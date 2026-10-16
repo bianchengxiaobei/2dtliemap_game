@@ -1,0 +1,169 @@
+{
+ "cx": 6,
+ "cy": 9,
+ "floors": [
+  "dddddddddd",
+  "dddddddddd",
+  "ddddwwwwwd",
+  "ddddwwwwwd",
+  "ddddwwwwwd",
+  "ddddwwwwwd",
+  "ddddwwwwwd",
+  "dddddddddd",
+  "gggggdggww",
+  "ggggggggww"
+ ],
+ "objects": [
+  {
+   "x": 4,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 5,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 6,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 7,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 4,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 4,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 4,
+   "y": 5,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 5,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 4,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 5,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.door"
+  },
+  {
+   "x": 6,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 7,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 9,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  }
+ ],
+ "rooms": [
+  {
+   "x": 9,
+   "y": 9,
+   "w": 5,
+   "h": 2,
+   "id": 4,
+   "name": "house_4"
+  },
+  {
+   "x": 5,
+   "y": 3,
+   "w": 3,
+   "h": 3,
+   "id": 6,
+   "name": "house_6"
+  }
+ ]
+}

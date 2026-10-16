@@ -1,0 +1,39 @@
+{
+ "cx": 1,
+ "cy": 9,
+ "floors": [
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd"
+ ],
+ "objects": [
+  {
+   "x": 9,
+   "y": 0,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree"
+  },
+  {
+   "x": 9,
+   "y": 2,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree"
+  },
+  {
+   "x": 9,
+   "y": 3,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree"
+  }
+ ]
+}

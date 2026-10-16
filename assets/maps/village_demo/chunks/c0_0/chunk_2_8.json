@@ -1,0 +1,32 @@
+{
+ "cx": 2,
+ "cy": 8,
+ "floors": [
+  "dddddddggg",
+  "ddddddddgg",
+  "dddddddddg",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd",
+  "dddddddddd"
+ ],
+ "objects": [
+  {
+   "x": 0,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree"
+  },
+  {
+   "x": 2,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree"
+  }
+ ]
+}

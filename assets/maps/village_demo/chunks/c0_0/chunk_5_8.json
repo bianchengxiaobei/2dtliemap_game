@@ -1,0 +1,25 @@
+{
+ "cx": 5,
+ "cy": 8,
+ "floors": [
+  "ggdddddddd",
+  "ggdddddddd",
+  "ggdddddddd",
+  "ggdddddddd",
+  "gddddddddd",
+  "ggdddddddd",
+  "ggdddddddd",
+  "ggdddddddd",
+  "ggdddddddd",
+  "ggdddddddd"
+ ],
+ "objects": [
+  {
+   "x": 5,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree"
+  }
+ ]
+}

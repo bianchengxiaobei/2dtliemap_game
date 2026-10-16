@@ -28,6 +28,24 @@
         "frames": ["floor_dirt_1", "floor_dirt_2"]
       }
     },
+    "tile.floor.wood": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["floor_wood_1", "floor_wood_2"]
+      }
+    },
+    "wall.brick": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["wall_brick_1"]
+      }
+    },
+    "wall.door": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["wall_door_1"]
+      }
+    },
     "decor.grass_tuft": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",

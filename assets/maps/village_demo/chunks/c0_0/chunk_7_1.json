@@ -1,0 +1,189 @@
+{
+ "cx": 7,
+ "cy": 1,
+ "floors": [
+  "gggggggggd",
+  "gggggggggd",
+  "gggggggggd",
+  "gggggggggd",
+  "gggwwwwwwd",
+  "gggwwwwwwd",
+  "gggwwwwwwd",
+  "gggwwwwwwd",
+  "gggggggggd",
+  "wwwwwwgggd"
+ ],
+ "objects": [
+  {
+   "x": 3,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 4,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 5,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 6,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 7,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 3,
+   "y": 5,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 5,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 3,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 3,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 4,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.door"
+  },
+  {
+   "x": 5,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 6,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 7,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 0,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 1,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 2,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 3,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 4,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 5,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "decor.grass_tuft"
+  }
+ ],
+ "rooms": [
+  {
+   "x": 4,
+   "y": 5,
+   "w": 4,
+   "h": 2,
+   "id": 3,
+   "name": "house_3"
+  }
+ ]
+}

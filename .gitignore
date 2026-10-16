@@ -19,3 +19,6 @@ vcpkg_installed/
 
 # PZ 临时占位资源：不入公开仓库、不随构建分发（见 assets_placeholder_pz/README.md）
 assets_placeholder_pz/
+
+# 压测大图：可由 tools/gen_map.py 确定性重建（同 seed 逐字节相同），不入库
+assets/maps/stress_*/

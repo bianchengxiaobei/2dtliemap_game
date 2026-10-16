@@ -1,0 +1,30 @@
+{
+ "format": "zomboidlike-map-v1",
+ "name": "village_demo",
+ "generator": {
+  "tool": "tools/gen_map.py",
+  "version": 1,
+  "seed": 20261016,
+  "params": {
+   "chunks": "12x12",
+   "villages": 2,
+   "roads": 2,
+   "patches": 3,
+   "forests": 2
+  }
+ },
+ "bounds": {
+  "chunkX0": 0,
+  "chunkY0": 0,
+  "chunksX": 12,
+  "chunksY": 12
+ },
+ "terrain": {
+  "defaultFloor": "tile.floor.grass"
+ },
+ "legend": {
+  "g": "tile.floor.grass",
+  "d": "tile.floor.dirt",
+  "w": "tile.floor.wood"
+ }
+}

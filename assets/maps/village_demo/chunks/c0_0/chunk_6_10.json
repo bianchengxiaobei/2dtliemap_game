@@ -1,0 +1,56 @@
+{
+ "cx": 6,
+ "cy": 10,
+ "floors": [
+  "ggggggggww",
+  "ggggggggww",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg"
+ ],
+ "objects": [
+  {
+   "x": 8,
+   "y": 0,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 8,
+   "y": 1,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 9,
+   "y": 1,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 3,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "decor.grass_tuft"
+  }
+ ],
+ "rooms": [
+  {
+   "x": 9,
+   "y": -1,
+   "w": 5,
+   "h": 2,
+   "id": 4,
+   "name": "house_4"
+  }
+ ]
+}

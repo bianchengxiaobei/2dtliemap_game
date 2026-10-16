@@ -143,3 +143,17 @@ TEST_CASE("SpriteDrawRect：192×256 画布高物体锚在格中心附近") {
     // 水平中心 ≈ 格中心（o=37 + w=118 在 192 画布内水平对称）
     CHECK(std::abs(r.x + r.w * 0.5f - center.x) <= 1.01f);
 }
+
+TEST_CASE("SpriteDrawRect：64×224 画布墙体块立于格上（M3 占位墙约定）") {
+    // 墙帧参数（assets/own：wall_brick_1/wall_door_1）：fx=64, fy=224, ox=0, oy=112, w=64, h=112
+    const glm::vec2 center = render::ToScreen(1.0f, 1.0f);
+    const render::SpriteRect r = render::SpriteDrawRect(1.0f, 1.0f, 0, 64, 224, 0, 112, 64, 112);
+    CHECK(r.x == doctest::Approx(center.x - 32.0f));         // 水平居中
+    CHECK((r.y + r.h) == doctest::Approx(center.y + 16.0f)); // 底部落在格中心 +16 接触带
+    CHECK(r.y == doctest::Approx(center.y - 96.0f));         // 顶 = 一格楼高（kFloorPx）
+
+    // 相邻格（东邻）墙的水平错位 = (32, 16)，与地砖剖分一致
+    const render::SpriteRect r2 = render::SpriteDrawRect(2.0f, 1.0f, 0, 64, 224, 0, 112, 64, 112);
+    CHECK((r2.x - r.x) == doctest::Approx(32.0f));
+    CHECK((r2.y - r.y) == doctest::Approx(16.0f));
+}

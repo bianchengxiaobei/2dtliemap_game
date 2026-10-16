@@ -21,6 +21,7 @@ OUT_DIR = os.path.join(ROOT, "assets", "own")
 
 FLOOR_CANVAS = (64, 128)
 TREE_CANVAS = (192, 256)
+WALL_CANVAS = (64, 224)  # 内容占画布底部 64x112：从格中心 +16 立起，顶到上一层楼面
 
 
 def new_canvas(size):
@@ -101,6 +102,61 @@ def make_tree(seed):
     return canvas
 
 
+def make_wood_floor(seed, base=(150, 112, 68)):
+    """木地板菱形块：与草地同几何，加木板缝"""
+    rng = random.Random(seed)
+    canvas = new_canvas(FLOOR_CANVAS)
+    tile = new_canvas((64, 32))
+    d = ImageDraw.Draw(tile)
+    d.rectangle([0, 0, 63, 31], fill=base + (255,))
+    for x in range(0, 64, 8):
+        d.line([(x, 0), (x, 31)], fill=(base[0] - 32, base[1] - 26, base[2] - 16, 255), width=1)
+    px = tile.load()
+    for _ in range(170):
+        x = rng.randrange(64)
+        y = rng.randrange(32)
+        jitter = rng.randint(-14, 14)
+        r, g, b, a = px[x, y]
+        px[x, y] = (max(0, min(255, r + jitter)), max(0, min(255, g + jitter)),
+                    max(0, min(255, b + jitter)), a)
+    tile = Image.composite(tile, Image.new("RGBA", (64, 32), (0, 0, 0, 0)), diamond_mask(64, 32))
+    canvas.alpha_composite(tile, (0, 96))
+    return canvas, (0, 96)
+
+
+def make_wall(seed, door=False):
+    """墙：画布 64x224，砖面块占画布底部 64x112（一格楼高）。
+    door=True 时画成门板（有门框/把手）。"""
+    rng = random.Random(seed)
+    canvas = new_canvas(WALL_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    top, bottom, left, right = 112, 223, 0, 63
+
+    d.rectangle([left, top, right, bottom], fill=(122, 58, 44, 255))
+    mortar = (94, 76, 66, 255)
+    brick_h, brick_w = 16, 24
+    for i, y in enumerate(range(top, bottom, brick_h)):
+        d.line([(left, y), (right, y)], fill=mortar, width=1)
+        offset = 0 if i % 2 == 0 else brick_w // 2
+        for x in range(left + offset, right, brick_w):
+            d.line([(x, y), (x, min(y + brick_h, bottom))], fill=mortar, width=1)
+    # 顶缘亮边 / 底缘暗边（提示"块"的厚度）
+    d.line([(left, top), (right, top)], fill=(168, 96, 74, 255), width=2)
+    d.line([(left, bottom), (right, bottom)], fill=(66, 30, 22, 255), width=2)
+
+    if door:
+        dw = 36
+        dx0 = 32 - dw // 2
+        dt = bottom - 92
+        d.rectangle([dx0, dt, dx0 + dw, bottom], fill=(104, 72, 46, 255))
+        d.rectangle([dx0, dt, dx0 + dw, bottom], outline=(58, 38, 22, 255), width=2)
+        d.line([(dx0 + dw // 2, dt + 2), (dx0 + dw // 2, bottom - 2)], fill=(58, 38, 22, 255), width=1)
+        for y in range(dt + 6, bottom, 10):  # 门板横纹
+            d.line([(dx0 + 2, y), (dx0 + dw - 2, y)], fill=(92, 62, 40, 255), width=1)
+        d.ellipse([dx0 + dw - 11, dt + 40, dx0 + dw - 5, dt + 46], fill=(220, 200, 120, 255))
+    return canvas
+
+
 def pack_frames(frames, margin=1):
     """shelf 打包：返回合并后的页图与子图矩形表"""
     # 每行限宽 1024
@@ -141,6 +197,14 @@ def main():
     for i, col in enumerate(dirt_colors):
         canvas, (ox, oy) = make_floor(col, 2000 + i, speckle=22)
         specs.append((f"floor_dirt_{i + 1}", canvas, (ox, oy, 64, 32), ox, oy, 64, 128))
+
+    wood_colors = [(150, 112, 68), (142, 104, 62)]
+    for i, col in enumerate(wood_colors):
+        canvas, (ox, oy) = make_wood_floor(2100 + i, base=col)
+        specs.append((f"floor_wood_{i + 1}", canvas, (ox, oy, 64, 32), ox, oy, 64, 128))
+
+    specs.append(("wall_brick_1", make_wall(2200), (0, 112, 64, 112), 0, 112, 64, 224))
+    specs.append(("wall_door_1", make_wall(2201, door=True), (0, 112, 64, 112), 0, 112, 64, 224))
 
     for i in range(3):
         canvas = make_tuft(3000 + i)

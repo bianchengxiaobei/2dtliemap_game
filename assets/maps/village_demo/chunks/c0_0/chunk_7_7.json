@@ -1,0 +1,32 @@
+{
+ "cx": 7,
+ "cy": 7,
+ "floors": [
+  "gggggggggd",
+  "dggggggggd",
+  "dddggggggd",
+  "ddddgggggd",
+  "dddddggggd",
+  "ddddddgggd",
+  "dddddddggd",
+  "ddddddddgd",
+  "ddddddddgd",
+  "dddddddddd"
+ ],
+ "objects": [
+  {
+   "x": 8,
+   "y": 0,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "decor.grass_tuft"
+  },
+  {
+   "x": 2,
+   "y": 7,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree"
+  }
+ ]
+}

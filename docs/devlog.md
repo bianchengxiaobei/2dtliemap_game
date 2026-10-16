@@ -94,3 +94,21 @@
 
 **测试**：`tests/test_world.cpp` 8 用例（含 6 万次坐标往返属性检查）；全量 16 用例 / 115509 断言全绿（`ctest --preset x64-debug`）。
 
+---
+
+## 2026-10-16 M3-T2 地图格式 v1 + 生成器
+
+**格式定稿（docs/mapformat.md）**
+- 目录：`assets/maps/<name>/map.json`（元数据/legend/bounds）+ `chunks/c<cell>/chunk_<cx>_<cy>.json`；
+- **稀疏设计**：缺失 chunk 文件 = 默认地形 + 无对象（流式加载的快速路径）；`floors` 用 legend 字符 10×10 网格；`objects`/`rooms` 稀疏列表；坐标一律 chunk 局部 `[0,10)`；`cx/cy` 与文件名一致性做加载门禁；房间跨 chunk 时在相交的每个文件中出现（id 相同）。
+
+**生成器 `tools/gen_map.py`**（纯 Python、无三方依赖）
+- 内容：泥土补丁 + 横竖路 + 村庄（砖墙/木地板/南侧门/房间）+ 森林斑块/散布树 + 草丛；
+- **确定性**：同 seed + 同参数 → 逐字节相同输出（132 文件 md5 全量对比验证通过）；
+- `village_demo` 12×12 chunks（131/144 落盘）已入库；`stress_100x100` 100×100 chunks（3693/10000 落盘，~1.2 万对象）供 T4/T7 压测，gitignore 可重建。
+
+**占位资源扩展**
+- `gen_placeholder_atlas.py` 新增 `floor_wood_1/2`、`wall_brick_1`、`wall_door_1`；
+- 墙的画布约定（已写进 `test_isomath` 锁定）：画布 64×224、内容 64×112，底带 = 格中心 +16、顶 = 一格楼高（`kFloorPx`）——墙对象放在所属地面格（z=0），精灵自然向上遮挡一格；
+- manifest 增加 `tile.floor.wood` / `wall.brick` / `wall.door`（仅 own；`placeholder_pz` 下自动回退 own，验收时可见两套混合渲染）。
+
