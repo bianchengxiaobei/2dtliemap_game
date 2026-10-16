@@ -878,3 +878,38 @@ F 键绑定（config `input.bindings.Pickup` + `inventory.pickupRadius`=1.6）�
 HUD ground=7 → W 走位 → F 拾取 → `拾取：绷带 x2（地面剩 0 件；背包 2 件）` +
 HUD `bag: 2 item(s) 0.2/20.0kg | ground=6` → 再按 F `Nothing to pick up` 负例；
 截图 m6t3_1_scatter / m6t3_2_pickup / m6t3_3_empty。
+
+---
+
+## 2026-10-16 M6-T5 装备/使用闭环（T4 背包 UI 顺延至正式 UI）
+
+**范围说明**：按用户决定，M6-T4（临时背包列表 UI）顺延——正式 UI 里程碑（M9）一并实现；
+本任务用临时按键 + HUD 完成装备/使用闭环，并补 G 丢弃键凑齐验收第 2 条全链路。
+
+**JSON v1 扩展**：物品可选 `"use"` 对象（heal 0~100 HP；hunger/thirst/fatigue 0~1，
+正值 = 减少需求）；严格校验（未知键/类型/越界全报 + 行号）。items.json：绷带
+`{heal:15}`、罐头豆子 `{hunger:0.35}`。
+
+**规则层**：`UseFirstConsumable`（消费第一个有效果物品 1 件，返回效果与剩余）+ 
+`ApplyUseEffect`（纯函数：HP 钳到上限并返回**实际**回血；需求钳 [0,1]；空指针安全）。
+
+**接线**（WorldDemoState 临时按键，正式 UI 时迁移）：`E` 使用 / `R` 装备（主手武器
+↔ 背包第一件武器，换装回流背包，放不下落地面）/ `G` 丢弃背包第一堆（整堆落地面）；
+`F` 拾取（T3）。装备渲染：收集后、排序前追加一个物品图标 DrawItem（玩家旁 +
+屏幕偏移、同格层 +1 画在角色之上；正式挂点/动画留后续）。HUD 行 16
+`equip: primary=axe body=-`。
+
+**演示调整**：出生点 (70,18) → **(70,24) 村庄南侧开阔地**（原点位在房屋覆盖层下
+出生即被楼面遮挡 + 紧贴尸群）；散落点改以出生点为基准；新增 `health.playerMaxHp` /
+`playerStartHp` 配置（默认 100/100，演示回血量可用命令行调低起始 HP）。
+
+**测试**：+2 用例（use 字段解析与校验 7 种非法；ApplyUseEffect 钳制/满血/空指针 +
+UseFirstConsumable 消耗语义，T5 版）；150 用例全绿（Debug 117857 / Release 117858）。
+
+**实机冒烟**（Release）：
+- 拾取×3 → `bag: 3 item(s) 3.2/20.0kg`；R → 日志`装备：消防斧 → 主手` + HUD
+  `equip: primary=axe` + **手持斧图标截图**（放大验证：角色右手侧斧头）；
+- E（满血）→ `使用：绷带（回血 0，HP 100/100；剩余 1 件）`（钳制正确）；
+- E（40/100）→ **hp 40 → 55（+15）**、绷带消耗（3→2 件、3.2→3.1kg）；
+- G → `Dropped bandage x1` 提示 + ground 5→6（地面/背包一致）。
+截图：m6t5_*、m6t5b_hand（手持）、m6t5c_before_use/healed（回血前后）。

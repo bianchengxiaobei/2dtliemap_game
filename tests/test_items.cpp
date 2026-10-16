@@ -176,6 +176,53 @@ TEST_CASE("M6-T1：加载失败不覆盖已有数据（不部分生效）") {
     CHECK(registry.Find("only") != nullptr);
 }
 
+TEST_CASE("M6-T5：use 效果字段解析与校验") {
+    items::ItemRegistry registry;
+    std::string error;
+    auto load = [&](const std::string& body) {
+        error.clear();
+        return registry.LoadFromString(MakeJson("    " + body), "test", &error);
+    };
+
+    // 合法：heal + hunger
+    REQUIRE(load(R"({ "id": "medkit", "name": "急救包", "icon": "i", "weight": 0.5, "maxStack": 2, "type": "consumable", "use": { "heal": 30, "hunger": 0.2 } })"));
+    const items::ItemDef* medkit = registry.Find("medkit");
+    REQUIRE(medkit != nullptr);
+    CHECK(medkit->use.heal == doctest::Approx(30.0f));
+    CHECK(medkit->use.hunger == doctest::Approx(0.2f));
+    CHECK(medkit->use.thirst == doctest::Approx(0.0f));
+    CHECK(medkit->use.Any());
+
+    // 无 use → 不可使用
+    REQUIRE(load(R"({ "id": "rock", "name": "石头", "icon": "i", "weight": 1, "maxStack": 1, "type": "generic" })"));
+    const items::ItemDef* rock = registry.Find("rock");
+    REQUIRE(rock != nullptr);
+    CHECK_FALSE(rock->use.Any());
+
+    // use 非对象
+    CHECK_FALSE(load(R"({ "id": "x", "name": "x", "icon": "i", "weight": 1, "maxStack": 1, "type": "consumable", "use": 5 })"));
+    CHECK(Contains(error, "第 4 行"));
+    CHECK(Contains(error, "必须是对象"));
+
+    // heal 越界（>100 / 负数）
+    CHECK_FALSE(load(R"({ "id": "x", "name": "x", "icon": "i", "weight": 1, "maxStack": 1, "type": "consumable", "use": { "heal": 101 } })"));
+    CHECK(Contains(error, "use.heal"));
+    CHECK_FALSE(load(R"({ "id": "x", "name": "x", "icon": "i", "weight": 1, "maxStack": 1, "type": "consumable", "use": { "heal": -5 } })"));
+    CHECK(Contains(error, "use.heal"));
+
+    // 需求越界
+    CHECK_FALSE(load(R"({ "id": "x", "name": "x", "icon": "i", "weight": 1, "maxStack": 1, "type": "consumable", "use": { "hunger": 1.5 } })"));
+    CHECK(Contains(error, "use.hunger"));
+
+    // 未知字段
+    CHECK_FALSE(load(R"({ "id": "x", "name": "x", "icon": "i", "weight": 1, "maxStack": 1, "type": "consumable", "use": { "hp": 5 } })"));
+    CHECK(Contains(error, "use 未知字段 'hp'"));
+
+    // 类型错误
+    CHECK_FALSE(load(R"({ "id": "x", "name": "x", "icon": "i", "weight": 1, "maxStack": 1, "type": "consumable", "use": { "heal": "high" } })"));
+    CHECK(Contains(error, "必须是数字"));
+}
+
 TEST_CASE("M6-T1：文件不存在与仓库内置物品文件") {
     items::ItemRegistry registry;
     std::string error;

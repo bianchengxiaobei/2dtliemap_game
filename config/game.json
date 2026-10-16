@@ -24,6 +24,10 @@
     "playerCapacityKg": 20.0,
     "pickupRadius": 1.6
   },
+  "health": {
+    "playerMaxHp": 100.0,
+    "playerStartHp": 100.0
+  },
   "world": {
     "mapDir": "assets/maps/village_demo",
     "loadRadius": 3,
@@ -117,6 +121,9 @@
       "DemoGunshot": "F7",
       "Attack": "SPACE",
       "Pickup": "F",
+      "Use": "E",
+      "Equip": "R",
+      "Drop": "G",
       "TogglePhysicsDebug": "F10"
     }
   },

@@ -175,4 +175,44 @@ bool Unequip(ecs::Equipment& equipment, ecs::EquipSlot slot, ecs::ItemInstance* 
     return true;
 }
 
+UseResult UseFirstConsumable(ecs::Container& container, const ItemRegistry& registry) {
+    UseResult result;
+    for (auto it = container.items.begin(); it != container.items.end(); ++it) {
+        const ItemDef* def = registry.Find(it->defId);
+        if (def == nullptr || !def->use.Any()) {
+            continue;  // 不可使用（工具/装备/坏数据）：跳过
+        }
+        result.applied = true;
+        result.defId = def->id;
+        result.effect = def->use;
+        it->count -= 1;
+        if (it->count <= 0) {
+            container.items.erase(it);
+            result.remaining = 0;
+        } else {
+            result.remaining = it->count;
+        }
+        return result;
+    }
+    return result;  // 无可使用物品
+}
+
+float ApplyUseEffect(const UseEffect& effect, float hpMax, float* hpCurrent, float* hunger,
+                     float* thirst, float* fatigue) {
+    float healed = 0.0f;
+    if (hpCurrent != nullptr && effect.heal > 0.0f) {
+        healed = std::min(effect.heal, std::max(0.0f, hpMax - *hpCurrent));
+        *hpCurrent += healed;
+    }
+    auto reduce = [](float* value, float amount) {
+        if (value != nullptr && amount > 0.0f) {
+            *value = std::max(0.0f, *value - amount);
+        }
+    };
+    reduce(hunger, effect.hunger);
+    reduce(thirst, effect.thirst);
+    reduce(fatigue, effect.fatigue);
+    return healed;
+}
+
 }  // namespace zl::items

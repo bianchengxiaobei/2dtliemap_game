@@ -48,6 +48,11 @@ private:
     void EnsureDemoItemsScattered();
     void PickupNearestItem();
     void DespawnGroundItems();
+    // M6-T5：装备/使用闭环（临时按键，无列表 UI——正式 UI 在 M9）
+    void UseConsumableItem();       // E：使用背包中第一个带效果的物品（消耗 1 件）
+    void ToggleEquipWeapon();       // R：主手武器 ↔ 背包第一件武器（换装/卸下）
+    void DropFirstItem();           // G：丢弃背包第一堆（整堆落地面）
+    void AppendEquippedWeapon();    // 手持渲染：收集后追加装备图标 DrawItem（排序前）
     // M5-T1：演示击杀——离参考点（玩家/相机中心）最近的存活游荡者 HP 归零 → DeathSystem 转尸体
     void KillNearestDemoEntity();
     // M5-T4：演示开枪——玩家位置发射大半径 SoundEvent（事件总线 OnSound）吸引僵尸
@@ -101,6 +106,9 @@ private:
     float m_playerAttackStagger = 0.35f;
     // M6-T2：玩家背包容量（config inventory.playerCapacityKg；生成时写入 Container 组件）
     float m_playerCapacityKg = 20.0f;
+    // M6-T5：玩家起始 HP（config health.playerStartHp / playerMaxHp；演示回血时可调低起始）
+    float m_playerStartHp = 100.0f;
+    float m_playerMaxHp = 100.0f;
     // M6-T3：地面物品拾取半径（config inventory.pickupRadius）与散落标记
     float m_pickupRadius = 1.6f;
     bool m_demoItemsScattered = false;

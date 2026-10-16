@@ -13,7 +13,7 @@ namespace {
 const char* kItemsJson = R"({
   "format": "items-v1",
   "items": [
-    { "id": "bandage", "name": "绷带", "icon": "i", "weight": 0.1, "maxStack": 5, "type": "consumable" },
+    { "id": "bandage", "name": "绷带", "icon": "i", "weight": 0.1, "maxStack": 5, "type": "consumable", "use": { "heal": 15 } },
     { "id": "rag", "name": "破布", "icon": "i", "weight": 0.1, "maxStack": 10, "type": "generic" },
     { "id": "axe", "name": "斧", "icon": "i", "weight": 3.0, "maxStack": 1, "type": "weapon" },
     { "id": "knife", "name": "刀", "icon": "i", "weight": 0.6, "maxStack": 1, "type": "weapon" },
@@ -195,6 +195,62 @@ TEST_CASE("M6-T2：装备槽规则与换装/卸下") {
     swapped2 = Make("dummy_placeholder", 1);  // 先填充，确认被覆盖
     CHECK(items::Equip(equipment, registry, ecs::EquipSlot::Body, Make("jacket", 1), &swapped2));
     CHECK_FALSE(swapped2.Valid());
+}
+
+TEST_CASE("M6-T5：使用第一个可用物品（消耗与效果返回）") {
+    const items::ItemRegistry registry = MakeRegistry();
+    ecs::Container bag;
+    bag.capacityKg = 100.0f;
+    CHECK(items::AddItem(bag, registry, Make("rag", 2)) == 2);      // 不可使用（无效果）
+    CHECK(items::AddItem(bag, registry, Make("bandage", 2)) == 2);  // 可回血（use.heal=15）
+
+    const items::UseResult first = items::UseFirstConsumable(bag, registry);
+    CHECK(first.applied);
+    CHECK(first.defId == "bandage");
+    CHECK(first.effect.heal == doctest::Approx(15.0f));
+    CHECK(first.remaining == 1);
+    CHECK(items::CountOf(bag, "bandage") == 1);
+
+    const items::UseResult second = items::UseFirstConsumable(bag, registry);
+    CHECK(second.applied);
+    CHECK(second.remaining == 0);
+    CHECK(items::CountOf(bag, "bandage") == 0);
+    CHECK(bag.items.size() == 1);  // 条目移除后只剩 rag x2
+
+    // 只剩不可使用物品：不生效、不消耗
+    const items::UseResult none = items::UseFirstConsumable(bag, registry);
+    CHECK_FALSE(none.applied);
+    CHECK(items::CountOf(bag, "rag") == 2);
+}
+
+TEST_CASE("M6-T5：使用效果落地（回血钳制 / 需求钳制 / 空指针安全）") {
+    // 完整回血
+    float hp = 50.0f;
+    float hunger = 0.8f;
+    float healed = items::ApplyUseEffect(items::UseEffect{15.0f, 0.35f, 0.0f, 0.0f}, 100.0f,
+                                         &hp, &hunger, nullptr, nullptr);
+    CHECK(healed == doctest::Approx(15.0f));
+    CHECK(hp == doctest::Approx(65.0f));
+    CHECK(hunger == doctest::Approx(0.45f));
+
+    // 回血钳到上限（90 + 15 → 100，实际 +10）
+    hp = 90.0f;
+    healed = items::ApplyUseEffect(items::UseEffect{15.0f, 0.0f, 0.0f, 0.0f}, 100.0f, &hp,
+                                   nullptr, nullptr, nullptr);
+    CHECK(healed == doctest::Approx(10.0f));
+    CHECK(hp == doctest::Approx(100.0f));
+
+    // 满血：实际 0
+    healed = items::ApplyUseEffect(items::UseEffect{15.0f, 0.0f, 0.0f, 0.0f}, 100.0f, &hp,
+                                   nullptr, nullptr, nullptr);
+    CHECK(healed == doctest::Approx(0.0f));
+    CHECK(hp == doctest::Approx(100.0f));
+
+    // 需求钳到 0；无需求指针不崩
+    float thirst = 0.1f;
+    items::ApplyUseEffect(items::UseEffect{0.0f, 0.0f, 0.5f, 0.5f}, 100.0f, nullptr, nullptr,
+                          &thirst, nullptr);
+    CHECK(thirst == doctest::Approx(0.0f));
 }
 
 TEST_CASE("M6-T2：槽位名称与总重量") {

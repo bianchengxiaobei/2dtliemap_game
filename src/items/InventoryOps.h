@@ -38,4 +38,20 @@ bool Equip(ecs::Equipment& equipment, const ItemRegistry& registry, ecs::EquipSl
 // 卸下槽位：成功 true 并移出到 *outRemoved（可为 null）；槽位空返回 false
 bool Unequip(ecs::Equipment& equipment, ecs::EquipSlot slot, ecs::ItemInstance* outRemoved);
 
+// 使用结果（M6-T5）：调用方负责把 effect 落地到 Health/Needs（含钳制）与提示
+struct UseResult {
+    bool applied = false;  // false = 容器里没有可使用的物品（未消耗任何东西）
+    std::string defId;     // 被消耗的物品定义 id
+    UseEffect effect;      // 定义中的使用效果
+    int remaining = 0;     // 该堆叠使用后剩余数量（0 = 条目已移除）
+};
+
+// 使用容器中第一个带使用效果（ItemDef.use.Any()）的物品：消耗 1 件
+UseResult UseFirstConsumable(ecs::Container& container, const ItemRegistry& registry);
+
+// 把使用效果落地到数值（纯函数，可单测）：HP 加到不超过 hpMax（返回实际回血量）；
+// 需求三项钳到 [0,1]（指针可为 null = 该实体无需求组件）
+float ApplyUseEffect(const UseEffect& effect, float hpMax, float* hpCurrent, float* hunger,
+                     float* thirst, float* fatigue);
+
 }  // namespace zl::items

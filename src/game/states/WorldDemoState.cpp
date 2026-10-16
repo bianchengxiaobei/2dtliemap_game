@@ -104,7 +104,7 @@ void WorldDemoState::OnEnter() {
     // 相机：对准 village_demo 北侧村庄（房群在 chunk (6..7, 1..2)）；边界=地图（M4-T5）
     render::Camera& camera = *m_ctx.camera;
     camera.SetViewport(m_ctx.renderer->FramebufferWidth(), m_ctx.renderer->FramebufferHeight());
-    camera.SetCenter(render::ToScreen(70.0f, 18.0f));
+    camera.SetCenter(render::ToScreen(70.0f, 24.0f));
     m_followCamera = config.Get<bool>("camera.follow", true);
     m_followRate = static_cast<float>(config.Get<double>("camera.followRate", 8.0));
 
@@ -130,6 +130,10 @@ void WorldDemoState::OnEnter() {
     // M6-T3：地面物品拾取半径（格）+ 每次进入状态重新散落
     m_pickupRadius = static_cast<float>(config.Get<double>("inventory.pickupRadius", 1.6));
     m_demoItemsScattered = false;
+    // M6-T5：玩家起始 HP（默认满血；演示/压测可用 --health.playerStartHp 调低）
+    m_playerMaxHp = static_cast<float>(config.Get<double>("health.playerMaxHp", 100.0));
+    m_playerStartHp = static_cast<float>(config.Get<double>("health.playerStartHp",
+                                                            static_cast<double>(m_playerMaxHp)));
     if (m_cruiseEnabled) {
         camera.SetCenter(render::ToScreen(m_cruiseCenterX + m_cruiseRadius, m_cruiseCenterY));
         ZL_INFO("perf", "自动巡航开启：圆心=({:.0f},{:.0f}) 半径={:.0f} 速度={:.0f}格/s 时长={:.1f}min",
@@ -141,7 +145,7 @@ void WorldDemoState::OnEnter() {
     SpawnDemoEntities();
     // M4-T4：玩家实体由 OnFrame 延迟生成（等目标 chunk 加载完成）
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 攻击 | F 拾取物品 | F6 演示击杀 | F7 开枪（声音引怪） | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 攻击 | F 拾取 | E 使用 | R 装备 | G 丢弃 | F6 演示击杀 | F7 开枪（声音引怪） | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
 }
 
 void WorldDemoState::ApplyCameraMode() {
@@ -198,7 +202,10 @@ ecs::Entity WorldDemoState::SpawnCharacter(float px, float py) {
         e, ecs::SpriteRef{ecs::HashName("character.placeholder"), 0, 0xFFFFFFFFu});
     registry.emplace<ecs::Facing>(e, ecs::Facing{});
     registry.emplace<ecs::AnimState>(e, ecs::AnimState{});
-    registry.emplace<ecs::Health>(e, ecs::Health{});  // M5-T1：死亡流程（HP<=0 → 尸体）
+    ecs::Health startHealth;
+    startHealth.max = m_playerMaxHp > 0.0f ? m_playerMaxHp : 100.0f;
+    startHealth.current = std::min(m_playerStartHp, startHealth.max);
+    registry.emplace<ecs::Health>(e, startHealth);  // M5-T1 死亡流程 / M6-T5 起始 HP
     registry.emplace<ecs::Needs>(e, ecs::Needs{});
 
     // M4-T3：物理胶囊（位置/速度由 Bullet 接管）；M4-T4 动画读物理回写速度
@@ -230,10 +237,11 @@ void WorldDemoState::EnsurePlayerSpawned() {
     if (m_player != entt::null) {
         return;
     }
-    // 目标点 = 默认相机中心（村庄北）。必须先等目标 chunk 加载完成：
+    // 目标点 = 村庄南侧开阔地（M6-T5：原 (70,18) 落在房屋覆盖层下，出生即被楼面半透明
+    // 遮挡且紧贴尸群；南侧空地可见性好、开局有缓冲）。必须先等目标 chunk 加载完成：
     // 否则"未加载=阻挡"会让螺旋扫到远处已加载的外围（M4-T4 冒烟踩坑）
     constexpr int kTargetX = 70;
-    constexpr int kTargetY = 18;
+    constexpr int kTargetY = 24;
     const world::ChunkCoord targetChunk = world::ChunkOf(kTargetX, kTargetY);
     const world::Chunk* target = FindChunk(targetChunk.cx, targetChunk.cy);
     if (target == nullptr || target->State() != world::ChunkState::Loaded) {
@@ -600,12 +608,12 @@ void WorldDemoState::EnsureDemoItemsScattered() {
         return;
     }
     // 与玩家生成相同的门控：目标 chunk 就绪后再散落（走位图/格子数据可靠）
-    const world::ChunkCoord targetChunk = world::ChunkOf(70, 18);
+    const world::ChunkCoord targetChunk = world::ChunkOf(70, 24);
     const world::Chunk* target = FindChunk(targetChunk.cx, targetChunk.cy);
     if (target == nullptr || target->State() != world::ChunkState::Loaded) {
         return;  // 下帧再试
     }
-    // 村庄附近固定散落点（(70,18) 周边；每项经可走格吸附，失败则跳过并告警）
+    // 出生点（70,24）周边固定散落点；每项经可走格吸附，失败则跳过并告警
     struct Spot {
         int dx;
         int dy;
@@ -613,21 +621,22 @@ void WorldDemoState::EnsureDemoItemsScattered() {
         int count;
     };
     static constexpr Spot kSpots[] = {
-        {-5, -4, "bandage", 2},       {4, -6, "canned_beans", 1},
-        {7, 3, "axe", 1},             {-7, 2, "kitchen_knife", 1},
-        {2, 7, "rag", 3},             {-3, -8, "jacket", 1},
-        {9, -2, "tote_bag", 1},       {6, 9, "bandage", 1},
+        {0, 0, "bandage", 2},       // 出生点正下：F 拾取 → E 使用（回血测试）
+        {1, 1, "axe", 1},           // 出生点旁 1.4 格：F 拾取 → R 装备（手持渲染）
+        {-3, -7, "canned_beans", 1}, {4, -8, "kitchen_knife", 1},
+        {-6, -3, "rag", 3},         {7, -4, "tote_bag", 1},
+        {-7, 4, "jacket", 1},       {5, 6, "rag", 2},
     };
     int spawned = 0;
     for (const Spot& spot : kSpots) {
         int wx = 0;
         int wy = 0;
         const bool found = ai::FindNearestWalkable(
-            70 + spot.dx, 18 + spot.dy, 6,
+            70 + spot.dx, 24 + spot.dy, 6,
             [this](int x, int y) { return !IsSolidSquare(x, y); }, &wx, &wy);
         if (!found) {
             ZL_WARN("items", "散落点 ({}, {}) 附近找不到可走格，跳过 {}",
-                    70 + spot.dx, 18 + spot.dy, spot.defId);
+                    70 + spot.dx, 24 + spot.dy, spot.defId);
             continue;
         }
         const ecs::ItemInstance stack{spot.defId, spot.count, 1.0f};
@@ -675,6 +684,165 @@ void WorldDemoState::PickupNearestItem() {
         SetNotice("Bag full (" + result.defId + ")", kNoticeFailColor, 1.5f);
         ZL_INFO("items", "拾取失败：{}（背包已满）", name);
     }
+}
+
+void WorldDemoState::UseConsumableItem() {
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_player == entt::null) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* container = registry.try_get<ecs::Container>(m_player);
+    auto* health = registry.try_get<ecs::Health>(m_player);
+    if (container == nullptr || health == nullptr) {
+        return;
+    }
+
+    const items::UseResult use = items::UseFirstConsumable(*container, *m_ctx.items);
+    if (!use.applied) {
+        SetNotice("No usable item", kNoticeInfoColor, 1.2f);
+        return;
+    }
+    const items::ItemDef* def = m_ctx.items->Find(use.defId);
+    const std::string name = def != nullptr ? def->name : use.defId;
+
+    // 效果落地（纯函数：HP 钳到上限，返回实际回血；需求钳到 [0,1]）
+    auto* needs = registry.try_get<ecs::Needs>(m_player);
+    const float healed = items::ApplyUseEffect(
+        use.effect, health->max, &health->current,
+        needs != nullptr ? &needs->hunger : nullptr,
+        needs != nullptr ? &needs->thirst : nullptr,
+        needs != nullptr ? &needs->fatigue : nullptr);
+    if (use.effect.heal > 0.0f) {
+        SetNotice("Used " + use.defId + " (+" + std::to_string(static_cast<int>(healed)) +
+                      "HP)",
+                  kNoticeOkColor, 1.5f);
+    } else {
+        SetNotice("Used " + use.defId, kNoticeOkColor, 1.5f);
+    }
+    ZL_INFO("items", "使用：{}（回血 {:.0f}，HP {:.0f}/{:.0f}；剩余 {} 件）", name, healed,
+            health->current, health->max, use.remaining);
+}
+
+void WorldDemoState::ToggleEquipWeapon() {
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_player == entt::null) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* equipment = registry.try_get<ecs::Equipment>(m_player);
+    auto* container = registry.try_get<ecs::Container>(m_player);
+    auto* pos = registry.try_get<ecs::Position>(m_player);
+    if (equipment == nullptr || container == nullptr || pos == nullptr) {
+        return;
+    }
+    constexpr std::size_t kPrimary = static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand);
+    const items::ItemRegistry& reg = *m_ctx.items;
+
+    // 已装备 → 卸下（回背包；放不下则落地面）
+    if (equipment->slots[kPrimary].has_value()) {
+        ecs::ItemInstance out;
+        items::Unequip(*equipment, ecs::EquipSlot::PrimaryHand, &out);
+        const items::ItemDef* def = reg.Find(out.defId);
+        const std::string name = def != nullptr ? def->name : out.defId;
+        if (items::AddItem(*container, reg, out) > 0) {
+            SetNotice("Unequipped " + out.defId, kNoticeInfoColor, 1.5f);
+            ZL_INFO("items", "卸下：{}（回背包）", name);
+        } else {
+            game::SpawnGroundItem(*m_ctx.ecs, reg, out, pos->x, pos->y, pos->z);
+            SetNotice("Unequipped " + out.defId + " (dropped)", kNoticeInfoColor, 1.5f);
+            ZL_INFO("items", "卸下：{}（背包放不下 → 落地面）", name);
+        }
+        return;
+    }
+
+    // 空手 → 背包第一件武器上手；被换下的武器回背包（放不下落地面）
+    for (std::size_t i = 0; i < container->items.size(); ++i) {
+        const ecs::ItemInstance entry = container->items[i];  // 拷贝（RemoveItem 会失效引用）
+        const items::ItemDef* def = reg.Find(entry.defId);
+        if (def == nullptr || def->type != items::ItemType::Weapon) {
+            continue;
+        }
+        ecs::ItemInstance swapped;
+        if (!items::Equip(*equipment, reg, ecs::EquipSlot::PrimaryHand, entry, &swapped)) {
+            continue;
+        }
+        items::RemoveItem(*container, entry.defId, 1);
+        if (swapped.Valid()) {
+            if (items::AddItem(*container, reg, swapped) <= 0) {
+                game::SpawnGroundItem(*m_ctx.ecs, reg, swapped, pos->x, pos->y, pos->z);
+            }
+        }
+        SetNotice("Equipped " + entry.defId, kNoticeOkColor, 1.5f);
+        ZL_INFO("items", "装备：{} → 主手（背包剩 {} 件）", def->name,
+                items::CountOf(*container, entry.defId));
+        return;
+    }
+    SetNotice("No weapon in bag", kNoticeFailColor, 1.2f);
+}
+
+void WorldDemoState::DropFirstItem() {
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_player == entt::null) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* container = registry.try_get<ecs::Container>(m_player);
+    auto* pos = registry.try_get<ecs::Position>(m_player);
+    if (container == nullptr || pos == nullptr) {
+        return;
+    }
+    if (container->items.empty()) {
+        SetNotice("Bag empty", kNoticeInfoColor, 1.2f);
+        return;
+    }
+    ecs::ItemInstance stack = container->items.front();
+    const int removed = items::RemoveItem(*container, stack.defId, stack.count);
+    if (removed <= 0) {
+        return;
+    }
+    stack.count = removed;
+    game::SpawnGroundItem(*m_ctx.ecs, *m_ctx.items, stack, pos->x, pos->y, pos->z);
+    const items::ItemDef* def = m_ctx.items->Find(stack.defId);
+    SetNotice("Dropped " + stack.defId + " x" + std::to_string(removed), kNoticeInfoColor,
+              1.5f);
+    ZL_INFO("items", "丢弃：{} x{}（地面物品 {} 件）", def != nullptr ? def->name : stack.defId,
+            removed, game::CountGroundItems(*m_ctx.ecs));
+}
+
+void WorldDemoState::AppendEquippedWeapon() {
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_ctx.assets == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* equipment = registry.try_get<ecs::Equipment>(m_player);
+    const auto* pos = registry.try_get<ecs::Position>(m_player);
+    if (equipment == nullptr || pos == nullptr) {
+        return;
+    }
+    const auto& slot =
+        equipment->slots[static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand)];
+    if (!slot.has_value()) {
+        return;
+    }
+    const items::ItemDef* def = m_ctx.items->Find(slot->defId);
+    if (def == nullptr) {
+        return;
+    }
+    const auto* frames = m_ctx.assets->FramesByHash(ecs::HashName(def->icon));
+    if (frames == nullptr || frames->empty()) {
+        return;
+    }
+    const AssetProvider::Entry& entry = frames->front();
+    if (entry.atlas == nullptr || entry.frame == nullptr) {
+        return;
+    }
+    render::DrawItem item;
+    RenderCollectSystem::FillEntityDrawItem(pos->x, pos->y, pos->z, 0xFFFFFFFFu,
+                                            m_ctx.ecs->IdOf(m_player).id, *entry.frame,
+                                            entry.atlas->Texture(), /*subLayer=*/1, &item);
+    // 手持占位：屏幕空间右偏（角色右侧）——正式挂点/动画留后续里程碑
+    item.rect.x += 16.0f;
+    item.rect.y -= 36.0f;
+    m_items.push_back(item);
 }
 
 void WorldDemoState::DespawnGroundItems() {
@@ -729,6 +897,8 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
         RenderCollectSystem::Collect(*m_ctx.ecs, *m_ctx.spatialIndex, *m_ctx.assets, m_view,
                                      m_items);
     }
+    // M6-T5：手持武器（装备槽 → 玩家旁图标；画在同格角色之上）
+    AppendEquippedWeapon();
     std::sort(m_items.begin(), m_items.end(), render::DrawItemLess);
     DrawWorld();
     DrawDebugOverlay();
@@ -852,6 +1022,15 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     }
     if (input.IsActionPressed("Pickup")) {
         PickupNearestItem();  // M6-T3：F 拾取最近地面物品（容量/堆叠规则）
+    }
+    if (input.IsActionPressed("Use")) {
+        UseConsumableItem();  // M6-T5：E 使用（消耗 1 件 + 效果落地）
+    }
+    if (input.IsActionPressed("Equip")) {
+        ToggleEquipWeapon();  // M6-T5：R 装备/卸下主手武器（手持渲染）
+    }
+    if (input.IsActionPressed("Drop")) {
+        DropFirstItem();  // M6-T5：G 丢弃背包第一堆（落地面）
     }
     if (input.IsActionPressed("DemoGunshot")) {
         EmitGunshot();  // M5-T4：演示开枪（大半径 SoundEvent → 感知 → 僵尸来查看）
@@ -1313,7 +1492,7 @@ void WorldDemoState::DrawDebugText() {
             percStats.alerted, percStats.heard);
     }
     bgfx::dbgTextPrintf(0, 9, 0x07,
-                        "WASD/LMB move | SPACE attack | F pickup | F6 demo-kill | F7 gunshot | F4 cam | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+                        "WASD/LMB move | SPACE attack | F pickup | E use | R equip | G drop | F6 demo-kill | F7 gunshot | F4 cam | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
     // M5-T5：LOD 档位 + 虚拟群落统计（虚拟化 = 统计层，不入 registry）
     if (m_ctx.lod != nullptr) {
         const ai::LodSystem::Stats lodStats = m_ctx.lod->GetStats();
@@ -1361,6 +1540,16 @@ void WorldDemoState::DrawDebugText() {
             bgfx::dbgTextPrintf(0, 15, 0x0f, "bag: %d item(s) %.1f/%.1fkg | ground=%d",
                                 itemCount, items::TotalWeight(*container, *m_ctx.items),
                                 container->capacityKg, game::CountGroundItems(*m_ctx.ecs));
+        }
+        // M6-T5：装备槽（手持渲染由 AppendEquippedWeapon 落世界；此处 HUD 展示）
+        const auto* equipment = m_ctx.ecs->Registry().try_get<ecs::Equipment>(m_player);
+        if (equipment != nullptr) {
+            const auto& primary =
+                equipment->slots[static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand)];
+            const auto& body = equipment->slots[static_cast<std::size_t>(ecs::EquipSlot::Body)];
+            bgfx::dbgTextPrintf(0, 16, 0x0f, "equip: primary=%s body=%s",
+                                primary.has_value() ? primary->defId.c_str() : "-",
+                                body.has_value() ? body->defId.c_str() : "-");
         }
     }
 }

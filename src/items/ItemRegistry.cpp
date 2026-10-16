@@ -244,13 +244,14 @@ bool ItemRegistry::LoadFromString(std::string_view text, const std::string& sour
             return itemFail("条目必须是对象");
         }
 
-        static const std::unordered_set<std::string> kAllowedKeys = {"id",    "name",
-                                                                     "icon",  "weight",
-                                                                     "maxStack", "type"};
+        static const std::unordered_set<std::string> kAllowedKeys = {"id",       "name",
+                                                                     "icon",     "weight",
+                                                                     "maxStack", "type",
+                                                                     "use"};
         for (auto it = item.begin(); it != item.end(); ++it) {
             if (!kAllowedKeys.contains(it.key())) {
                 return itemFail("未知字段 '" + it.key() +
-                                "'（允许: id/name/icon/weight/maxStack/type）");
+                                "'（允许: id/name/icon/weight/maxStack/type/use）");
             }
         }
 
@@ -328,6 +329,40 @@ bool ItemRegistry::LoadFromString(std::string_view text, const std::string& sour
         const std::string typeText = item["type"].get<std::string>();
         if (!ParseItemType(typeText, &def.type)) {
             return itemFail("type 不受支持: \"" + typeText + "\"（允许 " + kAllowedTypes + "）");
+        }
+
+        // use 效果（M6-T5，可选）：heal 0~100 HP；hunger/thirst/fatigue 0~1（正值 = 减少需求）
+        if (item.contains("use")) {
+            const nlohmann::json& use = item["use"];
+            if (!use.is_object()) {
+                return itemFail("字段 'use' 必须是对象，实际: " + use.dump());
+            }
+            static const std::unordered_set<std::string> kUseKeys = {"heal", "hunger", "thirst",
+                                                                     "fatigue"};
+            for (auto it = use.begin(); it != use.end(); ++it) {
+                if (!kUseKeys.contains(it.key())) {
+                    return itemFail("use 未知字段 '" + it.key() +
+                                    "'（允许: heal/hunger/thirst/fatigue）");
+                }
+                if (!it->is_number()) {
+                    return itemFail("use." + it.key() + " 必须是数字，实际: " + it->dump());
+                }
+            }
+            const float heal = use.value("heal", 0.0f);
+            if (!(heal >= 0.0f) || heal > 100.0f) {
+                return itemFail("use.heal 取值非法: " + use["heal"].dump() + "（允许 0 ~ 100 HP）");
+            }
+            float needs[3] = {use.value("hunger", 0.0f), use.value("thirst", 0.0f),
+                              use.value("fatigue", 0.0f)};
+            const char* needNames[3] = {"hunger", "thirst", "fatigue"};
+            for (int ni = 0; ni < 3; ++ni) {
+                if (!(needs[ni] >= 0.0f) || needs[ni] > 1.0f) {
+                    return itemFail(std::string("use.") + needNames[ni] +
+                                    " 取值非法: " + use[needNames[ni]].dump() +
+                                    "（允许 0 ~ 1，正值 = 减少需求）");
+                }
+            }
+            def.use = UseEffect{heal, needs[0], needs[1], needs[2]};
         }
 
         idLines.emplace(def.id, LineOf(text, elemOff));
