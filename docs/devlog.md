@@ -799,3 +799,25 @@ CombatSystem 增补"倒地攻击者挥击忽略"用例。**127 用例 / Debug 11
 系统链从 9 个增至 13 个（Lod/Boids/Combat/VirtualHorde/SpawnLod 等）；僵尸从"漂移盒子"
 进化为 感知-记忆-追击-群聚-LOD-战斗-倒地-尸体的完整闭环，且**同屏 500 只 60fps 可玩**。
 下一步：M6 物品与容器（物品定义注册表 → 掉落/拾取/背包/丢弃）。
+
+---
+
+## 2026-10-16 M6-T1 物品定义注册表
+
+**交付**：`src/items/`（`ItemDef.h/.cpp` 类型枚举与定义结构；`ItemRegistry.h/.cpp` 加载+校验）、
+`assets/items.json`（7 条起步内容：绷带/罐头/消防斧/厨刀/破布/夹克/手提袋）、GameApp 启动加载
+（`items.file` 配置键，失败不阻断启动、空表降级）、GameContext 注入 `items` 指针。
+
+**格式**：JSON v1 根对象 `format="items-v1"` + `items` 数组；字段 id/name/icon/weight/maxStack/type。
+严格校验（任一错误整体不加载、失败不覆盖旧数据）：未知字段（抓拼写错误）/
+id 字符集与唯一性/weight 0~1000/类型枚举 5 种/结构错误全报。
+
+**报错定位到行**：不依赖解析库 —— `ItemRegistry.cpp` 内置轻量 JSON 扫描器（SkipString/SkipValue/
+FindTopLevelValue/FindArrayElement）在原文中定位：语法错误报「第 X 行 第 Y 列」（e.byte 换算）、
+每个条目错误都精确报出该条目 `{` 所在行（重复 id 同时报首次定义行），例：
+`test: 第 6 行 第 5 列: items[2]: id "dup" 重复（首次定义于第 4 行）`。
+
+**测试**：新增 tests/test_items.cpp 8 用例（合法加载/语法行号/字段非法×10/结构错误×6/重复 id 两处
+行号/失败不覆盖/内置文件内容守护/枚举往返）；Debug 135 用例 117668 断言全绿（Release 117669）。
+**实机**：启动日志 `物品注册表已加载: 7 条定义 <- assets/items.json`；临时加 hammer 条目重启
+→ `8 条定义`（M6 验收第 1 条「改 JSON 重启即生效」提前预验证），随后还原。

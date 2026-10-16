@@ -1,0 +1,12 @@
+{
+  "format": "items-v1",
+  "items": [
+    { "id": "bandage", "name": "绷带", "icon": "item.bandage", "weight": 0.1, "maxStack": 5, "type": "consumable" },
+    { "id": "canned_beans", "name": "罐头豆子", "icon": "item.canned_beans", "weight": 0.8, "maxStack": 3, "type": "consumable" },
+    { "id": "axe", "name": "消防斧", "icon": "item.axe", "weight": 3.0, "maxStack": 1, "type": "weapon" },
+    { "id": "kitchen_knife", "name": "厨刀", "icon": "item.kitchen_knife", "weight": 0.6, "maxStack": 1, "type": "weapon" },
+    { "id": "rag", "name": "破布", "icon": "item.rag", "weight": 0.1, "maxStack": 10, "type": "generic" },
+    { "id": "jacket", "name": "夹克", "icon": "item.jacket", "weight": 1.2, "maxStack": 1, "type": "clothing" },
+    { "id": "tote_bag", "name": "手提袋", "icon": "item.tote_bag", "weight": 0.5, "maxStack": 1, "type": "container" }
+  ]
+}

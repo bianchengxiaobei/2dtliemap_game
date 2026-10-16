@@ -28,6 +28,7 @@
 #include "game/AssetProvider.h"
 #include "game/EventProbe.h"
 #include "game/GameContext.h"
+#include "items/ItemRegistry.h"
 #include "physics/PhysicsSyncSystem.h"
 #include "physics/PhysicsWorld.h"
 #include "platform/Window.h"
@@ -118,6 +119,9 @@ private:
     // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
     ecs::EcsWorld m_ecs;
     ecs::SpatialIndex m_spatialIndex;
+
+    // 物品定义注册表（M6-T1）：启动时加载 assets/items.json（校验失败以空表继续）
+    items::ItemRegistry m_itemRegistry;
 
     double m_lastFrameTime = 0.0;
     bool m_shutdownDone = false;

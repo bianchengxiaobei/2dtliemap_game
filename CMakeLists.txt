@@ -63,6 +63,8 @@ add_executable(ZomboidLike
     src/game/states/RenderDemoState.cpp
     src/game/states/SandboxState.cpp
     src/game/states/WorldDemoState.cpp
+    src/items/ItemDef.cpp
+    src/items/ItemRegistry.cpp
     src/platform/KeyNames.cpp
     src/platform/Window.cpp
     src/physics/PhysicsSyncSystem.cpp
@@ -124,6 +126,7 @@ add_executable(ZomboidLikeTests
     tests/test_boids.cpp
     tests/test_combat.cpp
     tests/test_spawn_lod.cpp
+    tests/test_items.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -147,6 +150,8 @@ add_executable(ZomboidLikeTests
     src/ecs/EcsWorld.cpp
     src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
+    src/items/ItemDef.cpp
+    src/items/ItemRegistry.cpp
     src/physics/PhysicsSyncSystem.cpp
     src/physics/PhysicsWorld.cpp
     src/render/Camera.cpp

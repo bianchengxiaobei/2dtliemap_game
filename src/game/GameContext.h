@@ -32,6 +32,10 @@ namespace zl::characters {
 class CombatSystem;
 }  // namespace zl::characters
 
+namespace zl::items {
+class ItemRegistry;
+}  // namespace zl::items
+
 namespace zl::physics {
 class PhysicsWorld;
 }  // namespace zl::physics
@@ -57,8 +61,7 @@ namespace zl::game {
 class AssetProvider;
 
 // 状态的依赖注入容器：由 GameApp 组装，状态只拿指针不拿所有权。
-struct GameContext {
-    core::Config* config = nullptr;
+struct GameContext {    core::Config* config = nullptr;
     core::EventBus* events = nullptr;
     core::Input* input = nullptr;
     core::GameTime* gameTime = nullptr;
@@ -104,6 +107,9 @@ struct GameContext {
 
     // 刷怪与虚拟化（M5-T7 起）：密度目标/实体化/虚拟化（只读统计）
     ai::SpawnLodSystem* spawnLod = nullptr;
+
+    // 物品定义（M6-T1 起）：只读查询（ItemDef 生命周期同进程）
+    items::ItemRegistry* items = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

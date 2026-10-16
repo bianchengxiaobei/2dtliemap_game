@@ -17,6 +17,9 @@
     "manifest": "assets/asset_manifest.json",
     "provider": "own"
   },
+  "items": {
+    "file": "assets/items.json"
+  },
   "world": {
     "mapDir": "assets/maps/village_demo",
     "loadRadius": 3,

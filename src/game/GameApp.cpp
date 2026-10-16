@@ -73,6 +73,13 @@ bool GameApp::Init(int argc, char** argv) {
     m_config.ApplyCommandLine(argc, argv);
     core::SetLogLevel(m_config.Get<std::string>("log.level", "debug"));
 
+    // 1.5 物品定义注册表（M6-T1）：启动加载 + 校验；失败不阻断启动（空表降级）
+    const std::string itemsFile = m_config.Get<std::string>("items.file", "assets/items.json");
+    if (!m_itemRegistry.LoadFile(itemsFile)) {
+        ZL_WARN("items", "物品注册表为空，物品相关功能不可用（文件: {}）", itemsFile);
+    }
+    m_ctx.items = &m_itemRegistry;
+
     // 2. 窗口
     platform::Window::Desc desc;
     desc.width = m_config.Get<int>("window.width", 1280);
