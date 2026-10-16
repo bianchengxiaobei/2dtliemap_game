@@ -225,6 +225,20 @@ def write_map(mapd, out_dir, meta):
             if not has_floor_override and not objs and not rooms:
                 continue  # 稀疏：默认 chunk 不落盘
 
+            # 房间矩形按本 chunk 裁剪（文件自包含；跨 chunk 的房间在每个相交文件中各有一份）
+            rooms_in = []
+            for rx0, ry0, rw, rh, rid, rname in sorted(rooms, key=lambda r: r[4]):
+                ix0 = max(rx0, x0)
+                iy0 = max(ry0, y0)
+                ix1 = min(rx0 + rw, x0 + CHUNK)
+                iy1 = min(ry0 + rh, y0 + CHUNK)
+                if ix0 < ix1 and iy0 < iy1:
+                    rooms_in.append({
+                        "x": ix0 - x0, "y": iy0 - y0,
+                        "w": ix1 - ix0, "h": iy1 - iy0,
+                        "id": rid, "name": rname,
+                    })
+
             payload = {"cx": cx, "cy": cy}
             if has_floor_override:
                 payload["floors"] = floors
@@ -233,11 +247,8 @@ def write_map(mapd, out_dir, meta):
                     {"x": o[0] - x0, "y": o[1] - y0, "z": o[2], "layer": o[3], "sprite": o[4]}
                     for o in objs
                 ]
-            if rooms:
-                payload["rooms"] = [
-                    {"x": r[0] - x0, "y": r[1] - y0, "w": r[2], "h": r[3], "id": r[4], "name": r[5]}
-                    for r in sorted(rooms, key=lambda r: r[4])
-                ]
+            if rooms_in:
+                payload["rooms"] = rooms_in
 
             cell_dir = os.path.join(chunks_dir, "c%d_%d" % (cx // CHUNKS_PER_CELL, cy // CHUNKS_PER_CELL))
             os.makedirs(cell_dir, exist_ok=True)
