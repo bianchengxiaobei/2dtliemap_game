@@ -1179,3 +1179,28 @@ function <…>`（mod id + 路径行号 + 栈）+ `mod 已禁用`，进程存活
 `mod 重载成功，已解除禁用：[break_test]`；两示例输出 `starter items: bandage x2, axe x1`、
 `tip: press F6 …`（SetTimer）、`survivor at 69.2, 23.7 (z=0) | health=84.0 | zombies=40`。
 临时 break_test 已删除。
+
+---
+
+## 2026-10-17 M7 验收（Lua 脚本系统，tag v0.7.0）
+
+**验收现场**：Release 实机单会话跑 5 个 mod（2 正式示例 + 验收临时 mod ×3），三条标准一次过：
+
+1. **示例 mod 不改 C++ + 热重载立即生效**：运行中把 `mods/example_hello_lua/scripts/main.lua`
+   的周期从 600 tick 改为 120、文案改 `survivor@v2` → 约 2 秒后
+   `mod 重载成功：[example_hello_lua]` + 重执行日志 `hello mod loaded` +
+   新的 `survivor@v2 at …` 立即出现；全程未改一行 C++；文件已 `git checkout` 还原。
+2. **死循环/报错不崩 + 日志清晰**：
+   - `bad_loop`（OnTick `while true do end`）→
+     `mod [bad_loop] 脚本错误（事件 OnTick）：…脚本指令数超限（疑似死循环）…已中止` +
+     `mods/bad_loop/scripts/main.lua:1: in function <…>`（mod id + 路径:行号 + 栈）+ `mod 已禁用`；
+   - `bad_error`（调不存在的函数）→
+     `attempt to call a nil value (global 'this_function_does_not_exist')` + traceback + `已禁用`；
+   - 进程全程存活，其它 3 个 mod 与游戏本体零影响（`processAlive=True` 贯穿）。
+3. **modding.md 可复现写出第三个 mod**：按文档 §1 结构从零写 `mods/night_watch`
+   （周期哨所报告 `[watch] pos/…hp/…zombies/…kills`、击杀计数、`Game.SetTimer` 问候）——
+   扫描加载、SetTimer 触发、300 tick 周期输出全部正常。
+
+验收临时物（night_watch / bad_loop / bad_error）随后清理，仓库只保留两个官方示例。
+
+**状态**：M7 完成（T1~T7 + 验收）；测试 182 用例全绿（Debug 118252 / Release 118253）。
