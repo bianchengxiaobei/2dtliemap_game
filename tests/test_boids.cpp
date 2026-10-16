@@ -13,7 +13,9 @@
 #include "ai/systems/BoidsSystem.h"
 #include "ai/systems/LodSystem.h"
 #include "ai/systems/PerceptionSystem.h"
+#include "ai/systems/SpawnLodSystem.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/systems/CombatSystem.h"
 #include "characters/systems/MovementSystem.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/SpatialIndex.h"
@@ -237,9 +239,11 @@ TEST_CASE("VirtualHordeStore：只存统计不入 registry + 聚合漂移 + 实�
     CHECK(world.AliveCount() == 0u);
 }
 
-// M5 预验收基准：500 个 registry 僵尸（含 LOD 门控）+ 200 虚拟僵尸（群落统计）。
-// 计时范围 = 主线程模拟链（空间索引 → LOD → 感知 → AI → 群体行为 → 移动），
-// 不含物理步进与寻路后台（docs/02 §6 预算口径："模拟 tick < 4ms"）。
+// M5 验收基准：500 个 registry 僵尸（含 LOD 门控）+ 200 虚拟僵尸（群落统计），
+// 主线程模拟链全口径（空间索引 → LOD → 感知 → AI → 群体行为 → 战斗 → 虚拟群落漂移 →
+// 移动 → 刷怪/虚拟化扫描），不含物理步进与寻路后台（docs/02 §6 预算口径："模拟 tick < 4ms"）。
+// 稳态：僵尸全在 virtualizeRadius 内、群落全在 materializeRadius 外、总量超目标 →
+// SpawnLod/Combat 每 tick 只做扫描与衰减（转换代价由 test_spawn_lod 单测覆盖）。
 TEST_CASE("M5 基准：500 僵尸 + 200 虚拟化的模拟 tick 计时") {
     ecs::EcsWorld world;
     ecs::SpatialIndex index;
@@ -247,7 +251,24 @@ TEST_CASE("M5 基准：500 僵尸 + 200 虚拟化的模拟 tick 计时") {
     ai::PerceptionSystem perception([](int, int) { return true; });
     ai::AiSystem ai([](int, int) { return true; });
     ai::BoidsSystem boids;
+    characters::CombatSystem combat;
     characters::MovementSystem movement;
+    // 200 虚拟僵尸：4 群落 × 50，统计层漂移（声明先于 SpawnLodSystem —— 它持有引用）
+    ai::VirtualHordeStore virtualHordes;
+    for (int i = 0; i < 4; ++i) {
+        virtualHordes.AddHorde(60.0f + static_cast<float>(i) * 10.0f, 60.0f, 50);
+    }
+    // 刷怪/虚拟化（M5-T7）：工厂走最小僵尸构成（无物理）；稳态下不发生转换
+    ai::SpawnLodSystem spawnLod(
+        [](int, int) { return true; },
+        [&](ecs::EcsWorld& w, float px, float py) {
+            const ecs::Entity e = w.Create();
+            w.Registry().emplace<ecs::Position>(e, ecs::Position{px, py, 0});
+            w.Registry().emplace<ecs::Health>(e, ecs::Health{100.0f, 100.0f});
+            w.Registry().emplace<ecs::AiState>(e, ecs::AiState{});
+            return e;
+        },
+        [](ecs::EcsWorld&, ecs::Entity) {}, virtualHordes);
     entt::registry& r = world.Registry();
 
     // 焦点/玩家：地图中心
@@ -282,20 +303,16 @@ TEST_CASE("M5 基准：500 僵尸 + 200 虚拟化的模拟 tick 计时") {
         r.emplace<ecs::LodState>(e, ecs::LodState{});
     }
 
-    // 200 虚拟僵尸：4 群落 × 50，统计层漂移
-    ai::VirtualHordeStore virtualHordes;
-    for (int i = 0; i < 4; ++i) {
-        virtualHordes.AddHorde(60.0f + static_cast<float>(i) * 10.0f, 60.0f, 50);
-    }
-
     constexpr int kTicks = 120;
     double tIndex = 0.0;
     double tLod = 0.0;
     double tPerception = 0.0;
     double tAi = 0.0;
     double tBoids = 0.0;
+    double tCombat = 0.0;
     double tMovement = 0.0;
     double tVirtual = 0.0;
+    double tSpawn = 0.0;
     const auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < kTicks; ++i) {
         auto mark = [] { return std::chrono::steady_clock::now(); };
@@ -318,25 +335,40 @@ TEST_CASE("M5 基准：500 僵尸 + 200 虚拟化的模拟 tick 计时") {
         boids.Update(world);
         acc(tBoids, a);
         a = mark();
-        movement.Update(world, kDt);
-        acc(tMovement, a);
+        combat.Update(world, kDt);
+        acc(tCombat, a);
         a = mark();
         virtualHordes.Update(kDt, 30.0f, 30.0f, 12.0f);
         acc(tVirtual, a);
+        a = mark();
+        movement.Update(world, kDt);
+        acc(tMovement, a);
+        a = mark();
+        spawnLod.SetFocus(30.0f, 30.0f);
+        spawnLod.Update(world, kDt);
+        acc(tSpawn, a);
         world.Flush();
     }
     const double elapsedMs =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     const double avgMs = elapsedMs / kTicks;
     const auto lodStats = lod.GetStats();
+    const auto spawnStats = spawnLod.GetStats();
     const double per = 1.0 / kTicks;
     std::printf("[bench] M5 模拟 tick：500 僵尸 + 200 虚拟 avg=%.3f ms/tick"
-                "（index=%.3f lod=%.3f perception=%.3f ai=%.3f boids=%.3f movement=%.3f"
-                " virtual=%.3f；LOD full=%d mid=%d far=%d updated=%d chase=%d）\n",
+                "（index=%.3f lod=%.3f perception=%.3f ai=%.3f boids=%.3f combat=%.3f"
+                " virtual=%.3f movement=%.3f spawnlod=%.3f；"
+                "LOD full=%d mid=%d far=%d updated=%d chase=%d；"
+                "spawn live=%d virtualZ=%d 转换=%llu/%llu）\n",
                 avgMs, tIndex * per, tLod * per, tPerception * per, tAi * per, tBoids * per,
-                tMovement * per, tVirtual * per, lodStats.fullCount, lodStats.midCount,
-                lodStats.farCount, lodStats.updated, ai.GetStats().chase);
-    CHECK(avgMs < 40.0);  // 宽松哨兵（Debug 也远达不到）
+                tCombat * per, tVirtual * per, tMovement * per, tSpawn * per, lodStats.fullCount,
+                lodStats.midCount, lodStats.farCount, lodStats.updated, ai.GetStats().chase,
+                spawnStats.live, spawnStats.virtualZombies,
+                static_cast<unsigned long long>(spawnStats.materialized),
+                static_cast<unsigned long long>(spawnStats.virtualized));
+    CHECK(spawnStats.materialized == 0u);  // 稳态：无转换（群落都在 materializeRadius 外）
+    CHECK(spawnStats.virtualized == 0u);   // 实体都在 virtualizeRadius 内
+    CHECK(avgMs < 40.0);                   // 宽松哨兵（Debug 也远达不到）
 #ifdef NDEBUG
     CHECK(avgMs < 4.0);  // docs/02 预算：模拟 tick < 4ms（Release）
 #endif

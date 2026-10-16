@@ -76,6 +76,27 @@
 | 分解（Release） | — | boids 0.321 / ai 0.024 / perception 0.029 / index+lod+move ≈ 0.02 ms | — | Boids 为主要成本 |
 | 优化前（Boids 用 chunk 粒度索引逐候选查组件） | 242 ms/tick（Debug） | — | — | 见 devlog M5-T5（网格缓存后降 56×） |
 
+## M5 验收基线（2026-10-16，M5-T7 后；全链口径 + 实机 500 复测）
+
+**场景 A：500 registry 僵尸 + 200 虚拟僵尸的模拟 tick（全链口径）**
+（单测 `test_boids` 基准；主线程模拟链 = 空间索引/LOD/感知/AI/Boids/**Combat**/虚拟群落漂移/
+移动/**SpawnLod 扫描**，不含物理步进与寻路后台；稳态：无实体化/虚拟化转换）
+
+| 指标 | Debug | Release | 预算 | 结论 |
+|---|---|---|---|---|
+| 平均模拟 tick | 12.37 ms | **0.396 ms** | < 4 ms | ✔（Release 余量 10×） |
+| 分解（Release） | — | **boids 0.308** / perception 0.026 / ai 0.023 / combat 0.010 / spawnlod 0.009 / index+lod+move+virtual ≈ 0.02 ms | — | Boids（邻域网格）为主要成本；M5-T6/T7 新增两系统合计 0.019 ms |
+| 守恒断言 | live=500 + virtual=200，转换 0/0（稳态），LOD full=500 | — | — | 无双计/漏计 |
+
+**场景 B：实机（Release）500 同屏压测**（命令行覆盖 populationTarget=500 / maxLive=520 /
+materializePerSecond=480 拉满）+ 密度守恒核对：
+
+| 指标 | 实测 | 备注 |
+|---|---|---|
+| FPS | **59（帧 16.5ms）** | 图 ~5500 实例 / 3116 四边形；玩家被尸群围杀中仍在跑 |
+| 稳定态人口 | live≈424~454 + virtual≈46~76 = **500 恒定** | 补给 260 一次补齐；实体化累计 690 / 虚拟化累计 276（玩家移动来回转换） |
+| 病灶扫描 | SpawnLod 每 tick 扫描 500 实体 ≈ 0.009 ms（场景 A） | LOD 分档 full=141 / mid=292 随战况浮动 |
+
 ## 已知问题与优化候选
 
 1. **多图集交错 drawcall 高**（placeholder_pz 244）：画家序下 4 个来源（Tiles1x 地面 / Erosion 草丛 /
@@ -95,3 +116,4 @@
 | 2026-10-16 | M2 验收 | 128×128 地图 @0.5x，Release | 13063 精灵同屏 60fps（16.2ms），drawcall 3 |
 | 2026-10-16 | M3-T7 | stress 100×100 巡航，Debug 5min / Release 1min | 7253 块加载 / P95 0.84ms（Release 0.37ms）/ 驻留 49 恒定 / Release FPS 60 稳定 |
 | 2026-10-16 | M4 验收 | 物理 500 静态体基准（Debug/Release）+ ECS 10000×3 压力 | Release 0.139ms/帧（<2ms ✔）/ Debug 1.066ms；ECS storage 复用无泄漏 |
+| 2026-10-16 | M5 验收 | 500 僵尸 + 200 虚拟全链模拟 tick + 实机 500 同屏压测 | Release **0.396ms/tick**（<4ms ✔，boids 0.308 主导）；实机 FPS 59、人口 500 恒定守恒 |
