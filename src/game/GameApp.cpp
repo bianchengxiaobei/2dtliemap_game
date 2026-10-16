@@ -93,6 +93,9 @@ bool GameApp::Init(int argc, char** argv) {
         luaRuntime->SetApi(&m_scriptApi);
         m_script.RegisterRuntime(std::move(luaRuntime));
         m_script.InitializeAll();
+        // M7-T4：事件桥接（EventBus → 脚本 Events.On）；manager 借此在重载后发 OnModReload
+        m_script.SetEventBus(&m_events);
+        m_eventBridge = std::make_unique<script::EventBridge>(m_events, m_script);
         ZL_INFO("script", "脚本系统就绪（后端 {} 个，API v{}）", m_script.RuntimeCount(),
                 script::ScriptApi::kApiVersion);
     } else {
@@ -187,11 +190,13 @@ bool GameApp::Init(int argc, char** argv) {
         [this](world::Chunk& chunk, int cx, int cy) {
             m_physics->BuildChunkStatics(cx, cy, chunk);
             m_pathfinding->OnChunkLoaded(chunk);
+            m_events.EmitQueued(core::kOnChunkLoaded, core::ChunkEvent{cx, cy});  // M7-T4
         },
         [this](world::Chunk& chunk, int cx, int cy) {
             (void)chunk;  // 数据仍可读，但静态体/位图按 chunk 键移除即可
             m_physics->RemoveChunkStatics(cx, cy);
             m_pathfinding->OnChunkUnloading(cx, cy);
+            m_events.EmitQueued(core::kOnChunkUnloaded, core::ChunkEvent{cx, cy});  // M7-T4
         });
     m_ctx.physics = m_physics.get();
     m_ctx.pathfinding = m_pathfinding.get();
@@ -289,7 +294,7 @@ bool GameApp::Init(int argc, char** argv) {
     m_spawnLodSystem = std::make_unique<ai::SpawnLodSystem>(
         walkable,
         [this](ecs::EcsWorld& w, float px, float py) {
-            return SpawnZombie(w, m_physics.get(), px, py);
+            return SpawnZombie(w, m_physics.get(), px, py, &m_events);
         },
         [this](ecs::EcsWorld& w, ecs::Entity e) {
             if (m_physics == nullptr) {
@@ -387,7 +392,8 @@ bool GameApp::Init(int argc, char** argv) {
     });
     // 死亡流程（M5-T1/T6）：位置已由 PhysicsSync 回写；先倒地窗口（Dying）再转尸体；
     // 尸体创建与实体销毁在 tick 末 Flush 生效
-    m_deathSystem = std::make_unique<characters::DeathSystem>(m_physics.get(), deathFallSeconds);
+    m_deathSystem = std::make_unique<characters::DeathSystem>(m_physics.get(), deathFallSeconds,
+                                                              &m_events);
     m_ecs.Systems().AddSystem("DeathSystem",
                               [this](ecs::EcsWorld& w, float dt) { m_deathSystem->Update(w, dt); });
     // 刷怪与虚拟化（M5-T7）：在死亡结算之后（倒地窗口的实体不参与虚拟化）、动画之前；
@@ -428,6 +434,7 @@ void GameApp::Shutdown() {
     m_shutdownDone = true;
 
     m_probe.Detach(m_events);
+    m_eventBridge.reset();  // 先退订桥接（不再向脚本派发）
     if (m_soundSubscription != core::EventBus::kInvalidSubscription) {
         m_events.Unsubscribe(m_soundSubscription);  // 先于感知系统销毁
         m_soundSubscription = core::EventBus::kInvalidSubscription;

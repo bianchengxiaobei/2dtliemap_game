@@ -3,13 +3,16 @@
 #include "ai/components/AiComponents.h"
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
+#include "core/EventBus.h"
+#include "core/GameEvents.h"
 #include "ecs/components/CommonComponents.h"
 #include "ecs/components/PhysicsComponents.h"
 #include "physics/PhysicsWorld.h"
 
 namespace zl::game {
 
-ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, float px, float py) {
+ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, float px, float py,
+                        core::EventBus* events) {
     entt::registry& registry = world.Registry();
     const ecs::Entity e = world.Create();
     registry.emplace<ecs::Position>(e, ecs::Position{px, py, 0});
@@ -41,6 +44,10 @@ ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, fl
     registry.emplace<ecs::PathFollow>(e, ecs::PathFollow{});
     registry.emplace<ecs::LodState>(e, ecs::LodState{});        // M5-T5：LodSystem 逐帧写档位
     registry.emplace<ecs::AttackIntent>(e, ecs::AttackIntent{});  // M5-T6：攻击脉冲 → 伤害管线
+    if (events != nullptr) {  // M7-T4：OnZombieSpawn（排队：tick 末统一派发）
+        events->EmitQueued(core::kOnZombieSpawn,
+                           core::ZombieEvent{world.IdOf(e).id, 0, px, py, 0});
+    }
     return e;
 }
 

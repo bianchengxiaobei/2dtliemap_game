@@ -143,7 +143,7 @@ std::uint64_t ScriptApi::SpawnZombie(float x, float y, int z) const {
         return 0;
     }
     (void)z;  // 僵尸生成目前只支持地面层（z=0 语义，与 ZombieFactory 一致）
-    const ecs::Entity zombie = game::SpawnZombie(*m_ctx->ecs, m_ctx->physics, x, y);
+    const ecs::Entity zombie = game::SpawnZombie(*m_ctx->ecs, m_ctx->physics, x, y, m_ctx->events);
     if (zombie == ecs::EcsWorld::kNull) {
         return 0;
     }

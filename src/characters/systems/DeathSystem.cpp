@@ -3,6 +3,8 @@
 #include <vector>
 
 #include "characters/components/CharacterComponents.h"
+#include "core/EventBus.h"
+#include "core/GameEvents.h"
 #include "core/Log.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
@@ -67,6 +69,17 @@ void DeathSystem::Update(ecs::EcsWorld& world, float dt) {
             z = position->z;
         }
         const std::uint64_t sourceId = world.IdOf(e).id;
+
+        // M7-T4：死亡事件（排队：tick 末统一派发；killer 暂无追踪，未知 = 0）
+        if (m_events != nullptr) {
+            if (registry.all_of<ecs::PlayerTag>(e)) {
+                m_events->EmitQueued(core::kOnPlayerDeath,
+                                     core::PlayerEvent{sourceId, x, y, z});
+            } else {
+                m_events->EmitQueued(core::kOnZombieDead,
+                                     core::ZombieEvent{sourceId, 0, x, y, z});
+            }
+        }
 
         // 尸体（延迟创建：与销毁同 tick 入队，Flush 统一生效；日志在 Flush 时输出）
         world.QueueCreate([x, y, z, sourceId](ecs::EcsWorld& w) {

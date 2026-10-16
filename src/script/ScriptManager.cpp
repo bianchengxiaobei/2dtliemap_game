@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "core/EventBus.h"
+#include "core/GameEvents.h"
 #include "core/Log.h"
 
 namespace zl::script {
@@ -137,6 +139,10 @@ bool ScriptManager::ReloadMod(std::string_view modId, std::string& errorOut) {
     } else {
         ZL_INFO(kModule, "mod 重载成功：[{}]", record->info.id);
     }
+    // M7-T4：通知脚本侧 OnModReload（排队派发：避免在事件派发内重载时的重入）
+    if (m_events != nullptr) {
+        m_events->EmitQueued(core::kOnModReload, record->info.id);
+    }
     return true;
 }
 
@@ -181,6 +187,10 @@ void ScriptManager::DispatchEvent(const core::ScriptEvent& ev) {
         }
         DisableMod(record, errors.front().message);
     }
+}
+
+void ScriptManager::SetEventBus(core::EventBus* events) {
+    m_events = events;
 }
 
 bool ScriptManager::IsModDisabled(std::string_view modId) const {

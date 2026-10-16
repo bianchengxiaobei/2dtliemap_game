@@ -16,6 +16,8 @@ class ScriptApi;
 // - 脚本 print 重定向到游戏日志（[mod-id] 前缀）；
 // - 加载/执行错误带 traceback 上报（errorOut / ModError），不抛出；
 // - M7-T3：SetApi 后，每个 mod 环境获得 Host API 表（Game/Log/Player/World/Items/Zombies）。
+// - M7-T4：Events.On/Off 订阅（每 mod 独立注册表，重载即清订阅）+ Game.SetTimer（一次性，
+//   按游戏时间，OnTick 派发时泵）。
 class LuaRuntime final : public IScriptRuntime {
 public:
     LuaRuntime();
@@ -35,7 +37,7 @@ public:
     bool ReloadMod(const std::string& modId, std::string& errorOut) override;
     void UnloadMod(const std::string& modId) override;
 
-    // M7-T2 阶段无事件订阅（Events.On 在 M7-T4 接通），恒返回空。
+    // 派发事件给该 mod 的 Events.On 订阅（先泵到期 SetTimer）；脚本错误按列表返回。
     std::vector<ModError> DispatchEventToMod(const std::string& modId,
                                              const core::ScriptEvent& ev) override;
 

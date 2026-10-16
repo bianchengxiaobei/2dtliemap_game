@@ -376,6 +376,15 @@ void WorldDemoState::UpdatePathFeedback(double frameDt) {
             m_markerY = request->goalY;
             m_markerTimer = 1.5f;
             m_markerColor = kMarkerArriveColor;
+            if (m_ctx.events != nullptr) {  // M7-T4：OnPlayerMove（点击移动到达路点；排队派发）
+                const auto* position = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+                const float px = position != nullptr ? position->x : 0.0f;
+                const float py = position != nullptr ? position->y : 0.0f;
+                const int pz = position != nullptr ? position->z : 0;
+                m_ctx.events->EmitQueued(
+                    core::kOnPlayerMove,
+                    core::PlayerEvent{m_ctx.ecs->IdOf(m_player).id, px, py, pz});
+            }
         } else if (state == ecs::PathStatus::Failed) {
             SetNotice("unreachable: target (" + std::to_string(request->goalX) + "," +
                           std::to_string(request->goalY) + ")",
@@ -413,7 +422,7 @@ void WorldDemoState::SpawnDemoEntities() {
     for (int i = 0; i < kCount; ++i) {
         const float px = m_demoBoxX0 + u01(rng) * (m_demoBoxX1 - m_demoBoxX0);
         const float py = m_demoBoxY0 + u01(rng) * (m_demoBoxY1 - m_demoBoxY0);
-        SpawnZombie(world, m_ctx.physics, px, py);  // M5-T7：僵尸工厂（与实体化共用构成）
+        SpawnZombie(world, m_ctx.physics, px, py, m_ctx.events);  // M5-T7 工厂；M7-T4 发 OnZombieSpawn
     }
     ZL_INFO("ecs", "生成 {} 个 AI 游荡者（AiSystem + PerceptionSystem；区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]）",
             kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1);
@@ -680,6 +689,11 @@ void WorldDemoState::PickupNearestItem() {
         }
         ZL_INFO("items", "拾取：{} x{}（地面剩 {} 件；背包 {} 件）", name, result.picked,
                 result.groundRemaining, items::CountOf(*container, result.defId));
+        if (m_ctx.events != nullptr) {  // M7-T4：OnItemPickup（排队派发）
+            m_ctx.events->EmitQueued(
+                core::kOnItemPickup,
+                core::ItemEvent{result.entityId, result.defId, result.picked});
+        }
     } else {
         SetNotice("Bag full (" + result.defId + ")", kNoticeFailColor, 1.5f);
         ZL_INFO("items", "拾取失败：{}（背包已满）", name);
@@ -799,7 +813,12 @@ void WorldDemoState::DropFirstItem() {
         return;
     }
     stack.count = removed;
-    game::SpawnGroundItem(*m_ctx.ecs, *m_ctx.items, stack, pos->x, pos->y, pos->z);
+    const ecs::Entity ground =
+        game::SpawnGroundItem(*m_ctx.ecs, *m_ctx.items, stack, pos->x, pos->y, pos->z);
+    if (m_ctx.events != nullptr && ground != entt::null) {  // M7-T4：OnItemDrop（排队派发）
+        m_ctx.events->EmitQueued(core::kOnItemDrop,
+                                 core::ItemEvent{m_ctx.ecs->IdOf(ground).id, stack.defId, removed});
+    }
     const items::ItemDef* def = m_ctx.items->Find(stack.defId);
     SetNotice("Dropped " + stack.defId + " x" + std::to_string(removed), kNoticeInfoColor,
               1.5f);

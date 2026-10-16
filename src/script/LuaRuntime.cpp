@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "core/EventBus.h"
 #include "core/Log.h"
 #include "script/ScriptApi.h"
 
@@ -84,12 +85,37 @@ sol::table MakePositionTable(lua_State* L, const ScriptVec3& position) {
     return out;
 }
 
+// 事件表（事件名 + 命名字段）→ Lua 表（字段名 → 值；monostate 跳过）
+sol::table MakeEventArgTable(lua_State* L, const core::ScriptEvent& event) {
+    sol::table out = NewTable(L, static_cast<int>(event.fields.size()) + 1);
+    for (const core::ScriptField& field : event.fields) {
+        if (const auto* value = std::get_if<std::int64_t>(&field.value)) {
+            out[field.name] = *value;
+        } else if (const auto* value = std::get_if<double>(&field.value)) {
+            out[field.name] = *value;
+        } else if (const auto* value = std::get_if<std::string>(&field.value)) {
+            out[field.name] = *value;
+        } else if (const auto* value = std::get_if<bool>(&field.value)) {
+            out[field.name] = *value;
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 struct LuaRuntime::Impl {
+    // Game.SetTimer 的一次性定时器（按游戏分钟计时；OnTick 派发时泵）
+    struct Timer {
+        sol::function fn;
+        double dueMinutes = 0.0;
+    };
+
     struct ModEntry {
         ModInfo info;
         sol::environment env;
+        sol::table eventHandlers;  // 事件名 → 函数数组（Events.On 注册；On/Off 随时可变）
+        std::shared_ptr<std::vector<Timer>> timers;
     };
 
     std::unique_ptr<sol::state> lua;
@@ -99,9 +125,11 @@ struct LuaRuntime::Impl {
     const ScriptApi* api = nullptr;
     bool initialized = false;
 
-    // Host API 表（M7-T3）：Game/Log/Player/World/Items/Zombies；每 mod 独立绑定
-    // （Log 前缀与闭包捕获的 mod id 相关）。api 为 nullptr 时绑定安全默认值的空壳。
-    void BindApiTables(sol::environment& env, const std::string& modId) {
+    // Host API 表（M7-T3/T4）：Game/Log/Player/World/Items/Zombies/Events；
+    // 每 mod 独立绑定（Log 前缀、事件表与定时器均按 mod 隔离）。
+    // api 为 nullptr 时绑定安全默认值的空壳。
+    void BindApiTables(sol::environment& env, const std::string& modId, sol::table handlers,
+                       const std::shared_ptr<std::vector<Timer>>& timers) {
         const ScriptApi* scriptApi = api;
 
         sol::table game = NewTable(lua->lua_state());
@@ -123,6 +151,14 @@ struct LuaRuntime::Impl {
                 out["totalMinutes"] = scriptApi->GetTotalGameMinutes();
             }
             return out;
+        };
+        // M7-T4：一次性定时器（seconds 为游戏秒；回调在后续 OnTick 泵出）
+        game["SetTimer"] = [scriptApi, timers](double seconds, sol::function fn) {
+            Timer timer;
+            timer.fn = std::move(fn);
+            const double now = scriptApi != nullptr ? scriptApi->GetTotalGameMinutes() : 0.0;
+            timer.dueMinutes = now + (seconds > 0.0 ? seconds : 0.0) / 60.0;
+            timers->push_back(std::move(timer));
         };
         env["Game"] = game;
 
@@ -203,6 +239,71 @@ struct LuaRuntime::Impl {
             return scriptApi != nullptr ? scriptApi->ItemName(defId) : std::string();
         };
         env["Items"] = itemsApi;
+
+        // M7-T4：事件订阅（Events.On/Off）。注册表按 mod 隔离（每 mod 独立 handlers 表）；
+        // 派发时先拷贝出本轮函数列表：回调中 On/Off 不破坏当前遍历。
+        lua_State* L = lua->lua_state();
+        sol::table events = NewTable(L, 4);
+        events["On"] = [handlers, L](const std::string& name, sol::function fn) mutable {
+            if (name.empty()) {
+                return;
+            }
+            sol::object existing = handlers[name];
+            sol::table list;
+            if (existing.is<sol::table>()) {
+                list = existing.as<sol::table>();
+            } else {
+                list = NewTable(L, 4);
+                handlers[name] = list;
+            }
+            list[list.size() + 1] = fn;
+        };
+        events["Off"] =
+            [handlers, L](const std::string& name, sol::optional<sol::function> fn) mutable {
+            sol::object existing = handlers[name];
+            if (!existing.is<sol::table>()) {
+                return;  // 未订阅
+            }
+            if (!fn.has_value()) {
+                handlers[name] = sol::nil;  // 取消该事件的全部订阅
+                return;
+            }
+            sol::table list = existing.as<sol::table>();
+            sol::table kept = NewTable(L, 4);
+            std::size_t keptCount = 0;
+            const std::size_t count = list.size();
+            for (std::size_t i = 1; i <= count; ++i) {
+                sol::object item = list[i];
+                bool same = false;
+                if (item.get_type() == sol::type::function) {
+                    item.push();
+                    fn->push();
+                    same = lua_rawequal(L, -1, -2) != 0;
+                    lua_pop(L, 2);
+                }
+                if (!same) {
+                    kept[++keptCount] = item;
+                }
+            }
+            handlers[name] = kept;
+        };
+        env["Events"] = events;
+    }
+
+    // 调用栈约定（自底向上）：[fn, args...]；成功后恢复栈，失败给出带 traceback 的错误。
+    bool CallStackWithTraceback(int nargs, std::string& errorOut) {
+        lua_State* L = lua->lua_state();
+        lua_pushcfunction(L, LuaTracebackHandler);
+        lua_insert(L, -(nargs + 2));
+        const int status = lua_pcall(L, nargs, 0, -(nargs + 2));
+        if (status != LUA_OK) {
+            const char* message = lua_tostring(L, -1);
+            errorOut = message != nullptr ? message : "(未知脚本错误)";
+            lua_pop(L, 2);  // 错误消息 + 处理器
+            return false;
+        }
+        lua_pop(L, 1);  // 处理器
+        return true;
     }
 
     // 在指定沙箱环境中执行一段 chunk（chunkName 以 '@' 开头 → 错误显示相对路径:行号）
@@ -237,7 +338,8 @@ struct LuaRuntime::Impl {
         return true;
     }
 
-    sol::environment MakeModEnvironment(const std::string& modId) {
+    sol::environment MakeModEnvironment(const std::string& modId, sol::table handlers,
+                                        const std::shared_ptr<std::vector<Timer>>& timers) {
         lua_State* L = lua->lua_state();
         sol::environment env(*lua, sol::create, sandboxGlobals);
 
@@ -249,7 +351,7 @@ struct LuaRuntime::Impl {
         lua_setfield(L, -2, "print");                     // env.print = 重定向桥
         lua_pop(L, 1);
 
-        BindApiTables(env, modId);                        // Host API 表（M7-T3）
+        BindApiTables(env, modId, handlers, timers);      // Host API 表（M7-T3/T4）
         return env;
     }
 
@@ -276,13 +378,16 @@ struct LuaRuntime::Impl {
             return false;
         }
 
-        // 先在临时环境执行；成功才替换旧环境（重载失败保留旧版本）
-        sol::environment env = MakeModEnvironment(mod.id);
+        // 先在临时环境执行；成功才替换旧环境（重载失败保留旧版本；
+        // 旧环境连带的订阅/定时器随其一起释放 → 重载 = 清订阅后重执行）
+        const sol::table handlers = NewTable(lua->lua_state(), 8);
+        auto timers = std::make_shared<std::vector<Timer>>();
+        sol::environment env = MakeModEnvironment(mod.id, handlers, timers);
         if (!RunChunk(*source, "@" + path, env, errorOut)) {
             return false;
         }
 
-        mods.insert_or_assign(mod.id, ModEntry{mod, std::move(env)});
+        mods.insert_or_assign(mod.id, ModEntry{mod, std::move(env), handlers, std::move(timers)});
         if (!isReload) {
             loadedIds.push_back(mod.id);
         }
@@ -371,10 +476,69 @@ void LuaRuntime::UnloadMod(const std::string& modId) {
 
 std::vector<ModError> LuaRuntime::DispatchEventToMod(const std::string& modId,
                                                      const core::ScriptEvent& ev) {
-    // M7-T2：无订阅机制；Events.On 的事件桥接在 M7-T4 接通。
-    (void)modId;
-    (void)ev;
-    return {};
+    std::vector<ModError> errors;
+    Impl& impl = *m_impl;
+    if (!impl.initialized) {
+        return errors;
+    }
+    const auto it = impl.mods.find(modId);
+    if (it == impl.mods.end()) {
+        return errors;
+    }
+    Impl::ModEntry& entry = it->second;
+    lua_State* L = impl.lua->lua_state();
+
+    // 1) 定时器泵：仅在每 tick 的 OnTick 派发时检查（秒 → 游戏分钟，取当前游戏时钟）
+    if (ev.name == core::kOnTick) {
+        const double now = impl.api != nullptr ? impl.api->GetTotalGameMinutes() : 0.0;
+        std::vector<Impl::Timer> due;
+        std::vector<Impl::Timer>& timers = *entry.timers;
+        for (auto timer = timers.begin(); timer != timers.end();) {
+            if (timer->dueMinutes <= now) {
+                due.push_back(std::move(*timer));
+                timer = timers.erase(timer);
+            } else {
+                ++timer;
+            }
+        }
+        for (Impl::Timer& timer : due) {
+            std::string error;
+            timer.fn.push();
+            if (!impl.CallStackWithTraceback(0, error)) {
+                errors.push_back(ModError{modId, "SetTimer 回调错误：" + error});
+                return errors;  // mod 即将被禁用：不再继续泵
+            }
+        }
+    }
+
+    // 2) Events.On 订阅派发（先拷贝本轮函数列表：回调中 On/Off 不影响当前遍历）
+    sol::object handlersObject = entry.eventHandlers[ev.name];
+    if (!handlersObject.is<sol::table>()) {
+        return errors;
+    }
+    sol::table list = handlersObject.as<sol::table>();
+    std::vector<sol::function> handlers;
+    const std::size_t count = list.size();
+    for (std::size_t i = 1; i <= count; ++i) {
+        sol::object item = list[i];
+        if (item.get_type() == sol::type::function) {
+            handlers.push_back(item.as<sol::function>());
+        }
+    }
+    if (handlers.empty()) {
+        return errors;
+    }
+    for (sol::function& handler : handlers) {
+        std::string error;
+        handler.push();
+        sol::table arg = MakeEventArgTable(L, ev);
+        arg.push();
+        if (!impl.CallStackWithTraceback(1, error)) {
+            errors.push_back(ModError{modId, "事件 " + ev.name + " 处理错误：" + error});
+            return errors;
+        }
+    }
+    return errors;
 }
 
 const std::vector<std::string>& LuaRuntime::LoadedMods() const {

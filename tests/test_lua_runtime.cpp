@@ -12,8 +12,10 @@
 #include <spdlog/sinks/ostream_sink.h>
 #include <spdlog/spdlog.h>
 
+#include "ScriptTestHelpers.h"
 #include "ai/PathfindingService.h"
 #include "characters/components/CharacterComponents.h"
+#include "core/EventBus.h"
 #include "core/GameLoop.h"
 #include "core/GameTime.h"
 #include "core/Log.h"
@@ -21,73 +23,19 @@
 #include "ecs/components/CommonComponents.h"
 #include "game/GameContext.h"
 #include "game/GroundItems.h"
+#include "game/ZombieFactory.h"
 #include "items/InventoryOps.h"
 #include "items/ItemComponents.h"
 #include "items/ItemRegistry.h"
+#include "script/EventBridge.h"
 #include "script/LuaRuntime.h"
 #include "script/ScriptApi.h"
+#include "script/ScriptManager.h"
 #include "world/Chunk.h"
 
 using namespace zl;
-
-namespace {
-
-// 测试进程独立的临时 mod 根目录（自动清理）
-class TempModRoot {
-public:
-    TempModRoot() {
-        std::random_device rd;
-        root = std::filesystem::temp_directory_path() / ("zl_lua_test_" + std::to_string(rd()));
-        std::error_code ec;
-        std::filesystem::create_directories(root, ec);
-    }
-    ~TempModRoot() {
-        std::error_code ec;
-        std::filesystem::remove_all(root, ec);
-    }
-
-    script::ModInfo MakeMod(const std::string& id, const std::string& source) {
-        WriteLua(id, source);
-        script::ModInfo mod;
-        mod.id = id;
-        mod.name = id;
-        mod.version = "1.0.0";
-        mod.backend = "lua";
-        mod.rootPath = (root / id).string();
-        mod.mainScript = "scripts/main.lua";
-        return mod;
-    }
-
-    void WriteLua(const std::string& id, const std::string& source) {
-        const std::filesystem::path dir = root / id / "scripts";
-        std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
-        std::ofstream out(dir / "main.lua", std::ios::binary | std::ios::trunc);
-        out << source;
-    }
-
-    std::filesystem::path root;
-};
-
-// 捕获游戏日志输出（验证 print 重定向）
-class LogCapture {
-public:
-    LogCapture() : m_sink(std::make_shared<spdlog::sinks::ostream_sink_mt>(m_stream)) {
-        core::Log()->sinks().push_back(m_sink);
-    }
-    ~LogCapture() {
-        auto& sinks = core::Log()->sinks();
-        sinks.erase(std::remove(sinks.begin(), sinks.end(), m_sink), sinks.end());
-    }
-
-    std::string Str() const { return m_stream.str(); }
-
-private:
-    std::ostringstream m_stream;
-    std::shared_ptr<spdlog::sinks::ostream_sink_mt> m_sink;
-};
-
-}  // namespace
+using zltest::LogCapture;
+using zltest::TempModRoot;
 
 TEST_CASE("M7-T2：初始化/关闭与未初始化防护") {
     script::LuaRuntime runtime;
@@ -331,4 +279,121 @@ Log.Info('date=' .. t.year .. '-' .. t.month .. '-' .. t.day .. ' tick=' .. Game
     CHECK(items::CountOf(ecs.Registry().get<ecs::Container>(player), "bandage") == 2);
     CHECK(game::CountGroundItems(ecs) == 1);
     CHECK(api.ZombieCount() == 1);
+}
+
+TEST_CASE("M7-T4：事件桥接端到端（Events.On/Off + SetTimer + 错误隔离）") {
+    // 环境（同 M7-T3：玩家 + 注册表 + chunk；游戏时间可推进：1 游戏分钟 / tick）
+    ecs::EcsWorld ecs;
+    items::ItemRegistry items;
+    std::string registryError;
+    REQUIRE(items.LoadFromString(R"({
+      "format": "items-v1",
+      "items": [
+        { "id": "bandage", "name": "绷带", "icon": "i", "weight": 0.1, "maxStack": 5, "type": "consumable" }
+      ]
+    })", "test", &registryError));
+    core::GameLoop loop(60.0);
+    core::GameTime gameTime;
+    gameTime.Configure(60.0, core::DateTime{});
+    ai::PathfindingService pathfinding(nullptr, ai::MapChunkBounds{0, 0, 4, 4});
+    world::Chunk chunk(0, 0);
+    pathfinding.OnChunkLoaded(chunk);
+
+    const ecs::Entity player = ecs.Create();
+    {
+        auto& registry = ecs.Registry();
+        registry.emplace<ecs::PlayerTag>(player);
+        registry.emplace<ecs::Position>(player, ecs::Position{3.0f, 4.0f, 0});
+        registry.emplace<ecs::Velocity>(player);
+        registry.emplace<ecs::Health>(player, ecs::Health{100.0f, 100.0f});
+        ecs::Container bag;
+        bag.capacityKg = 20.0f;
+        registry.emplace<ecs::Container>(player, bag);
+    }
+
+    game::GameContext ctx;
+    ctx.ecs = &ecs;
+    ctx.items = &items;
+    ctx.loop = &loop;
+    ctx.gameTime = &gameTime;
+    ctx.pathfinding = &pathfinding;
+    script::ScriptApi api;
+    api.Attach(&ctx);
+
+    core::EventBus bus;
+    script::ScriptManager manager;
+    {
+        auto lua = std::make_unique<script::LuaRuntime>();
+        lua->SetApi(&api);
+        manager.RegisterRuntime(std::move(lua));
+    }
+    REQUIRE(manager.InitializeAll());
+    manager.SetEventBus(&bus);
+    script::EventBridge bridge(bus, manager);
+
+    TempModRoot mods;
+    std::string error;
+    const script::ModInfo good = mods.MakeMod("good", R"lua(
+Log.Info('t4 loaded')
+Events.On("OnGameStart", function()
+    Player.AddItem('bandage', 3)
+end)
+Events.On("OnTick", function(e)
+    Log.Info('tick=' .. e.tick)
+    if e.tick == 9 then
+        Events.Off("OnTick")
+    end
+end)
+Events.On("OnZombieSpawn", function(e)
+    Log.Info('zspawn=' .. e.zombieId .. ' at ' .. string.format('%.0f,%.0f', e.x, e.y))
+end)
+Game.SetTimer(0, function() Log.Info('timer=now') end)
+Game.SetTimer(30, function() Log.Info('timer=30s') end)
+)lua");
+    REQUIRE(manager.LoadMod(good, error));
+    // bad mod：OnTick 抛错 → 被禁用（错误隔离；good 不受影响）
+    REQUIRE(manager.LoadMod(
+        mods.MakeMod("bad", "Events.On('OnTick', function(e) error('boom') end)"), error));
+    LogCapture capture;
+
+    auto dispatchTick = [&](std::int64_t tick) {
+        bus.EmitQueued(core::kOnTick, tick);
+        bus.FlushQueued();
+    };
+
+    // OnGameStart（立即派发）：脚本发 3 个绷带
+    bus.Emit(core::kOnGameStart);
+    CHECK(items::CountOf(ecs.Registry().get<ecs::Container>(player), "bandage") == 3);
+
+    // OnTick：good 收到字段 tick；SetTimer(0) 在首个 tick 泵出；bad 报错被禁用
+    dispatchTick(7);
+    std::string logs = capture.Str();
+    CHECK(logs.find("tick=7") != std::string::npos);
+    CHECK(logs.find("timer=now") != std::string::npos);
+    CHECK(manager.IsModDisabled("bad"));
+    CHECK_FALSE(manager.IsModDisabled("good"));
+    CHECK(logs.find("mod [bad]") != std::string::npos);
+    CHECK(logs.find("boom") != std::string::npos);
+
+    // OnZombieSpawn：工厂发事件（排队）→ 桥接 → 脚本（id=2：玩家之后第二个实体）
+    const ecs::Entity zombie = game::SpawnZombie(ecs, nullptr, 12.0f, 12.0f, &bus);
+    const bool zombieSpawned = zombie != entt::null;  // doctest 分解与 EnTT 比较符冲突 → 先归约
+    REQUIRE(zombieSpawned);
+    bus.FlushQueued();
+    logs = capture.Str();
+    CHECK(logs.find("zspawn=2 at 12,12") != std::string::npos);
+
+    // SetTimer(30 游戏秒 = 0.5 分钟)：推进 1 分钟后下一 tick 泵出
+    gameTime.Tick();
+    dispatchTick(8);
+    logs = capture.Str();
+    CHECK(logs.find("timer=30s") != std::string::npos);
+    CHECK(logs.find("tick=8") != std::string::npos);
+
+    // Events.Off：tick 9 取消订阅 → tick 10 起不再派发
+    dispatchTick(9);
+    dispatchTick(10);
+    logs = capture.Str();
+    CHECK(logs.find("tick=9") != std::string::npos);
+    CHECK(logs.find("tick=10") == std::string::npos);
 }

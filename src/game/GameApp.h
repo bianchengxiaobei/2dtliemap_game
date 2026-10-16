@@ -37,6 +37,7 @@
 #include "render/Renderer.h"
 #include "render/SpriteBatch.h"
 #include "render/Texture2D.h"
+#include "script/EventBridge.h"
 #include "script/ScriptApi.h"
 #include "script/ScriptManager.h"
 #include "world/ChunkManager.h"
@@ -129,6 +130,8 @@ private:
     script::ScriptManager m_script;
     // Host API 薄包装（M7-T3）：GameContext 挂接发生在 Init 稍后（1.6 时机均可）
     script::ScriptApi m_scriptApi;
+    // 事件桥接（M7-T4）：EventBus → ScriptManager::DispatchEvent（事件表 v1 全表）
+    std::unique_ptr<script::EventBridge> m_eventBridge;
 
     double m_lastFrameTime = 0.0;
     bool m_shutdownDone = false;

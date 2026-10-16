@@ -1042,3 +1042,49 @@ tick——脚本日志逐行断言 + 容器/位置/地面/僵尸数副作用对�
 - 测试 target 缺 GameLoop/GameTime/ZombieFactory 源文件导致 LNK2019 → 已补进 CMake 测试源列表。
 
 **实机**：Release 启动 `脚本系统就绪（后端 1 个，API v1）`。
+
+---
+
+## 2026-10-17 M7-T4 事件桥接（EventBus ↔ Events.On + SetTimer）
+
+**交付**：
+- `src/core/GameEvents.h`：事件表 v1 剩余 11 个键（OnPlayerMove/OnPlayerDeath/OnZombieSpawn/
+  OnZombieDead/OnItemPickup/OnItemDrop/OnChunkLoaded/OnChunkUnloaded/OnSaveBegin/OnSaveEnd/
+  OnModReload）+ 4 个多字段载荷结构（PlayerEvent/ZombieEvent/ItemEvent/ChunkEvent）；
+  `EventBus::EventPayload` variant 按“只加类型”约定扩充（含 OnGameStart/OnTick/OnSound 共 14 键）。
+- `src/script/EventBridge.h/.cpp`：订阅全表 14 键；`Translate` 把 EventBus 载荷翻成
+  「事件名 + 命名字段」（id→int64、坐标→double、枚举→字符串；未知键/载荷类型不符→nullopt），
+  再走 `ScriptManager::DispatchEvent`（错误隔离与禁用策略在 manager）。
+- LuaRuntime：`Events.On(name, fn)` / `Events.Off(name[, fn])`（每 mod 独立注册表；Off 省略 fn =
+  清空该事件订阅）；`Game.SetTimer(seconds, fn)` 一次性定时器（按**游戏秒**计时，OnTick 派发时泵；
+  seconds=0 在下一次 tick 即触发）；`DispatchEventToMod` 事件参数为字段表、回调带 traceback。
+- 生产端接线：僵尸工厂 `SpawnZombie(..., core::EventBus* events=nullptr)` 发 OnZombieSpawn
+  （SpawnLod 实体化/演示种子/脚本 Spawn 全走同一处）；`DeathSystem(..., core::EventBus*)` 阶段 2
+  发 OnZombieDead / OnPlayerDeath（有 PlayerTag 判玩家）；GameApp chunk 回调发
+  OnChunkLoaded/Unloaded；WorldDemoState 拾取/丢弃/点击到达发 OnItemPickup/OnItemDrop/OnPlayerMove；
+  `ScriptManager::SetEventBus` 后重载成功发 OnModReload（modId）。
+- 语义：生产者一律 `EmitQueued`（tick 末统一派发；Flush 先换出队列→回调中再发不会当场递归，
+  天然防“脚本刷僵尸”风暴）；调用脚本前先拷贝本轮函数列表 → 回调里 On/Off 不破坏遍历；
+  重载 = 旧环境整体释放 → 订阅与定时器自动清空。
+
+**已知边界（已注 docs/01）**：`OnZombieDead.killer` 暂无伤害来源追踪恒 0；
+`OnPlayerMove` 仅点击移动到达路点（WASD 无路点概念）；`OnSaveBegin/End` 翻译就绪、生产端随存档系统；
+`OnSound.z` 恒 0（SoundEvent 无 z 字段）。
+
+**测试**：176 用例全绿（Debug 118165 / Release 118166）。
+- 新 `tests/test_event_bridge.cpp`（4 用例）：14 键翻译逐字段断言 + 未知键/错类型防护；
+  工厂 OnZombieSpawn（排队→Flush 到达 + events=nullptr 不发）；DeathSystem 双事件（僵尸/玩家 +
+  events=nullptr 不发）；ReloadMod→OnModReload（FakeRuntime）。
+- `test_lua_runtime.cpp` 增端到端用例：OnGameStart 发 3 绷带（副作用落地）；OnTick 字段 tick；
+  SetTimer(0) 首 tick 泵出、SetTimer(30 游戏秒) 推进游戏钟后泵出；Events.Off 后不再派发；
+  双 mod 错误隔离（bad 报错被禁用且日志含 mod id 与错误，good 不受影响）；工厂→桥接→脚本
+  `zspawn=2 at 12,12`。夹具（TempModRoot/LogCapture）抽到 `tests/ScriptTestHelpers.h` 复用。
+
+**坑**：
+- sol 的 lambda 捕获 **const 引用**时闭包成员类型也是 const（mutable 救不回来）→ 需要写表的
+  sol::table 一律按**值**传进绑定函数再捕获；
+- doctest `REQUIRE(entity != entt::null)` 与 EnTT 比较符重载冲突（C2593）→ 先归约 bool 或
+  辅助函数（沿用 test_ground_items 约定）。
+
+**实机**：Release 启动 `事件桥接就绪（事件表 v1 共 14 个事件）`；569 tick 运行中 chunk 53 加载/
+4 卸载事件过桥无异常，ESC 优雅退出。

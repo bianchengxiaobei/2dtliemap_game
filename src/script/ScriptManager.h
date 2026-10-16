@@ -8,6 +8,10 @@
 #include "core/ScriptEvent.h"
 #include "script/IScriptRuntime.h"
 
+namespace zl::core {
+class EventBus;
+}
+
 namespace zl::script {
 
 // 脚本系统门面（M7-T1，docs/03 §3.2）：
@@ -43,6 +47,9 @@ public:
     // ---- 事件派发（M7-T4 接 EventBus） ----
     void DispatchEvent(const core::ScriptEvent& ev);
 
+    // M7-T4：接入事件总线后，热重载成功会发出 OnModReload（modId）。
+    void SetEventBus(core::EventBus* events);
+
     // ---- 错误隔离 ----
     bool IsModDisabled(std::string_view modId) const;
     std::size_t DisabledModCount() const;
@@ -69,6 +76,7 @@ private:
     std::vector<RuntimeEntry> m_runtimes;
     std::vector<ModRecord> m_mods;  // 按 (loadOrder, loadSeq) 排序
     int m_nextLoadSeq = 0;
+    core::EventBus* m_events = nullptr;  // 可为 nullptr（无总线：不发 OnModReload）
 };
 
 }  // namespace zl::script
