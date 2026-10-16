@@ -16,6 +16,7 @@
 #include "game/states/WorldDemoState.h"
 #include "platform/KeyNames.h"
 #include "render/IsoMath.h"
+#include "script/LuaRuntime.h"
 #include "world/MapLoader.h"
 
 namespace zl::game {
@@ -84,8 +85,10 @@ bool GameApp::Init(int argc, char** argv) {
     }
     m_ctx.items = &m_itemRegistry;
 
-    // 1.6 脚本系统（M7-T1）：门面就绪；后端实例在 M7-T2 注册（script.backend 决定默认后端）
+    // 1.6 脚本系统（M7-T1/T2）：注册 Lua 后端并初始化（script.backend 决定 mod 默认后端）；
+    // mod 扫描/加载在 M7-T5 接入
     if (m_config.Get<bool>("script.enabled", true)) {
+        m_script.RegisterRuntime(std::make_unique<script::LuaRuntime>());
         m_script.InitializeAll();
         ZL_INFO("script", "脚本系统就绪（后端 {} 个）", m_script.RuntimeCount());
     } else {

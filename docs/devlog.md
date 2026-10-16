@@ -967,3 +967,37 @@ config/game.json 新增 `script.enabled/script.backend`（T2/T5 消费）。T1 �
 **测试**：158 用例全绿（Debug 117938 / Release 117939 断言）；覆盖 注册/重名拒绝、
 初始化失败隔离、加载路由（未注册后端/未就绪/运行时失败/重复加载）、按 loadOrder 派发 +
 命名字段传递、错误禁用 + 跳过、重载恢复/失败保持、卸载、ShutdownAll。
+
+---
+
+## 2026-10-16 M7-T2 LuaRuntime（sol2）
+
+**交付**：`src/script/LuaRuntime.h/.cpp`（IScriptRuntime 的 Lua 5.4 实现）+ `tests/test_lua_runtime.cpp`
+（7 用例，真实临时 mod 文件 + spdlog 输出捕获）+ CMake 接入（`find_package(Lua)`/`sol2 CONFIG`，
+两 target 链接 `sol2::sol2` + `unofficial::lua::lua`；vcpkg manifest 的 lua/sol2 此前已装）。
+
+**实现要点**：
+- **sol2 + 原生 C API 混合**：sol::state 管解释器；chunk 执行用 `luaL_loadbufferx`（强制文本模式拒
+  bytecode）+ `lua_setupvalue` 注入 `_ENV` + `lua_pcall` 配 **traceback 消息处理器**
+  （`luaL_traceback`）——错误串 = `文件:行号: 消息` + 完整调用栈（含函数名），满足 T4/T6 的
+  「日志清晰（含 mod id 与堆栈）」；
+- **每 mod 独立 _ENV 沙箱**：沙箱基础表 = 白名单 base 函数（assert/error/pairs/pcall/type/…，不含
+  dofile/loadfile/load）+ string/table/math/coroutine/utf8；os/io/debug/package 从未加载，
+  环境 `__index` 指向沙箱表（无全局回退）——mod 间全局变量互不可见（测试验证 a=42 / b=nil）；
+  T5 将在此基础上正式化沙箱文档与测试；
+- **print 重定向**：per-mod C 闭包（upvalue=mod id）→ `[script-lua] [mod-id] <参数以 \t 连接>`，
+  多参数走 `luaL_tolstring`（尊重 __tostring）；
+- **重载语义**：先在新环境执行成功才替换旧环境（失败保留旧版本，符合 docs/03 §8）；
+  LoadMod 失败不登记；Shutdown 先释放环境引用再 lua_close；
+- DispatchEventToMod 暂为空实现（无订阅机制），M7-T4 接通 Events.On。
+
+**测试**：165 用例全绿（Debug 118000 / Release 118001 断言）。覆盖：初始化幂等/未初始化防护、
+print 重定向（类型转换 + 前缀）、沙箱（白名单可用 / os、dofile 报错行号）、语法错误行号、
+运行时错误 traceback（中文消息 + 函数名 + 栈）、重载成功换新/失败保留/修复恢复/未加载报错、
+环境隔离、卸载幂等、缺失文件、重复加载。
+
+**实机**：Release 启动日志 `注册脚本后端：lua → 脚本后端 lua 初始化完成 → 脚本系统就绪（后端 1 个）`。
+
+**坑**：sol2 4.x 中 `sol::table::create` 静态重载被派生类的同名非静态成员隐藏（C2352）→
+改用 `lua_createtable` + `sol::stack::pop<sol::table>`；`sol::state` 构造**不会**自动打开标准库，
+必须显式 `open_libraries(...)`。

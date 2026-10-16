@@ -26,6 +26,8 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Bullet CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(doctest CONFIG REQUIRED)
+find_package(Lua REQUIRED)
+find_package(sol2 CONFIG REQUIRED)
 
 add_executable(ZomboidLike
     src/main.cpp
@@ -77,6 +79,7 @@ add_executable(ZomboidLike
     src/render/Renderer.cpp
     src/render/SpriteBatch.cpp
     src/render/Texture2D.cpp
+    src/script/LuaRuntime.cpp
     src/script/ScriptManager.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp
@@ -100,6 +103,8 @@ target_link_libraries(ZomboidLike PRIVATE
     nlohmann_json::nlohmann_json
     glm::glm
     EnTT::EnTT
+    sol2::sol2
+    ${LUA_LIBRARIES}
     ${BULLET_LIBRARIES}
 )
 
@@ -133,6 +138,7 @@ add_executable(ZomboidLikeTests
     tests/test_inventory.cpp
     tests/test_ground_items.cpp
     tests/test_script.cpp
+    tests/test_lua_runtime.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -164,6 +170,7 @@ add_executable(ZomboidLikeTests
     src/physics/PhysicsWorld.cpp
     src/render/Camera.cpp
     src/render/IsoMath.cpp
+    src/script/LuaRuntime.cpp
     src/script/ScriptManager.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp
@@ -185,6 +192,8 @@ target_link_libraries(ZomboidLikeTests PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     EnTT::EnTT
+    sol2::sol2
+    ${LUA_LIBRARIES}
     ${BULLET_LIBRARIES}
 )
 
