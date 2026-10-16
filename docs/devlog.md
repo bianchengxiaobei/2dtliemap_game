@@ -1120,3 +1120,33 @@ BOM（\xEF\xBB\xBF），新增对应用例；mod.json 侧 nlohmann 自带 BOM �
 `mod 扫描完成：1 个目录，加载 1，跳过 0` → `[smoke_hello] smoke mod loaded` → `game started`
 → `60 ticks, zombies=40, tick=59`（Host API 在真实游戏里生效）。注：OnGameStart 触发时玩家尚
 未生成（玩家在 WorldDemoState 首 tick 生成，`player=0` 属预期）；冒烟 mod 已删除（示例 mod 归 T7）。
+
+---
+
+## 2026-10-17 M7-T6 热重载（mtime 轮询 + 主线程消费 + 失败恢复）
+
+**交付**：
+- `src/script/ModWatcher.h/.cpp`：后台线程按间隔（默认 1s，config `script.hotReloadSeconds`）
+  扫描各 mod 根目录**递归**文件签名（文件数 + 最大 mtime；增删改都会反映）；
+  签名变化 → 列入待处理并**立即推进基准**（同一变更只通知一次；修复文件再存盘会再次触发）；
+  线程只收集通知、从不触碰 Lua（解释器只归主线程）；条件变量休眠，析构 stop+join 干净退出。
+- 主循环消费（GameApp::MainLoop，ProcessResults 之后）：`PollChanges()` → `ScriptManager::ReloadMod`
+  ——重载成功 manager 发 `OnModReload`（T4 已接）、失败禁用并在日志提示“修复文件再保存可恢复”。
+- `ScriptManager::GetModInfo(id, out)`：热重载按 id 取 rootPath 的查询口（拷贝语义）。
+- config：`script.hotReload`（默认 true）/ `script.hotReloadSeconds`（默认 1.0）；
+  启动日志 `热重载监控已启动：N 个 mod（轮询 1.0s）`。
+- 只监控启动时已加载的 mod（本版本无运行时新增 mod 入口）。
+
+**语义对账（docs/03 §8）**：清订阅=重载时重建全新 `_ENV`（旧环境连订阅/定时器一并释放）；
+失败保留旧环境（LuaRuntime 从 T2 起就是“临时环境成功才替换”）+ manager 层禁用（§8.4 简单版策略），
+两者叠加：失败后该 mod 停止派发、修复重载成功后自动解除禁用。
+
+**测试**：181 用例全绿（Debug 118242 / Release 118243）。`tests/test_hot_reload.cpp`：
+① ModWatcher 单元（无初始通知、同一变更不重复、按 mod 隔离、二次修改再触发）；
+② 端到端：v1 生效 → 改文件检测 → ReloadMod → OnModReload（modId）→ 仅 v2 生效（旧订阅消失）→
+写语法错误 → 重载失败禁用且不再产生脚本日志（游戏不崩）→ 修复 → 重载成功解除禁用 → v3 生效。
+
+**实机**（真游戏内改文件全循环，日志节选）：
+`alive v1 tick=180` → 改文件 → `mod 重载成功：[smoke_hello]` + `alive v2` → 写坏 →
+`mod 已禁用（重载失败：main.lua:1: syntax error near 'is'）` + 进程存活继续跑 → 修复 →
+`mod 重载成功，已解除禁用` + `alive v3`。冒烟 mod 已删除（示例归 T7）。

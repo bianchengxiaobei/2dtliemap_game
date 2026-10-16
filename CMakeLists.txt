@@ -82,6 +82,7 @@ add_executable(ZomboidLike
     src/script/EventBridge.cpp
     src/script/LuaRuntime.cpp
     src/script/ModLoader.cpp
+    src/script/ModWatcher.cpp
     src/script/ScriptApi.cpp
     src/script/ScriptManager.cpp
     src/world/Cell.cpp
@@ -145,6 +146,7 @@ add_executable(ZomboidLikeTests
     tests/test_script_api.cpp
     tests/test_event_bridge.cpp
     tests/test_mod_loader.cpp
+    tests/test_hot_reload.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -182,6 +184,7 @@ add_executable(ZomboidLikeTests
     src/script/EventBridge.cpp
     src/script/LuaRuntime.cpp
     src/script/ModLoader.cpp
+    src/script/ModWatcher.cpp
     src/script/ScriptApi.cpp
     src/script/ScriptManager.cpp
     src/world/Cell.cpp

@@ -23,7 +23,9 @@
   "script": {
     "enabled": true,
     "backend": "lua",
-    "modsDir": "mods"
+    "modsDir": "mods",
+    "hotReload": true,
+    "hotReloadSeconds": 1.0
   },
   "inventory": {
     "playerCapacityKg": 20.0,

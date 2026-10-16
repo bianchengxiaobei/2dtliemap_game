@@ -43,6 +43,7 @@ public:
     void UnloadMod(std::string_view modId);
     bool IsModLoaded(std::string_view modId) const;
     std::vector<std::string> LoadedModIds() const;  // 按加载顺序
+    bool GetModInfo(std::string_view modId, ModInfo& out) const;  // M7-T6：热重载寻根目录
 
     // ---- 事件派发（M7-T4 接 EventBus） ----
     void DispatchEvent(const core::ScriptEvent& ev);

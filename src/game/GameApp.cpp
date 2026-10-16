@@ -99,7 +99,25 @@ bool GameApp::Init(int argc, char** argv) {
         m_eventBridge = std::make_unique<script::EventBridge>(m_events, m_script);
         // M7-T5：扫描并加载 mods/（目录不存在则跳过；单个 mod 失败不阻断其它）
         script::ModLoader loader(m_script, m_config.Get<std::string>("script.backend", "lua"));
-        loader.ScanAndLoad(m_config.Get<std::string>("script.modsDir", "mods"));
+        const script::ModLoader::Result mods =
+            loader.ScanAndLoad(m_config.Get<std::string>("script.modsDir", "mods"));
+        // M7-T6：热重载监控（后台线程 mtime 轮询；变更在主循环消费 → ReloadMod）
+        if (m_config.Get<bool>("script.hotReload", true)) {
+            std::vector<script::ModWatcher::Entry> watched;
+            for (const std::string& id : mods.loadedIds) {
+                script::ModInfo info;
+                if (m_script.GetModInfo(id, info)) {
+                    watched.push_back(script::ModWatcher::Entry{id, info.rootPath});
+                }
+            }
+            if (!watched.empty()) {
+                const double interval =
+                    m_config.Get<double>("script.hotReloadSeconds", 1.0);
+                m_modWatcher = std::make_unique<script::ModWatcher>(std::move(watched), interval);
+                ZL_INFO("script", "热重载监控已启动：{} 个 mod（轮询 {:.1f}s）",
+                        m_modWatcher->WatchedCount(), interval);
+            }
+        }
         ZL_INFO("script", "脚本系统就绪（后端 {} 个，API v{}）", m_script.RuntimeCount(),
                 script::ScriptApi::kApiVersion);
     } else {
@@ -439,6 +457,7 @@ void GameApp::Shutdown() {
 
     m_probe.Detach(m_events);
     m_eventBridge.reset();  // 先退订桥接（不再向脚本派发）
+    m_modWatcher.reset();   // 停止轮询线程（先于脚本运行时关闭）
     if (m_soundSubscription != core::EventBus::kInvalidSubscription) {
         m_events.Unsubscribe(m_soundSubscription);  // 先于感知系统销毁
         m_soundSubscription = core::EventBus::kInvalidSubscription;
@@ -488,6 +507,17 @@ void GameApp::MainLoop() {
 
         // 主线程消费后台结果（chunk 加载完成、存档快照等）
         m_tasks->ProcessResults();
+
+        // M7-T6：消费热重载通知（轮询线程只通知；重载与脚本执行都在主线程）
+        if (m_modWatcher != nullptr) {
+            for (const std::string& modId : m_modWatcher->PollChanges()) {
+                std::string error;
+                if (!m_script.ReloadMod(modId, error)) {
+                    ZL_WARN("core", "mod 热重载失败：[{}]：{}（已禁用；修复文件再保存可恢复）",
+                            modId, error);
+                }
+            }
+        }
 
         // 状态延迟切换生效
         m_states.ApplyPendingState();

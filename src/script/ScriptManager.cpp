@@ -172,6 +172,15 @@ std::vector<std::string> ScriptManager::LoadedModIds() const {
     return ids;
 }
 
+bool ScriptManager::GetModInfo(std::string_view modId, ModInfo& out) const {
+    const ModRecord* record = FindMod(modId);
+    if (record == nullptr) {
+        return false;
+    }
+    out = record->info;
+    return true;
+}
+
 void ScriptManager::DispatchEvent(const core::ScriptEvent& ev) {
     for (ModRecord& record : m_mods) {
         if (record.disabled) {

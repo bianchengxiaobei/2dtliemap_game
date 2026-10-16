@@ -38,6 +38,7 @@
 #include "render/SpriteBatch.h"
 #include "render/Texture2D.h"
 #include "script/EventBridge.h"
+#include "script/ModWatcher.h"
 #include "script/ScriptApi.h"
 #include "script/ScriptManager.h"
 #include "world/ChunkManager.h"
@@ -132,6 +133,8 @@ private:
     script::ScriptApi m_scriptApi;
     // 事件桥接（M7-T4）：EventBus → ScriptManager::DispatchEvent（事件表 v1 全表）
     std::unique_ptr<script::EventBridge> m_eventBridge;
+    // 热重载（M7-T6）：mods mtime 轮询后台线程；变更在主循环消费
+    std::unique_ptr<script::ModWatcher> m_modWatcher;
 
     double m_lastFrameTime = 0.0;
     bool m_shutdownDone = false;
