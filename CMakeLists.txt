@@ -6,7 +6,7 @@ if (ZL_ENABLE_PYTHON)
     set(VCPKG_MANIFEST_FEATURES "python")
 endif()
 
-project(ZomboidLike VERSION 0.2.0 LANGUAGES CXX)
+project(ZomboidLike VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -71,6 +71,10 @@ target_link_libraries(ZomboidLike PRIVATE
     nlohmann_json::nlohmann_json
     glm::glm
 )
+
+if (WIN32)
+    target_link_libraries(ZomboidLike PRIVATE psapi)  # 工作集内存采样（M3-T7 压测）
+endif()
 
 target_include_directories(ZomboidLike PRIVATE ${Stb_INCLUDE_DIR})
 

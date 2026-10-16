@@ -104,6 +104,63 @@ TEST_CASE("MapLoader：解析真实 chunk 文件（chunk_6_1 含房子）") {
     CHECK(foundNW);
 }
 
+TEST_CASE("MapLoader：ChunkFilePath 跨 cell/负数坐标目录（village_demo 全在 cell 0 测不到）") {
+    world::MapLoader::Meta meta;
+    std::string error;
+    REQUIRE(world::MapLoader::LoadMeta(kDemoDir, &meta, &error));
+
+    const auto EndsWith = [](const std::string& path, const std::filesystem::path& suffix) {
+        const std::string tail = suffix.string();
+        return path.size() >= tail.size() &&
+               path.compare(path.size() - tail.size(), tail.size(), tail) == 0;
+    };
+
+    CHECK(EndsWith(world::MapLoader::ChunkFilePath(meta, 7, 1),
+                   std::filesystem::path("chunks") / "c0_0" / "chunk_7_1.json"));
+    // 跨 cell：chunk (52,50) → cell (1,1)（曾经的 bug：误写成 c30_30）
+    CHECK(EndsWith(world::MapLoader::ChunkFilePath(meta, 52, 50),
+                   std::filesystem::path("chunks") / "c1_1" / "chunk_52_50.json"));
+    CHECK(EndsWith(world::MapLoader::ChunkFilePath(meta, 30, 0),
+                   std::filesystem::path("chunks") / "c1_0" / "chunk_30_0.json"));
+    // 负数：chunk (-1,-1) → cell (-1,-1)
+    CHECK(EndsWith(world::MapLoader::ChunkFilePath(meta, -1, -1),
+                   std::filesystem::path("chunks") / "c-1_-1" / "chunk_-1_-1.json"));
+    CHECK(EndsWith(world::MapLoader::ChunkFilePath(meta, -31, -30),
+                   std::filesystem::path("chunks") / "c-2_-1" / "chunk_-31_-30.json"));
+}
+
+TEST_CASE("MapLoader：cell 非 0 的 chunk 文件真实加载（回归：目录解析）") {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "zl_maploader_cell_test";
+    std::filesystem::remove_all(dir);
+    WriteTextFile(
+        dir / "map.json",
+        R"({"format":"zomboidlike-map-v1","name":"t","bounds":{"chunkX0":-100,"chunkY0":-100,"chunksX":500,"chunksY":500},"terrain":{"defaultFloor":"tile.floor.grass"},"legend":{"g":"tile.floor.grass"}})");
+    // chunk (52,50) 放在 c1_1；chunk (-1,-2) 放在 c-1_-1
+    WriteTextFile(dir / "chunks" / "c1_1" / "chunk_52_50.json",
+                  R"({"cx":52,"cy":50,"objects":[{"x":8,"y":0,"layer":"furniture","sprite":"object.tree"}]})");
+    WriteTextFile(dir / "chunks" / "c-1_-1" / "chunk_-1_-2.json",
+                  R"({"cx":-1,"cy":-2,"objects":[{"x":0,"y":0,"layer":"wall","sprite":"wall.brick"}]})");
+
+    world::MapLoader::Meta meta;
+    std::string error;
+    REQUIRE(world::MapLoader::LoadMeta(dir.string(), &meta, &error));
+
+    world::ChunkData data;
+    REQUIRE(world::MapLoader::LoadChunk(meta, 52, 50, &data, &error));
+    CHECK(data.fromFile);
+    REQUIRE(data.objects.size() == 1u);
+    CHECK(data.objects[0].sprite == "object.tree");
+
+    error.clear();
+    REQUIRE(world::MapLoader::LoadChunk(meta, -1, -2, &data, &error));
+    CHECK(data.fromFile);
+    REQUIRE(data.objects.size() == 1u);
+    CHECK(data.objects[0].sprite == "wall.brick");
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("MapLoader：z=1 楼上数据往返（chunk_7_2 两层小楼，M3-T6）") {
     world::MapLoader::Meta meta;
     std::string error;

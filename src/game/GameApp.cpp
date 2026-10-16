@@ -22,7 +22,8 @@ constexpr double kMaxFrameDt = 0.25;
 
 constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"Quit", "ESCAPE"},      {"Pause", "F1"},       {"CycleSpeed", "F2"},
-    {"DemoTasks", "F3"},     {"ReloadBindings", "F5"}, {"ToggleDebugOverlay", "F9"},
+    {"DemoTasks", "F3"},     {"ReloadBindings", "F5"}, {"ToggleCruise", "F8"},
+    {"ToggleDebugOverlay", "F9"},
     {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
     {"MoveRight", "D"},
 };

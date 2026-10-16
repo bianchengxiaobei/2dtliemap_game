@@ -48,6 +48,8 @@ public:
 
     const Stats& GetStats() const { return m_stats; }
     const std::deque<double>& RecentLoadMs() const { return m_recentLoadMs; }
+    // 单块解析耗时分位数（从全部记录计算；空样本返回 0）
+    double LoadMsPercentile(double percentile) const;
     bool HasPendingWork() const { return m_stats.loadingChunks > 0; }
 
     int LoadRadius() const { return m_loadRadius; }

@@ -19,7 +19,13 @@
   },
   "world": {
     "mapDir": "assets/maps/village_demo",
-    "loadRadius": 3
+    "loadRadius": 3,
+    "autoCruise": false,
+    "cruiseSpeed": 30,
+    "cruiseRadius": 40,
+    "cruiseCenterX": 500,
+    "cruiseCenterY": 500,
+    "cruiseMinutes": 5
   },
   "renderDemo": {
     "mapSize": 32,
@@ -36,6 +42,7 @@
       "CycleSpeed": "F2",
       "DemoTasks": "F3",
       "ReloadBindings": "F5",
+      "ToggleCruise": "F8",
       "ToggleDebugOverlay": "F9",
       "MoveUp": "W",
       "MoveDown": "S",

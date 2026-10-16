@@ -121,10 +121,12 @@ bool MapLoader::InBounds(const Meta& meta, int chunkX, int chunkY) {
 }
 
 std::string MapLoader::ChunkFilePath(const Meta& meta, int chunkX, int chunkY) {
-    const ChunkLocal local = ChunkLocalOf(chunkX, chunkY);
+    // 目录按 cell 分组：cellX = floor(chunkX / kChunksPerCell)（注意不能写成 chunkX - 局部坐标，
+    // 那是 cell 的原点 chunk=cellX*30，不是 cell 序号；负数同样必须 FloorDiv）
+    const int cellX = FloorDiv(chunkX, core::kChunksPerCell);
+    const int cellY = FloorDiv(chunkY, core::kChunksPerCell);
     const std::filesystem::path dir = std::filesystem::path(meta.rootDir) / "chunks" /
-                                      ("c" + std::to_string(chunkX - local.lcx) + "_" +
-                                       std::to_string(chunkY - local.lcy));
+                                      ("c" + std::to_string(cellX) + "_" + std::to_string(cellY));
     return (dir / ("chunk_" + std::to_string(chunkX) + "_" + std::to_string(chunkY) + ".json"))
         .string();
 }

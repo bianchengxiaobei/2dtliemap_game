@@ -52,6 +52,8 @@ private:
 
     void HandleFrameInput(double frameDt);
     void CollectWorld();
+    void UpdateCruise(double frameDt);
+    void LogPerfSample(const char* tag);
     void PushObject(const world::SquareObject& object, int wx, int wy, int z,
                     world::SquareLayer layer);
     world::Chunk* FindChunk(int chunkX, int chunkY) const;
@@ -71,6 +73,18 @@ private:
     bool m_prevMouseValid = false;
     float m_scrollAccum = 0.0f;
     float m_statsTimer = 0.0f;
+
+    // 自动巡航 + 压测采样（M3-T7）：绕 (cx,cy) 圆周巡航，每 5s 打一条 perf 统计
+    bool m_cruiseEnabled = false;
+    bool m_cruiseFinished = false;
+    double m_cruiseElapsed = 0.0;
+    float m_cruiseAngle = 0.0f;
+    float m_cruiseSpeed = 30.0f;     // 世界格/秒
+    float m_cruiseRadius = 40.0f;    // 世界格
+    float m_cruiseCenterX = 500.0f;  // 世界格
+    float m_cruiseCenterY = 500.0f;
+    double m_cruiseMinutes = 5.0;
+    float m_perfTimer = 0.0f;
 
     int m_hoverX = 0;
     int m_hoverY = 0;

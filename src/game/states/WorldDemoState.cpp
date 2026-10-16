@@ -4,6 +4,11 @@
 #include <cmath>
 #include <string>
 
+#if defined(_WIN32)
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 #include "core/Config.h"
 #include "core/EventBus.h"
 #include "core/GameLoop.h"
@@ -28,6 +33,7 @@ constexpr float kPanSpeedPxPerSecond = 900.0f;
 constexpr float kGridLineThickness = 1.2f;
 constexpr float kHoverLineThickness = 2.5f;
 constexpr float kStatsLogInterval = 3.0f;
+constexpr float kPerfLogInterval = 5.0f;
 constexpr uint32_t kGridColor = 0x30ffffff;   // 白色低透明（ABGR: A=0x30）
 constexpr uint32_t kHoverColor = 0xff30e0ff;  // 黄色高亮
 constexpr uint32_t kAxisXColor = 0xc04040ff;  // 红
@@ -43,6 +49,17 @@ uint32_t HashPick(int x, int y, uint32_t salt) {
     h *= 0x5bd1e995u;
     h ^= h >> 15;
     return h;
+}
+
+// 工作集内存（压测记录用；非 Windows 返回 0）
+uint64_t WorkingSetBytes() {
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters{};
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) {
+        return counters.WorkingSetSize;
+    }
+#endif
+    return 0;
 }
 
 }  // namespace
@@ -64,7 +81,20 @@ void WorldDemoState::OnEnter() {
     camera.ClearBounds();
     camera.SetCenter(render::ToScreen(70.0f, 18.0f));
 
-    ZL_INFO("render", "按键：WASD/右键拖拽 平移 | 滚轮 缩放 | F9 网格线 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+    // 自动巡航压测（M3-T7；F8 手动切换）
+    m_cruiseEnabled = config.Get<bool>("world.autoCruise", false);
+    m_cruiseSpeed = static_cast<float>(config.Get<double>("world.cruiseSpeed", 30.0));
+    m_cruiseRadius = static_cast<float>(config.Get<double>("world.cruiseRadius", 40.0));
+    m_cruiseCenterX = static_cast<float>(config.Get<double>("world.cruiseCenterX", 500.0));
+    m_cruiseCenterY = static_cast<float>(config.Get<double>("world.cruiseCenterY", 500.0));
+    m_cruiseMinutes = config.Get<double>("world.cruiseMinutes", 5.0);
+    if (m_cruiseEnabled) {
+        camera.SetCenter(render::ToScreen(m_cruiseCenterX + m_cruiseRadius, m_cruiseCenterY));
+        ZL_INFO("perf", "自动巡航开启：圆心=({:.0f},{:.0f}) 半径={:.0f} 速度={:.0f}格/s 时长={:.1f}min",
+                m_cruiseCenterX, m_cruiseCenterY, m_cruiseRadius, m_cruiseSpeed, m_cruiseMinutes);
+    }
+
+    ZL_INFO("render", "按键：WASD/右键拖拽 平移 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
 }
 
 void WorldDemoState::OnExit() {
@@ -81,6 +111,7 @@ void WorldDemoState::OnTick(double tickDt) {
 void WorldDemoState::OnFrame(double frameDt, double alpha) {
     (void)alpha;
     HandleFrameInput(frameDt);
+    UpdateCruise(frameDt);
 
     // 流式加载：相机中心（世界像素 → 世界格坐标）
     const glm::vec2 camGrid = render::FromScreen(m_ctx.camera->Center(), 0);
@@ -106,6 +137,55 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
                 chunkStats.totalLoaded, chunkStats.totalUnloaded, chunkStats.totalCancelled,
                 chunkStats.totalFailed);
     }
+
+    // 压测采样（巡航期间每 5s 一条 perf 行）
+    m_perfTimer += static_cast<float>(frameDt);
+    if (m_perfTimer >= kPerfLogInterval) {
+        m_perfTimer = 0.0f;
+        if (m_cruiseEnabled && !m_cruiseFinished) {
+            LogPerfSample("cruise");
+        }
+    }
+}
+
+void WorldDemoState::UpdateCruise(double frameDt) {
+    if (!m_cruiseEnabled || m_cruiseFinished) {
+        return;
+    }
+    m_cruiseElapsed += frameDt;
+    m_cruiseAngle += static_cast<float>(frameDt) * (m_cruiseSpeed / m_cruiseRadius);
+    if (m_cruiseAngle > 2.0f * 3.14159265f) {
+        m_cruiseAngle -= 2.0f * 3.14159265f;
+    }
+    const float gx = m_cruiseCenterX + m_cruiseRadius * std::cos(m_cruiseAngle);
+    const float gy = m_cruiseCenterY + m_cruiseRadius * std::sin(m_cruiseAngle);
+    m_ctx.camera->SetCenter(render::ToScreen(gx, gy));
+
+    if (m_cruiseElapsed >= m_cruiseMinutes * 60.0) {
+        m_cruiseFinished = true;
+        LogPerfSample("cruise-done");
+        const auto& chunkStats = m_ctx.chunkManager->GetStats();
+        ZL_INFO("perf",
+                "巡航结束：{:.0f}s | chunk 累计 加载={} 卸载={} 取消={} 失败={} | 驻留={}（回到稳态）",
+                m_cruiseElapsed, chunkStats.totalLoaded, chunkStats.totalUnloaded,
+                chunkStats.totalCancelled, chunkStats.totalFailed, chunkStats.loadedChunks);
+    }
+}
+
+void WorldDemoState::LogPerfSample(const char* tag) {
+    const render::Renderer::Stats stats = m_ctx.renderer->GetStats();
+    const auto& chunkStats = m_ctx.chunkManager->GetStats();
+    const double p50 = m_ctx.chunkManager->LoadMsPercentile(0.50);
+    const double p95 = m_ctx.chunkManager->LoadMsPercentile(0.95);
+    const double maxMs = m_ctx.chunkManager->LoadMsPercentile(1.0);
+    ZL_INFO("perf",
+            "[{}] t={:.0f}s | FPS={:.0f} | 实例={} 四边形={} | drawcall={} | chunk 驻留={} 加载中={} | "
+            "单块解析 P50={:.2f}ms P95={:.2f}ms max={:.2f}ms（样本 {}）| 累计加载={} | 工作集={:.1f}MB",
+            tag, m_cruiseElapsed, stats.fps, m_items.size(), m_ctx.sprites->QuadsThisFrame(),
+            stats.drawCalls, chunkStats.loadedChunks, chunkStats.loadingChunks, p50, p95, maxMs,
+            m_ctx.chunkManager->RecentLoadMs().size(),
+            static_cast<unsigned long long>(chunkStats.totalLoaded),
+            static_cast<double>(WorkingSetBytes()) / (1024.0 * 1024.0));
 }
 
 void WorldDemoState::HandleFrameInput(double frameDt) {
@@ -143,6 +223,20 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     if (input.IsActionPressed("ToggleDebugOverlay")) {
         m_showGrid = !m_showGrid;
         ZL_INFO("render", "F9 网格叠加: {}", m_showGrid ? "开" : "关");
+    }
+    if (input.IsActionPressed("ToggleCruise")) {
+        m_cruiseEnabled = !m_cruiseEnabled;
+        m_cruiseFinished = false;
+        m_cruiseElapsed = 0.0;
+        m_cruiseAngle = 0.0f;
+        if (m_cruiseEnabled) {
+            // 从圆周起点开始：以当前相机位置为圆心
+            const glm::vec2 camGrid = render::FromScreen(camera.Center(), 0);
+            m_cruiseCenterX = camGrid.x;
+            m_cruiseCenterY = camGrid.y;
+        }
+        ZL_INFO("perf", "F8 自动巡航: {}（{:.1f} 分钟，速度 {:.0f} 格/s，半径 {:.0f}）",
+                m_cruiseEnabled ? "开" : "关", m_cruiseMinutes, m_cruiseSpeed, m_cruiseRadius);
     }
 
     // 平移：WASD（屏幕空间速度恒定）

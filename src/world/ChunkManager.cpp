@@ -229,6 +229,19 @@ Chunk* ChunkManager::FindActiveChunk(int chunkX, int chunkY) {
     return cell->GetChunk(local.lcx, local.lcy);
 }
 
+double ChunkManager::LoadMsPercentile(double percentile) const {
+    if (m_recentLoadMs.empty()) {
+        return 0.0;
+    }
+    std::vector<double> sorted(m_recentLoadMs.begin(), m_recentLoadMs.end());
+    std::sort(sorted.begin(), sorted.end());
+    const double clamped = std::clamp(percentile, 0.0, 1.0);
+    const std::size_t index = static_cast<std::size_t>(
+        std::min(static_cast<double>(sorted.size()) - 1.0,
+                 std::floor(clamped * static_cast<double>(sorted.size()))));
+    return sorted[index];
+}
+
 bool ChunkManager::RemoveActiveChunk(int chunkX, int chunkY) {
     const CellCoord cellCoord{FloorDiv(chunkX, core::kChunksPerCell),
                               FloorDiv(chunkY, core::kChunksPerCell)};

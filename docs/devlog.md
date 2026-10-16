@@ -168,3 +168,29 @@
 **实测**：默认相机下两层小楼（house_1，chunk 7_2）呈半透明上层；实例 4998→5034、drawcall 仍 3、60fps。
 测试：新增 z=1 往返用例（解析 14 面楼上墙/16 块楼上地板/楼上房间 → 挂接进 z=1 格）；全量 28 用例绿。
 
+---
+
+## 2026-10-16 M3-T7 基线压测
+
+**新增能力**
+- `ChunkManager::LoadMsPercentile`（解析耗时分位数）；WorldDemoState 自动巡航（`world.autoCruise`，
+  圆心/半径/速度/时长可配，F8 手动开关）+ 每 5s 一条 perf 日志（FPS/实例/P50/P95/max/工作集，psapi 采样）。
+
+**巡航结果（stress_100x100，见 docs/perf-baseline.md）**
+- Debug 5min：7253 块加载 / 7204 卸载 / 0 取消 0 失败 / 驻留恒定 49；解析 P95 0.84ms；FPS 中位 60（突发时 38~42）；
+- Release 1min：P95 0.37ms、max 0.89ms；FPS 中位 60 / P5 58；工作集 138.2→139.0MB（+0.6MB，基本持平）。
+
+**压测顺手抓出的大 bug（ChunkFilePath 的 cell 目录解析）**
+- 现象：stress 巡航实例数恒等于"49×100 地面"，一棵树都没有——数据太整齐反而可疑；
+- 定位：`ChunkFilePath` 用 `chunkX - 局部坐标` 当 cell 目录名，得到的是 cell 的**原点 chunk**（30）
+  而不是 cell **序号**（1）→ `c1_1` 被写成 `c30_30`，**cell 0 以外所有非默认 chunk 文件静默降级成稀疏默认**；
+- 为什么之前没暴露：village_demo 全在 cell 0（原点=0=序号），单测也只覆盖 cell 0；
+- 修复：目录名用 `FloorDiv(chunkX, kChunksPerCell)`（负数同语义）；补测试：跨 cell（52,50)→c1_1）、
+  边界（30,0)→c1_0、负数（-1,-1)→c-1_-1、(‑31,‑30)→c-2_-1，以及**真实文件加载回归用例**。
+
+**M3 验收对照（docs/01 M3 验收四条全过）**
+- 高速移动不卡顿：T4 巡航测试 Update 峰值 <10ms + 5min 巡航 0 取消 0 失败、日志齐全；
+- 内存回落 ±20%：驻留恒定、Release +0.6MB/60s；
+- 篡改/缺失地图不崩溃：坏 chunk 3 次重试后放弃记 error（单测覆盖）；稀疏缺失 = 默认地形是正常路径；
+- MapLoader 单测全绿（31 用例 / 11.6 万断言）。
+
