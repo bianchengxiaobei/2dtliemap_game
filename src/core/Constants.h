@@ -13,7 +13,7 @@ inline constexpr int kChunkLoadRadius = 3;   // 以相机为中心加载的 chun
 // 等距渲染
 inline constexpr int kTileW = 64;            // 等距菱形精灵占屏宽（2:1）
 inline constexpr int kTileH = 32;
-inline constexpr int kFloorPx = 24;          // 每层楼垂直偏移像素
+inline constexpr int kFloorPx = 96;          // 每 z 层垂直偏移像素（= 3×kTileH，对齐 PZ）
 
 // 模拟
 inline constexpr int kTickRate = 60;         // 固定 tick 频率 Hz
