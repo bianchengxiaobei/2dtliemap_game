@@ -51,6 +51,7 @@ add_executable(ZomboidLike
     src/world/Cell.cpp
     src/world/Chunk.cpp
     src/world/ChunkData.cpp
+    src/world/ChunkManager.cpp
     src/world/GridSquare.cpp
     src/world/MapLoader.cpp
     src/world/World.cpp
@@ -79,12 +80,15 @@ add_executable(ZomboidLikeTests
     tests/test_main.cpp
     tests/test_isomath.cpp
     tests/test_maploader.cpp
+    tests/test_chunkmanager.cpp
     tests/test_world.cpp
     src/core/Log.cpp
+    src/core/TaskScheduler.cpp
     src/render/IsoMath.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp
     src/world/ChunkData.cpp
+    src/world/ChunkManager.cpp
     src/world/GridSquare.cpp
     src/world/MapLoader.cpp
     src/world/World.cpp

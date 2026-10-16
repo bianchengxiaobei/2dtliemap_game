@@ -112,3 +112,22 @@
 - 墙的画布约定（已写进 `test_isomath` 锁定）：画布 64×224、内容 64×112，底带 = 格中心 +16、顶 = 一格楼高（`kFloorPx`）——墙对象放在所属地面格（z=0），精灵自然向上遮挡一格；
 - manifest 增加 `tile.floor.wood` / `wall.brick` / `wall.door`（仅 own；`placeholder_pz` 下自动回退 own，验收时可见两套混合渲染）。
 
+---
+
+## 2026-10-16 M3-T3 / M3-T4 地图加载与流式 chunk
+
+**M3-T3 MapLoader（src/world/ChunkData + MapLoader）**
+- `ChunkData` = 与运行时 `Chunk` 分离的纯数据（后台产出 → 主线程 `ApplyChunkData` 挂接，搬移字符串零拷贝挂接）；
+- 冒烟过程中发现并修掉生成器 bug：**房间矩形跨 chunk 未裁剪**（loader 严格校验 chunk 内矩形），改为生成器按 chunk 裁剪（文件自包含），mapformat.md 同步；
+- 解析策略：硬错误（打不开/JSON 坏/结构非法/cx 与路径不一致）→ `false + error`；条目级问题（越界/未知层/未知 legend 字符）→ warn + 跳过或取默认；
+- 测试覆盖：元数据、稀疏缺失、真实 chunk、ApplyChunkData、全图 131 文件/334 对象一致性、坏文件各路径。
+
+**M3-T4 ChunkManager 流式加载**
+- 相机 chunk 差集（Chebyshev 半径，默认 3 → 7×7）；相机未跨 chunk 时空操作；
+- 状态机全流程：请求即建 Chunk（Loading 挂世界）→ TaskScheduler 后台解析纯数据 → 主线程 `ProcessResults` 挂接 → Loaded；相机离开 → Loaded 即时卸载（Reset+RemoveChunk+空 cell 回收）；
+- **每帧预算**（实测 Debug 下一次性建 25 个 Chunk ≈ 37ms 尖峰）：`Update` 每帧最多派发 4 个、`ProcessResults` 每帧最多挂接 8 个；巡航测试 Update 峰值 < 10ms；
+- 取消/重试：解析完成时相机已离开 → 丢弃（totalCancelled）；失败最多 3 次 → give-up（离开范围自动解除）；
+- 结果队列自带（非 SubmitResult）：后台任务经 `shared_ptr` 持有队列与作业，manager 先析构不写悬空指针；
+- 生命周期 debug 日志齐全（Loading/Loaded+耗时/取消/卸载），T7 用。
+- 测试 4 用例：7×7 窗口全挂接+数据抽查；远跳驻留恒定（49 chunk/1 cell）；高速巡航 61 步不阻塞主线程且终态恰 25 chunk；坏文件重试放弃不崩溃。
+
