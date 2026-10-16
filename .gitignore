@@ -1,0 +1,21 @@
+# 构建产物
+build/
+out/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+CMakeUserPresets.json
+
+# 运行产物
+logs/
+imgui.ini
+*.log
+
+# vcpkg（manifest 模式下生成在 build/ 内，兜底忽略）
+vcpkg_installed/
+
+# PZ 临时占位资源：不入公开仓库、不随构建分发（见 assets_placeholder_pz/README.md）
+assets_placeholder_pz/

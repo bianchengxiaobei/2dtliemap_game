@@ -1,0 +1,26 @@
+{
+  "name": "zomboidlike",
+  "version": "0.1.0",
+  "builtin-baseline": "3cd21e48a75f67acfef289da52893ce79144aaa1",
+  "dependencies": [
+    "glfw3",
+    "bgfx",
+    "glm",
+    "bullet3",
+    "entt",
+    "lua",
+    "sol2",
+    "spdlog",
+    "stb",
+    "nlohmann-json",
+    "doctest",
+    "sqlite3",
+    "miniaudio"
+  ],
+  "features": {
+    "python": {
+      "description": "Python script backend (M8)",
+      "dependencies": ["pybind11", "python3"]
+    }
+  }
+}

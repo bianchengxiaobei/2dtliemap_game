@@ -1,0 +1,31 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "x64-debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/x64-debug",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "ZL_ENABLE_PYTHON": "OFF"
+      }
+    },
+    {
+      "name": "x64-release",
+      "inherits": "x64-debug",
+      "binaryDir": "${sourceDir}/build/x64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "x64-debug", "configurePreset": "x64-debug" },
+    { "name": "x64-release", "configurePreset": "x64-release" }
+  ]
+}
