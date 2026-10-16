@@ -23,6 +23,7 @@
 #include "ecs/components/CommonComponents.h"
 #include "ecs/components/PhysicsComponents.h"
 #include "game/EventProbe.h"
+#include "game/CameraFollow.h"
 #include "physics/PhysicsWorld.h"
 #include "platform/Window.h"
 #include "render/Camera.h"
@@ -73,11 +74,12 @@ void WorldDemoState::OnEnter() {
         ZL_ERROR("render", "资源初始化失败，世界将不可见");
     }
 
-    // 相机：对准 village_demo 北侧村庄（房群在 chunk (6..7, 1..2)）；无边界（世界无限）
+    // 相机：对准 village_demo 北侧村庄（房群在 chunk (6..7, 1..2)）；边界=地图（M4-T5）
     render::Camera& camera = *m_ctx.camera;
     camera.SetViewport(m_ctx.renderer->FramebufferWidth(), m_ctx.renderer->FramebufferHeight());
-    camera.ClearBounds();
     camera.SetCenter(render::ToScreen(70.0f, 18.0f));
+    m_followCamera = config.Get<bool>("camera.follow", true);
+    m_followRate = static_cast<float>(config.Get<double>("camera.followRate", 8.0));
 
     // 自动巡航压测（M3-T7；F8 手动切换）
     m_cruiseEnabled = config.Get<bool>("world.autoCruise", false);
@@ -91,12 +93,56 @@ void WorldDemoState::OnEnter() {
         ZL_INFO("perf", "自动巡航开启：圆心=({:.0f},{:.0f}) 半径={:.0f} 速度={:.0f}格/s 时长={:.1f}min",
                 m_cruiseCenterX, m_cruiseCenterY, m_cruiseRadius, m_cruiseSpeed, m_cruiseMinutes);
     }
+    ApplyCameraMode();
 
     // M4-T2/T3：ECS 演示实体（村庄附近漂移；物理体由 Bullet 驱动）
     SpawnDemoEntities();
     // M4-T4：玩家实体由 OnFrame 延迟生成（等目标 chunk 加载完成）
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+    ZL_INFO("render", "按键：WASD 移动玩家 | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+}
+
+void WorldDemoState::ApplyCameraMode() {
+    render::Camera& camera = *m_ctx.camera;
+    const bool cruiseActive = m_cruiseEnabled && !m_cruiseFinished;
+    if (m_followCamera && !cruiseActive) {
+        // 跟随模式：相机中心夹取到地图格范围的投影 AABB 内（边缘不移出地图）
+        const world::MapLoader::Meta& meta = m_ctx.chunkManager->Map();
+        const float gx0 = static_cast<float>(meta.chunkX0 * core::kChunkSize);
+        const float gy0 = static_cast<float>(meta.chunkY0 * core::kChunkSize);
+        const float gx1 = static_cast<float>((meta.chunkX0 + meta.chunksX) * core::kChunkSize);
+        const float gy1 = static_cast<float>((meta.chunkY0 + meta.chunksY) * core::kChunkSize);
+        glm::vec2 minPx;
+        glm::vec2 maxPx;
+        MapPixelBounds(gx0, gy0, gx1, gy1, &minPx, &maxPx);
+        camera.SetBounds(minPx, maxPx);
+        m_followSnapped = false;  // 下次跟随直接落位（不做缓动）
+    } else {
+        camera.ClearBounds();  // 自由相机/巡航：无边界（开发漫游/压测）
+    }
+}
+
+void WorldDemoState::UpdateCameraFollow(double frameDt) {
+    if (!m_followCamera || (m_cruiseEnabled && !m_cruiseFinished)) {
+        return;  // 自由模式或巡航接管
+    }
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return;
+    }
+    const auto* pos = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (pos == nullptr) {
+        return;
+    }
+    render::Camera& camera = *m_ctx.camera;
+    const glm::vec2 target = render::ToScreen(pos->x, pos->y, 0);
+    if (!m_followSnapped) {
+        camera.SetCenter(target);  // 首次/切回：直接落位，避免长距离缓动
+        m_followSnapped = true;
+        ZL_INFO("render", "相机跟随就位：玩家格 ({:.1f}, {:.1f})", pos->x, pos->y);
+        return;
+    }
+    camera.SetCenter(CameraFollowStep(camera.Center(), target, m_followRate,
+                                      static_cast<float>(frameDt)));
 }
 
 ecs::Entity WorldDemoState::SpawnCharacter(float px, float py) {
@@ -269,6 +315,7 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     (void)alpha;
     HandleFrameInput(frameDt);
     UpdateCruise(frameDt);
+    UpdateCameraFollow(frameDt);  // M4-T5：跟随在巡航之后（巡航接管时不生效）
 
     // 流式加载：相机中心（世界像素 → 世界格坐标）
     const glm::vec2 camGrid = render::FromScreen(m_ctx.camera->Center(), 0);
@@ -335,6 +382,7 @@ void WorldDemoState::UpdateCruise(double frameDt) {
 
     if (m_cruiseElapsed >= m_cruiseMinutes * 60.0) {
         m_cruiseFinished = true;
+        ApplyCameraMode();  // 巡航结束：回跟随模式恢复地图边界
         LogPerfSample("cruise-done");
         const auto& chunkStats = m_ctx.chunkManager->GetStats();
         ZL_INFO("perf",
@@ -408,6 +456,12 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
         }
         ZL_INFO("physics", "F10 物理线框: {}", m_physicsDebug ? "开" : "关");
     }
+    if (input.IsActionPressed("ToggleFreeCam")) {
+        m_followCamera = !m_followCamera;
+        ApplyCameraMode();
+        ZL_INFO("render", "F4 相机模式: {}（{}）", m_followCamera ? "跟随玩家" : "自由",
+                m_followCamera ? "边界=地图 AABB" : "无边界，方向键/拖拽平移");
+    }
     if (input.IsActionPressed("ToggleCruise")) {
         m_cruiseEnabled = !m_cruiseEnabled;
         m_cruiseFinished = false;
@@ -419,32 +473,35 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
             m_cruiseCenterX = camGrid.x;
             m_cruiseCenterY = camGrid.y;
         }
+        ApplyCameraMode();  // 巡航=无边界；结束回跟随=恢复地图边界
         ZL_INFO("perf", "F8 自动巡航: {}（{:.1f} 分钟，速度 {:.0f} 格/s，半径 {:.0f}）",
                 m_cruiseEnabled ? "开" : "关", m_cruiseMinutes, m_cruiseSpeed, m_cruiseRadius);
     }
 
-    // 平移：方向键（M4-T4 起 WASD 归玩家移动；相机跟随在 M4-T5）
+    // 平移：方向键（仅自由相机模式；M4-T5 跟随模式下由 UpdateCameraFollow 接管）
     glm::vec2 move(0.0f, 0.0f);
-    if (input.IsActionDown("PanUp")) {
-        move.y -= 1.0f;
-    }
-    if (input.IsActionDown("PanDown")) {
-        move.y += 1.0f;
-    }
-    if (input.IsActionDown("PanLeft")) {
-        move.x -= 1.0f;
-    }
-    if (input.IsActionDown("PanRight")) {
-        move.x += 1.0f;
+    if (!m_followCamera) {
+        if (input.IsActionDown("PanUp")) {
+            move.y -= 1.0f;
+        }
+        if (input.IsActionDown("PanDown")) {
+            move.y += 1.0f;
+        }
+        if (input.IsActionDown("PanLeft")) {
+            move.x -= 1.0f;
+        }
+        if (input.IsActionDown("PanRight")) {
+            move.x += 1.0f;
+        }
     }
     if (move.x != 0.0f || move.y != 0.0f) {
         camera.PanBy(glm::normalize(move) * (kPanSpeedPxPerSecond * static_cast<float>(frameDt) /
                                              camera.Zoom()));
     }
 
-    // 拖拽平移（右键/中键）
+    // 拖拽平移（右键/中键；自由相机模式）
     const glm::vec2 mouse(input.MouseX(), input.MouseY());
-    const bool dragging = input.IsMouseButtonDown(1) || input.IsMouseButtonDown(2);
+    const bool dragging = !m_followCamera && (input.IsMouseButtonDown(1) || input.IsMouseButtonDown(2));
     if (dragging && m_prevMouseValid) {
         camera.PanBy(-(mouse - m_prevMouse) / camera.Zoom());
     }
@@ -770,9 +827,11 @@ void WorldDemoState::DrawDebugText() {
                         m_missingChunks, static_cast<unsigned long long>(chunkStats.totalLoaded),
                         static_cast<unsigned long long>(chunkStats.totalUnloaded),
                         static_cast<unsigned long long>(chunkStats.totalCancelled));
-    bgfx::dbgTextPrintf(0, 6, 0x0f, "zoom: %.2f | hover: (%d, %d) | provider: %s",
-                        m_ctx.camera->Zoom(), m_hoverX, m_hoverY,
-                        m_ctx.assets->Provider().c_str());
+    bgfx::dbgTextPrintf(0, 6, 0x0f, "zoom: %.2f | cam: %s | hover: (%d, %d) | provider: %s",
+                        m_ctx.camera->Zoom(),
+                        m_followCamera ? (m_cruiseEnabled && !m_cruiseFinished ? "cruise" : "follow")
+                                       : "free",
+                        m_hoverX, m_hoverY, m_ctx.assets->Provider().c_str());
     // M4-T4：玩家状态（位置/朝向/动画帧/移动意图）
     if (m_ctx.ecs != nullptr && m_player != entt::null) {
         entt::registry& registry = m_ctx.ecs->Registry();
@@ -791,7 +850,7 @@ void WorldDemoState::DrawDebugText() {
         }
     }
     bgfx::dbgTextPrintf(0, 8, 0x07,
-                        "WASD move | arrows/RMB drag pan | wheel zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+                        "WASD move | F4 free cam | arrows/RMB drag pan | wheel zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
 }
 
 }  // namespace zl::game

@@ -329,3 +329,31 @@ dir=3(Up)、行走帧 frame=1 捕捉成功；D 1.5s 位移 4.2 格 dir=2(Right)�
 动画帧推进/站立复位/朝向保持/framesPerDir=1 不除零、PickFrameIndex（动画/变体/帧数保护）、
 全链路（输入→物理→同步→动画：顶墙滑动 200 tick 停在 4.2、行走帧出现过、松键立停 + 站立帧）。
 合计 65 用例 / 116886 断言全绿。
+
+---
+
+## 2026-10-16 M4-T5 相机跟随
+
+**新增**
+- `game/CameraFollow.h`（纯函数，可单测）：
+  * `CameraFollowStep`：指数趋近 `c += (t-c)·(1-e^(-rate·dt))`——帧率无关（严格性质：
+    两步 dt == 一步 2dt，指数可乘性），拖帧不追过头；rate<=0 瞬间到位、dt<=0 不动；
+  * `MapPixelBounds`：地图格矩形 → 世界像素 AABB（菱形投影四角的紧包围盒）；
+- WorldDemoState：
+  * 跟随模式（默认，`camera.follow`/`camera.followRate` 可配）：平滑跟随玩家，
+    `SetBounds(地图 AABB)` 边缘夹取（相机中心不出图，玩家贴边时人物离开画面中心）；
+    刚生成/切回时"直接落位"不缓动（`m_followSnapped`）；
+  * 自由相机（F4 切换，开发者模式）：无边界，方向键/右键拖拽平移；切回跟随即时就位；
+  * 巡航（F8）与跟随互斥：巡航=无边界，结束/关闭时 `ApplyCameraMode()` 恢复；
+    （否则 SetCenter 会被地图边界夹住——老压测的中心 (500,500) 在地图外，会静默失效）
+- ChunkManager 暴露 `Map()`（meta 访问器，相机边界用）；绑定 `ToggleFreeCam=F4`。
+
+**实测**（village_demo）：生成即就位 (70.5,18.4)；W 走 1.5s → camGrid 跟随至 (66,14)（chunk 随
+相机流式 加载=56/卸载=7）；F4 自由 → 再走 1.5s player=(62.0,9.5) 而 camGrid 保持 (66,13)
+（玩家离开画面中心，镜头不动）；F4 切回 → 日志"相机跟随就位：玩家格 (62.0, 9.6)"瞬间回中。
+FPS 59~60、物理 step 0.35ms。
+
+**测试**（tests/test_camera_follow.cpp，4 用例）：指数趋近（120 步单调收敛/帧率无关/退化输入）、
+MapPixelBounds（四角紧包围盒 + village 120×120 具体值）、Camera::SetBounds 夹取（1.0x/1.5x 换算/
+ClearBounds）、跟随集成（目标远在地图外 → 收敛到夹取点 (-3200, 360)）。
+合计 69 用例 / 117047 断言全绿。

@@ -26,9 +26,9 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"ToggleDebugOverlay", "F9"}, {"TogglePhysicsDebug", "F10"},
     {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
     {"MoveRight", "D"},
-    // M4-T4：WASD 归玩家；相机平移改方向键（开发用，M4-T5 改为跟随）
+    // M4-T4：WASD 归玩家；方向键平移相机（自由相机模式，M4-T5）
     {"PanUp", "UP"},         {"PanDown", "DOWN"},   {"PanLeft", "LEFT"},
-    {"PanRight", "RIGHT"},
+    {"PanRight", "RIGHT"},   {"ToggleFreeCam", "F4"},
 };
 
 double NowSeconds() {

@@ -35,6 +35,10 @@
   "task": {
     "threads": 0
   },
+  "camera": {
+    "follow": true,
+    "followRate": 8.0
+  },
   "input": {
     "bindings": {
       "Quit": "ESCAPE",
@@ -52,6 +56,7 @@
       "PanDown": "DOWN",
       "PanLeft": "LEFT",
       "PanRight": "RIGHT",
+      "ToggleFreeCam": "F4",
       "TogglePhysicsDebug": "F10"
     }
   },

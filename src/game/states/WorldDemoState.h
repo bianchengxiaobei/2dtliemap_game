@@ -46,6 +46,9 @@ private:
     void EnsurePlayerSpawned();
     ecs::Entity SpawnCharacter(float px, float py);
     bool IsSolidSquare(int wx, int wy) const;
+    // M4-T5：相机跟随（follow=平滑跟随玩家+地图边界；自由=方向键/拖拽，无边界）
+    void ApplyCameraMode();
+    void UpdateCameraFollow(double frameDt);
     void UpdateCruise(double frameDt);
     void LogPerfSample(const char* tag);
     void PushObject(const world::SquareObject& object, int wx, int wy, int z,
@@ -71,8 +74,12 @@ private:
     float m_demoBoxX1 = 0.0f;
     float m_demoBoxY1 = 0.0f;
     int m_demoEntityCount = 0;
-    // M4-T4：本地玩家（WASD 控制；相机由方向键平移，M4-T5 改为跟随）
+    // M4-T4：本地玩家（WASD 控制）
     ecs::Entity m_player = entt::null;
+    // M4-T5：相机模式（F4 切换；follow 平滑跟随玩家并夹取到地图边界）
+    bool m_followCamera = true;
+    bool m_followSnapped = false;  // 下次跟随直接落位（刚切换/生成时不做缓动）
+    float m_followRate = 8.0f;     // 指数趋近速率（1/s）
     bool m_physicsDebug = false;  // F10：Bullet 线框
     int m_wireDiagCount = 0;      // 线框诊断日志计数（开启后头几帧）
 

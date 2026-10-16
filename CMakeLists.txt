@@ -103,6 +103,7 @@ add_executable(ZomboidLikeTests
     tests/test_spatialindex.cpp
     tests/test_physics.cpp
     tests/test_player_control.cpp
+    tests/test_camera_follow.cpp
     tests/test_world.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/InputSystem.cpp
@@ -115,6 +116,7 @@ add_executable(ZomboidLikeTests
     src/ecs/SystemScheduler.cpp
     src/physics/PhysicsSyncSystem.cpp
     src/physics/PhysicsWorld.cpp
+    src/render/Camera.cpp
     src/render/IsoMath.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp

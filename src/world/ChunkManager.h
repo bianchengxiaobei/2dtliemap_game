@@ -61,6 +61,9 @@ public:
 
     int LoadRadius() const { return m_loadRadius; }
 
+    // 地图元信息（bounds/legend 等；M4-T5 相机边界夹取用）
+    const MapLoader::Meta& Map() const { return m_meta; }
+
 private:
     struct LoadJob {
         int chunkX = 0;
