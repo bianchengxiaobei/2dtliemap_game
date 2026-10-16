@@ -41,6 +41,7 @@ class MapData:
         self.rooms = []  # (x, y, w, h, id, name)
         self.blocked = set()  # (x, y) 不可放树/草丛
         self.next_room_id = 1
+        self.next_house_id = 1  # 房号（命名用）与房间 id 解耦：楼上层也会占用 room id
 
     def in_bounds(self, x, y):
         return 0 <= x < self.w and 0 <= y < self.h
@@ -52,10 +53,10 @@ class MapData:
     def add_object(self, x, y, z, layer, sprite):
         self.objects.append((x, y, z, layer, sprite))
 
-    def add_room(self, x, y, w, h, name):
+    def add_room(self, x, y, w, h, name, z=0):
         rid = self.next_room_id
         self.next_room_id += 1
-        self.rooms.append((x, y, w, h, rid, name))
+        self.rooms.append((x, y, w, h, rid, name, z))
         return rid
 
 
@@ -99,8 +100,9 @@ def rects_overlap(ax, ay, aw, ah, bx, by, bw, bh, margin=1):
     )
 
 
-def gen_house(mapd, rng, x0, y0, w, h, house_rects):
-    """一栋房子：砖墙一圈 + 一扇南侧门 + 木地板 + 单个房间"""
+def gen_house(mapd, rng, x0, y0, w, h, house_rects, stories=1):
+    """一栋房子：砖墙一圈 + 一扇南侧门 + 木地板 + 单个房间；stories>=2 时加楼上（z=1）。
+    楼上不消耗 rng（复用地面门位置），保证加层不影响其余布局的确定性。"""
     for rx, ry, rw, rh in house_rects:
         if rects_overlap(x0, y0, w, h, rx, ry, rw, rh):
             return False
@@ -119,13 +121,29 @@ def gen_house(mapd, rng, x0, y0, w, h, house_rects):
                     mapd.add_object(x, y, 0, "wall", "wall.door")
                 else:
                     mapd.add_object(x, y, 0, "wall", "wall.brick")
-                mapd.set_floor(x, y, "w")
-            else:
-                mapd.set_floor(x, y, "w")
+            mapd.set_floor(x, y, "w")
             mapd.blocked.add((x, y))
 
+    house_no = mapd.next_house_id
+    mapd.next_house_id += 1
     house_rects.append((x0, y0, w, h))
-    mapd.add_room(x0 + 1, y0 + 1, w - 2, h - 2, "house_%d" % mapd.next_room_id)
+    mapd.add_room(x0 + 1, y0 + 1, w - 2, h - 2, "house_%d" % house_no)
+
+    # 楼上（z=1）：同footprint 砖墙 + 木地板（objects 的 floor 层表达，v1 格式）
+    for story in range(2, stories + 1):
+        z = story - 1
+        for ly in range(h):
+            for lx in range(w):
+                x, y = x0 + lx, y0 + ly
+                perimeter = lx == 0 or ly == 0 or lx == w - 1 or ly == h - 1
+                if perimeter:
+                    if ly == h - 1 and x == door_x:
+                        mapd.add_object(x, y, z, "wall", "wall.door")
+                    else:
+                        mapd.add_object(x, y, z, "wall", "wall.brick")
+                else:
+                    mapd.add_object(x, y, z, "floor", "tile.floor.wood")
+        mapd.add_room(x0 + 1, y0 + 1, w - 2, h - 2, "house_%d_upper" % house_no, z=1)
     return True
 
 
@@ -139,7 +157,8 @@ def gen_village(mapd, rng, center_x, center_y, house_rects):
         h = rng.randint(4, 6)
         x0 = center_x + rng.randint(-9, 6 - w)
         y0 = center_y + rng.randint(-8, 4 - h)
-        if gen_house(mapd, rng, x0, y0, w, h, house_rects):
+        stories = 2 if placed == 0 else 1  # 每村第一栋带楼上（z=1），演示多 z 绘制
+        if gen_house(mapd, rng, x0, y0, w, h, house_rects, stories):
             placed += 1
     return placed
 
@@ -227,17 +246,20 @@ def write_map(mapd, out_dir, meta):
 
             # 房间矩形按本 chunk 裁剪（文件自包含；跨 chunk 的房间在每个相交文件中各有一份）
             rooms_in = []
-            for rx0, ry0, rw, rh, rid, rname in sorted(rooms, key=lambda r: r[4]):
+            for rx0, ry0, rw, rh, rid, rname, rz in sorted(rooms, key=lambda r: r[4]):
                 ix0 = max(rx0, x0)
                 iy0 = max(ry0, y0)
                 ix1 = min(rx0 + rw, x0 + CHUNK)
                 iy1 = min(ry0 + rh, y0 + CHUNK)
                 if ix0 < ix1 and iy0 < iy1:
-                    rooms_in.append({
+                    entry = {
                         "x": ix0 - x0, "y": iy0 - y0,
                         "w": ix1 - ix0, "h": iy1 - iy0,
                         "id": rid, "name": rname,
-                    })
+                    }
+                    if rz:
+                        entry["z"] = rz
+                    rooms_in.append(entry)
 
             payload = {"cx": cx, "cy": cy}
             if has_floor_override:
@@ -314,7 +336,7 @@ def main():
         "name": args.name,
         "generator": {
             "tool": "tools/gen_map.py",
-            "version": 1,
+            "version": 2,
             "seed": args.seed,
             "params": {
                 "chunks": "%dx%d" % (chunks_x, chunks_y),

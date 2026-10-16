@@ -15,6 +15,34 @@
  ],
  "objects": [
   {
+   "x": 0,
+   "y": 0,
+   "z": 1,
+   "layer": "floor",
+   "sprite": "tile.floor.wood"
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "z": 1,
+   "layer": "floor",
+   "sprite": "tile.floor.wood"
+  },
+  {
+   "x": 2,
+   "y": 0,
+   "z": 1,
+   "layer": "floor",
+   "sprite": "tile.floor.wood"
+  },
+  {
+   "x": 3,
+   "y": 0,
+   "z": 1,
+   "layer": "floor",
+   "sprite": "tile.floor.wood"
+  },
+  {
    "x": 4,
    "y": 0,
    "z": 0,
@@ -22,9 +50,23 @@
    "sprite": "wall.brick"
   },
   {
+   "x": 4,
+   "y": 0,
+   "z": 1,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
    "x": 0,
    "y": 1,
    "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "z": 1,
    "layer": "wall",
    "sprite": "wall.brick"
   },
@@ -36,9 +78,23 @@
    "sprite": "wall.door"
   },
   {
+   "x": 1,
+   "y": 1,
+   "z": 1,
+   "layer": "wall",
+   "sprite": "wall.door"
+  },
+  {
    "x": 2,
    "y": 1,
    "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 2,
+   "y": 1,
+   "z": 1,
    "layer": "wall",
    "sprite": "wall.brick"
   },
@@ -50,9 +106,23 @@
    "sprite": "wall.brick"
   },
   {
+   "x": 3,
+   "y": 1,
+   "z": 1,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
    "x": 4,
    "y": 1,
    "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 4,
+   "y": 1,
+   "z": 1,
    "layer": "wall",
    "sprite": "wall.brick"
   }
@@ -63,8 +133,17 @@
    "y": 0,
    "w": 4,
    "h": 1,
-   "id": 4,
+   "id": 5,
    "name": "house_4"
+  },
+  {
+   "x": 0,
+   "y": 0,
+   "w": 4,
+   "h": 1,
+   "id": 6,
+   "name": "house_4_upper",
+   "z": 1
   }
  ]
 }

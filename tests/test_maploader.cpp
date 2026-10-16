@@ -84,7 +84,7 @@ TEST_CASE("MapLoader：解析真实 chunk 文件（chunk_6_1 含房子）") {
     CHECK(data.rooms[0].localY == 8);
     CHECK(data.rooms[0].w == 3);
     CHECK(data.rooms[0].h == 2);
-    CHECK(data.rooms[0].id == 2);
+    CHECK(data.rooms[0].id == 3);
     CHECK(data.rooms[0].name == "house_2");
 
     // 对象：9 面砖墙（房子西/北/东边）+ 1 处草丛
@@ -104,6 +104,53 @@ TEST_CASE("MapLoader：解析真实 chunk 文件（chunk_6_1 含房子）") {
     CHECK(foundNW);
 }
 
+TEST_CASE("MapLoader：z=1 楼上数据往返（chunk_7_2 两层小楼，M3-T6）") {
+    world::MapLoader::Meta meta;
+    std::string error;
+    REQUIRE(world::MapLoader::LoadMeta(kDemoDir, &meta, &error));
+
+    world::ChunkData data;
+    REQUIRE(world::MapLoader::LoadChunk(meta, 7, 2, &data, &error));
+    CHECK(data.fromFile);
+
+    int z1Walls = 0;
+    int z1Floors = 0;
+    for (const auto& object : data.objects) {
+        if (object.z == 1 && object.layer == world::SquareLayer::Wall) {
+            ++z1Walls;
+        }
+        if (object.z == 1 && object.layer == world::SquareLayer::Floor) {
+            ++z1Floors;
+            CHECK(object.sprite == "tile.floor.wood");
+        }
+    }
+    CHECK(z1Walls == 14);
+    CHECK(z1Floors == 16);
+
+    // 楼上房间（z=1）
+    bool foundUpperRoom = false;
+    for (const auto& room : data.rooms) {
+        if (room.z == 1) {
+            foundUpperRoom = true;
+            CHECK(room.name == "house_1_upper");
+            CHECK(room.w == 4);
+            CHECK(room.h == 4);
+        }
+    }
+    CHECK(foundUpperRoom);
+
+    // 挂接：z=1 的楼上地面/墙进 runtime Chunk，z=0 不受影响
+    world::Chunk chunk(7, 2);
+    world::ApplyChunkData(data, chunk);
+    REQUIRE(chunk.Square(2, 1, 1).Floor() != nullptr);
+    CHECK(chunk.Square(2, 1, 1).Floor()->sprite == "tile.floor.wood");
+    CHECK(chunk.Square(2, 1, 1).RoomId() == 2);
+    CHECK(chunk.Square(0, 0, 1).Layer(world::SquareLayer::Wall).size() == 1u);
+    // z=0 同格：地面是 floors 网格的 default（该 chunk 无 override 的行也全为草/木）
+    REQUIRE(chunk.Square(2, 1, 0).Floor() != nullptr);
+    CHECK(chunk.Square(2, 1, 0).Floor()->sprite == "tile.floor.wood");  // 房内 z=0 也是木地板
+}
+
 TEST_CASE("ApplyChunkData：纯数据挂接进运行时 Chunk") {
     world::MapLoader::Meta meta;
     std::string error;
@@ -117,7 +164,7 @@ TEST_CASE("ApplyChunkData：纯数据挂接进运行时 Chunk") {
     const world::GridSquare& room = chunk.Square(5, 8, 0);
     REQUIRE(room.Floor() != nullptr);
     CHECK(room.Floor()->sprite == "tile.floor.wood");
-    CHECK(room.RoomId() == 2);
+    CHECK(room.RoomId() == 3);
 
     const world::GridSquare& wall = chunk.Square(4, 7, 0);
     REQUIRE(wall.Layer(world::SquareLayer::Wall).size() == 1u);
@@ -154,10 +201,10 @@ TEST_CASE("MapLoader：整张 village_demo 全量解析一致性") {
             roomOccurrences += static_cast<int>(data.rooms.size());
         }
     }
-    // 与生成器输出一致（确定性地图：131 个非默认 chunk / 334 对象 / 6 房间（部分跨 chunk））
+    // 与生成器输出一致（确定性地图：131 个非默认 chunk / 398 对象（含 z=1 楼上）/ 15 房间出现）
     CHECK(filesLoaded == 131);
-    CHECK(objectTotal == 334);
-    CHECK(roomOccurrences >= 6);
+    CHECK(objectTotal == 398);
+    CHECK(roomOccurrences == 15);
 }
 
 TEST_CASE("MapLoader：错误路径（坏元数据/坏 chunk）") {

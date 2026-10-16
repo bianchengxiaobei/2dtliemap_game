@@ -32,6 +32,8 @@ constexpr uint32_t kGridColor = 0x30ffffff;   // 白色低透明（ABGR: A=0x30�
 constexpr uint32_t kHoverColor = 0xff30e0ff;  // 黄色高亮
 constexpr uint32_t kAxisXColor = 0xc04040ff;  // 红
 constexpr uint32_t kAxisYColor = 0xc040ff40;  // 绿
+// 上层（z≥1）透明度策略（M3-T6 临时方案）：楼上整体 35% 不透明，看得到室内
+constexpr uint32_t kUpperZColor = 0x59ffffff;
 
 // 变体选取哈希：同一格每帧稳定（不闪烁），不同格/层/盐值分布不同
 uint32_t HashPick(int x, int y, uint32_t salt) {
@@ -238,8 +240,9 @@ void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int w
     item.v0 = frame.v0;
     item.u1 = frame.u1;
     item.v1 = frame.v1;
-    item.color = 0xffffffff;
-    item.stage = layer == world::SquareLayer::Floor ? 0 : 1;
+    item.color = z >= 1 ? kUpperZColor : 0xffffffff;
+    // 两段式：仅 z=0 的地面进"地面批"；其余（含 z≥1 的一切）走全局画家序
+    item.stage = (z == 0 && layer == world::SquareLayer::Floor) ? 0 : 1;
     item.z = z;
     item.diag = wx + wy;
     item.gx = wx;
@@ -281,22 +284,28 @@ void WorldDemoState::CollectWorld() {
             }
             ++m_collectedChunks;
 
-            // z=0（多 z 绘制见 M3-T6）
-            for (int ly = 0; ly < core::kChunkSize; ++ly) {
-                const int wy = cy * core::kChunkSize + ly;
-                if (wy < gyMin || wy > gyMax) {
-                    continue;
-                }
-                for (int lx = 0; lx < core::kChunkSize; ++lx) {
-                    const int wx = cx * core::kChunkSize + lx;
-                    if (wx < gxMin || wx > gxMax) {
+            // 逐 z 层收集（z=0 地面起步；z≥1 楼上，空层快速跳过）
+            for (int z = 0; z < core::kMaxZ; ++z) {
+                for (int ly = 0; ly < core::kChunkSize; ++ly) {
+                    const int wy = cy * core::kChunkSize + ly;
+                    if (wy < gyMin || wy > gyMax) {
                         continue;
                     }
-                    const world::GridSquare& square = chunk->Square(lx, ly, 0);
-                    for (int layerIndex = 0; layerIndex < world::kSquareLayerCount; ++layerIndex) {
-                        const auto layer = static_cast<world::SquareLayer>(layerIndex);
-                        for (const world::SquareObject& object : square.Layer(layer)) {
-                            PushObject(object, wx, wy, 0, layer);
+                    for (int lx = 0; lx < core::kChunkSize; ++lx) {
+                        const int wx = cx * core::kChunkSize + lx;
+                        if (wx < gxMin || wx > gxMax) {
+                            continue;
+                        }
+                        const world::GridSquare& square = chunk->Square(lx, ly, z);
+                        if (square.IsEmpty()) {
+                            continue;
+                        }
+                        for (int layerIndex = 0; layerIndex < world::kSquareLayerCount;
+                             ++layerIndex) {
+                            const auto layer = static_cast<world::SquareLayer>(layerIndex);
+                            for (const world::SquareObject& object : square.Layer(layer)) {
+                                PushObject(object, wx, wy, z, layer);
+                            }
                         }
                     }
                 }

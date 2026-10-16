@@ -17,6 +17,9 @@ constexpr const char* kFormat = "zomboidlike-map-v1";
 constexpr const char* kLogModule = "world";
 
 std::optional<SquareLayer> ParseLayerName(std::string_view name) {
+    if (name == "floor") {
+        return SquareLayer::Floor;  // 仅用于 z≥1 的楼上地面（z=0 由 floors 网格表达）
+    }
     if (name == "wall") {
         return SquareLayer::Wall;
     }

@@ -162,9 +162,23 @@
    "sprite": "wall.brick"
   },
   {
+   "x": 0,
+   "y": 8,
+   "z": 1,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
    "x": 1,
    "y": 8,
    "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 1,
+   "y": 8,
+   "z": 1,
    "layer": "wall",
    "sprite": "wall.brick"
   },
@@ -176,6 +190,13 @@
    "sprite": "wall.brick"
   },
   {
+   "x": 2,
+   "y": 8,
+   "z": 1,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
    "x": 3,
    "y": 8,
    "z": 0,
@@ -183,6 +204,13 @@
    "sprite": "wall.brick"
   },
   {
+   "x": 3,
+   "y": 8,
+   "z": 1,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
    "x": 4,
    "y": 8,
    "z": 0,
@@ -191,8 +219,50 @@
   },
   {
    "x": 4,
+   "y": 8,
+   "z": 1,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 0,
+   "y": 9,
+   "z": 1,
+   "layer": "floor",
+   "sprite": "tile.floor.wood"
+  },
+  {
+   "x": 1,
+   "y": 9,
+   "z": 1,
+   "layer": "floor",
+   "sprite": "tile.floor.wood"
+  },
+  {
+   "x": 2,
+   "y": 9,
+   "z": 1,
+   "layer": "floor",
+   "sprite": "tile.floor.wood"
+  },
+  {
+   "x": 3,
+   "y": 9,
+   "z": 1,
+   "layer": "floor",
+   "sprite": "tile.floor.wood"
+  },
+  {
+   "x": 4,
    "y": 9,
    "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 4,
+   "y": 9,
+   "z": 1,
    "layer": "wall",
    "sprite": "wall.brick"
   },
@@ -210,15 +280,24 @@
    "y": 9,
    "w": 4,
    "h": 1,
-   "id": 4,
+   "id": 5,
    "name": "house_4"
+  },
+  {
+   "x": 0,
+   "y": 9,
+   "w": 4,
+   "h": 1,
+   "id": 6,
+   "name": "house_4_upper",
+   "z": 1
   },
   {
    "x": 1,
    "y": 3,
    "w": 5,
    "h": 3,
-   "id": 5,
+   "id": 7,
    "name": "house_5"
   }
  ]

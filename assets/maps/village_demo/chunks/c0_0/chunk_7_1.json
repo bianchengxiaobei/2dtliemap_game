@@ -134,9 +134,23 @@
    "sprite": "wall.brick"
   },
   {
+   "x": 0,
+   "y": 9,
+   "z": 1,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
    "x": 1,
    "y": 9,
    "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 1,
+   "y": 9,
+   "z": 1,
    "layer": "wall",
    "sprite": "wall.brick"
   },
@@ -148,9 +162,23 @@
    "sprite": "wall.brick"
   },
   {
+   "x": 2,
+   "y": 9,
+   "z": 1,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
    "x": 3,
    "y": 9,
    "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 3,
+   "y": 9,
+   "z": 1,
    "layer": "wall",
    "sprite": "wall.brick"
   },
@@ -162,9 +190,23 @@
    "sprite": "wall.brick"
   },
   {
+   "x": 4,
+   "y": 9,
+   "z": 1,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
    "x": 5,
    "y": 9,
    "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  {
+   "x": 5,
+   "y": 9,
+   "z": 1,
    "layer": "wall",
    "sprite": "wall.brick"
   },
@@ -182,7 +224,7 @@
    "y": 5,
    "w": 4,
    "h": 2,
-   "id": 3,
+   "id": 4,
    "name": "house_3"
   }
  ]

@@ -79,12 +79,13 @@ z 为世界层（0=地面，见 `core::kMaxZ`）。
 |---|---|---|---|
 | `x`, `y` | int | ✔ | 局部格坐标 |
 | `z` | int | | 层，缺省 0 |
-| `layer` | string | ✔ | ∈ `wall` / `furniture` / `item` / `mark`（`floor` 层由 `floors` 字段表达） |
+| `layer` | string | ✔ | ∈ `floor` / `wall` / `furniture` / `item` / `mark`；`floor` 仅用于 **z≥1 的楼上地面**（z=0 地面由 `floors` 字段表达） |
 | `sprite` | string | ✔ | 逻辑名（AssetProvider 解析，如 `wall.brick`） |
 | `ox`, `oy` | int | | 附加像素偏移（微调锚点），缺省 0 |
 
 **rooms 条目**：矩形 `[x, x+w) × [y, y+h)`（局部坐标），加载时把覆盖格的 `RoomId` 设为 `id`；
-`id` 在地图内唯一（生成器保证），`name` 是可读标签。墙/门所在格不属于房间内部。
+`id` 在地图内唯一（生成器保证），`name` 是可读标签；`z` 可选（缺省 0，楼上房间为 1）。
+墙/门所在格不属于房间内部。
 房间矩形跨 chunk 时，会在它相交的**每个** chunk 文件中出现（`id` 相同），
 且坐标**已按各 chunk 裁剪**（文件自包含；生成器负责裁剪，加载器只接受 chunk 内矩形）。
 

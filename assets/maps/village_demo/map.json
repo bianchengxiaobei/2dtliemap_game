@@ -3,7 +3,7 @@
  "name": "village_demo",
  "generator": {
   "tool": "tools/gen_map.py",
-  "version": 1,
+  "version": 2,
   "seed": 20261016,
   "params": {
    "chunks": "12x12",
