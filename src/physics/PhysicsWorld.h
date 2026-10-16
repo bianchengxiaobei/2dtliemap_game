@@ -45,6 +45,10 @@ public:
     btRigidBody* CreateCharacterBody(float radius, float height, float gridX, float gridY, int z);
     void DestroyBody(btRigidBody* body);
 
+    // 传送角色体到目标格（M7-T3 脚本 Player.Teleport）：同步 motion state、清速度与力；
+    // z 为楼层（体心 = z*层高 + 胶囊半高，与 CreateCharacterBody 同一约定）。
+    void TeleportBody(btRigidBody* body, float gridX, float gridY, int z);
+
     // ---- 静态体（墙/家具/树，按 chunk 批量生成/卸载）----
 
     // 遍历 chunk 的 z=0 层：任一对象 blocksMovement=true → 该格生成一个 Box（半格 0.5）。

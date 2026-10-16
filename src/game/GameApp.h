@@ -37,6 +37,7 @@
 #include "render/Renderer.h"
 #include "render/SpriteBatch.h"
 #include "render/Texture2D.h"
+#include "script/ScriptApi.h"
 #include "script/ScriptManager.h"
 #include "world/ChunkManager.h"
 #include "world/World.h"
@@ -126,6 +127,8 @@ private:
 
     // 脚本系统（M7-T1）：后端注册表 + mod 生命周期门面；后端实例由 M7-T2（Lua）注册
     script::ScriptManager m_script;
+    // Host API 薄包装（M7-T3）：GameContext 挂接发生在 Init 稍后（1.6 时机均可）
+    script::ScriptApi m_scriptApi;
 
     double m_lastFrameTime = 0.0;
     bool m_shutdownDone = false;

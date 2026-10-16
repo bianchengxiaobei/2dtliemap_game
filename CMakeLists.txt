@@ -80,6 +80,7 @@ add_executable(ZomboidLike
     src/render/SpriteBatch.cpp
     src/render/Texture2D.cpp
     src/script/LuaRuntime.cpp
+    src/script/ScriptApi.cpp
     src/script/ScriptManager.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp
@@ -139,6 +140,7 @@ add_executable(ZomboidLikeTests
     tests/test_ground_items.cpp
     tests/test_script.cpp
     tests/test_lua_runtime.cpp
+    tests/test_script_api.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -156,6 +158,8 @@ add_executable(ZomboidLikeTests
     src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp
     src/core/EventBus.cpp
+    src/core/GameLoop.cpp
+    src/core/GameTime.cpp
     src/core/Input.cpp
     src/core/Log.cpp
     src/core/TaskScheduler.cpp
@@ -163,6 +167,7 @@ add_executable(ZomboidLikeTests
     src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
     src/game/GroundItems.cpp
+    src/game/ZombieFactory.cpp
     src/items/ItemDef.cpp
     src/items/ItemRegistry.cpp
     src/items/InventoryOps.cpp
@@ -171,6 +176,7 @@ add_executable(ZomboidLikeTests
     src/render/Camera.cpp
     src/render/IsoMath.cpp
     src/script/LuaRuntime.cpp
+    src/script/ScriptApi.cpp
     src/script/ScriptManager.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp

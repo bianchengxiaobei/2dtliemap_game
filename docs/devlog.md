@@ -1001,3 +1001,44 @@ print 重定向（类型转换 + 前缀）、沙箱（白名单可用 / os、dof
 **坑**：sol2 4.x 中 `sol::table::create` 静态重载被派生类的同名非静态成员隐藏（C2352）→
 改用 `lua_createtable` + `sol::stack::pop<sol::table>`；`sol::state` 构造**不会**自动打开标准库，
 必须显式 `open_libraries(...)`。
+
+---
+
+## 2026-10-16 M7-T3 ScriptApi 第一版（薄包装 + StableId 句柄）
+
+**交付**：`src/script/ScriptApi.h/.cpp`（Host API 门面，不依赖任何脚本库）+ LuaRuntime 每 mod
+API 表绑定 + 底层两个新查询（`PathfindingService::IsPassable`、`PhysicsWorld::TeleportBody`）
++ `tests/test_script_api.cpp`（5 用例）+ `test_lua_runtime.cpp` Lua 绑定端到端用例（脚本调用
+→ 断言日志输出 + 副作用落地）。
+
+**API 定稿（docs/03 §4，命名 PascalCase）**：
+- `Game.GetTick() / GetPlayerId() / GetTime()（{year,month,day,hour,minute,totalMinutes}）`
+- `Log.Info/Warn/Error(msg)`（模块名 script-mod，带 [mod-id] 前缀）
+- `Player.GetPosition()→{x,y,z}|nil / Teleport(x,y,z) / GetHealth()→number|nil / AddItem(defId[,count])→加入数`
+- `World.IsPassable(x,y) / SpawnItem(defId,x,y[,z])→bool`
+- `Zombies.Spawn(x,y[,z])→handle / Count() / GetPosition(handle)→{x,y,z}|nil`
+- `Items.Exists(defId) / GetName(defId)`（只读注册表）
+- 实体一律 StableId（0=无效；跨存档有效）；`ScriptApi::kApiVersion = 1`（T5 加载器按 mod.json 校验）。
+- 归 T4：`Events.On/Off`、`Game.SetTimer`（需要 tick 泵）；`World.GetSquare` 随后续扩充。
+
+**实现要点**：
+- ScriptApi 是「无状态门面」：所有改变游戏状态的方法都是 const（只经 GameContext 指针改世界），
+  绑定层持 `const ScriptApi*` 即可；
+- Teleport 三件套：ECS Position + Velocity 归零 + **物理体传送**（新增
+  `PhysicsWorld::TeleportBody`：同步 motion state/interpolation、清速度与力；
+  PhysicsSync 每 tick 从物理体回写位置，只改 ECS 会被下一 tick 覆盖）；
+- `World.IsPassable` 走寻路服务的 chunk 位图缓存（新增查询方法；未加载 chunk =
+  不可通行，与 PathSnapshot 语义一致）；
+- 绑定层返回 `std::optional<sol::table>` → Lua 侧 nil（sol2 原生支持 optional→nil）；
+  z 参数用 `sol::optional<int>` 缺省 0。
+
+**测试**：171 用例全绿（Debug 118075 / Release 118076 断言）。Lua 端到端覆盖：读位置/加物品/
+传送/血量/刷僵尸（handle≠0 → 查询位置）/物品名（中文回传）/SpawnItem 真/假/IsPassable/日期与
+tick——脚本日志逐行断言 + 容器/位置/地面/僵尸数副作用对账。
+
+**坑**：
+- EnTT 单组件 view（`view<C>().each(fn)`）对「只收 entity 的 lambda」不适用（会走第三分支只传
+  组件）→ lambda 写成双参 `(entt::entity, const C&)` 或省略 entity；
+- 测试 target 缺 GameLoop/GameTime/ZombieFactory 源文件导致 LNK2019 → 已补进 CMake 测试源列表。
+
+**实机**：Release 启动 `脚本系统就绪（后端 1 个，API v1）`。

@@ -12,8 +12,21 @@
 #include <spdlog/sinks/ostream_sink.h>
 #include <spdlog/spdlog.h>
 
+#include "ai/PathfindingService.h"
+#include "characters/components/CharacterComponents.h"
+#include "core/GameLoop.h"
+#include "core/GameTime.h"
 #include "core/Log.h"
+#include "ecs/EcsWorld.h"
+#include "ecs/components/CommonComponents.h"
+#include "game/GameContext.h"
+#include "game/GroundItems.h"
+#include "items/InventoryOps.h"
+#include "items/ItemComponents.h"
+#include "items/ItemRegistry.h"
 #include "script/LuaRuntime.h"
+#include "script/ScriptApi.h"
+#include "world/Chunk.h"
 
 using namespace zl;
 
@@ -230,4 +243,92 @@ TEST_CASE("M7-T2：缺失脚本文件与重复加载错误") {
     CHECK(runtime.LoadMod(mods.MakeMod("dup", "print('ok')"), error));
     CHECK_FALSE(runtime.LoadMod(mods.MakeMod("dup", "print('again')"), error));
     CHECK(error.find("已加载") != std::string::npos);
+}
+
+TEST_CASE("M7-T3：Lua 绑定端到端（Game/Player/World/Zombies/Items/Log）") {
+    // 最小游戏环境：玩家 + 物品注册表 + 空 chunk + 一个 tick
+    ecs::EcsWorld ecs;
+    items::ItemRegistry items;
+    std::string registryError;
+    REQUIRE(items.LoadFromString(R"({
+      "format": "items-v1",
+      "items": [
+        { "id": "bandage", "name": "绷带", "icon": "i", "weight": 0.1, "maxStack": 5, "type": "consumable" }
+      ]
+    })", "test", &registryError));
+    core::GameLoop loop(60.0);
+    loop.Frame(1.0 / 60.0, [](double) {}, [](double, double) {});
+    core::GameTime gameTime;
+    gameTime.Configure(1.0, core::DateTime{});
+    ai::PathfindingService pathfinding(nullptr, ai::MapChunkBounds{0, 0, 4, 4});
+    world::Chunk chunk(0, 0);
+    pathfinding.OnChunkLoaded(chunk);
+
+    const ecs::Entity player = ecs.Create();
+    {
+        auto& registry = ecs.Registry();
+        registry.emplace<ecs::PlayerTag>(player);
+        registry.emplace<ecs::Position>(player, ecs::Position{3.0f, 4.0f, 0});
+        registry.emplace<ecs::Velocity>(player);
+        registry.emplace<ecs::Health>(player, ecs::Health{80.0f, 100.0f});
+        ecs::Container bag;
+        bag.capacityKg = 20.0f;
+        registry.emplace<ecs::Container>(player, bag);
+    }
+
+    game::GameContext ctx;
+    ctx.ecs = &ecs;
+    ctx.items = &items;
+    ctx.loop = &loop;
+    ctx.gameTime = &gameTime;
+    ctx.pathfinding = &pathfinding;
+    script::ScriptApi api;
+    api.Attach(&ctx);
+
+    TempModRoot mods;
+    script::LuaRuntime runtime;
+    runtime.SetApi(&api);
+    std::string error;
+    REQUIRE(runtime.Initialize(error));
+
+    LogCapture capture;
+    const script::ModInfo mod = mods.MakeMod("apitest", R"lua(
+Log.Info('boot pid=' .. Game.GetPlayerId())
+local p = Player.GetPosition()
+Log.Info(string.format('at %.1f,%.1f,%d', p.x, p.y, p.z))
+Log.Info('added=' .. Player.AddItem('bandage', 2))
+Player.Teleport(5, 6, 0)
+Log.Info('hp=' .. tostring(Player.GetHealth()))
+local h = Zombies.Spawn(9, 9, 0)
+Log.Info('zombies=' .. Zombies.Count() .. ' handle0=' .. tostring(h ~= 0))
+local z = Zombies.GetPosition(h)
+Log.Info(string.format('z at %.0f,%.0f', z.x, z.y))
+Log.Info('item=' .. Items.GetName('bandage') .. ' exists=' .. tostring(Items.Exists('missing')))
+Log.Info('spawnitem=' .. tostring(World.SpawnItem('bandage', 1.5, 2.5, 0)) .. '/' .. tostring(World.SpawnItem('nope', 1.5, 2.5, 0)))
+Log.Info('passable=' .. tostring(World.IsPassable(0, 0)))
+local t = Game.GetTime()
+Log.Info('date=' .. t.year .. '-' .. t.month .. '-' .. t.day .. ' tick=' .. Game.GetTick())
+)lua");
+    CHECK(runtime.LoadMod(mod, error));
+    CHECK(error.empty());
+
+    const std::string logs = capture.Str();
+    CHECK(logs.find("boot pid=1") != std::string::npos);
+    CHECK(logs.find("at 3.0,4.0,0") != std::string::npos);
+    CHECK(logs.find("added=2") != std::string::npos);
+    CHECK(logs.find("hp=80.0") != std::string::npos);
+    CHECK(logs.find("zombies=1 handle0=true") != std::string::npos);
+    CHECK(logs.find("z at 9,9") != std::string::npos);
+    CHECK(logs.find("item=绷带 exists=false") != std::string::npos);
+    CHECK(logs.find("spawnitem=true/false") != std::string::npos);
+    CHECK(logs.find("passable=true") != std::string::npos);
+    CHECK(logs.find("date=2000-7-9 tick=1") != std::string::npos);
+
+    // 副作用落地：位置/背包/地面/僵尸
+    const ecs::Position& position = ecs.Registry().get<ecs::Position>(player);
+    CHECK(position.x == doctest::Approx(5.0f));
+    CHECK(position.y == doctest::Approx(6.0f));
+    CHECK(items::CountOf(ecs.Registry().get<ecs::Container>(player), "bandage") == 2);
+    CHECK(game::CountGroundItems(ecs) == 1);
+    CHECK(api.ZombieCount() == 1);
 }

@@ -176,6 +176,30 @@ void PhysicsWorld::DestroyBody(btRigidBody* body) {
     DestroyRigidBodyNow(m_impl->world, body);
 }
 
+void PhysicsWorld::TeleportBody(btRigidBody* body, float gridX, float gridY, int z) {
+    if (body == nullptr) {
+        return;
+    }
+    float halfHeight = 0.0f;
+    if (body->getCollisionShape() != nullptr &&
+        body->getCollisionShape()->getShapeType() == CAPSULE_SHAPE_PROXYTYPE) {
+        auto* capsule = static_cast<btCapsuleShapeZ*>(body->getCollisionShape());
+        halfHeight = capsule->getHalfHeight() + capsule->getRadius();
+    }
+    const btTransform transform(
+        btQuaternion::getIdentity(),
+        btVector3(gridX, gridY, static_cast<float>(z) * kFloorHeightUnits + halfHeight));
+    body->setWorldTransform(transform);
+    body->setInterpolationWorldTransform(transform);  // 防插值拖尾
+    if (body->getMotionState() != nullptr) {
+        body->getMotionState()->setWorldTransform(transform);
+    }
+    body->setLinearVelocity(btVector3(0.0f, 0.0f, 0.0f));
+    body->setAngularVelocity(btVector3(0.0f, 0.0f, 0.0f));
+    body->clearForces();
+    body->activate(true);
+}
+
 void PhysicsWorld::BuildChunkStatics(int chunkX, int chunkY, const world::Chunk& chunk) {
     const std::uint64_t key = PackKey(chunkX, chunkY);
     if (m_impl->chunkStatics.contains(key)) {

@@ -49,6 +49,16 @@ void PathfindingService::OnChunkUnloading(int chunkX, int chunkY) {
     m_chunks.erase(PackKey(chunkX, chunkY));
 }
 
+bool PathfindingService::IsPassable(int gx, int gy) const {
+    const world::ChunkCoord coord = world::ChunkOf(gx, gy);
+    const auto it = m_chunks.find(PackKey(coord.cx, coord.cy));
+    if (it == m_chunks.end()) {
+        return false;  // 未加载 = 未知 = 不可通行（与 PathSnapshot 一致）
+    }
+    const world::SquareLocal local = world::SquareLocalOf(gx, gy);
+    return !it->second.IsBlocked(local.lx, local.ly);
+}
+
 std::shared_ptr<PathSnapshot> PathfindingService::BuildSnapshot(int sx, int sy, int gx,
                                                                 int gy) const {
     const world::ChunkCoord startChunk = world::ChunkOf(sx, sy);

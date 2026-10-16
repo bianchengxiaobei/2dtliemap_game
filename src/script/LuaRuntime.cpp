@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "core/Log.h"
+#include "script/ScriptApi.h"
 
 namespace zl::script {
 namespace {
@@ -69,6 +70,20 @@ std::optional<std::string> ReadFile(const std::filesystem::path& path) {
     return buffer.str();
 }
 
+// 裸建表（sol::table::create 静态重载被派生类成员隐藏）
+sol::table NewTable(lua_State* L, int nrec = 8) {
+    lua_createtable(L, 0, nrec);
+    return sol::stack::pop<sol::table>(L);
+}
+
+sol::table MakePositionTable(lua_State* L, const ScriptVec3& position) {
+    sol::table out = NewTable(L, 3);
+    out["x"] = position.x;
+    out["y"] = position.y;
+    out["z"] = position.z;
+    return out;
+}
+
 }  // namespace
 
 struct LuaRuntime::Impl {
@@ -81,7 +96,114 @@ struct LuaRuntime::Impl {
     sol::table sandboxGlobals;
     std::unordered_map<std::string, ModEntry> mods;
     std::vector<std::string> loadedIds;
+    const ScriptApi* api = nullptr;
     bool initialized = false;
+
+    // Host API 表（M7-T3）：Game/Log/Player/World/Items/Zombies；每 mod 独立绑定
+    // （Log 前缀与闭包捕获的 mod id 相关）。api 为 nullptr 时绑定安全默认值的空壳。
+    void BindApiTables(sol::environment& env, const std::string& modId) {
+        const ScriptApi* scriptApi = api;
+
+        sol::table game = NewTable(lua->lua_state());
+        game["GetTick"] = [scriptApi]() -> std::int64_t {
+            return scriptApi != nullptr ? scriptApi->GetTick() : 0;
+        };
+        game["GetPlayerId"] = [scriptApi]() -> std::uint64_t {
+            return scriptApi != nullptr ? scriptApi->GetPlayerId() : 0;
+        };
+        game["GetTime"] = [scriptApi](sol::this_state ts) -> sol::table {
+            sol::table out = NewTable(ts.L, 6);
+            if (scriptApi != nullptr) {
+                const core::DateTime dt = scriptApi->GetTime();
+                out["year"] = dt.year;
+                out["month"] = dt.month;
+                out["day"] = dt.day;
+                out["hour"] = dt.hour;
+                out["minute"] = dt.minute;
+                out["totalMinutes"] = scriptApi->GetTotalGameMinutes();
+            }
+            return out;
+        };
+        env["Game"] = game;
+
+        sol::table log = NewTable(lua->lua_state());
+        log["Info"] = [modId](const std::string& message) {
+            ZL_INFO("script-mod", "[{}] {}", modId, message);
+        };
+        log["Warn"] = [modId](const std::string& message) {
+            ZL_WARN("script-mod", "[{}] {}", modId, message);
+        };
+        log["Error"] = [modId](const std::string& message) {
+            ZL_ERROR("script-mod", "[{}] {}", modId, message);
+        };
+        env["Log"] = log;
+
+        sol::table player = NewTable(lua->lua_state());
+        player["GetPosition"] = [scriptApi](sol::this_state ts) -> std::optional<sol::table> {
+            ScriptVec3 position;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerPosition(position)) {
+                return std::nullopt;
+            }
+            return MakePositionTable(ts.L, position);
+        };
+        player["Teleport"] = [scriptApi](double x, double y, sol::optional<int> z) -> bool {
+            return scriptApi != nullptr && scriptApi->TeleportPlayer(
+                                               static_cast<float>(x), static_cast<float>(y),
+                                               z.value_or(0));
+        };
+        player["GetHealth"] = [scriptApi](sol::this_state) -> std::optional<double> {
+            float hp = 0.0f;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerHealth(hp)) {
+                return std::nullopt;
+            }
+            return static_cast<double>(hp);
+        };
+        player["AddItem"] = [scriptApi](const std::string& defId, sol::optional<int> count) -> int {
+            return scriptApi != nullptr ? scriptApi->AddPlayerItem(defId, count.value_or(1)) : 0;
+        };
+        env["Player"] = player;
+
+        sol::table world = NewTable(lua->lua_state());
+        world["IsPassable"] = [scriptApi](int gx, int gy) -> bool {
+            return scriptApi != nullptr && scriptApi->IsPassable(gx, gy);
+        };
+        world["SpawnItem"] = [scriptApi](const std::string& defId, double x, double y,
+                                         sol::optional<int> z) -> bool {
+            return scriptApi != nullptr && scriptApi->SpawnItem(defId, static_cast<float>(x),
+                                                                static_cast<float>(y), z.value_or(0));
+        };
+        env["World"] = world;
+
+        sol::table zombies = NewTable(lua->lua_state());
+        zombies["Count"] = [scriptApi]() -> int {
+            return scriptApi != nullptr ? scriptApi->ZombieCount() : 0;
+        };
+        zombies["Spawn"] = [scriptApi](double x, double y, sol::optional<int> z) -> std::uint64_t {
+            if (scriptApi == nullptr) {
+                return 0;
+            }
+            return scriptApi->SpawnZombie(static_cast<float>(x), static_cast<float>(y),
+                                          z.value_or(0));
+        };
+        zombies["GetPosition"] = [scriptApi](sol::this_state ts,
+                                             std::uint64_t handle) -> std::optional<sol::table> {
+            ScriptVec3 position;
+            if (scriptApi == nullptr || !scriptApi->GetZombiePosition(handle, position)) {
+                return std::nullopt;
+            }
+            return MakePositionTable(ts.L, position);
+        };
+        env["Zombies"] = zombies;
+
+        sol::table itemsApi = NewTable(lua->lua_state());
+        itemsApi["Exists"] = [scriptApi](const std::string& defId) -> bool {
+            return scriptApi != nullptr && scriptApi->ItemExists(defId);
+        };
+        itemsApi["GetName"] = [scriptApi](const std::string& defId) -> std::string {
+            return scriptApi != nullptr ? scriptApi->ItemName(defId) : std::string();
+        };
+        env["Items"] = itemsApi;
+    }
 
     // 在指定沙箱环境中执行一段 chunk（chunkName 以 '@' 开头 → 错误显示相对路径:行号）
     bool RunChunk(const std::string& source, const std::string& chunkName, sol::environment& env,
@@ -126,6 +248,8 @@ struct LuaRuntime::Impl {
         lua_pushcclosure(L, LuaPrintBridge, 1);
         lua_setfield(L, -2, "print");                     // env.print = 重定向桥
         lua_pop(L, 1);
+
+        BindApiTables(env, modId);                        // Host API 表（M7-T3）
         return env;
     }
 
@@ -174,6 +298,10 @@ LuaRuntime::~LuaRuntime() {
 
 const char* LuaRuntime::Name() const {
     return "lua";
+}
+
+void LuaRuntime::SetApi(const ScriptApi* api) {
+    m_impl->api = api;
 }
 
 bool LuaRuntime::Initialize(std::string& errorOut) {

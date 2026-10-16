@@ -85,12 +85,16 @@ bool GameApp::Init(int argc, char** argv) {
     }
     m_ctx.items = &m_itemRegistry;
 
-    // 1.6 脚本系统（M7-T1/T2）：注册 Lua 后端并初始化（script.backend 决定 mod 默认后端）；
-    // mod 扫描/加载在 M7-T5 接入
+    // 1.6 脚本系统（M7-T1/T2/T3）：注册 Lua 后端 + Host API 接入并初始化
+    // （script.backend 决定 mod 默认后端；mod 扫描/加载在 M7-T5 接入）
     if (m_config.Get<bool>("script.enabled", true)) {
-        m_script.RegisterRuntime(std::make_unique<script::LuaRuntime>());
+        m_scriptApi.Attach(&m_ctx);
+        auto luaRuntime = std::make_unique<script::LuaRuntime>();
+        luaRuntime->SetApi(&m_scriptApi);
+        m_script.RegisterRuntime(std::move(luaRuntime));
         m_script.InitializeAll();
-        ZL_INFO("script", "脚本系统就绪（后端 {} 个）", m_script.RuntimeCount());
+        ZL_INFO("script", "脚本系统就绪（后端 {} 个，API v{}）", m_script.RuntimeCount(),
+                script::ScriptApi::kApiVersion);
     } else {
         ZL_INFO("script", "脚本系统已禁用（script.enabled=false）");
     }

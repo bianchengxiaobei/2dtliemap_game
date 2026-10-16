@@ -70,6 +70,10 @@ public:
     void OnChunkLoaded(const world::Chunk& chunk);
     void OnChunkUnloading(int chunkX, int chunkY);
 
+    // 通行查询（M7-T3）：世界格坐标（z=0 地面层位图）；未加载 chunk 一律视为不可通行
+    // （与 PathSnapshot 语义一致；供脚本 World.IsPassable 使用）。
+    bool IsPassable(int gx, int gy) const;
+
     // 发起寻路（主线程）。返回 queryId（> 0），与结果一一对应。
     std::uint64_t Submit(int startX, int startY, int goalX, int goalY);
 
