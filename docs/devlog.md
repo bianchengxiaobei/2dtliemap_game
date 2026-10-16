@@ -680,3 +680,55 @@ FPS 59~61 / drawcall 3 不变。
 **冒烟（实机 40 僵尸，截图 m5t5_*）**：HUD `lod: full=32 mid=8`（拉远后 mid=11，焦点分档即时重评）、
 `virtual: hordes=5 zombies=200 nearest=44→30→23`（统计层漂移）；F7 枪声回归无异常；
 尸群不再"完全叠成一坨"，而是环绕玩家约 0.8 格间距的密集环（Boids 分离的视觉验证）。
+
+---
+
+## 2026-10-16 M5-T6 战斗系统（扇形判定 → 伤害管线 → 硬直/击退/倒地/尸体）
+
+**组件**（`characters/components/CombatComponents.h` + `CharacterComponents.h`）
+- `DamageType{Blunt/Bite/Debug}`；`DamageEvent{sourceId(稳定ID), type, amount, dir, knockback, stagger}`
+  —— 管线输入结构：**来源/类型解耦**（Health 只认数值；M6 护甲按类型扩展减伤）；
+- `AttackIntent{targetId, dir, range, arcDegrees, damage, knockback, stagger, type, pending}`
+  —— 挥击申请（AI/玩家写 pending，CombatSystem 消费）；`HitReaction{staggerLeft, vx, vy, flashLeft}`
+  —— 受击反应（AI 读"硬直中"；渲染读 SpriteRef.tint 闪红）；`Dying{remaining}` —— 倒地过渡。
+
+**CombatSystem**（`characters/systems/CombatSystem`，链位 Boids → **Combat** → VirtualHorde → Movement）
+1) 受击反应衰减：硬直中 MoveIntent 被击退速度接管（覆盖 AI/输入），速度每 tick ×(1−6dt) 衰减
+   （3 格/秒击退总位移 ≈0.5 格）；闪红 0.15s → 恢复 tint；
+2) 消费 AttackIntent：命中候选**每 tick 一次收集**（HP>0）→ 扇形判定（中心距 ≤ range 且
+   与 dir 夹角 ≤ arc/2）→ 可多目标（尸堆里一刀扫多只）；
+3) `ApplyDamage` 统一管线（tick/演示/测试/未来脚本共用）：扣血 → 硬直(取大)/击退(覆盖)/
+   闪红 → 致死记 kills（结算交 DeathSystem）；**玩家被抓/击杀走 INFO 日志**（冒烟信号）。
+- 阵营规则（M5-T6 临时）：AI 攻击者不误伤同类（僵尸 vs 僵尸豁免；阵营系统 M7+ 再抽象）。
+- EnTT 坑：**空类型组件（PlayerTag 这类 tag）不能用 `registry.try_get<T>()`**（本版
+  registry.hpp 对空类型返回 void 编译报错）→ 用 `registry.all_of<T>(e)`。
+
+**AiSystem（M5-T6）**：攻击脉冲把参数写进 AttackIntent（targetId/dir=指向目标/damage/…，
+配置 combat.zombie*）；受击硬直时**冻结整个状态机**（转移/计时/动作，击退位移由 Combat 接管）。
+
+**DeathSystem 两段式（硬直→倒地→尸体 全表现）**：HP<=0 → 阶段 1 入 `Dying`（清意图 +
+冻结速度 + 精灵换尸体帧，0.5s 倒地窗口；击退滑行仍生效）→ 阶段 2 销毁物理体 + 延迟销毁 +
+生成尸体。`Update(world, dt)` 签名更新；玩家倒地期间感知不再把它当视觉目标（僵尸立即丢失追击）。
+
+**玩家挥击（演示，SPACE）**：自动瞄准 3 格内最近僵尸（M6 接武器/朝向重做）→ 写 AttackIntent
+（40 伤害/100° 扇形/1.7 格）；F6 演示击杀改走 ApplyDamage（999 Debug）——两条路径同一管线。
+HUD 新增第 13 行 `combat: swings/hits/dmg/kills | staggered`；键位行加 SPACE。
+
+**配置**：新增 `combat.*`（zombieDamage 8 / zombieKnockback 2 / zombieStagger 0.3 /
+zombieRange 1.3 / zombieArc 120 / playerDamage 40 / playerRange 1.7 / playerKnockback 3 /
+playerStagger 0.35 / deathFallSeconds 0.5）+ `Attack: SPACE`。
+
+**测试**（tests/test_combat.cpp 新增 7 用例；test_death.cpp 适配两段式）
+- 扇形判定（锥内命中/锥外/距离外/pending 单次消费）；伤害管线（解耦 + 硬直接管移动 +
+  击退衰减 + 闪红恢复 + 致死不重复结算）；AiSystem 攻击脉冲落 AttackIntent + 硬直冻结
+  （30 tick 无新脉冲、stateTime 不涨）；**全链路**（3 刀致死 → Dying（速度冻结/换尸体帧）→
+  倒地中不再被命中 → 40 tick 后转尸体）；僵尸不误伤同类（同类豁免/玩家正常受击）；
+  感知剔除死亡玩家。**119 用例 / 117456(Debug) / 117457(Release) 断言全绿**。
+
+**冒烟（实机，截图 m5t6_*）**：开场即被村内僵尸围住撕咬（F7 前已 `attack=5`）——
+`玩家受到伤害：8 点` 连续刷屏、hp 92→4 归零 → `倒地：ID 41` → 尸体 → 原地重生（M5-T1 流程
+无回归）；空格 8 连击 `swings=95 hits=111（多目标扇形）dmg=1784 kills=13`，
+`击杀：目标 ID 35（来源 ID 51，40 点 0 伤害）→ 倒地 → 0.5s 后尸体`；HUD `staggered=1`
+（被撕咬硬直实时可见）、`virtual nearest=29`（M5-T5 无回归）。
+**已知调优项**：≥5 只僵尸围咬时玩家被连续硬直难以脱身（PZ 式"被抓住"；平衡与逃生留 M6+
+武器/推挤），重生点固定原地（安全点选择留后续）。

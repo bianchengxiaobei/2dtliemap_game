@@ -48,6 +48,8 @@ private:
     void KillNearestDemoEntity();
     // M5-T4：演示开枪——玩家位置发射大半径 SoundEvent（事件总线 OnSound）吸引僵尸
     void EmitGunshot();
+    // M5-T6：玩家挥击（空格）——自动瞄准最近僵尸 → 写 AttackIntent → CombatSystem 伤害管线
+    void PlayerAttack();
     // M4-T4：玩家（PlayerTag）——chunk 加载完成后在村庄中心附近找可走格生成
     void EnsurePlayerSpawned();
     ecs::Entity SpawnCharacter(float px, float py);
@@ -88,6 +90,11 @@ private:
     ecs::Entity m_player = entt::null;
     // M5-T4：演示枪声基础可闻半径（格；config sounds.gunshotRadius）
     float m_gunshotRadius = 30.0f;
+    // M5-T6：玩家挥击参数（config combat.player*；演示自动瞄准射程固定 3 格）
+    float m_playerAttackDamage = 40.0f;
+    float m_playerAttackRange = 1.7f;
+    float m_playerAttackKnockback = 3.0f;
+    float m_playerAttackStagger = 0.35f;
     // M4-T7：点击移动反馈（notice 文本 + 目标格标记）
     std::string m_noticeText;
     float m_noticeTimer = 0.0f;

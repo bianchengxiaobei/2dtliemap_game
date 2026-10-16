@@ -66,4 +66,11 @@ struct Corpse {
     std::uint64_t sourceId = 0;  // 死者 StableId（未来搜刮/存档溯源）
 };
 
+// M5-T6：倒地过渡（DeathSystem）：HP<=0 → 先入本组件（不可行动、速度冻结，
+// 击退仍可滑行），remaining 递减到 0 才生成尸体并回收实体——
+// 表现链"硬直（HitReaction）→ 倒地（Dying）→ 尸体（Corpse）"。
+struct Dying {
+    float remaining = 0.5f;  // 倒地剩余（秒）
+};
+
 }  // namespace zl::ecs

@@ -63,6 +63,18 @@
     "cohesionWeight": 0.5,
     "alignmentWeight": 0.4
   },
+  "combat": {
+    "zombieDamage": 8,
+    "zombieKnockback": 2.0,
+    "zombieStaggerSeconds": 0.3,
+    "zombieRange": 1.3,
+    "zombieArcDegrees": 120,
+    "playerDamage": 40,
+    "playerRange": 1.7,
+    "playerKnockback": 3.0,
+    "playerStaggerSeconds": 0.35,
+    "deathFallSeconds": 0.5
+  },
   "input": {
     "bindings": {
       "Quit": "ESCAPE",
@@ -83,6 +95,7 @@
       "ToggleFreeCam": "F4",
       "DemoKill": "F6",
       "DemoGunshot": "F7",
+      "Attack": "SPACE",
       "TogglePhysicsDebug": "F10"
     }
   },

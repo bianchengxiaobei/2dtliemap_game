@@ -25,6 +25,9 @@
 #include "ai/systems/LodSystem.h"
 #include "ai/systems/PerceptionSystem.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
+#include "characters/systems/AnimationSystem.h"
+#include "characters/systems/CombatSystem.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/SpatialIndex.h"
 #include "ecs/components/CommonComponents.h"
@@ -109,6 +112,13 @@ void WorldDemoState::OnEnter() {
     m_cruiseMinutes = config.Get<double>("world.cruiseMinutes", 5.0);
     // M5-T4：演示枪声基础可闻半径（隔墙衰减由感知系统的传播模型按听者计算）
     m_gunshotRadius = static_cast<float>(config.Get<double>("sounds.gunshotRadius", 30.0));
+    // M5-T6：玩家挥击参数（伤害管线入口，CombatSystem 消费 AttackIntent）
+    m_playerAttackDamage = static_cast<float>(config.Get<double>("combat.playerDamage", 40.0));
+    m_playerAttackRange = static_cast<float>(config.Get<double>("combat.playerRange", 1.7));
+    m_playerAttackKnockback =
+        static_cast<float>(config.Get<double>("combat.playerKnockback", 3.0));
+    m_playerAttackStagger =
+        static_cast<float>(config.Get<double>("combat.playerStaggerSeconds", 0.35));
     if (m_cruiseEnabled) {
         camera.SetCenter(render::ToScreen(m_cruiseCenterX + m_cruiseRadius, m_cruiseCenterY));
         ZL_INFO("perf", "自动巡航开启：圆心=({:.0f},{:.0f}) 半径={:.0f} 速度={:.0f}格/s 时长={:.1f}min",
@@ -120,7 +130,7 @@ void WorldDemoState::OnEnter() {
     SpawnDemoEntities();
     // M4-T4：玩家实体由 OnFrame 延迟生成（等目标 chunk 加载完成）
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | F4 自由相机 | F6 演示击杀 | F7 开枪（声音引怪） | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 攻击 | F6 演示击杀 | F7 开枪（声音引怪） | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
 }
 
 void WorldDemoState::ApplyCameraMode() {
@@ -235,6 +245,7 @@ void WorldDemoState::EnsurePlayerSpawned() {
     registry.emplace<ecs::MoveIntent>(m_player, ecs::MoveIntent{});
     registry.emplace<ecs::PathRequest>(m_player, ecs::PathRequest{});  // M4-T7：点击移动
     registry.emplace<ecs::PathFollow>(m_player, ecs::PathFollow{});
+    registry.emplace<ecs::AttackIntent>(m_player, ecs::AttackIntent{});  // M5-T6：空格挥击
     const int radius = std::max(std::abs(spawnX - kTargetX), std::abs(spawnY - kTargetY));
     ZL_INFO("game", "玩家实体生成：格 ({}, {})（目标 ({}, {})，搜索半径 {}）", spawnX, spawnY,
             kTargetX, kTargetY, radius);
@@ -393,6 +404,7 @@ void WorldDemoState::SpawnDemoEntities() {
         registry.emplace<ecs::PathRequest>(e, ecs::PathRequest{});
         registry.emplace<ecs::PathFollow>(e, ecs::PathFollow{});
         registry.emplace<ecs::LodState>(e, ecs::LodState{});  // M5-T5：LodSystem 逐帧写档位
+        registry.emplace<ecs::AttackIntent>(e, ecs::AttackIntent{});  // M5-T6：攻击脉冲 -> 伤害
     }
     ZL_INFO("ecs", "生成 {} 个 AI 游荡者（AiSystem + PerceptionSystem；区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]）",
             kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1);
@@ -452,11 +464,27 @@ void WorldDemoState::KillNearestDemoEntity() {
         SetNotice("demo kill: no live target nearby", kNoticeFailColor, 2.0f);
         return;
     }
-    registry.get<ecs::Health>(best).current = 0.0f;  // 下一 tick DeathSystem → 尸体
+    // M5-T6：改走统一伤害管线（硬直/击退/闪红 + 致死交给 DeathSystem 的倒地窗口）
     const auto* pos = registry.try_get<ecs::Position>(best);
     const std::uint64_t id = m_ctx.ecs->IdOf(best).id;
+    if (m_ctx.combat != nullptr) {
+        ecs::DamageEvent event;
+        event.sourceId = m_player != entt::null ? m_ctx.ecs->IdOf(m_player).id : 0;
+        event.type = ecs::DamageType::Debug;
+        event.amount = 999.0f;
+        float dx = pos != nullptr ? pos->x - ref.x : 1.0f;
+        float dy = pos != nullptr ? pos->y - ref.y : 1.0f;
+        const float len = std::sqrt(dx * dx + dy * dy);
+        event.dirX = len > 0.0001f ? dx / len : 0.7071f;
+        event.dirY = len > 0.0001f ? dy / len : 0.7071f;
+        event.knockback = 2.5f;
+        event.staggerSeconds = 0.35f;
+        m_ctx.combat->ApplyDamage(*m_ctx.ecs, best, event);
+    } else {
+        registry.get<ecs::Health>(best).current = 0.0f;  // 无战斗系统（降级）：直接归零
+    }
     SetNotice("demo kill: id " + std::to_string(id) + " -> corpse", kNoticeInfoColor, 2.5f);
-    ZL_INFO("characters", "演示击杀：稳定 ID {}（格 ({:.1f}, {:.1f})）HP 归零（F6）", id,
+    ZL_INFO("characters", "演示击杀：稳定 ID {}（格 ({:.1f}, {:.1f})）伤害管线致死（F6）", id,
             pos != nullptr ? pos->x : 0.0f, pos != nullptr ? pos->y : 0.0f);
 }
 
@@ -481,6 +509,69 @@ void WorldDemoState::EmitGunshot() {
               kNoticeInfoColor, 2.0f);
     ZL_INFO("ai", "枪声（F7）：声源 ({:.1f}, {:.1f}) 基础半径 {:.0f} 格（隔墙逐格衰减）", shot.x,
             shot.y, shot.radius);
+}
+
+void WorldDemoState::PlayerAttack() {
+    if (m_ctx.ecs == nullptr || m_ctx.combat == nullptr || m_player == entt::null) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* attack = registry.try_get<ecs::AttackIntent>(m_player);
+    const auto* playerPos = registry.try_get<ecs::Position>(m_player);
+    if (attack == nullptr || playerPos == nullptr) {
+        return;
+    }
+
+    // 自动瞄准：最近的可受伤僵尸（≤3 格）。演示用（M5-T6 无武器/鼠标朝向；M6 接装备后重做）
+    constexpr float kAutoAimRange = 3.0f;
+    ecs::Entity best = entt::null;
+    float bestDistSq = kAutoAimRange * kAutoAimRange;
+    registry.view<ecs::AiState, ecs::Health, ecs::Position>().each(
+        [&](const ecs::Entity e, const ecs::AiState&, const ecs::Health& health,
+            const ecs::Position& pos) {
+            if (!m_ctx.ecs->Alive(e) || health.current <= 0.0f) {
+                return;  // continue
+            }
+            const float dx = pos.x - playerPos->x;
+            const float dy = pos.y - playerPos->y;
+            const float distSq = dx * dx + dy * dy;
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                best = e;
+            }
+        });
+    if (best == entt::null) {
+        SetNotice("attack: no target within 3.0", kNoticeFailColor, 1.5f);
+        return;
+    }
+
+    const auto* targetPos = registry.try_get<ecs::Position>(best);
+    float dx = targetPos->x - playerPos->x;
+    float dy = targetPos->y - playerPos->y;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    if (len > 0.0001f) {
+        dx /= len;
+        dy /= len;
+    } else {
+        dx = 1.0f;  // 完全重叠：给个确定方向
+        dy = 0.0f;
+    }
+    attack->targetId = m_ctx.ecs->IdOf(best).id;
+    attack->dirX = dx;
+    attack->dirY = dy;
+    attack->damage = m_playerAttackDamage;
+    attack->range = m_playerAttackRange;
+    attack->knockback = m_playerAttackKnockback;
+    attack->staggerSeconds = m_playerAttackStagger;
+    attack->arcDegrees = 100.0f;
+    attack->type = ecs::DamageType::Blunt;
+    attack->pending = true;  // 下一 tick CombatSystem 消费（扇形判定 → 伤害管线）
+    if (auto* facing = registry.try_get<ecs::Facing>(m_player); facing != nullptr) {
+        facing->dir = characters::AnimationSystem::FacingFromVelocity(dx, dy);  // 挥击朝向反馈
+    }
+    SetNotice("attack: swing at id " + std::to_string(attack->targetId), kNoticeInfoColor, 1.2f);
+    ZL_INFO("characters", "玩家挥击（SPACE）：目标稳定 ID {}（中心距 {:.2f} 格，伤害 {:.0f}）",
+            attack->targetId, static_cast<double>(std::sqrt(bestDistSq)), m_playerAttackDamage);
 }
 
 void WorldDemoState::DespawnDemoEntities() {
@@ -654,6 +745,9 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     }
     if (input.IsActionPressed("DemoKill")) {
         KillNearestDemoEntity();  // M5-T1：演示击杀（HP 归零 → 尸体）
+    }
+    if (input.IsActionPressed("Attack")) {
+        PlayerAttack();  // M5-T6：空格挥击（自动瞄准最近僵尸 → 伤害管线）
     }
     if (input.IsActionPressed("DemoGunshot")) {
         EmitGunshot();  // M5-T4：演示开枪（大半径 SoundEvent → 感知 → 僵尸来查看）
@@ -1115,7 +1209,7 @@ void WorldDemoState::DrawDebugText() {
             percStats.alerted, percStats.heard);
     }
     bgfx::dbgTextPrintf(0, 9, 0x07,
-                        "WASD/LMB move | F4 cam | F6 demo-kill | F7 gunshot | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+                        "WASD/LMB move | SPACE attack | F6 demo-kill | F7 gunshot | F4 cam | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
     // M5-T5：LOD 档位 + 虚拟群落统计（虚拟化 = 统计层，不入 registry）
     if (m_ctx.lod != nullptr) {
         const ai::LodSystem::Stats lodStats = m_ctx.lod->GetStats();
@@ -1132,6 +1226,15 @@ void WorldDemoState::DrawDebugText() {
     if (m_noticeTimer > 0.0f && !m_noticeText.empty()) {
         bgfx::dbgTextPrintf(0, 12, static_cast<std::uint8_t>(m_noticeColor), "%s",
                             m_noticeText.c_str());
+    }
+    // M5-T6：战斗统计（挥击/命中/伤害/击杀累计 + 本帧硬直数）
+    if (m_ctx.combat != nullptr) {
+        const characters::CombatSystem::Stats combatStats = m_ctx.combat->GetStats();
+        bgfx::dbgTextPrintf(
+            0, 13, 0x0f, "combat: swings=%llu hits=%llu dmg=%.0f kills=%llu | staggered=%d",
+            static_cast<unsigned long long>(combatStats.swings),
+            static_cast<unsigned long long>(combatStats.hits), combatStats.damageDealt,
+            static_cast<unsigned long long>(combatStats.kills), combatStats.staggered);
     }
 }
 

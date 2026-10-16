@@ -11,6 +11,7 @@
 #include "ai/systems/PathFollowSystem.h"
 #include "ai/systems/PerceptionSystem.h"
 #include "characters/systems/AnimationSystem.h"
+#include "characters/systems/CombatSystem.h"
 #include "characters/systems/DeathSystem.h"
 #include "characters/systems/InputSystem.h"
 #include "characters/systems/MovementSystem.h"
@@ -89,8 +90,10 @@ private:
     std::unique_ptr<characters::MovementSystem> m_movementSystem;
     std::unique_ptr<physics::PhysicsSyncSystem> m_physicsSyncSystem;
     std::unique_ptr<characters::AnimationSystem> m_animationSystem;
-    // 死亡流程（M5-T1）：PhysicsSync 之后、Animation 之前
+    // 死亡流程（M5-T1/T6）：倒地窗口 → 尸体（PhysicsSync 之后、Animation 之前）
     std::unique_ptr<characters::DeathSystem> m_deathSystem;
+    // 战斗（M5-T6）：伤害管线 + 受击反应（Boids 之后、Movement 之前）
+    std::unique_ptr<characters::CombatSystem> m_combatSystem;
 
     // 寻路（M4-T6）：passability 位图随 chunk 生命周期维护；PathFollowSystem 在固定链中
     std::unique_ptr<ai::PathfindingService> m_pathfinding;

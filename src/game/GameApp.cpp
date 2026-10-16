@@ -27,6 +27,7 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"DemoTasks", "F3"},     {"ReloadBindings", "F5"}, {"ToggleCruise", "F8"},
     {"ToggleDebugOverlay", "F9"}, {"TogglePhysicsDebug", "F10"}, {"DemoKill", "F6"},
     {"DemoGunshot", "F7"},   // M5-T4：演示开枪（大半径 SoundEvent）
+    {"Attack", "SPACE"},     // M5-T6：玩家挥击（演示用自动瞄准，M6 接武器/朝向）
     {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
     {"MoveRight", "D"},
     // M4-T4：WASD 归玩家；方向键平移相机（自由相机模式，M4-T5）
@@ -171,7 +172,17 @@ bool GameApp::Init(int argc, char** argv) {
     const auto walkable = [this](int wx, int wy) {
         return !IsSquareBlocked(*m_world, wx, wy, 0);
     };
-    m_aiSystem = std::make_unique<ai::AiSystem>(walkable);
+    // M5-T6：僵尸攻击参数（攻击脉冲 → AttackIntent → CombatSystem 伤害管线）
+    ai::AiSystem::AttackParams aiAttack;
+    aiAttack.damage = static_cast<float>(m_config.Get<double>("combat.zombieDamage", 8.0));
+    aiAttack.knockback =
+        static_cast<float>(m_config.Get<double>("combat.zombieKnockback", 2.0));
+    aiAttack.staggerSeconds =
+        static_cast<float>(m_config.Get<double>("combat.zombieStaggerSeconds", 0.3));
+    aiAttack.range = static_cast<float>(m_config.Get<double>("combat.zombieRange", 1.3));
+    aiAttack.arcDegrees =
+        static_cast<float>(m_config.Get<double>("combat.zombieArcDegrees", 120.0));
+    m_aiSystem = std::make_unique<ai::AiSystem>(walkable, aiAttack);
     ai::PerceptionParams perceptionParams;
     perceptionParams.sightRadius =
         static_cast<float>(m_config.Get<double>("perception.sightRadius", 12.0));
@@ -219,6 +230,12 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.boids = m_boidsSystem.get();
     m_ctx.virtualHordes = &m_virtualHordes;
 
+    // 5.8 战斗（M5-T6）：伤害管线（伤害事件 → Health/HitReaction 统一入口）+ 倒地窗口时长
+    m_combatSystem = std::make_unique<characters::CombatSystem>();
+    m_ctx.combat = m_combatSystem.get();
+    const float deathFallSeconds =
+        static_cast<float>(m_config.Get<double>("combat.deathFallSeconds", 0.5));
+
     // 6. 上下文 + 事件探针
     m_ctx.config = &m_config;
     m_ctx.events = &m_events;
@@ -238,9 +255,10 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
 
     // ECS 固定链集中注册（docs/00 §6.1）；顺序 = 执行顺序。
-    // 目前：索引维护 → Input → Perception → Ai → PathFollow → Movement → PhysicsSync → Death → Animation；
-    // 后续任务按链序插入（目标链：Input → Perception → Ai → PathFollow → Movement → PhysicsSync →
-    //   Combat/Death → SpawnLod → RenderCollect）。
+    // 目前：索引维护 → LOD → Input → Perception → Ai → PathFollow → Boids → Combat →
+    //   VirtualHorde → Movement → PhysicsSync → Death → Animation；
+    // 后续任务按链序插入（目标链：… → Movement → PhysicsSync → Combat/Death → SpawnLod →
+    //   RenderCollect）。
     m_ecs.Systems().AddSystem("SpatialIndexSystem",
                               [this](ecs::EcsWorld& w, float) { m_spatialIndex.Update(w); });
     // LOD 档位（M5-T5）：紧跟索引之后、感知之前——本 tick 的门控标志供后续系统读取
@@ -272,6 +290,11 @@ bool GameApp::Init(int argc, char** argv) {
     // 群体行为（M5-T5）：改写 PathFollow 写的意图（分离/聚合/对齐），先于 Movement 生效
     m_ecs.Systems().AddSystem("BoidsSystem",
                               [this](ecs::EcsWorld& w, float) { m_boidsSystem->Update(w); });
+    // 战斗（M5-T6）：扇形攻击判定 + 伤害管线 —— 在群体行为之后（击退覆盖 flocking）、
+    // Movement 之前（硬直实体的击退速度同 tick 生效）
+    m_ecs.Systems().AddSystem("CombatSystem", [this](ecs::EcsWorld& w, float dt) {
+        m_combatSystem->Update(w, dt);
+    });
     // 虚拟群落（M5-T5）：统计层推进（朝玩家漂移）；T7 SpawnLodSystem 负责实体化
     m_ecs.Systems().AddSystem("VirtualHordeSystem", [this](ecs::EcsWorld& w, float dt) {
         float px = 0.0f;
@@ -295,10 +318,11 @@ bool GameApp::Init(int argc, char** argv) {
     m_ecs.Systems().AddSystem("PhysicsSyncSystem", [this](ecs::EcsWorld& w, float dt) {
         m_physicsSyncSystem->Update(w, dt);
     });
-    // 死亡流程（M5-T1）：位置已由 PhysicsSync 回写；尸体创建与实体销毁在 tick 末 Flush 生效
-    m_deathSystem = std::make_unique<characters::DeathSystem>(m_physics.get());
+    // 死亡流程（M5-T1/T6）：位置已由 PhysicsSync 回写；先倒地窗口（Dying）再转尸体；
+    // 尸体创建与实体销毁在 tick 末 Flush 生效
+    m_deathSystem = std::make_unique<characters::DeathSystem>(m_physics.get(), deathFallSeconds);
     m_ecs.Systems().AddSystem("DeathSystem",
-                              [this](ecs::EcsWorld& w, float) { m_deathSystem->Update(w); });
+                              [this](ecs::EcsWorld& w, float dt) { m_deathSystem->Update(w, dt); });
     // 动画读"物理实际速度"（撞墙≈0 → 自动进站立帧），因此排在 PhysicsSync 之后
     m_ecs.Systems().AddSystem("AnimationSystem", [this](ecs::EcsWorld& w, float dt) {
         m_animationSystem->Update(w, dt);
@@ -345,6 +369,7 @@ void GameApp::Shutdown() {
     m_physicsSyncSystem.reset();
     m_animationSystem.reset();
     m_deathSystem.reset();
+    m_combatSystem.reset();
     m_inputSystem.reset();
     m_movementSystem.reset();
     m_pathFollowSystem.reset();  // 先于服务

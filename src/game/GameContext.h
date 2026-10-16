@@ -27,6 +27,10 @@ class PerceptionSystem;
 class VirtualHordeStore;
 }  // namespace zl::ai
 
+namespace zl::characters {
+class CombatSystem;
+}  // namespace zl::characters
+
 namespace zl::physics {
 class PhysicsWorld;
 }  // namespace zl::physics
@@ -93,6 +97,9 @@ struct GameContext {
     ai::LodSystem* lod = nullptr;
     ai::BoidsSystem* boids = nullptr;
     ai::VirtualHordeStore* virtualHordes = nullptr;
+
+    // 战斗（M5-T6 起）：伤害管线入口（演示/脚本可直调 ApplyDamage）+ HUD 统计
+    characters::CombatSystem* combat = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <type_traits>
 
 #include "characters/components/CharacterComponents.h"
@@ -84,8 +85,19 @@ TEST_CASE("DeathSystem：HP<=0 → 物理体先销毁 + 延迟销毁 + 尸体实
     registry.emplace<Health>(healthy, Health{55.0f, 100.0f});
 
     CHECK(physics.DynamicBodyCount() == 1u);
-    DeathSystem death(&physics);
-    death.Update(world);
+    DeathSystem death(&physics, 0.5f);
+    death.Update(world, 1.0f / 60.0f);  // 第 1 tick：进入倒地窗口（M5-T6 Dying）
+    CHECK(registry.all_of<ecs::Dying>(dying));
+    CHECK(world.Alive(dying));                // 还在"倒下"过程：未入销毁队列
+    CHECK(world.Registry().valid(dying));
+    CHECK(physics.DynamicBodyCount() == 1u);  // 物理体窗口内保留（击退滑行仍可）
+    CHECK(world.AliveCount() == 2u);          // 死者 + 健康者（尸体尚未创建）
+    // 表现：换尸体帧（倒下）+ 速度冻结
+    CHECK(registry.get<SpriteRef>(dying).sprite == ecs::HashName("corpse.placeholder"));
+    CHECK(registry.get<Velocity>(dying).x == doctest::Approx(0.0f));
+
+    // 推进倒地窗口（0.5s）→ 销毁物理体 + 延迟销毁 + 尸体（Flush 前尸体仍属延迟创建）
+    death.Update(world, 0.5f);
     CHECK_FALSE(world.Alive(dying));          // 语义已死（延迟回收）
     CHECK(world.Registry().valid(dying));     // 本 tick 内存仍在
     CHECK(physics.DynamicBodyCount() == 0u);  // 物理体已回收（无泄漏）
@@ -131,14 +143,15 @@ TEST_CASE("DeathSystem：同 tick 多死者各自成尸；二次运行不重复�
     registry.emplace<Position>(c, Position{9.0f, 9.0f, 0});
     registry.emplace<Health>(c, Health{0.01f, 100.0f});  // 未死（>0）
 
-    death.Update(world);
+    death.Update(world, 1.0f / 60.0f);  // 两个死者进入倒地窗口（Dying）
+    death.Update(world, 0.5f);          // 窗口结束 → 各自转尸体
     world.Flush();
     CHECK(registry.view<Corpse>().size() == 2u);
     CHECK(world.Alive(c));
     CHECK(world.AliveCount() == 3u);  // c + 2 尸体
 
     // 二次运行：死者已回收、尸体无 Health → 不再产生新尸体
-    death.Update(world);
+    death.Update(world, 1.0f / 60.0f);
     world.Flush();
     CHECK(registry.view<Corpse>().size() == 2u);
     CHECK(world.AliveCount() == 3u);
@@ -187,7 +200,7 @@ TEST_CASE("DeathSystem：全链路——Health 归零的物理角色在 tick 链
     const auto runTick = [&] {
         movement.Update(world, kDt);
         sync.Update(world, kDt);
-        death.Update(world);
+        death.Update(world, kDt);
         world.Flush();
     };
 
@@ -200,15 +213,22 @@ TEST_CASE("DeathSystem：全链路——Health 归零的物理角色在 tick 链
 
     registry.get<Health>(e).current = 0.0f;  // 致死一击
     runTick();
+    CHECK(registry.valid(e));                 // M5-T6：倒地窗口——实体还在
+    CHECK(registry.all_of<ecs::Dying>(e));
+    CHECK(physics.DynamicBodyCount() == 1u);  // 物理体窗口内保留
 
-    CHECK_FALSE(registry.valid(e));          // tick 末已回收
+    for (int i = 0; i < 40 && registry.valid(e); ++i) {  // 推进窗口（0.5s）→ 回收
+        runTick();
+    }
+    CHECK_FALSE(registry.valid(e));           // 已回收
     CHECK(physics.DynamicBodyCount() == 0u);  // 无物理体泄漏
     CHECK(registry.view<Corpse>().size() == 1u);
     bool matched = false;
     registry.view<Corpse, Position>().each(
         [&](const entt::entity, const Corpse&, const Position& pos) {
-            CHECK(pos.x == doctest::Approx(beforeDeath.x));  // 尸体留在死亡瞬间的位置
-            CHECK(pos.y == doctest::Approx(beforeDeath.y));
+            // 尸体留在倒地位置（窗口内速度冻结；容差 = 致死 tick 残余位移）
+            CHECK(std::abs(pos.x - beforeDeath.x) < 0.2f);
+            CHECK(std::abs(pos.y - beforeDeath.y) < 0.2f);
             matched = true;
         });
     CHECK(matched);

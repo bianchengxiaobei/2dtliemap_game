@@ -17,7 +17,7 @@ constexpr const char* kCorpseSpriteName = "corpse.placeholder";
 
 }  // namespace
 
-void DeathSystem::Update(ecs::EcsWorld& world) {
+void DeathSystem::Update(ecs::EcsWorld& world, float dt) {
     entt::registry& registry = world.Registry();
 
     // 先收集（不在 view 遍历中改结构；Alive 过滤本 tick 已入销毁队列的实体）
@@ -29,6 +29,35 @@ void DeathSystem::Update(ecs::EcsWorld& world) {
     });
 
     for (const ecs::Entity e : dead) {
+        // —— 阶段 1：倒地窗口（M5-T6）——
+        auto* dying = registry.try_get<ecs::Dying>(e);
+        if (dying == nullptr) {
+            ecs::Dying state;
+            state.remaining = m_fallSeconds;
+            registry.emplace<ecs::Dying>(e, state);
+            // 停步：清移动意图 + 冻结速度（击退由 CombatSystem 的硬直接管滑行）
+            if (auto* intent = registry.try_get<ecs::MoveIntent>(e); intent != nullptr) {
+                intent->x = 0.0f;
+                intent->y = 0.0f;
+            }
+            if (auto* velocity = registry.try_get<ecs::Velocity>(e); velocity != nullptr) {
+                velocity->x = 0.0f;
+                velocity->y = 0.0f;
+            }
+            // 表现：换成尸体帧（"倒下"）；闪烁 tint 由 CombatSystem 在硬直结束时恢复
+            if (auto* sprite = registry.try_get<ecs::SpriteRef>(e); sprite != nullptr) {
+                sprite->sprite = ecs::HashName(kCorpseSpriteName);
+            }
+            ZL_INFO(kLogModule, "倒地：稳定 ID {}（{:.1f}s 后转尸体）", world.IdOf(e).id,
+                    m_fallSeconds);
+            continue;
+        }
+        dying->remaining -= dt;
+        if (dying->remaining > 0.0f) {
+            continue;  // 窗口未结束：还在"倒下"过程（击退滑行仍生效）
+        }
+
+        // —— 阶段 2：转尸体 + 回收 ——
         float x = 0.0f;
         float y = 0.0f;
         int z = 0;

@@ -110,6 +110,12 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                 return;
             }
             const float edt = lod != nullptr ? dt * lod->dtScale : dt;
+            // M5-T6：受击硬直中 → 冻结状态机（转移/计时/动作全暂停）；
+            // 击退位移由 CombatSystem 接管 MoveIntent，硬直结束恢复原状态语义
+            const auto* hit = registry.try_get<ecs::HitReaction>(e);
+            if (hit != nullptr && hit->staggerLeft > 0.0f) {
+                return;
+            }
 
             auto* health = registry.try_get<ecs::Health>(e);
             auto* request = registry.try_get<ecs::PathRequest>(e);
@@ -234,7 +240,26 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                             ++ai.attackPulses;
                             ++m_stats.swings;
                             ai.attackCooldown = kAttackPeriodSeconds;
-                            // M5-T6：伤害在此脉冲落地（对玩家 = 被抓）
+                            // M5-T6：落下攻击意图（CombatSystem 同 tick 消费：
+                            // 扇形判定 → 伤害管线 → 玩家被抓/僵尸受击）
+                            if (auto* attack = registry.try_get<ecs::AttackIntent>(e);
+                                attack != nullptr) {
+                                attack->targetId = ai.targetId;
+                                const float ddx = targetX - position.x;
+                                const float ddy = targetY - position.y;
+                                const float dlen = std::sqrt(ddx * ddx + ddy * ddy);
+                                if (dlen > 0.0001f) {
+                                    attack->dirX = ddx / dlen;
+                                    attack->dirY = ddy / dlen;
+                                }
+                                attack->damage = m_attack.damage;
+                                attack->knockback = m_attack.knockback;
+                                attack->staggerSeconds = m_attack.staggerSeconds;
+                                attack->range = m_attack.range;
+                                attack->arcDegrees = m_attack.arcDegrees;
+                                attack->type = m_attack.type;
+                                attack->pending = true;
+                            }
                         } else {
                             ai.attackCooldown -= edt;
                         }

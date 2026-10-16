@@ -39,6 +39,7 @@ add_executable(ZomboidLike
     src/ai/systems/PathFollowSystem.cpp
     src/ai/systems/PerceptionSystem.cpp
     src/characters/systems/AnimationSystem.cpp
+    src/characters/systems/CombatSystem.cpp
     src/characters/systems/DeathSystem.cpp
     src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp
@@ -119,6 +120,7 @@ add_executable(ZomboidLikeTests
     tests/test_zombie_ai.cpp
     tests/test_perception.cpp
     tests/test_boids.cpp
+    tests/test_combat.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -130,6 +132,7 @@ add_executable(ZomboidLikeTests
     src/ai/systems/PathFollowSystem.cpp
     src/ai/systems/PerceptionSystem.cpp
     src/characters/systems/AnimationSystem.cpp
+    src/characters/systems/CombatSystem.cpp
     src/characters/systems/DeathSystem.cpp
     src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp

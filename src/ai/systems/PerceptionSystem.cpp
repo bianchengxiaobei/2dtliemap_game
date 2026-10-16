@@ -145,10 +145,15 @@ void PerceptionSystem::Update(ecs::EcsWorld& world, float dt) {
     const float decayPerSecond = m_params.alertDecaySeconds > 0.0f ? 1.0f / m_params.alertDecaySeconds : 1.0f;
     const float boost = m_params.soundAlertBoost;
 
-    // 视觉目标（玩家）每 tick 收集一次：typically 1 个
+    // 视觉目标（玩家）每 tick 收集一次：typically 1 个。
+    // M5-T6：倒地/死亡玩家不再是视觉目标（HP<=0）——僵尸应立即失去追击对象
     m_targetsScratch.clear();
     registry.view<ecs::PlayerTag, ecs::Position>().each(
         [&](const entt::entity pe, const ecs::Position& playerPos) {
+            const auto* health = registry.try_get<ecs::Health>(pe);
+            if (health != nullptr && health->current <= 0.0f) {
+                return;  // continue
+            }
             m_targetsScratch.push_back(
                 VisibleTarget{world.IdOf(pe).id, playerPos.x, playerPos.y});
         });
