@@ -31,6 +31,14 @@ constexpr std::string_view kSandboxBaseFuncs[] = {
 // 允许脚本使用的标准库表。
 constexpr std::string_view kSandboxLibs[] = {"string", "table", "math", "coroutine", "utf8"};
 
+// 死循环防护（M7-T7，docs/03 §7）：每次「外部进入脚本」的调用（chunk 执行 / 事件回调 /
+// 定时器回调）最多执行约 kMaxInstructionsPerCall 条 Lua 指令；超限抛 Lua 错误 →
+// 走既有 pcall + traceback 路径 → ModError 归因该 mod → manager 禁用。
+// 说明：拦截的是显而易见的死循环（如 `while true do end`）；脚本自行 pcall 吞错的
+// 对抗性循环不在防护范围（定位"防手滑"，信任本地 mod）。
+constexpr std::size_t kMaxInstructionsPerCall = 5'000'000;
+constexpr int kInstructionHookStep = 10'000;  // hook 每 1 万条指令触发一次
+
 // print 重定向（upvalue[1] = mod id）：多参数以 \t 连接，走 luaL_tolstring（尊重 __tostring）。
 int LuaPrintBridge(lua_State* L) {
     const char* modId = lua_tostring(L, lua_upvalueindex(1));
@@ -132,6 +140,29 @@ struct LuaRuntime::Impl {
     std::vector<std::string> loadedIds;
     const ScriptApi* api = nullptr;
     bool initialized = false;
+    // 指令预算（hook 触发，见 kMaxInstructionsPerCall；启动后仅由主线程访问）
+    bool budgetActive = false;
+    std::int64_t instructionBudget = 0;
+
+    // 进入脚本调用前装配预算；调用结束（含出错）后解除
+    void ArmCallBudget() {
+        budgetActive = true;
+        instructionBudget = static_cast<std::int64_t>(kMaxInstructionsPerCall);
+    }
+    void DisarmCallBudget() { budgetActive = false; }
+
+    // Lua 指令计数 hook：预算耗尽 → 抛错（可与脚本错误同等归因/报告）
+    static void InstructionHook(lua_State* L, lua_Debug*) {
+        Impl* impl = *static_cast<Impl**>(lua_getextraspace(L));
+        if (impl == nullptr || !impl->budgetActive) {
+            return;  // 非脚本调用段（内部 C API 操作不经过 VM）
+        }
+        impl->instructionBudget -= kInstructionHookStep;
+        if (impl->instructionBudget <= 0) {
+            luaL_error(L, "脚本指令数超限（疑似死循环）：单次调用超过约 %d 万条指令，已中止",
+                       static_cast<int>(kMaxInstructionsPerCall / 10000));
+        }
+    }
 
     // Host API 表（M7-T3/T4）：Game/Log/Player/World/Items/Zombies/Events；
     // 每 mod 独立绑定（Log 前缀、事件表与定时器均按 mod 隔离）。
@@ -299,11 +330,14 @@ struct LuaRuntime::Impl {
     }
 
     // 调用栈约定（自底向上）：[fn, args...]；成功后恢复栈，失败给出带 traceback 的错误。
+    // M7-T7：装配指令预算（单次调用死循环防护）。
     bool CallStackWithTraceback(int nargs, std::string& errorOut) {
         lua_State* L = lua->lua_state();
         lua_pushcfunction(L, LuaTracebackHandler);
         lua_insert(L, -(nargs + 2));
+        ArmCallBudget();
         const int status = lua_pcall(L, nargs, 0, -(nargs + 2));
+        DisarmCallBudget();
         if (status != LUA_OK) {
             const char* message = lua_tostring(L, -1);
             errorOut = message != nullptr ? message : "(未知脚本错误)";
@@ -332,10 +366,12 @@ struct LuaRuntime::Impl {
             lua_pop(L, 1);  // 无 _ENV upvalue（不应发生）：弹回环境表
         }
 
-        // pcall + traceback 处理器（处理器在函数之下）
+        // pcall + traceback 处理器（处理器在函数之下）；M7-T7：装配指令预算（防死循环）
         lua_pushcfunction(L, LuaTracebackHandler);
         lua_insert(L, -2);
+        ArmCallBudget();
         const int status = lua_pcall(L, 0, 0, -2);
+        DisarmCallBudget();
         if (status != LUA_OK) {
             const char* message = lua_tostring(L, -1);
             errorOut = message != nullptr ? message : "(未知脚本错误)";
@@ -427,9 +463,13 @@ bool LuaRuntime::Initialize(std::string& errorOut) {
         m_impl->lua->open_libraries(sol::lib::base, sol::lib::math, sol::lib::string,
                                     sol::lib::table, sol::lib::coroutine, sol::lib::utf8);
 
+        // M7-T7：extraspace 指向 Impl（指令 hook 取回用）+ 指令计数 hook
+        lua_State* L = m_impl->lua->lua_state();
+        *static_cast<Impl**>(lua_getextraspace(L)) = m_impl.get();
+        lua_sethook(L, &Impl::InstructionHook, LUA_MASKCOUNT, kInstructionHookStep);
+
         // 构建沙箱基础表：白名单函数 + 安全标准库（globals 里没有 os/io/debug/package）
         sol::table globals = m_impl->lua->globals();
-        lua_State* L = m_impl->lua->lua_state();
         lua_createtable(L, 0, 32);
         sol::table sandbox = sol::stack::pop<sol::table>(L);
         for (const std::string_view name : kSandboxBaseFuncs) {

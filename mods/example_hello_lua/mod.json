@@ -1,0 +1,9 @@
+{
+  "id": "example_hello_lua",
+  "name": "Example Hello (Lua)",
+  "version": "1.0.0",
+  "api": 1,
+  "backend": "lua",
+  "main": "scripts/main.lua",
+  "loadOrder": 100
+}

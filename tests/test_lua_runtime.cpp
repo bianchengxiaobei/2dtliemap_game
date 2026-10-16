@@ -420,3 +420,33 @@ TEST_CASE("M7-T5：Lua 源文件容忍 UTF-8 BOM（Windows 编辑器常见）") 
     CHECK(error.empty());
     CHECK(capture.Str().find("bom ok") != std::string::npos);
 }
+
+TEST_CASE("M7-T7：死循环防护（指令数超限 → 中止本次调用并按错误上报）") {
+    TempModRoot mods;
+    script::LuaRuntime runtime;
+    std::string error;
+    REQUIRE(runtime.Initialize(error));
+
+    // 加载期死循环：LoadMod 失败并给出指令超限错误（不挂起游戏）
+    CHECK_FALSE(runtime.LoadMod(mods.MakeMod("spin_load", "while true do end"), error));
+    CHECK(error.find("指令数超限") != std::string::npos);
+
+    // 派发期死循环：错误归因到该 mod（含 traceback），调用方继续可用
+    REQUIRE(runtime.LoadMod(
+        mods.MakeMod("spin_dispatch", "Events.On('OnTick', function(e) while true do end end)"),
+        error));
+    core::ScriptEvent event;
+    event.name = std::string(core::kOnTick);
+    event.fields.push_back(core::ScriptField{"tick", static_cast<std::int64_t>(1)});
+    const std::vector<script::ModError> errors = runtime.DispatchEventToMod("spin_dispatch", event);
+    REQUIRE(errors.size() == 1);
+    CHECK(errors[0].modId == "spin_dispatch");
+    CHECK(errors[0].message.find("指令数超限") != std::string::npos);
+    CHECK(errors[0].message.find("stack traceback") != std::string::npos);
+
+    // 预算按调用重置：正常 mod 的小循环（10 万次）不受影响
+    REQUIRE(runtime.LoadMod(mods.MakeMod("calm",
+        "Events.On('OnTick', function(e) local s = 0 for i = 1, 100000 do s = s + i end end)"),
+        error));
+    CHECK(runtime.DispatchEventToMod("calm", event).empty());
+}

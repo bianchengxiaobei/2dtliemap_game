@@ -1,0 +1,9 @@
+{
+  "id": "example_reactive_lua",
+  "name": "Example Reactive (Lua)",
+  "version": "1.0.0",
+  "api": 1,
+  "backend": "lua",
+  "main": "scripts/main.lua",
+  "loadOrder": 110
+}

@@ -1150,3 +1150,32 @@ BOM（\xEF\xBB\xBF），新增对应用例；mod.json 侧 nlohmann 自带 BOM �
 `alive v1 tick=180` → 改文件 → `mod 重载成功：[smoke_hello]` + `alive v2` → 写坏 →
 `mod 已禁用（重载失败：main.lua:1: syntax error near 'is'）` + 进程存活继续跑 → 修复 →
 `mod 重载成功，已解除禁用` + `alive v3`。冒烟 mod 已删除（示例归 T7）。
+
+---
+
+## 2026-10-17 M7-T7 示例 mod ×2 + docs/modding.md + 死循环防护
+
+**交付**：
+- `mods/example_hello_lua`（最小入门）与 `mods/example_reactive_lua`（事件反应：5 杀奖励/
+  拾取/枪声/玩家死亡 + SetTimer），均可直接热重载试改。
+- `docs/modding.md`：mod 作者教程（快速开始 → mod.json 字段表 → Host API v1 参考 → 事件表 v1
+  与注意事项 → 定时器 → 调试/错误隔离/死循环防护/沙箱边界 → 示例说明 → FAQ → v1 限制）。
+- **死循环防护**（M7 验收条款②）：`lua_sethook` 指令计数——extraspace 存 Impl 指针，
+  hook 每 1 万条指令检查；**单次外部调用**（chunk 执行/事件回调/定时器回调）预算约 500 万条，
+  超限 `luaL_error("脚本指令数超限（疑似死循环）…")` → 走既有 pcall+traceback → ModError →
+  归因 mod 并禁用；预算在每个入口装配、返回即解除（正常 mod 的大循环不受影响，调用间独立）。
+  已知边界：脚本自己 pcall 吞错的对抗性循环不拦（"防手滑"定位，modding.md §6.4 声明）。
+  `docs/03` §7 死循环一行同步更新为"已实现"。
+- 示例可用性修正（实机发现）：`OnGameStart` 触发时玩家实体尚未生成 → `Player.AddItem` 返回 0；
+  hello 示例与 modding.md 快速开始改为"等 `Game.GetPlayerId() ~= 0` 首次就绪再发"。
+
+**测试**：182 用例全绿（Debug 118252 / Release 118253）。新增：加载期死循环（`while true do end`
+→ LoadMod 失败含"指令数超限"）、派发期死循环（ModError 归因 mod + traceback）、
+预算按调用重置（10 万次小循环不误伤）。
+
+**实机（三条验收证据一次跑齐）**：3 个 mod 加载；`break_test` 的 OnTick 死循环被拦：
+`mod [break_test] 脚本错误（事件 OnTick）：…指令数超限…` + `mods/break_test/scripts/main.lua:2: in
+function <…>`（mod id + 路径行号 + 栈）+ `mod 已禁用`，进程存活继续跑；修复文件保存 →
+`mod 重载成功，已解除禁用：[break_test]`；两示例输出 `starter items: bandage x2, axe x1`、
+`tip: press F6 …`（SetTimer）、`survivor at 69.2, 23.7 (z=0) | health=84.0 | zombies=40`。
+临时 break_test 已删除。
