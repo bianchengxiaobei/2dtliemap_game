@@ -105,6 +105,8 @@ void WorldDemoState::OnEnter() {
     m_cruiseCenterX = static_cast<float>(config.Get<double>("world.cruiseCenterX", 500.0));
     m_cruiseCenterY = static_cast<float>(config.Get<double>("world.cruiseCenterY", 500.0));
     m_cruiseMinutes = config.Get<double>("world.cruiseMinutes", 5.0);
+    // M5-T4：演示枪声基础可闻半径（隔墙衰减由感知系统的传播模型按听者计算）
+    m_gunshotRadius = static_cast<float>(config.Get<double>("sounds.gunshotRadius", 30.0));
     if (m_cruiseEnabled) {
         camera.SetCenter(render::ToScreen(m_cruiseCenterX + m_cruiseRadius, m_cruiseCenterY));
         ZL_INFO("perf", "自动巡航开启：圆心=({:.0f},{:.0f}) 半径={:.0f} 速度={:.0f}格/s 时长={:.1f}min",
@@ -116,7 +118,7 @@ void WorldDemoState::OnEnter() {
     SpawnDemoEntities();
     // M4-T4：玩家实体由 OnFrame 延迟生成（等目标 chunk 加载完成）
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | F4 自由相机 | F6 演示击杀 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | F4 自由相机 | F6 演示击杀 | F7 开枪（声音引怪） | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
 }
 
 void WorldDemoState::ApplyCameraMode() {
@@ -437,6 +439,29 @@ void WorldDemoState::KillNearestDemoEntity() {
             pos != nullptr ? pos->x : 0.0f, pos != nullptr ? pos->y : 0.0f);
 }
 
+void WorldDemoState::EmitGunshot() {
+    if (m_ctx.ecs == nullptr || m_ctx.events == nullptr || m_player == entt::null) {
+        SetNotice("gunshot: player not spawned", kNoticeFailColor, 2.0f);
+        return;
+    }
+    const auto* playerPos = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (playerPos == nullptr) {
+        return;
+    }
+    core::SoundEvent shot;
+    shot.x = playerPos->x;
+    shot.y = playerPos->y;
+    shot.radius = m_gunshotRadius;
+    shot.type = core::SoundType::Gunshot;
+    // M5-T4：发射方只发事件（不感知感知系统）；tick 末 FlushQueued 投递 → PushSound → 下 tick 感知消费
+    m_ctx.events->EmitQueued(core::kOnSound, shot);
+    SetNotice("gunshot! r=" + std::to_string(static_cast<int>(m_gunshotRadius)) +
+                  " (walls attenuate)",
+              kNoticeInfoColor, 2.0f);
+    ZL_INFO("ai", "枪声（F7）：声源 ({:.1f}, {:.1f}) 基础半径 {:.0f} 格（隔墙逐格衰减）", shot.x,
+            shot.y, shot.radius);
+}
+
 void WorldDemoState::DespawnDemoEntities() {
     if (m_ctx.ecs == nullptr) {
         return;
@@ -608,6 +633,9 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     }
     if (input.IsActionPressed("DemoKill")) {
         KillNearestDemoEntity();  // M5-T1：演示击杀（HP 归零 → 尸体）
+    }
+    if (input.IsActionPressed("DemoGunshot")) {
+        EmitGunshot();  // M5-T4：演示开枪（大半径 SoundEvent → 感知 → 僵尸来查看）
     }
     if (input.IsActionPressed("ReloadBindings")) {
         events.Emit(EventProbe::kInputActionEvent, std::string("ReloadBindings"));
@@ -1060,13 +1088,13 @@ void WorldDemoState::DrawDebugText() {
         bgfx::dbgTextPrintf(
             0, 10, 0x0f,
             "ai: idle=%d wander=%d chase=%d search=%d attack=%d dead=%d | swings=%llu | "
-            "seeing=%d alert=%d",
+            "seeing=%d alert=%d heard=%d",
             aiStats.idle, aiStats.wander, aiStats.chase, aiStats.search, aiStats.attack,
             aiStats.dead, static_cast<unsigned long long>(aiStats.swings), percStats.seeing,
-            percStats.alerted);
+            percStats.alerted, percStats.heard);
     }
     bgfx::dbgTextPrintf(0, 9, 0x07,
-                        "WASD/LMB move | F4 cam | F6 demo-kill | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+                        "WASD/LMB move | F4 cam | F6 demo-kill | F7 gunshot | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
     // M4-T7：点击移动反馈（限时提示：寻路中/已到达/不可达）
     if (m_noticeTimer > 0.0f && !m_noticeText.empty()) {
         bgfx::dbgTextPrintf(0, 11, static_cast<std::uint8_t>(m_noticeColor), "%s",

@@ -91,9 +91,56 @@ bool PerceptionSystem::CanSee(const Facing* facing, float px, float py, float tx
     return LineOfSight(px, py, tx, ty);
 }
 
+bool PerceptionSystem::HearsSound(const core::SoundEvent& sound, float lx, float ly) const {
+    const float dx = sound.x - lx;  // 听者 → 声源
+    const float dy = sound.y - ly;
+    const float distSq = dx * dx + dy * dy;
+    if (sound.radius <= 0.0f || distSq > sound.radius * sound.radius) {
+        return false;  // 无衰减已达上限 → 不可闻
+    }
+    if (!m_walkable) {
+        return true;  // 无阻挡查询：不衰减（降级）
+    }
+    const float dist = std::sqrt(distSq);
+    if (dist <= 0.001f) {
+        return true;
+    }
+    // 沿"听者→声源"连线每 0.5 格采样（不含端点），数不同阻挡格（M5-T4 传播模型）。
+    // 衰减随已数墙数即时评估：有效半径跌破距离即可提前判定不可闻。
+    const int steps = std::max(2, static_cast<int>(std::ceil(dist / 0.5f)));
+    int walls = 0;
+    int lastWx = 0;
+    int lastWy = 0;
+    bool hasLast = false;
+    for (int i = 1; i < steps; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        const int wx = static_cast<int>(std::floor(lx + dx * t));
+        const int wy = static_cast<int>(std::floor(ly + dy * t));
+        if (m_walkable(wx, wy)) {
+            continue;
+        }
+        if (hasLast && wx == lastWx && wy == lastWy) {
+            continue;  // 同一格被多次采样 → 只算一次
+        }
+        lastWx = wx;
+        lastWy = wy;
+        hasLast = true;
+        ++walls;
+        const float effective = sound.radius * std::pow(m_params.wallAttenuation,
+                                                       static_cast<float>(walls));
+        if (effective < dist) {
+            return false;  // 隔墙衰减后有效半径不足以传到这里
+        }
+    }
+    return true;
+}
+
 void PerceptionSystem::Update(ecs::EcsWorld& world, float dt) {
     entt::registry& registry = world.Registry();
+    // 每帧快照：perceivers/seeing/alerted 清点；heard 跨帧累计（HUD 显示总数）
+    const int totalHeard = m_stats.heard;
     m_stats = Stats{};
+    m_stats.heard = totalHeard;
 
     const float decayPerSecond = m_params.alertDecaySeconds > 0.0f ? 1.0f / m_params.alertDecaySeconds : 1.0f;
     const float boost = m_params.soundAlertBoost;
@@ -133,13 +180,12 @@ void PerceptionSystem::Update(ecs::EcsWorld& world, float dt) {
                 ai.targetId = 0;  // 丢失当前视觉（lastKnown 保留 → AI 去搜索）
             }
 
-            // 2) 听觉：本 tick 入队的声源（距离 ≤ radius 可闻）
+            // 2) 听觉（M5-T4）：本 tick 入队的声源 —— 基础半径 + 隔墙衰减判定可闻
             for (const core::SoundEvent& sound : m_pendingSounds) {
-                const float sdx = position.x - sound.x;
-                const float sdy = position.y - sound.y;
-                if (sdx * sdx + sdy * sdy > sound.radius * sound.radius) {
+                if (!HearsSound(sound, position.x, position.y)) {
                     continue;
                 }
+                ++m_stats.heard;
                 percep.alertness = std::min(1.0f, percep.alertness + boost);
                 percep.sinceHeard = 0.0f;
                 if (seenId == 0) {

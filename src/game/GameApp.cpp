@@ -25,6 +25,7 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"Quit", "ESCAPE"},      {"Pause", "F1"},       {"CycleSpeed", "F2"},
     {"DemoTasks", "F3"},     {"ReloadBindings", "F5"}, {"ToggleCruise", "F8"},
     {"ToggleDebugOverlay", "F9"}, {"TogglePhysicsDebug", "F10"}, {"DemoKill", "F6"},
+    {"DemoGunshot", "F7"},   // M5-T4：演示开枪（大半径 SoundEvent）
     {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
     {"MoveRight", "D"},
     // M4-T4：WASD 归玩家；方向键平移相机（自由相机模式，M4-T5）
@@ -179,10 +180,22 @@ bool GameApp::Init(int argc, char** argv) {
         static_cast<float>(m_config.Get<double>("perception.fovDegrees", 110.0));
     perceptionParams.alertDecaySeconds =
         static_cast<float>(m_config.Get<double>("perception.alertDecaySeconds", 8.0));
+    perceptionParams.wallAttenuation =
+        static_cast<float>(m_config.Get<double>("perception.wallAttenuation", 0.6));
     m_perceptionSystem =
         std::make_unique<ai::PerceptionSystem>(walkable, perceptionParams);
     m_ctx.aiSystem = m_aiSystem.get();
     m_ctx.perception = m_perceptionSystem.get();
+    // M5-T4：声音事件接线 —— 发射方（开枪等）只发事件，不感知感知系统
+    m_soundSubscription = m_events.Subscribe(
+        core::kOnSound, [this](const core::Event& event) {
+            if (m_perceptionSystem == nullptr) {
+                return;
+            }
+            if (const auto* sound = std::get_if<core::SoundEvent>(&event.payload)) {
+                m_perceptionSystem->PushSound(*sound);
+            }
+        });
 
     // 6. 上下文 + 事件探针
     m_ctx.config = &m_config;
@@ -269,6 +282,10 @@ void GameApp::Shutdown() {
     m_shutdownDone = true;
 
     m_probe.Detach(m_events);
+    if (m_soundSubscription != core::EventBus::kInvalidSubscription) {
+        m_events.Unsubscribe(m_soundSubscription);  // 先于感知系统销毁
+        m_soundSubscription = core::EventBus::kInvalidSubscription;
+    }
     m_states.Clear();
     // 渲染资源必须在 bgfx::shutdown 之前释放
     m_sprites.Shutdown();

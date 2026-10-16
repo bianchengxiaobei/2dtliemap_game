@@ -8,6 +8,7 @@
 #include "ai/systems/AiSystem.h"
 #include "ai/systems/PerceptionSystem.h"
 #include "characters/components/CharacterComponents.h"
+#include "core/EventBus.h"
 #include "core/SoundEvent.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
@@ -208,6 +209,123 @@ TEST_CASE("Perception→AiSystem：听见声音去声源查看（无视觉），
 
     rig.Run(6 * 60 + 10);  // 搜索超时
     CHECK(rig.Ai(z).status == ecs::AiStatus::Idle);
+}
+
+TEST_CASE("Perception：听觉隔墙衰减（有效半径 = 半径 × 系数^墙数）") {
+    PercRig rig;
+    const ecs::Entity z = rig.AddZombie(5.5f, 5.5f);
+    rig.Ai(z).idleSeconds = 100.0f;
+    rig.Percep(z).sinceHeard = 100.0f;  // 排除初始 sinceHeard=0 的"刚听见"假象
+
+    core::SoundEvent shot;
+    shot.x = 10.5f;  // 距离 5
+    shot.y = 5.5f;
+    shot.radius = 10.0f;
+    shot.type = core::SoundType::Gunshot;
+
+    // 无墙：距离 5 ≤ 10 → 可闻
+    rig.perception.PushSound(shot);
+    rig.perception.Update(rig.world, kDt);
+    CHECK(rig.Percep(z).sinceHeard == 0.0f);
+    CHECK(rig.Percep(z).alertness == doctest::Approx(0.6f));
+    CHECK(rig.Percep(z).lastKnownX == doctest::Approx(10.5f));
+
+    // 1 墙（7,5）：有效半径 10×0.6=6 ≥ 5 → 仍可闻
+    rig.blocked.insert(PercRig::Key(7, 5));
+    rig.Percep(z).sinceHeard = 100.0f;
+    rig.perception.PushSound(shot);
+    rig.perception.Update(rig.world, kDt);
+    CHECK(rig.Percep(z).sinceHeard == 0.0f);
+
+    // 2 墙（7,5)+(8,5)：有效半径 10×0.6²=3.6 < 5 → 不可闻（可疑点不被覆盖）
+    rig.blocked.insert(PercRig::Key(8, 5));
+    rig.Percep(z).sinceHeard = 100.0f;
+    core::SoundEvent farShot;
+    farShot.x = 15.5f;  // 距离 10
+    farShot.y = 5.5f;
+    farShot.radius = 10.0f;
+    farShot.type = core::SoundType::Gunshot;
+    rig.perception.PushSound(farShot);
+    rig.perception.Update(rig.world, kDt);
+    CHECK(rig.Percep(z).sinceHeard > 100.0f);
+    CHECK(rig.Percep(z).lastKnownX == doctest::Approx(10.5f));
+
+    // 拆墙恢复：距离 10 ≤ 10 → 可闻，可疑点更新到新声源
+    rig.blocked.clear();
+    rig.perception.PushSound(farShot);
+    rig.perception.Update(rig.world, kDt);
+    CHECK(rig.Percep(z).sinceHeard == 0.0f);
+    CHECK(rig.Percep(z).lastKnownX == doctest::Approx(15.5f));
+}
+
+TEST_CASE("M5-T4：事件总线 OnSound（SoundEvent 载荷）→ 感知系统消费") {
+    PercRig rig;
+    const ecs::Entity z = rig.AddZombie(5.5f, 5.5f);
+    rig.Ai(z).idleSeconds = 100.0f;
+    rig.Percep(z).sinceHeard = 100.0f;
+
+    // 复刻 GameApp 接线：发射方只发事件，订阅端转交感知系统
+    core::EventBus bus;
+    const core::EventBus::SubscriptionId sub = bus.Subscribe(
+        core::kOnSound, [&rig](const core::Event& event) {
+            if (const auto* sound = std::get_if<core::SoundEvent>(&event.payload)) {
+                rig.perception.PushSound(*sound);
+            }
+        });
+
+    core::SoundEvent shot;
+    shot.x = 20.5f;  // 距离 15（> sightRadius：纯听觉）
+    shot.y = 5.5f;
+    shot.radius = 30.0f;
+    shot.type = core::SoundType::Gunshot;
+    bus.EmitQueued(core::kOnSound, shot);
+    CHECK(bus.QueuedCount() == 1);
+    bus.FlushQueued();  // 主循环 tick 末投递语义
+
+    rig.perception.Update(rig.world, kDt);
+    CHECK(rig.Percep(z).sinceHeard == 0.0f);
+    CHECK(rig.Percep(z).lastKnownX == doctest::Approx(20.5f));
+    CHECK(rig.Percep(z).alertness == doctest::Approx(0.6f));
+    CHECK(rig.perception.GetStats().heard == 1);
+
+    bus.Unsubscribe(sub);
+}
+
+TEST_CASE("M5-T4 验收：枪声吸引半径外僵尸（事件总线全链）；隔墙衰减下不被吸引") {
+    PercRig rig;
+    const ecs::Entity open = rig.AddZombie(5.5f, 5.5f);    // 距声源 15，无遮挡
+    const ecs::Entity walled = rig.AddZombie(35.5f, 5.5f);  // 距声源 15，中间 2 墙
+    rig.Ai(open).idleSeconds = 100.0f;
+    rig.Ai(walled).idleSeconds = 100.0f;
+    rig.Percep(open).sinceHeard = 100.0f;
+    rig.Percep(walled).sinceHeard = 100.0f;
+    rig.blocked.insert(PercRig::Key(25, 5));
+    rig.blocked.insert(PercRig::Key(26, 5));
+
+    core::EventBus bus;
+    const core::EventBus::SubscriptionId sub = bus.Subscribe(
+        core::kOnSound, [&rig](const core::Event& event) {
+            if (const auto* sound = std::get_if<core::SoundEvent>(&event.payload)) {
+                rig.perception.PushSound(*sound);
+            }
+        });
+    core::SoundEvent shot;
+    shot.x = 20.5f;
+    shot.y = 5.5f;
+    shot.radius = 30.0f;  // 大半径枪声
+    shot.type = core::SoundType::Gunshot;
+    bus.EmitQueued(core::kOnSound, shot);
+    bus.FlushQueued();
+
+    rig.Tick();  // 感知 → AI 同 tick 消费
+    CHECK(rig.Ai(open).status == ecs::AiStatus::SearchLastKnown);  // 听到 → 去声源查看
+    CHECK(rig.Request(open).goalX == 20);
+    CHECK(rig.Request(open).goalY == 5);
+    // 2 墙衰减：30×0.6²=10.8 < 15 → 听不见，保持原有节奏
+    CHECK(rig.Ai(walled).status == ecs::AiStatus::Idle);
+    CHECK(rig.Percep(walled).sinceHeard > 1.0f);
+
+    bus.Unsubscribe(sub);
 }
 
 TEST_CASE("Perception→AiSystem：看见→追击；目标消失→去最后已知位置搜索再放弃（M5 验收链）") {

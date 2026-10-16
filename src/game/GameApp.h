@@ -96,6 +96,8 @@ private:
     std::unique_ptr<ai::AiSystem> m_aiSystem;
     // 感知（M5-T3）：视觉/听觉 → AiSystem 之前（本 tick 即被消费）
     std::unique_ptr<ai::PerceptionSystem> m_perceptionSystem;
+    // M5-T4：OnSound（事件总线）→ PerceptionSystem::PushSound 的订阅
+    core::EventBus::SubscriptionId m_soundSubscription = core::EventBus::kInvalidSubscription;
 
     // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
     ecs::EcsWorld m_ecs;

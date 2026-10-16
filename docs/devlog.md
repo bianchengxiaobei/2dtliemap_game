@@ -600,3 +600,37 @@ PerceptionState（初始可疑点=出生位置）；HUD ai 行追加 `seeing=N a
 **冒烟（实机 40 僵尸）**：尸群围堵时 HUD `seeing=6 alert=6 chase=1 attack=5`（同一场景
 M5-T2 的 360°/8 格桩会全场 aggro —— 视锥 + 遮挡把仇恨限制在"看得见"的个体）；逃离时
 chase↔search 随视线切换，开阔地新尸群重新锁定玩家（截图 `m5t2b_*`）。FPS 59 / drawcall 3。
+
+---
+
+## 2026-10-16 M5-T4 声音事件与传播（事件总线 OnSound + 隔墙衰减 + 开枪引怪）
+
+**事件与载荷**
+- `core::SoundEvent` 进 `EventBus::EventPayload` variant（新增 `SoundType{Gunshot,Impact,Generic}` +
+  事件键 `kOnSound="OnSound"`，对齐 docs/03 §5 事件表）；发射方只填声源位置 + 基础半径 + 类型；
+- 接线（GameApp）：`m_events.Subscribe(kOnSound, …)` → `PerceptionSystem::PushSound`
+  （订阅 ID 随 Shutdown 退订，先于感知系统销毁）。发射方（demo/武器）只发事件，
+  不依赖感知系统 —— 与 M11-T4 音频系统共用同一事件源。
+
+**传播模型（PerceptionSystem::HearsSound）**
+- 距离粗筛（> 基础半径直接不可闻）→ 沿"听者→声源"连线每 0.5 格采样（不含端点，与视线同法）数
+  **不同阻挡格** → 有效半径 = 半径 × 0.6^墙数；随数墙即时评估，跌破距离提前判定不可闻；
+- "未加载 = 阻挡"语义与寻路/视线一致；无 walkable 查询时降级为纯半径；
+- 参数 `perception.wallAttenuation=0.6`（config 可调；M11-T4 音频听觉共用）；
+- `Stats.heard` = 累计听见的听者次数（跨帧累计，HUD `heard=`）。
+
+**demo**：F7 开枪 —— 玩家位置发射半径 30 格 Gunshot（`sounds.gunshotRadius` 可配），
+HUD 提示 "gunshot! r=30 (walls attenuate)"；GameApp 绑定表补 `DemoGunshot=F7`
+（上一版只加 config 忘了 kDefaultBindings，冒烟首跑 F7 无反应——已修）。
+
+**测试**（tests/test_perception.cpp，+3 用例：104 用例 / 117307 断言全绿）
+- 隔墙衰减：无墙（5≤10）可闻 → 1 墙有效半径 6 仍可闻 → 2 墙 3.6 不可闻（可疑点不被覆盖）→
+  拆墙恢复可闻；事件总线 OnSound 投递（EmitQueued → FlushQueued 语义）→ 感知消费；
+- **M5 验收**：枪声（事件总线全链）吸引 15 格外僵尸去声源查看（goal=声源格）；同距离隔 2 墙者
+  听不见（30×0.6²=10.8 < 15）保持 Idle。
+- 修 bug：HearsSound 首版采样方向写反（`lx - sound.x` 应为 `sound.x - lx`），单测抓住。
+
+**冒烟（实机 40 僵尸，截图 m5t4_*）**：开枪前 `heard=0 idle=15 wander=19 chase=5 search=1`
+→ F7 后 `heard=24 alert=12 search=12`（24/40 可闻，其余出界或隔墙衰减；idle/wander 集体转
+去声源查看）→ 4s 后僵尸群回扑射击点 `chase=10 search=8 attack=6` → 最终扎堆 `attack=5`。
+FPS 59~61 / drawcall 3 不变。

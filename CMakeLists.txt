@@ -126,6 +126,7 @@ add_executable(ZomboidLikeTests
     src/characters/systems/DeathSystem.cpp
     src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp
+    src/core/EventBus.cpp
     src/core/Input.cpp
     src/core/Log.cpp
     src/core/TaskScheduler.cpp

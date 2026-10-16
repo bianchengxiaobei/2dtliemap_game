@@ -46,7 +46,11 @@
     "sightRadius": 12,
     "closeRadius": 2.5,
     "fovDegrees": 110,
-    "alertDecaySeconds": 8
+    "alertDecaySeconds": 8,
+    "wallAttenuation": 0.6
+  },
+  "sounds": {
+    "gunshotRadius": 30
   },
   "input": {
     "bindings": {
@@ -67,6 +71,7 @@
       "PanRight": "RIGHT",
       "ToggleFreeCam": "F4",
       "DemoKill": "F6",
+      "DemoGunshot": "F7",
       "TogglePhysicsDebug": "F10"
     }
   },

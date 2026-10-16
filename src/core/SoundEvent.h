@@ -1,12 +1,18 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 namespace zl::core {
 
-// M5-T4：声音事件（事件总线载荷类型；M5-T3 感知系统消费）。
-// 发射方（开枪/脚步/撞击…）填好传播模型算出的 radius 后经事件总线投递，
-// PerceptionSystem 按 (距离 ≤ radius) 判别可闻。
+// 事件总线键（docs/03 §5 事件表：OnSound）
+inline constexpr std::string_view kOnSound = "OnSound";
+
+// M5-T4：声音事件（事件总线载荷类型；M5-T3/M5-T4 感知系统消费）。
+// 规范：发射方只填"声源位置 + 基础可闻半径 + 类型"（武器/动作决定），
+// 经事件总线（EmitQueued(kOnSound, …)）投递；隔墙衰减由消费方按听者位置计算：
+//   effectiveRadius = radius × wallAttenuationPerCell^穿墙格数
+// （M11-T4 起音频系统与 AI 听觉共用同一套衰减参数。）
 enum class SoundType : std::uint8_t {
     Generic = 0,  // 泛用（脚步/环境）
     Gunshot = 1,  // 枪声（大半径）
@@ -16,7 +22,7 @@ enum class SoundType : std::uint8_t {
 struct SoundEvent {
     float x = 0.0f;       // 声源位置（世界格）
     float y = 0.0f;
-    float radius = 0.0f;  // 可闻半径（含隔墙衰减后的结果；M5-T4 传播模型计算）
+    float radius = 0.0f;  // 基础可闻半径（格，无遮挡）；隔墙衰减由感知系统按听者计算
     SoundType type = SoundType::Generic;
 };
 

@@ -46,6 +46,8 @@ private:
     void DespawnDemoEntities();
     // M5-T1：演示击杀——离参考点（玩家/相机中心）最近的存活游荡者 HP 归零 → DeathSystem 转尸体
     void KillNearestDemoEntity();
+    // M5-T4：演示开枪——玩家位置发射大半径 SoundEvent（事件总线 OnSound）吸引僵尸
+    void EmitGunshot();
     // M4-T4：玩家（PlayerTag）——chunk 加载完成后在村庄中心附近找可走格生成
     void EnsurePlayerSpawned();
     ecs::Entity SpawnCharacter(float px, float py);
@@ -84,6 +86,8 @@ private:
     float m_demoBoxY1 = 0.0f;
     // M4-T4：本地玩家（WASD 控制）
     ecs::Entity m_player = entt::null;
+    // M5-T4：演示枪声基础可闻半径（格；config sounds.gunshotRadius）
+    float m_gunshotRadius = 30.0f;
     // M4-T7：点击移动反馈（notice 文本 + 目标格标记）
     std::string m_noticeText;
     float m_noticeTimer = 0.0f;

@@ -8,11 +8,13 @@
 #include <variant>
 #include <vector>
 
+#include "core/SoundEvent.h"
+
 namespace zl::core {
 
 // 事件载荷：默认 monostate；模块载荷按需扩充（只加类型，不改派发机制）。
-// 事件表 v1 见 docs/03 §5，命名 OnXxx。
-using EventPayload = std::variant<std::monostate, bool, int64_t, double, std::string>;
+// 事件表 v1 见 docs/03 §5，命名 OnXxx（M5-T4：OnSound = SoundEvent）。
+using EventPayload = std::variant<std::monostate, bool, int64_t, double, std::string, SoundEvent>;
 
 struct Event {
     std::string key;
