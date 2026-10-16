@@ -131,3 +131,19 @@
 - 生命周期 debug 日志齐全（Loading/Loaded+耗时/取消/卸载），T7 用。
 - 测试 4 用例：7×7 窗口全挂接+数据抽查；远跳驻留恒定（49 chunk/1 cell）；高速巡航 61 步不阻塞主线程且终态恰 25 chunk；坏文件重试放弃不崩溃。
 
+---
+
+## 2026-10-16 M3-T5 世界渲染接入
+
+**WorldDemoState（config `game.startState=world` 为默认）**
+- 每帧：相机中心 → 世界格坐标 → `ChunkManager.Update/ProcessResults` → 可见范围四角反解 → chunk 网格 → **只读 Loaded chunk** 逐格收集（全 SquareLayer）→ 排序 → SpriteBatch；
+- **两段式收集**（对齐 PZ SpriteRenderer）：stage0 = 地面批（地面块之间互不遮挡，按纹理 1~3 个 drawcall）；stage1 = 其余层全局画家序（墙/树/草互相遮挡必须保序）；
+- 变体选取：`HashPick(x,y,layer)` 稳定哈希（同格每帧同变体，不闪烁）；
+- 悬停拾取：新增 `IsoMath::PickCellUnbounded`（无限世界 hit 恒真，不再受 map 尺寸限制）；
+- HUD：实例/四边形/批次/drawcall、chunk 驻留/加载中/可见/缺失、累计加载/卸载/取消；日志每 3s 一条世界统计。
+
+**实测（Debug，1280×720，相机对准北侧村庄，半径 3）**
+- `own` provider：49 chunk 驻留、实例 4998、四边形 2098、**drawcall 3**、59fps；
+- `placeholder_pz`：真实 PZ 地面 + own 墙自动回退混合渲染正常，**drawcall 244**（Tiles1x 地面 + Erosion 草丛 + JumboTrees + own 墙四来源按画家序交错）——记录进 T7 baseline；优化候选：运行期图集合并（PZ 的 sprite pages 思路）/ chunk 级状态桶；
+- 室内被外墙遮挡是 PZ 的正常行为（看室内靠上层透明度/剖切，T6 处理）。
+

@@ -24,6 +24,11 @@ class Renderer;
 class SpriteBatch;
 }  // namespace zl::render
 
+namespace zl::world {
+class ChunkManager;
+class World;
+}  // namespace zl::world
+
 namespace zl::game {
 
 class AssetProvider;
@@ -45,6 +50,10 @@ struct GameContext {
     render::SpriteBatch* sprites = nullptr;
     render::AtlasManager* atlases = nullptr;
     AssetProvider* assets = nullptr;
+
+    // 世界与流式加载（M3 起）
+    world::World* world = nullptr;
+    world::ChunkManager* chunkManager = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

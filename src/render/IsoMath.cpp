@@ -19,6 +19,12 @@ glm::vec2 FromScreen(const glm::vec2& screenPx, int z) {
 }
 
 GridPick PickCell(const glm::vec2& screenPx, int z, int mapWidth, int mapHeight) {
+    GridPick pick = PickCellUnbounded(screenPx, z);
+    pick.hit = pick.x >= 0 && pick.y >= 0 && pick.x < mapWidth && pick.y < mapHeight;
+    return pick;
+}
+
+GridPick PickCellUnbounded(const glm::vec2& screenPx, int z) {
     // floor∘反解 的天然菱形分区中心在锚点下方半格（kTileH/2）；
     // 先把查询点上移半格，使分区菱形与「中心=锚点」的绘制约定严格重合
     // （否则悬停高亮相对地面块会有半格竖直偏移）。
@@ -27,7 +33,7 @@ GridPick PickCell(const glm::vec2& screenPx, int z, int mapWidth, int mapHeight)
     GridPick pick;
     pick.x = static_cast<int>(std::floor(g.x));
     pick.y = static_cast<int>(std::floor(g.y));
-    pick.hit = pick.x >= 0 && pick.y >= 0 && pick.x < mapWidth && pick.y < mapHeight;
+    pick.hit = true;
     return pick;
 }
 

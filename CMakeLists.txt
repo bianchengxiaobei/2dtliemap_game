@@ -40,6 +40,7 @@ add_executable(ZomboidLike
     src/game/GameApp.cpp
     src/game/states/RenderDemoState.cpp
     src/game/states/SandboxState.cpp
+    src/game/states/WorldDemoState.cpp
     src/platform/KeyNames.cpp
     src/platform/Window.cpp
     src/render/Atlas.cpp

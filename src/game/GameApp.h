@@ -19,6 +19,8 @@
 #include "render/Renderer.h"
 #include "render/SpriteBatch.h"
 #include "render/Texture2D.h"
+#include "world/ChunkManager.h"
+#include "world/World.h"
 
 namespace zl::game {
 
@@ -60,6 +62,10 @@ private:
     render::SpriteBatch m_sprites;
     render::Camera m_camera;
     AssetProvider m_assets;
+
+    // 世界 + chunk 流式加载（M3）
+    std::unique_ptr<world::World> m_world;
+    std::unique_ptr<world::ChunkManager> m_chunkManager;
 
     double m_lastFrameTime = 0.0;
     bool m_shutdownDone = false;

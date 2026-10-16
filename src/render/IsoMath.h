@@ -30,6 +30,9 @@ struct GridPick {
 // 落在格边界上时确定性归属：floor(连续格坐标)，与菱形剖分一致。
 GridPick PickCell(const glm::vec2& screenPx, int z, int mapWidth, int mapHeight);
 
+// 无限世界拾取：不做范围检查，hit 恒为 true（世界向两侧延伸，M3-T5）
+GridPick PickCellUnbounded(const glm::vec2& screenPx, int z);
+
 // 精灵绘制矩形（世界像素空间，左上角 + 尺寸）。
 // 画布枢轴 (fx/2, fy - kTileH/2) 对准格中心：
 //   drawTL = ToScreen(gx, gy, z) - (fx/2, fy - kTileH/2) + (ox, oy)

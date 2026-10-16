@@ -11,11 +11,15 @@
     "startYear": 2000,
     "startMonth": 7,
     "startDay": 9,
-    "startState": "render"
+    "startState": "world"
   },
   "assets": {
     "manifest": "assets/asset_manifest.json",
     "provider": "own"
+  },
+  "world": {
+    "mapDir": "assets/maps/village_demo",
+    "loadRadius": 3
   },
   "renderDemo": {
     "mapSize": 32,

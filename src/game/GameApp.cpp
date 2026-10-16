@@ -10,7 +10,9 @@
 #include "core/Log.h"
 #include "game/states/RenderDemoState.h"
 #include "game/states/SandboxState.h"
+#include "game/states/WorldDemoState.h"
 #include "platform/KeyNames.h"
+#include "world/MapLoader.h"
 
 namespace zl::game {
 namespace {
@@ -114,7 +116,29 @@ bool GameApp::Init(int argc, char** argv) {
 
     ApplyInputBindings();
 
-    // 5. 上下文 + 事件探针
+    // 5. 世界 + chunk 流式加载（M3-T4/T5）
+    const std::string mapDir = m_config.Get<std::string>("world.mapDir", "assets/maps/village_demo");
+    world::MapLoader::Meta worldMeta;
+    std::string mapError;
+    if (!world::MapLoader::LoadMeta(mapDir, &worldMeta, &mapError)) {
+        // 降级：空世界（全默认地形），游戏可运行
+        ZL_ERROR("world", "地图元数据加载失败（降级为空世界）: {}", mapError);
+        worldMeta = world::MapLoader::Meta{};
+        worldMeta.rootDir = mapDir;
+        worldMeta.chunksX = 0;
+        worldMeta.chunksY = 0;
+    } else {
+        ZL_INFO("world", "地图已加载: {}（{}×{} chunks，默认地面 {}）", worldMeta.name,
+                worldMeta.chunksX, worldMeta.chunksY, worldMeta.defaultFloor);
+    }
+    const int loadRadius = m_config.Get<int>("world.loadRadius", core::kChunkLoadRadius);
+    m_world = std::make_unique<world::World>();
+    m_chunkManager =
+        std::make_unique<world::ChunkManager>(*m_world, std::move(worldMeta), *m_tasks, loadRadius);
+    m_ctx.world = m_world.get();
+    m_ctx.chunkManager = m_chunkManager.get();
+
+    // 6. 上下文 + 事件探针
     m_ctx.config = &m_config;
     m_ctx.events = &m_events;
     m_ctx.input = &m_input;
@@ -132,12 +156,14 @@ bool GameApp::Init(int argc, char** argv) {
 
     m_probe.Attach(m_events);
 
-    // 6. 初始状态（Boot/MainMenu 在后续里程碑接入）
-    const std::string startState = m_config.Get<std::string>("game.startState", "render");
+    // 7. 初始状态（Boot/MainMenu 在后续里程碑接入）
+    const std::string startState = m_config.Get<std::string>("game.startState", "world");
     if (startState == "sandbox") {
         m_states.SetState(std::make_unique<SandboxState>(m_ctx));
-    } else {
+    } else if (startState == "render") {
         m_states.SetState(std::make_unique<RenderDemoState>(m_ctx));
+    } else {
+        m_states.SetState(std::make_unique<WorldDemoState>(m_ctx));
     }
     m_states.ApplyPendingState();
     m_events.Emit(core::kOnGameStart);
@@ -162,6 +188,8 @@ void GameApp::Shutdown() {
     m_renderer.Shutdown();
     m_window.Destroy();
     m_loop.reset();
+    m_chunkManager.reset();
+    m_world.reset();
     m_tasks.reset();  // 最后回收线程池
 }
 
