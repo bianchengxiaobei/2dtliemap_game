@@ -79,7 +79,17 @@
     "character.placeholder": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["character_placeholder"]
+        "comment": "帧序约定：index = dir*2 + frame，dir: down=0, left=1, right=2, up=3（M4-T4）",
+        "frames": [
+          "character_down_0",
+          "character_down_1",
+          "character_left_0",
+          "character_left_1",
+          "character_right_0",
+          "character_right_1",
+          "character_up_0",
+          "character_up_1"
+        ]
       }
     },
     "ui.pixel": {

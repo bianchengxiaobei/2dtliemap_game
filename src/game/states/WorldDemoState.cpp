@@ -17,6 +17,7 @@
 #include "core/GameTime.h"
 #include "core/Input.h"
 #include "core/Log.h"
+#include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/SpatialIndex.h"
 #include "ecs/components/CommonComponents.h"
@@ -93,8 +94,89 @@ void WorldDemoState::OnEnter() {
 
     // M4-T2/T3：ECS 演示实体（村庄附近漂移；物理体由 Bullet 驱动）
     SpawnDemoEntities();
+    // M4-T4：玩家实体由 OnFrame 延迟生成（等目标 chunk 加载完成）
 
-    ZL_INFO("render", "按键：WASD/右键拖拽 平移 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+}
+
+ecs::Entity WorldDemoState::SpawnCharacter(float px, float py) {
+    ecs::EcsWorld& world = *m_ctx.ecs;
+    entt::registry& registry = world.Registry();
+    const ecs::Entity e = world.Create();
+    registry.emplace<ecs::Position>(e, ecs::Position{px, py, 0});
+    registry.emplace<ecs::Velocity>(e, ecs::Velocity{});
+    registry.emplace<ecs::Collider>(e, ecs::Collider{});
+    registry.emplace<ecs::SpriteRef>(
+        e, ecs::SpriteRef{ecs::HashName("character.placeholder"), 0, 0xFFFFFFFFu});
+    registry.emplace<ecs::Facing>(e, ecs::Facing{});
+    registry.emplace<ecs::AnimState>(e, ecs::AnimState{});
+
+    // M4-T3：物理胶囊（位置/速度由 Bullet 接管）；M4-T4 动画读物理回写速度
+    if (m_ctx.physics != nullptr) {
+        const ecs::Collider def;
+        ecs::RigidBody rigid;
+        rigid.body = m_ctx.physics->CreateCharacterBody(def.radius, def.height, px, py, 0);
+        registry.emplace<ecs::RigidBody>(e, rigid);
+    }
+    return e;
+}
+
+bool WorldDemoState::IsSolidSquare(int wx, int wy) const {
+    const world::ChunkCoord cc = world::ChunkOf(wx, wy);
+    const world::Chunk* chunk = FindChunk(cc.cx, cc.cy);
+    if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
+        return true;  // 未加载（未知）按阻挡处理：不往未加载区生成玩家
+    }
+    const world::SquareLocal local = world::SquareLocalOf(wx, wy);
+    const world::GridSquare& square = chunk->Square(local.lx, local.ly, 0);
+    for (int i = 0; i < world::kSquareLayerCount; ++i) {
+        for (const world::SquareObject& object :
+             square.Layer(static_cast<world::SquareLayer>(i))) {
+            if (object.blocksMovement) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void WorldDemoState::EnsurePlayerSpawned() {
+    if (m_player != entt::null || m_ctx.ecs == nullptr) {
+        return;
+    }
+    // 目标点 = 默认相机中心（村庄北）。必须先等目标 chunk 加载完成：
+    // 否则"未加载=阻挡"会让螺旋扫到远处已加载的外围（M4-T4 冒烟踩坑）
+    constexpr int kTargetX = 70;
+    constexpr int kTargetY = 18;
+    const world::ChunkCoord targetChunk = world::ChunkOf(kTargetX, kTargetY);
+    const world::Chunk* target = FindChunk(targetChunk.cx, targetChunk.cy);
+    if (target == nullptr || target->State() != world::ChunkState::Loaded) {
+        return;  // 下帧再试
+    }
+    // 螺旋外扩找可走格
+    for (int r = 0; r <= 24; ++r) {
+        for (int dy = -r; dy <= r; ++dy) {
+            for (int dx = -r; dx <= r; ++dx) {
+                if (std::max(std::abs(dx), std::abs(dy)) != r) {
+                    continue;  // 只看当前环
+                }
+                const int wx = kTargetX + dx;
+                const int wy = kTargetY + dy;
+                if (IsSolidSquare(wx, wy)) {
+                    continue;
+                }
+                m_player = SpawnCharacter(static_cast<float>(wx) + 0.5f,
+                                          static_cast<float>(wy) + 0.5f);
+                entt::registry& registry = m_ctx.ecs->Registry();
+                registry.emplace<ecs::PlayerTag>(m_player);
+                registry.emplace<ecs::LocalControl>(m_player, ecs::LocalControl{});
+                registry.emplace<ecs::MoveIntent>(m_player, ecs::MoveIntent{});
+                ZL_INFO("game", "玩家实体生成：格 ({}, {})（目标 ({}, {})，搜索半径 {}）", wx, wy,
+                        kTargetX, kTargetY, r);
+                return;
+            }
+        }
+    }
 }
 
 void WorldDemoState::SpawnDemoEntities() {
@@ -115,24 +197,13 @@ void WorldDemoState::SpawnDemoEntities() {
     const uint32_t sprite = ecs::HashName("character.placeholder");
     entt::registry& registry = world.Registry();
     for (int i = 0; i < kCount; ++i) {
-        const ecs::Entity e = world.Create();
         const float px = m_demoBoxX0 + u01(rng) * (m_demoBoxX1 - m_demoBoxX0);
         const float py = m_demoBoxY0 + u01(rng) * (m_demoBoxY1 - m_demoBoxY0);
         const float angle = u01(rng) * 6.2831853f;
         const float speed = 0.8f + u01(rng) * 1.6f;
-        registry.emplace<ecs::Position>(e, ecs::Position{px, py, 0});
-        registry.emplace<ecs::Velocity>(
-            e, ecs::Velocity{std::cos(angle) * speed, std::sin(angle) * speed});
-        registry.emplace<ecs::Collider>(e, ecs::Collider{});
-        registry.emplace<ecs::SpriteRef>(e, ecs::SpriteRef{sprite, 0, 0xFFFFFFFFu});
-
-        // M4-T3：物理体（胶囊参数与 Collider 一致）；位置/速度由 Bullet 接管
-        if (m_ctx.physics != nullptr) {
-            const ecs::Collider def;
-            ecs::RigidBody rigid;
-            rigid.body = m_ctx.physics->CreateCharacterBody(def.radius, def.height, px, py, 0);
-            registry.emplace<ecs::RigidBody>(e, rigid);
-        }
+        const ecs::Entity e = SpawnCharacter(px, py);
+        registry.patch<ecs::Velocity>(
+            e, [&](ecs::Velocity& v) { v = {std::cos(angle) * speed, std::sin(angle) * speed}; });
     }
     m_demoEntityCount = kCount;
     ZL_INFO("ecs", "生成 {} 个演示实体（漂移盒 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]，精灵名哈希 {:#x}）",
@@ -156,6 +227,7 @@ void WorldDemoState::DespawnDemoEntities() {
         });
     m_ctx.ecs->Flush();
     m_demoEntityCount = 0;
+    m_player = entt::null;
 }
 
 void WorldDemoState::OnExit() {
@@ -171,9 +243,14 @@ void WorldDemoState::OnTick(double tickDt) {
     ++m_ticksInState;
     // M4-T3：位移由 MovementSystem + PhysicsSyncSystem（固定链）驱动；
     // 这里只剩"入场导向"脚手架——实体出盒后把速度分量反向（撞墙的自然阻挡交给物理）。
+    // M4-T4：玩家（有 MoveIntent 的实体）不参与漂移盒约束（意图由 InputSystem 全量重写）。
     if (m_ctx.ecs != nullptr && m_demoEntityCount > 0) {
-        m_ctx.ecs->Registry().view<ecs::Position, ecs::Velocity>().each(
-            [&](const ecs::Entity, const ecs::Position& p, ecs::Velocity& v) {
+        entt::registry& registry = m_ctx.ecs->Registry();
+        registry.view<ecs::Position, ecs::Velocity>().each(
+            [&](const ecs::Entity e, const ecs::Position& p, ecs::Velocity& v) {
+                if (registry.any_of<ecs::PlayerTag, ecs::MoveIntent>(e)) {
+                    return;
+                }
                 if (p.x < m_demoBoxX0) {
                     v.x = std::fabs(v.x);
                 } else if (p.x > m_demoBoxX1) {
@@ -197,6 +274,9 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     const glm::vec2 camGrid = render::FromScreen(m_ctx.camera->Center(), 0);
     m_ctx.chunkManager->Update(camGrid.x, camGrid.y);
     m_ctx.chunkManager->ProcessResults();
+
+    // M4-T4：目标 chunk 加载完成后生成玩家（村庄中心附近找可走格）
+    EnsurePlayerSpawned();
 
     CollectWorld();
     // M4-T2：ECS 实体 → 同列表的"高度精灵"通道；之后统一全局画家序排序
@@ -343,18 +423,18 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
                 m_cruiseEnabled ? "开" : "关", m_cruiseMinutes, m_cruiseSpeed, m_cruiseRadius);
     }
 
-    // 平移：WASD（屏幕空间速度恒定）
+    // 平移：方向键（M4-T4 起 WASD 归玩家移动；相机跟随在 M4-T5）
     glm::vec2 move(0.0f, 0.0f);
-    if (input.IsActionDown("MoveUp")) {
+    if (input.IsActionDown("PanUp")) {
         move.y -= 1.0f;
     }
-    if (input.IsActionDown("MoveDown")) {
+    if (input.IsActionDown("PanDown")) {
         move.y += 1.0f;
     }
-    if (input.IsActionDown("MoveLeft")) {
+    if (input.IsActionDown("PanLeft")) {
         move.x -= 1.0f;
     }
-    if (input.IsActionDown("MoveRight")) {
+    if (input.IsActionDown("PanRight")) {
         move.x += 1.0f;
     }
     if (move.x != 0.0f || move.y != 0.0f) {
@@ -693,8 +773,25 @@ void WorldDemoState::DrawDebugText() {
     bgfx::dbgTextPrintf(0, 6, 0x0f, "zoom: %.2f | hover: (%d, %d) | provider: %s",
                         m_ctx.camera->Zoom(), m_hoverX, m_hoverY,
                         m_ctx.assets->Provider().c_str());
+    // M4-T4：玩家状态（位置/朝向/动画帧/移动意图）
+    if (m_ctx.ecs != nullptr && m_player != entt::null) {
+        entt::registry& registry = m_ctx.ecs->Registry();
+        const auto* playerPos = registry.try_get<ecs::Position>(m_player);
+        const auto* playerFacing = registry.try_get<ecs::Facing>(m_player);
+        const auto* playerAnim = registry.try_get<ecs::AnimState>(m_player);
+        const auto* playerIntent = registry.try_get<ecs::MoveIntent>(m_player);
+        if (playerPos != nullptr) {
+            bgfx::dbgTextPrintf(
+                0, 7, 0x0f, "player: (%.1f, %.1f) dir=%u frame=%u intent=(%.1f, %.1f)",
+                playerPos->x, playerPos->y,
+                playerFacing != nullptr ? static_cast<unsigned>(playerFacing->dir) : 0u,
+                playerAnim != nullptr ? static_cast<unsigned>(playerAnim->frame) : 0u,
+                playerIntent != nullptr ? playerIntent->x : 0.0f,
+                playerIntent != nullptr ? playerIntent->y : 0.0f);
+        }
+    }
     bgfx::dbgTextPrintf(0, 8, 0x07,
-                        "WASD/RMB drag pan | wheel zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+                        "WASD move | arrows/RMB drag pan | wheel zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
 }
 
 }  // namespace zl::game

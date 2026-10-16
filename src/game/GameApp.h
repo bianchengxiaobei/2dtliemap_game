@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <memory>
 
+#include "characters/systems/AnimationSystem.h"
+#include "characters/systems/InputSystem.h"
 #include "characters/systems/MovementSystem.h"
 #include "core/AppState.h"
 #include "core/Config.h"
@@ -74,8 +76,11 @@ private:
 
     // 物理（M4-T3）：静态体随 chunk 生命周期生成/移除；系统实例与注册集中管理
     std::unique_ptr<physics::PhysicsWorld> m_physics;
+    // 角色系统（M4-T3/T4）
+    std::unique_ptr<characters::InputSystem> m_inputSystem;
     std::unique_ptr<characters::MovementSystem> m_movementSystem;
     std::unique_ptr<physics::PhysicsSyncSystem> m_physicsSyncSystem;
+    std::unique_ptr<characters::AnimationSystem> m_animationSystem;
 
     // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
     ecs::EcsWorld m_ecs;

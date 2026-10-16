@@ -2,6 +2,7 @@
 
 #include <btBulletDynamicsCommon.h>
 
+#include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
 #include "ecs/components/PhysicsComponents.h"
@@ -12,6 +13,11 @@ void MovementSystem::Update(ecs::EcsWorld& world, float dt) {
     entt::registry& registry = world.Registry();
     registry.view<ecs::Position, ecs::Velocity>().each(
         [&](const ecs::Entity e, ecs::Position& position, ecs::Velocity& velocity) {
+            // M4-T4：有 MoveIntent（输入/AI 意图）时先落到 Velocity——意图本 tick 生效
+            if (const auto* intent = registry.try_get<ecs::MoveIntent>(e); intent != nullptr) {
+                velocity.x = intent->x;
+                velocity.y = intent->y;
+            }
             const auto* rigid = registry.try_get<ecs::RigidBody>(e);
             if (rigid != nullptr && rigid->body != nullptr) {
                 // 物理实体：速度交给 Bullet（XY 平面；z 锁死不参与运动）

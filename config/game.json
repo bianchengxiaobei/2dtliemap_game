@@ -48,6 +48,10 @@
       "MoveDown": "S",
       "MoveLeft": "A",
       "MoveRight": "D",
+      "PanUp": "UP",
+      "PanDown": "DOWN",
+      "PanLeft": "LEFT",
+      "PanRight": "RIGHT",
       "TogglePhysicsDebug": "F10"
     }
   },

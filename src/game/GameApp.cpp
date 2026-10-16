@@ -26,6 +26,9 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"ToggleDebugOverlay", "F9"}, {"TogglePhysicsDebug", "F10"},
     {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
     {"MoveRight", "D"},
+    // M4-T4：WASD 归玩家；相机平移改方向键（开发用，M4-T5 改为跟随）
+    {"PanUp", "UP"},         {"PanDown", "DOWN"},   {"PanLeft", "LEFT"},
+    {"PanRight", "RIGHT"},
 };
 
 double NowSeconds() {
@@ -170,17 +173,27 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
 
     // ECS 固定链集中注册（docs/00 §6.1）；顺序 = 执行顺序。
-    // 目前：索引维护 → Movement → PhysicsSync；后续任务按链序插入
-    // （Input → Ai → PathFollow → Movement → PhysicsSync → Perception → Combat → SpawnLod → RenderCollect）。
+    // 目前：索引维护 → Input → Movement → PhysicsSync → Animation；后续任务按链序插入
+    // （目标链：Input → Ai → PathFollow → Movement → PhysicsSync → Perception → Combat →
+    //   SpawnLod → RenderCollect）。
     m_ecs.Systems().AddSystem("SpatialIndexSystem",
                               [this](ecs::EcsWorld& w, float) { m_spatialIndex.Update(w); });
+    m_inputSystem = std::make_unique<characters::InputSystem>();
     m_movementSystem = std::make_unique<characters::MovementSystem>();
     m_physicsSyncSystem = std::make_unique<physics::PhysicsSyncSystem>(m_physics.get());
+    m_animationSystem = std::make_unique<characters::AnimationSystem>();
+    m_ecs.Systems().AddSystem("InputSystem", [this](ecs::EcsWorld& w, float) {
+        m_inputSystem->Update(m_input, w);
+    });
     m_ecs.Systems().AddSystem("MovementSystem", [this](ecs::EcsWorld& w, float dt) {
         m_movementSystem->Update(w, dt);
     });
     m_ecs.Systems().AddSystem("PhysicsSyncSystem", [this](ecs::EcsWorld& w, float dt) {
         m_physicsSyncSystem->Update(w, dt);
+    });
+    // 动画读"物理实际速度"（撞墙≈0 → 自动进站立帧），因此排在 PhysicsSync 之后
+    m_ecs.Systems().AddSystem("AnimationSystem", [this](ecs::EcsWorld& w, float dt) {
+        m_animationSystem->Update(w, dt);
     });
 
     m_probe.Attach(m_events);
@@ -218,6 +231,8 @@ void GameApp::Shutdown() {
     m_window.Destroy();
     m_loop.reset();
     m_physicsSyncSystem.reset();
+    m_animationSystem.reset();
+    m_inputSystem.reset();
     m_movementSystem.reset();
     m_physics.reset();  // 物理体先于 chunk 生命周期回调销毁
     m_chunkManager.reset();

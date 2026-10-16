@@ -26,8 +26,10 @@ void RenderCollectSystem::Collect(ecs::EcsWorld& world, const ecs::SpatialIndex&
             return;
         }
         const std::uint64_t stableId = world.IdOf(e).id;
-        const AssetProvider::Entry& entry =
-            (*frames)[render::HashPick(stableId, 0x5EC7u) % frames->size()];
+        const std::size_t frameIndex =
+            PickFrameIndex(registry.try_get<ecs::AnimState>(e), registry.try_get<ecs::Facing>(e),
+                           stableId, frames->size());
+        const AssetProvider::Entry& entry = (*frames)[frameIndex];
         if (entry.atlas == nullptr || entry.frame == nullptr) {
             return;
         }

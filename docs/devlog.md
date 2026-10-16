@@ -288,3 +288,44 @@ village 与 stress 巡航（30s、754 块加载/705 卸载）静态体数稳定=
 Movement 两分支、全链路（Movement+Sync 240 tick 后 Position 停墙前 + 速度回写归零）、
 500 静态体+50 动态体步进预算（Debug 宽松上限）、MapLoader solid 解析。
 合计 58 用例 / 116821 断言全绿。
+
+---
+
+## 2026-10-16 M4-T4 玩家控制（系统化）
+
+**新增**
+- `characters/components/CharacterComponents.h`：`PlayerTag` / `LocalControl`（walkSpeed 4.0 格/s）/
+  `MoveIntent`（期望速度，格/秒）/ `Facing`（4 向）/ `AnimState`（frame/framesPerDir=2/fps=8）；
+- `characters::InputSystem`：WASD（**屏幕语义**，W=屏幕上）→ 等距矫正（反解 ToScreen 线性部分，
+  2:1 投影下屏幕方向 ≠ 格方向）→ 归一后写 MoveIntent；线性映射保方向，屏幕方向不变；
+- `characters::AnimationSystem`：速度 → 朝向（屏幕主轴 sx=vx-vy, sy=vx+vy；|sy|≥|sx| 取上/下，
+  否则左/右；45° 平局取上下轴，确定性）+ 行走帧推进（时间循环取模防漂移）；
+- `MovementSystem` 增加 MoveIntent 消费（意图→Velocity，本 tick 生效；物理/非物理两分支不变）；
+- `RenderCollectSystem::PickFrameIndex`（纯函数）：动画实体 index = dir×framesPerDir + frame，
+  无动画走 HashPick 变体；帧数保护（模收敛）；
+- 图集扩为 8 帧：`character_{down,left,right,up}_{0,1}`（左向手绘、右向镜像；帧序=dir 枚举序，
+  dir: down=0,left=1,right=2,up=3，与 Direction/AnimState 对齐）；manifest 同步；
+- WorldDemoState：玩家延迟生成（等目标 chunk 加载后螺旋找可走格）、演示实体挂 Facing/AnimState
+  随漂移自动朝向动画；相机平移改方向键（PanUp/Down/Left/Right，WASD 归玩家）。
+
+**实测**（village_demo）：玩家生成于 (70,18)（r=0，目标即可走格）；W 按住 2s 位移 6.0 格、
+dir=3(Up)、行走帧 frame=1 捕捉成功；D 1.5s 位移 4.2 格 dir=2(Right)；松键后 intent=(0,0)、
+位置在 1.5s 间隔的两张 settled 截图中完全一致（无卡键无漂移）；站立帧双腿并拢 vs 行走帧腿错位
+（放大裁剪确认）；FPS 59~60、物理 step 0.34ms。
+
+**踩坑**
+1. 玩家生成时机：EnsurePlayerSpawned 在首帧跑，螺旋寻格时"未加载=阻挡"，而首帧只有相机外围少量
+   chunk 已加载 → 玩家被丢到 25 格外的 (49,-3)（搜索半径 21）。修复：先等**目标格所在 chunk**
+   加载完成再开始扫描；
+2. **自动化输入坑（重要，供后续冒烟复用）**：PostMessage 发 WM_KEYDOWN/WM_KEYUP 时 lParam 必须带
+   scancode，且 WM_KEYUP 必须置 KF_UP(0x8000)/KF_REPEAT(0x4000) 位——GLFW 用
+   `HIWORD(lParam) & KF_UP` 判定动作，lParam=0 时 keyup 被当成再次按下 → 按键"卡死"；
+   四方向键同时卡住时 MoveIntent 恰好互相抵消（W+D+S+A 向量和为零）→ 曾误判为"已松键"；
+   lParam 正确后行为完全正常。另：ImageGrab 抓屏有 ~0.5-1s 滞后，键态断言一律用"松键后 ≥2s 的
+   settled 截图"或间隔截图对比。
+
+**测试**（tests/test_player_control.cpp，7 用例）：等距矫正 8 向往返一致 + W/D 具体值、InputSystem
+写 MoveIntent（含速度/非玩家实体隔离/松键归零）、Movement 消费意图、朝向 4+4 向判定（含格轴平局）、
+动画帧推进/站立复位/朝向保持/framesPerDir=1 不除零、PickFrameIndex（动画/变体/帧数保护）、
+全链路（输入→物理→同步→动画：顶墙滑动 200 tick 停在 4.2、行走帧出现过、松键立停 + 站立帧）。
+合计 65 用例 / 116886 断言全绿。

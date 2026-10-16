@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 
 #include "core/AppState.h"
+#include "ecs/EcsWorld.h"
 #include "game/AssetProvider.h"
 #include "game/GameContext.h"
 #include "game/RenderCollectSystem.h"
@@ -41,6 +42,10 @@ private:
     void CollectWorld();
     void SpawnDemoEntities();
     void DespawnDemoEntities();
+    // M4-T4：玩家（PlayerTag）——chunk 加载完成后在村庄中心附近找可走格生成
+    void EnsurePlayerSpawned();
+    ecs::Entity SpawnCharacter(float px, float py);
+    bool IsSolidSquare(int wx, int wy) const;
     void UpdateCruise(double frameDt);
     void LogPerfSample(const char* tag);
     void PushObject(const world::SquareObject& object, int wx, int wy, int z,
@@ -60,12 +65,14 @@ private:
     int m_collectedChunks = 0;  // 本帧进入收集的已加载 chunk 数
     int m_missingChunks = 0;    // 本帧可见但尚未加载的 chunk 数
 
-    // M4-T2 演示脚手架：ECS 实体在盒内漂移（M4-T4 玩家控制接入后删除）
+    // M4-T2/T3 演示脚手架：ECS 实体在盒内漂移（M4-T6 寻路接入后删除）
     float m_demoBoxX0 = 0.0f;
     float m_demoBoxY0 = 0.0f;
     float m_demoBoxX1 = 0.0f;
     float m_demoBoxY1 = 0.0f;
     int m_demoEntityCount = 0;
+    // M4-T4：本地玩家（WASD 控制；相机由方向键平移，M4-T5 改为跟随）
+    ecs::Entity m_player = entt::null;
     bool m_physicsDebug = false;  // F10：Bullet 线框
     int m_wireDiagCount = 0;      // 线框诊断日志计数（开启后头几帧）
 

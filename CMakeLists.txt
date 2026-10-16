@@ -29,6 +29,8 @@ find_package(doctest CONFIG REQUIRED)
 
 add_executable(ZomboidLike
     src/main.cpp
+    src/characters/systems/AnimationSystem.cpp
+    src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp
     src/core/AppState.cpp
     src/core/Config.cpp
@@ -100,8 +102,12 @@ add_executable(ZomboidLikeTests
     tests/test_ecs.cpp
     tests/test_spatialindex.cpp
     tests/test_physics.cpp
+    tests/test_player_control.cpp
     tests/test_world.cpp
+    src/characters/systems/AnimationSystem.cpp
+    src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp
+    src/core/Input.cpp
     src/core/Log.cpp
     src/core/TaskScheduler.cpp
     src/ecs/EcsWorld.cpp

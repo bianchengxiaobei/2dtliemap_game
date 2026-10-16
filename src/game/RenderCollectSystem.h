@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/SpatialIndex.h"
 #include "game/AssetProvider.h"
@@ -63,8 +64,25 @@ public:
         *out = item;
     }
 
+    // 帧选择（纯函数，可单测）：
+    //   有 AnimState + Facing（动画实体）→ index = dir * framesPerDir + frame（帧序约定）；
+    //   否则（世界对象式静态变体）→ HashPick(stableId) 确定性伪随机。
+    static std::size_t PickFrameIndex(const ecs::AnimState* anim, const ecs::Facing* facing,
+                                      std::uint64_t stableId, std::size_t frameCount) {
+        if (frameCount == 0) {
+            return 0;
+        }
+        if (anim != nullptr && facing != nullptr && anim->framesPerDir > 0) {
+            const std::size_t index = static_cast<std::size_t>(facing->dir) *
+                                          static_cast<std::size_t>(anim->framesPerDir) +
+                                      anim->frame;
+            return index < frameCount ? index : index % frameCount;
+        }
+        return render::HashPick(stableId, 0x5EC7u) % frameCount;
+    }
+
     // 主线程渲染帧：把可见范围内（Position + SpriteRef）实体的高度精灵追加进 items。
-    // 变体选取用 StableId（实体移动不换帧）；资源缺失静默跳过（与 PushObject 同策略）。
+    // 帧选择见 PickFrameIndex；资源缺失静默跳过（与 PushObject 同策略）。
     static void Collect(ecs::EcsWorld& world, const ecs::SpatialIndex& index,
                         const AssetProvider& assets, const ViewRect& view,
                         std::vector<render::DrawItem>& items);
