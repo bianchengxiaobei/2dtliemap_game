@@ -68,7 +68,15 @@ std::optional<std::string> ReadFile(const std::filesystem::path& path) {
     }
     std::ostringstream buffer;
     buffer << in.rdbuf();
-    return buffer.str();
+    std::string text = buffer.str();
+    // 容忍 UTF-8 BOM（Windows 编辑器默认写入）：Lua 词法层不识别 BOM，会报
+    // "unexpected symbol near '<\239>'"（M7-T5 实机踩坑）
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
+        static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF) {
+        text.erase(0, 3);
+    }
+    return text;
 }
 
 // 裸建表（sol::table::create 静态重载被派生类成员隐藏）

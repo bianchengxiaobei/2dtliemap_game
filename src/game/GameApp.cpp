@@ -17,6 +17,7 @@
 #include "platform/KeyNames.h"
 #include "render/IsoMath.h"
 #include "script/LuaRuntime.h"
+#include "script/ModLoader.h"
 #include "world/MapLoader.h"
 
 namespace zl::game {
@@ -96,6 +97,9 @@ bool GameApp::Init(int argc, char** argv) {
         // M7-T4：事件桥接（EventBus → 脚本 Events.On）；manager 借此在重载后发 OnModReload
         m_script.SetEventBus(&m_events);
         m_eventBridge = std::make_unique<script::EventBridge>(m_events, m_script);
+        // M7-T5：扫描并加载 mods/（目录不存在则跳过；单个 mod 失败不阻断其它）
+        script::ModLoader loader(m_script, m_config.Get<std::string>("script.backend", "lua"));
+        loader.ScanAndLoad(m_config.Get<std::string>("script.modsDir", "mods"));
         ZL_INFO("script", "脚本系统就绪（后端 {} 个，API v{}）", m_script.RuntimeCount(),
                 script::ScriptApi::kApiVersion);
     } else {

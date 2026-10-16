@@ -1088,3 +1088,35 @@ tick——脚本日志逐行断言 + 容器/位置/地面/僵尸数副作用对�
 
 **实机**：Release 启动 `事件桥接就绪（事件表 v1 共 14 个事件）`；569 tick 运行中 chunk 53 加载/
 4 卸载事件过桥无异常，ESC 优雅退出。
+
+---
+
+## 2026-10-17 M7-T5 mod 加载器（mods/<id>/mod.json + 沙箱收口）
+
+**交付**：
+- `src/script/ModLoader.h/.cpp`：`ScanAndLoad(modsDir)` 扫描子目录（目录名排序 → 确定性），
+  逐个解析 + 加载；`ParseModInfo(jsonText, modDir, defaultBackend, out, error)` 可单测/热重载复用。
+  字段规则：`id` 缺省=目录名（与目录名不一致仅告警，以 id 为准）；`name` 缺省=id；
+  `version` 缺省 0.0.0；`api` 缺省=当前 `ScriptApi::kApiVersion`（**过新拒绝**：如 api=99；
+  偏旧告警尽力加载）；`backend` 缺省=config `script.backend`；`main` 缺省 `scripts/main.lua`；
+  `loadOrder` 缺省 100（派发顺序由 manager 按 loadOrder 稳定排序）。
+- 失败隔离：无 mod.json / JSON 坏 / 顶层非对象 / 字段类型不符 / api 过新 / 后端未注册 —— 单 mod
+  记日志跳过，不阻断其它（与事件错误隔离同原则）；目录不存在 → 空结果不算错误。
+- GameApp 1.6 接线（bridge 之后、`OnGameStart` 之前）：`script.modsDir`（默认 `mods`）。
+- config/game.json 增 `script.modsDir`。
+- 沙箱收口：T2 起 os/io/debug/package 从未加载、dofile/loadfile/load/require 不在白名单——
+  本任务把测试扩展到面断言（脚本内 `tostring(debug)` 等全为 nil，string 等白名单可用）。
+- `tests/ScriptTestHelpers.h` 增 `WriteManifest`；新 `tests/test_mod_loader.cpp`（2 用例）。
+
+**坑（实机发现，已修复）**：Windows 编辑器（PS 5.1 `-Encoding UTF8`、旧记事本等）写出的
+**UTF-8 BOM** 会让 Lua 词法层报 `unexpected symbol near '<\239>'` → LuaRuntime 读源文件时剥离
+BOM（\xEF\xBB\xBF），新增对应用例；mod.json 侧 nlohmann 自带 BOM 容忍，无需处理。
+
+**测试**：179 用例全绿（Debug 118219）。解析矩阵（完整/缺省/id 回退/旧 api/过新 api/坏 JSON/
+错类型）+ 扫描集成（7 目录：加载 3 跳过 4；loadOrder=10 先于 90 派发，与目录序无关；
+被跳过的 mod 脚本从未执行）+ BOM 容忍 + 沙箱面。
+
+**实机**：真实 mod（mods/smoke_hello：OnGameStart 打玩家 ID、OnTick 第 60 拍打 `Zombies.Count`）——
+`mod 扫描完成：1 个目录，加载 1，跳过 0` → `[smoke_hello] smoke mod loaded` → `game started`
+→ `60 ticks, zombies=40, tick=59`（Host API 在真实游戏里生效）。注：OnGameStart 触发时玩家尚
+未生成（玩家在 WorldDemoState 首 tick 生成，`player=0` 属预期）；冒烟 mod 已删除（示例 mod 归 T7）。

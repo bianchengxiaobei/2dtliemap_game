@@ -54,6 +54,15 @@ public:
         out << source;
     }
 
+    // 写 mods/<id>/mod.json（M7-T5 ModLoader 测试）
+    void WriteManifest(const std::string& id, const std::string& jsonText) {
+        const std::filesystem::path dir = root / id;
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        std::ofstream out(dir / "mod.json", std::ios::binary | std::ios::trunc);
+        out << jsonText;
+    }
+
     std::filesystem::path root;
 };
 

@@ -97,7 +97,18 @@ TEST_CASE("M7-T2：沙箱——白名单可用，os/io/dofile 不可用") {
     CHECK_FALSE(runtime.LoadMod(mods.MakeMod("uses_dofile", "dofile('x.lua')"), error));
     CHECK(error.find("dofile") != std::string::npos);
 
-    CHECK(runtime.LoadedMods() == std::vector<std::string>{"safe"});
+    // M7-T5 沙箱收口：危险库与动态加载入口一律不可见（nil）
+    CHECK(runtime.LoadMod(
+        mods.MakeMod("surface", "Log.Info('d=' .. tostring(debug) .. ' p=' .. tostring(package) .."
+                                " ' i=' .. tostring(io) .. ' r=' .. tostring(require) .."
+                                " ' lf=' .. tostring(loadfile) .. ' l=' .. tostring(load) .."
+                                " ' s=' .. tostring(type(string)))"),
+        error));
+    CHECK(error.empty());
+    CHECK(capture.Str().find("d=nil p=nil i=nil r=nil lf=nil l=nil s=table") !=
+          std::string::npos);
+
+    CHECK(runtime.LoadedMods() == std::vector<std::string>{"safe", "surface"});
 }
 
 TEST_CASE("M7-T2：错误定位——语法错误行号 + 运行时错误带 traceback") {
@@ -396,4 +407,16 @@ Game.SetTimer(30, function() Log.Info('timer=30s') end)
     logs = capture.Str();
     CHECK(logs.find("tick=9") != std::string::npos);
     CHECK(logs.find("tick=10") == std::string::npos);
+}
+
+TEST_CASE("M7-T5：Lua 源文件容忍 UTF-8 BOM（Windows 编辑器常见）") {
+    TempModRoot mods;
+    script::LuaRuntime runtime;
+    std::string error;
+    REQUIRE(runtime.Initialize(error));
+
+    LogCapture capture;
+    CHECK(runtime.LoadMod(mods.MakeMod("bom", "\xEF\xBB\xBFLog.Info('bom ok')"), error));
+    CHECK(error.empty());
+    CHECK(capture.Str().find("bom ok") != std::string::npos);
 }
