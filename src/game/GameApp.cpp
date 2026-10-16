@@ -30,6 +30,7 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"ToggleDebugOverlay", "F9"}, {"TogglePhysicsDebug", "F10"}, {"DemoKill", "F6"},
     {"DemoGunshot", "F7"},   // M5-T4：演示开枪（大半径 SoundEvent）
     {"Attack", "SPACE"},     // M5-T6：玩家挥击（演示用自动瞄准，M6 接武器/朝向）
+    {"Pickup", "F"},         // M6-T3：拾取最近地面物品
     {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
     {"MoveRight", "D"},
     // M4-T4：WASD 归玩家；方向键平移相机（自由相机模式，M4-T5）

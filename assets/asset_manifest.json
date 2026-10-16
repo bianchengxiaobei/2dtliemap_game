@@ -99,6 +99,48 @@
         "frames": ["corpse_1", "corpse_2"]
       }
     },
+    "item.bandage": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_bandage"]
+      }
+    },
+    "item.canned_beans": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_canned_beans"]
+      }
+    },
+    "item.axe": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_axe"]
+      }
+    },
+    "item.kitchen_knife": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_kitchen_knife"]
+      }
+    },
+    "item.rag": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_rag"]
+      }
+    },
+    "item.jacket": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_jacket"]
+      }
+    },
+    "item.tote_bag": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_tote_bag"]
+      }
+    },
     "ui.pixel": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",

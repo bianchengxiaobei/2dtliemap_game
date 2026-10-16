@@ -58,6 +58,7 @@ add_executable(ZomboidLike
     src/game/AssetProvider.cpp
     src/game/EventProbe.cpp
     src/game/GameApp.cpp
+    src/game/GroundItems.cpp
     src/game/RenderCollectSystem.cpp
     src/game/ZombieFactory.cpp
     src/game/states/RenderDemoState.cpp
@@ -129,6 +130,7 @@ add_executable(ZomboidLikeTests
     tests/test_spawn_lod.cpp
     tests/test_items.cpp
     tests/test_inventory.cpp
+    tests/test_ground_items.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -152,6 +154,7 @@ add_executable(ZomboidLikeTests
     src/ecs/EcsWorld.cpp
     src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
+    src/game/GroundItems.cpp
     src/items/ItemDef.cpp
     src/items/ItemRegistry.cpp
     src/items/InventoryOps.cpp

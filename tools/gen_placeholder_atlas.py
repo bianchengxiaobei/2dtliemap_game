@@ -246,6 +246,48 @@ def make_corpse(seed, flip=False):
     return canvas
 
 
+def make_item_icon(kind):
+    """物品图标占位（M6-T3）：画布 64x128，图案绘制在格中心带（锚点与角色一致，
+    脚底 y=112）——物品贴地可见；逻辑名 item.<id> 见 asset_manifest。"""
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    cx, cy = 32, 104
+    dark = (30, 28, 34, 255)
+    if kind == "bandage":
+        d.ellipse([cx - 9, cy - 7, cx + 9, cy + 7], fill=(240, 240, 232, 255), outline=dark)
+        d.rectangle([cx - 2, cy - 7, cx + 2, cy + 7], fill=(224, 80, 80, 255))
+        d.rectangle([cx - 9, cy - 2, cx + 9, cy + 2], fill=(224, 80, 80, 255))
+        d.ellipse([cx - 9, cy - 7, cx + 9, cy + 7], outline=dark)
+    elif kind == "canned_beans":
+        d.rectangle([cx - 7, cy - 10, cx + 7, cy + 10], fill=(196, 198, 204, 255), outline=dark)
+        d.ellipse([cx - 7, cy - 13, cx + 7, cy - 7], fill=(222, 224, 230, 255), outline=dark)
+        d.rectangle([cx - 7, cy - 4, cx + 7, cy + 4], fill=(176, 92, 58, 255))
+        d.line([(cx - 4, cy), (cx + 4, cy)], fill=(242, 240, 230, 255), width=2)
+    elif kind == "axe":
+        d.line([(cx - 10, cy + 12), (cx + 5, cy - 9)], fill=(126, 92, 58, 255), width=4)
+        d.polygon([(cx + 1, cy - 13), (cx + 14, cy - 7), (cx + 9, cy + 4), (cx - 3, cy - 3)],
+                  fill=(176, 180, 188, 255), outline=dark)
+    elif kind == "kitchen_knife":
+        d.polygon([(cx - 13, cy - 3), (cx + 6, cy - 5), (cx + 6, cy + 1), (cx - 13, cy + 3)],
+                  fill=(224, 228, 236, 255), outline=dark)
+        d.rectangle([cx + 6, cy - 4, cx + 14, cy + 2], fill=(46, 42, 40, 255))
+    elif kind == "rag":
+        d.polygon([(cx - 11, cy - 6), (cx + 9, cy - 9), (cx + 13, cy + 4), (cx - 6, cy + 9),
+                   (cx - 13, cy + 2)], fill=(152, 150, 142, 255), outline=dark)
+        d.line([(cx - 8, cy + 2), (cx + 8, cy - 2)], fill=(118, 116, 110, 255), width=1)
+    elif kind == "jacket":
+        d.polygon([(cx - 11, cy - 8), (cx + 11, cy - 8), (cx + 14, cy + 6), (cx + 5, cy + 6),
+                   (cx + 5, cy + 12), (cx - 5, cy + 12), (cx - 5, cy + 6), (cx - 14, cy + 6)],
+                  fill=(74, 104, 148, 255), outline=dark)
+        d.line([(cx, cy - 8), (cx, cy + 6)], fill=(50, 74, 108, 255), width=1)
+    elif kind == "tote_bag":
+        d.arc([cx - 8, cy - 19, cx + 8, cy - 3], 180, 360, fill=(96, 70, 46, 255), width=3)
+        d.polygon([(cx - 11, cy - 8), (cx + 11, cy - 8), (cx + 9, cy + 12), (cx - 9, cy + 12)],
+                  fill=(160, 120, 78, 255), outline=dark)
+        d.line([(cx - 9, cy - 8), (cx + 9, cy - 8)], fill=(120, 88, 56, 255), width=2)
+    return canvas
+
+
 def pack_frames(frames, margin=1):
     """shelf 打包：返回合并后的页图与子图矩形表"""
     # 每行限宽 1024
@@ -327,6 +369,14 @@ def main():
         bbox = canvas.getbbox()
         specs.append((f"tree_{i + 1}", canvas, (bbox[0], bbox[1],
                      bbox[2] - bbox[0], bbox[3] - bbox[1]), bbox[0], bbox[1], 192, 256))
+
+    # 物品图标占位（M6-T3：地面物品实体；逻辑名 item.<id> 见 asset_manifest）
+    for kind in ("bandage", "canned_beans", "axe", "kitchen_knife", "rag", "jacket",
+                 "tote_bag"):
+        canvas = make_item_icon(kind)
+        bbox = canvas.getbbox()
+        specs.append((f"item_{kind}", canvas, (bbox[0], bbox[1],
+                     bbox[2] - bbox[0], bbox[3] - bbox[1]), bbox[0], bbox[1], 64, 128))
 
     white = new_canvas((1, 1))
     white.putpixel((0, 0), (255, 255, 255, 255))

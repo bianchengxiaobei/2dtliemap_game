@@ -844,3 +844,37 @@ PrimaryHand=仅武器、Body=仅衣物；扩展 = 加枚举值 + SlotAccepts 规
 部分加入×4、未知与非法实例、移除计数、装备换装/拒装/卸下、重量与槽名）；141 用例全绿
 （Debug 117757 / Release 117758）。实机冒烟：启动无错误日志，玩家两次生成均成功
 （第二次 = 已知的出生点被围殴平衡问题）。
+
+---
+
+## 2026-10-16 M6-T3 地面物品实体（睡眠化）
+
+**实体形态**（`src/game/GroundItems.h/.cpp`）：地面物品 = `Position + ItemInstance + SpriteRef`
+（sprite = HashName(ItemDef.icon)，layer=-1 → 同格时画在角色之下；**无 Collider/RigidBody**：
+不阻挡、不参与物理）。Spawning 走 `SpawnGroundItem`（未知定义/非法实例拒绝+告警）。
+
+**睡眠化**：物品由 SpatialIndex 按 chunk 桶管理（Position 驱动，自动入桶/换桶/回收）；
+渲染收集（RenderCollectSystem）只查询相机视口覆盖的 chunk → 远离相机的物品自然不进入
+收集、0 额外 drawcall（实测 drawcall=3 不变）；无需每帧全量遍历。
+
+**拾取链路**：`PickupNearestItem`（半径内最近同层物品 → `InventoryOps::AddItem` 并入
+玩家 Container → 地面数量扣减，归零才销毁实体——支持**部分拾取**，装不下留在地面）。
+F 键绑定（config `input.bindings.Pickup` + `inventory.pickupRadius`=1.6）；HUD 行 15
+`bag: N item(s) W/Ckg | ground=M`；提示文案 ASCII（Nothing to pick up / Bag full），
+中文名进日志。
+
+**资源**：gen_placeholder_atlas.py 新增 7 个物品图标帧（绷带/罐头/斧/厨刀/破布/夹克/
+手提袋，格中心带小图案）；manifest 新增 item.<id> 逻辑名（own 绑定，pz provider 下
+自动回退 own）；重生成图集 34 帧。
+
+**开局演示**：村庄附近固定 8 散落点（经 FindNearestWalkable 吸附 + chunk 就绪门控），
+含绷带 x2 / 破布 x3 堆叠演示；状态退出时清理地面物品。
+
+**测试**：新增 tests/test_ground_items.cpp 6 用例（实体构成/空间索引归属/最近搜索含 z
+过滤/完整拾取+实体销毁/部分拾取+背包满/坏数据防御/丢弃往返一致）；147 用例全绿
+（Debug 117812 / Release 117813）。
+
+**实机冒烟**（Release；僵尸无害化覆盖参数便于走位）：散落 7 处（1 处无可走格跳过）→
+HUD ground=7 → W 走位 → F 拾取 → `拾取：绷带 x2（地面剩 0 件；背包 2 件）` +
+HUD `bag: 2 item(s) 0.2/20.0kg | ground=6` → 再按 F `Nothing to pick up` 负例；
+截图 m6t3_1_scatter / m6t3_2_pickup / m6t3_3_empty。

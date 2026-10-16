@@ -37,6 +37,8 @@
 #include "game/CameraFollow.h"
 #include "game/WorldQueries.h"
 #include "game/ZombieFactory.h"
+#include "game/GroundItems.h"
+#include "items/InventoryOps.h"
 #include "items/ItemComponents.h"
 #include "physics/PhysicsWorld.h"
 #include "platform/Window.h"
@@ -125,6 +127,9 @@ void WorldDemoState::OnEnter() {
     // M6-T2：玩家背包容量（kg）
     m_playerCapacityKg =
         static_cast<float>(config.Get<double>("inventory.playerCapacityKg", 20.0));
+    // M6-T3：地面物品拾取半径（格）+ 每次进入状态重新散落
+    m_pickupRadius = static_cast<float>(config.Get<double>("inventory.pickupRadius", 1.6));
+    m_demoItemsScattered = false;
     if (m_cruiseEnabled) {
         camera.SetCenter(render::ToScreen(m_cruiseCenterX + m_cruiseRadius, m_cruiseCenterY));
         ZL_INFO("perf", "自动巡航开启：圆心=({:.0f},{:.0f}) 半径={:.0f} 速度={:.0f}格/s 时长={:.1f}min",
@@ -136,7 +141,7 @@ void WorldDemoState::OnEnter() {
     SpawnDemoEntities();
     // M4-T4：玩家实体由 OnFrame 延迟生成（等目标 chunk 加载完成）
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 攻击 | F6 演示击杀 | F7 开枪（声音引怪） | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 攻击 | F 拾取物品 | F6 演示击杀 | F7 开枪（声音引怪） | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
 }
 
 void WorldDemoState::ApplyCameraMode() {
@@ -590,8 +595,105 @@ void WorldDemoState::DespawnDemoEntities() {
     m_player = entt::null;
 }
 
+void WorldDemoState::EnsureDemoItemsScattered() {
+    if (m_demoItemsScattered || m_ctx.ecs == nullptr || m_ctx.items == nullptr) {
+        return;
+    }
+    // 与玩家生成相同的门控：目标 chunk 就绪后再散落（走位图/格子数据可靠）
+    const world::ChunkCoord targetChunk = world::ChunkOf(70, 18);
+    const world::Chunk* target = FindChunk(targetChunk.cx, targetChunk.cy);
+    if (target == nullptr || target->State() != world::ChunkState::Loaded) {
+        return;  // 下帧再试
+    }
+    // 村庄附近固定散落点（(70,18) 周边；每项经可走格吸附，失败则跳过并告警）
+    struct Spot {
+        int dx;
+        int dy;
+        const char* defId;
+        int count;
+    };
+    static constexpr Spot kSpots[] = {
+        {-5, -4, "bandage", 2},       {4, -6, "canned_beans", 1},
+        {7, 3, "axe", 1},             {-7, 2, "kitchen_knife", 1},
+        {2, 7, "rag", 3},             {-3, -8, "jacket", 1},
+        {9, -2, "tote_bag", 1},       {6, 9, "bandage", 1},
+    };
+    int spawned = 0;
+    for (const Spot& spot : kSpots) {
+        int wx = 0;
+        int wy = 0;
+        const bool found = ai::FindNearestWalkable(
+            70 + spot.dx, 18 + spot.dy, 6,
+            [this](int x, int y) { return !IsSolidSquare(x, y); }, &wx, &wy);
+        if (!found) {
+            ZL_WARN("items", "散落点 ({}, {}) 附近找不到可走格，跳过 {}",
+                    70 + spot.dx, 18 + spot.dy, spot.defId);
+            continue;
+        }
+        const ecs::ItemInstance stack{spot.defId, spot.count, 1.0f};
+        if (game::SpawnGroundItem(*m_ctx.ecs, *m_ctx.items, stack,
+                                  static_cast<float>(wx) + 0.5f,
+                                  static_cast<float>(wy) + 0.5f) != entt::null) {
+            ++spawned;
+        }
+    }
+    m_demoItemsScattered = true;
+    ZL_INFO("items", "地面物品散落：{} 处（村庄附近；F 拾取最近）", spawned);
+}
+
+void WorldDemoState::PickupNearestItem() {
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_player == entt::null) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* pos = registry.try_get<ecs::Position>(m_player);
+    auto* container = registry.try_get<ecs::Container>(m_player);
+    if (pos == nullptr || container == nullptr) {
+        return;
+    }
+    const game::PickupResult result = game::PickupNearestItem(
+        *m_ctx.ecs, *m_ctx.items, *container, pos->x, pos->y, pos->z, m_pickupRadius);
+    if (!result.found) {
+        SetNotice("Nothing to pick up", kNoticeInfoColor, 1.2f);
+        return;
+    }
+    const items::ItemDef* def = m_ctx.items->Find(result.defId);
+    const std::string name = def != nullptr ? def->name : result.defId;
+    if (result.picked > 0) {
+        // HUD 只支持 ASCII：提示用 id；日志用中文名
+        if (result.groundRemaining > 0) {
+            SetNotice("Picked " + result.defId + " x" + std::to_string(result.picked) +
+                          " (left " + std::to_string(result.groundRemaining) + ")",
+                      kNoticeOkColor, 1.5f);
+        } else {
+            SetNotice("Picked " + result.defId + " x" + std::to_string(result.picked),
+                      kNoticeOkColor, 1.5f);
+        }
+        ZL_INFO("items", "拾取：{} x{}（地面剩 {} 件；背包 {} 件）", name, result.picked,
+                result.groundRemaining, items::CountOf(*container, result.defId));
+    } else {
+        SetNotice("Bag full (" + result.defId + ")", kNoticeFailColor, 1.5f);
+        ZL_INFO("items", "拾取失败：{}（背包已满）", name);
+    }
+}
+
+void WorldDemoState::DespawnGroundItems() {
+    if (m_ctx.ecs == nullptr) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    registry.view<ecs::ItemInstance>().each(
+        [&](const ecs::Entity e, const ecs::ItemInstance&) {
+            if (m_ctx.ecs->Alive(e)) {
+                m_ctx.ecs->Destroy(e);
+            }
+        });
+    m_ctx.ecs->Flush();
+}
+
 void WorldDemoState::OnExit() {
-    // 先清演示实体（含物理体），再汇报统计
+    // 先清演示实体（含物理体/地面物品），再汇报统计
+    DespawnGroundItems();
     DespawnDemoEntities();
     const auto& stats = m_ctx.chunkManager->GetStats();
     ZL_INFO("render", "退出 WorldDemo：本状态共 {} tick；chunk 累计 加载 {} / 卸载 {} / 取消 {}",
@@ -618,6 +720,8 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
 
     // M4-T4：目标 chunk 加载完成后生成玩家（村庄中心附近找可走格）
     EnsurePlayerSpawned();
+    // M6-T3：玩家就绪后散落地面物品（同样等 chunk 就绪）
+    EnsureDemoItemsScattered();
 
     CollectWorld();
     // M4-T2：ECS 实体 → 同列表的"高度精灵"通道；之后统一全局画家序排序
@@ -745,6 +849,9 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     }
     if (input.IsActionPressed("Attack")) {
         PlayerAttack();  // M5-T6：空格挥击（自动瞄准最近僵尸 → 伤害管线）
+    }
+    if (input.IsActionPressed("Pickup")) {
+        PickupNearestItem();  // M6-T3：F 拾取最近地面物品（容量/堆叠规则）
     }
     if (input.IsActionPressed("DemoGunshot")) {
         EmitGunshot();  // M5-T4：演示开枪（大半径 SoundEvent → 感知 → 僵尸来查看）
@@ -1206,7 +1313,7 @@ void WorldDemoState::DrawDebugText() {
             percStats.alerted, percStats.heard);
     }
     bgfx::dbgTextPrintf(0, 9, 0x07,
-                        "WASD/LMB move | SPACE attack | F6 demo-kill | F7 gunshot | F4 cam | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+                        "WASD/LMB move | SPACE attack | F pickup | F6 demo-kill | F7 gunshot | F4 cam | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
     // M5-T5：LOD 档位 + 虚拟群落统计（虚拟化 = 统计层，不入 registry）
     if (m_ctx.lod != nullptr) {
         const ai::LodSystem::Stats lodStats = m_ctx.lod->GetStats();
@@ -1242,6 +1349,19 @@ void WorldDemoState::DrawDebugText() {
                             static_cast<unsigned long long>(spawnStats.materialized),
                             static_cast<unsigned long long>(spawnStats.virtualized),
                             static_cast<unsigned long long>(spawnStats.spawned));
+    }
+    // M6-T2/T3：背包（件数/重量/容量）+ 地面物品数（睡眠化：远处物品仍在场但不进渲染收集）
+    if (m_ctx.ecs != nullptr && m_player != entt::null && m_ctx.items != nullptr) {
+        const auto* container = m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
+        if (container != nullptr) {
+            int itemCount = 0;
+            for (const ecs::ItemInstance& entry : container->items) {
+                itemCount += entry.count;
+            }
+            bgfx::dbgTextPrintf(0, 15, 0x0f, "bag: %d item(s) %.1f/%.1fkg | ground=%d",
+                                itemCount, items::TotalWeight(*container, *m_ctx.items),
+                                container->capacityKg, game::CountGroundItems(*m_ctx.ecs));
+        }
     }
 }
 

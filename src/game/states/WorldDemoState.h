@@ -44,6 +44,10 @@ private:
     void CollectWorld();
     void SpawnDemoEntities();
     void DespawnDemoEntities();
+    // M6-T3：地面物品——村庄附近散落（首次帧、目标 chunk 就绪后）+ F 键拾取最近 + 退出清理
+    void EnsureDemoItemsScattered();
+    void PickupNearestItem();
+    void DespawnGroundItems();
     // M5-T1：演示击杀——离参考点（玩家/相机中心）最近的存活游荡者 HP 归零 → DeathSystem 转尸体
     void KillNearestDemoEntity();
     // M5-T4：演示开枪——玩家位置发射大半径 SoundEvent（事件总线 OnSound）吸引僵尸
@@ -97,6 +101,9 @@ private:
     float m_playerAttackStagger = 0.35f;
     // M6-T2：玩家背包容量（config inventory.playerCapacityKg；生成时写入 Container 组件）
     float m_playerCapacityKg = 20.0f;
+    // M6-T3：地面物品拾取半径（config inventory.pickupRadius）与散落标记
+    float m_pickupRadius = 1.6f;
+    bool m_demoItemsScattered = false;
     // M4-T7：点击移动反馈（notice 文本 + 目标格标记）
     std::string m_noticeText;
     float m_noticeTimer = 0.0f;

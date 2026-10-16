@@ -21,7 +21,8 @@
     "file": "assets/items.json"
   },
   "inventory": {
-    "playerCapacityKg": 20.0
+    "playerCapacityKg": 20.0,
+    "pickupRadius": 1.6
   },
   "world": {
     "mapDir": "assets/maps/village_demo",
@@ -115,6 +116,7 @@
       "DemoKill": "F6",
       "DemoGunshot": "F7",
       "Attack": "SPACE",
+      "Pickup": "F",
       "TogglePhysicsDebug": "F10"
     }
   },
