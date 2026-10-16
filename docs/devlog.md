@@ -913,3 +913,25 @@ UseFirstConsumable 消耗语义，T5 版）；150 用例全绿（Debug 117857 / 
 - E（40/100）→ **hp 40 → 55（+15）**、绷带消耗（3→2 件、3.2→3.1kg）；
 - G → `Dropped bandage x1` 提示 + ground 5→6（地面/背包一致）。
 截图：m6t5_*、m6t5b_hand（手持）、m6t5c_before_use/healed（回血前后）。
+
+---
+
+## 2026-10-16 M6 验收（物品与容器 —— 全链路单会话冒烟 + tag v0.6.0）
+
+**验收三条（docs/01 M6 验收）**
+1. **改物品 JSON 加新物品重启即生效**：临时加入 energy_drink（含 use 效果 heal10/thirst0.3）
+   → 重启 → `物品注册表已加载: 8 条定义 <- assets/items.json`（零代码改动）→ 还原；
+2. **拾取/丢弃/装备/使用全链路 + 地面背包一致**：单会话冒烟（Release；无害僵尸 +
+   起始 40HP + 拾取半径 4）日志链——
+   `拾取：绷带 x2 → 拾取：消防斧 x1 → 装备：消防斧 → 主手 → 使用：绷带（回血 15，HP 55/100）
+   → 丢弃：绷带 x1（地面物品 7 件）→ 拾取：绷带 x1`；HUD 对账：boot `bag 0/ground 8`
+   → 拾取后 `bag 3 (3.2kg)/ground 6` → 装备+使用后 `bag 1 (0.1kg)/ground 6, equip=axe, hp 55`
+   → 丢弃后 ground 7 → 再拾取 ground 6（守恒）；
+3. **容器容量与堆叠规则单测**：test_inventory/test_items 覆盖容量边界/部分加入/合并/拆堆/
+   maxStack=1/装备槽类型规则/use 解析与落地钳制——150 用例全绿（Debug 117857 / Release 117858）。
+
+**实机证据**：m6acc_1_boot / m6acc_2_picked / m6acc_3_equipped_used / m6acc_4_reconcile；
+手持渲染另有 m6t5b_hand（放大：角色右手斧）；优雅退出（ESC）验证日志完整落盘。
+**里程碑数字**：M6 共 5 任务（T4 顺延正式 UI）；测试从 127 → 150 用例；系统/内容：
+物品定义注册表（JSON v1 严格校验+行号报错）、容器/装备规则、地面物品实体（空间索引睡眠化）、
+拾取/丢弃/装备/使用临时按键闭环（正式 UI 后迁移）。下一步：M7 Lua 脚本系统（事件 + API + 热重载）。
