@@ -821,3 +821,26 @@ FindTopLevelValue/FindArrayElement）在原文中定位：语法错误报「第 
 行号/失败不覆盖/内置文件内容守护/枚举往返）；Debug 135 用例 117668 断言全绿（Release 117669）。
 **实机**：启动日志 `物品注册表已加载: 7 条定义 <- assets/items.json`；临时加 hammer 条目重启
 → `8 条定义`（M6 验收第 1 条「改 JSON 重启即生效」提前预验证），随后还原。
+
+---
+
+## 2026-10-16 M6-T2 物品组件与系统
+
+**组件**（`src/items/ItemComponents.h`，zl::ecs）：`ItemInstance`（defId/count/condition，
+地面实体与容器条目共用同一数据结构，地面物品 T3 复用）、`Container`（vector 条目内联 +
+capacityKg 重量上限；玩家主背包/口袋/尸体容器共用）、`Equipment`（槽位数组：
+PrimaryHand=仅武器、Body=仅衣物；扩展 = 加枚举值 + SlotAccepts 规则）。
+
+**规则层**（`src/items/InventoryOps.h/.cpp`，纯函数无 ECS/物理依赖，全部可无头单测）：
+- `AddItem`：堆叠合并（先填未满堆叠再开新堆叠；单次超过 maxStack 自动拆堆）+ 容量约束
+  （kg，epsilon 防浮点误判）+ **允许部分加入**（返回实际数量；拾取到一半 = 地面留剩余，T3 直接用）；
+- `RemoveItem`（返回实际移除数）/ `CountOf` / `TotalWeight`；未知 defId 一律告警不生效；
+- `Equip`（类型-槽位校验 + 换装时旧装备移入 outSwapped）/ `Unequip` / `SlotAccepts`。
+
+**接线**：玩家生成（WorldDemoState::EnsurePlayerSpawned）挂 Container（容量 config
+`inventory.playerCapacityKg`=20kg）+ Equipment；config/game.json 新增 inventory 节。
+
+**测试**：新增 tests/test_inventory.cpp 6 用例（堆叠合并/拆堆/maxStack=1 不合并、容量边界与
+部分加入×4、未知与非法实例、移除计数、装备换装/拒装/卸下、重量与槽名）；141 用例全绿
+（Debug 117757 / Release 117758）。实机冒烟：启动无错误日志，玩家两次生成均成功
+（第二次 = 已知的出生点被围殴平衡问题）。

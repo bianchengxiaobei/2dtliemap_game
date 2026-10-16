@@ -37,6 +37,7 @@
 #include "game/CameraFollow.h"
 #include "game/WorldQueries.h"
 #include "game/ZombieFactory.h"
+#include "items/ItemComponents.h"
 #include "physics/PhysicsWorld.h"
 #include "platform/Window.h"
 #include "render/Camera.h"
@@ -121,6 +122,9 @@ void WorldDemoState::OnEnter() {
         static_cast<float>(config.Get<double>("combat.playerKnockback", 3.0));
     m_playerAttackStagger =
         static_cast<float>(config.Get<double>("combat.playerStaggerSeconds", 0.35));
+    // M6-T2：玩家背包容量（kg）
+    m_playerCapacityKg =
+        static_cast<float>(config.Get<double>("inventory.playerCapacityKg", 20.0));
     if (m_cruiseEnabled) {
         camera.SetCenter(render::ToScreen(m_cruiseCenterX + m_cruiseRadius, m_cruiseCenterY));
         ZL_INFO("perf", "自动巡航开启：圆心=({:.0f},{:.0f}) 半径={:.0f} 速度={:.0f}格/s 时长={:.1f}min",
@@ -248,6 +252,9 @@ void WorldDemoState::EnsurePlayerSpawned() {
     registry.emplace<ecs::PathRequest>(m_player, ecs::PathRequest{});  // M4-T7：点击移动
     registry.emplace<ecs::PathFollow>(m_player, ecs::PathFollow{});
     registry.emplace<ecs::AttackIntent>(m_player, ecs::AttackIntent{});  // M5-T6：空格挥击
+    // M6-T2：玩家背包 + 装备槽（容量来自 config；拾取/装备系统在后续任务接入）
+    registry.emplace<ecs::Container>(m_player, ecs::Container{{}, m_playerCapacityKg});
+    registry.emplace<ecs::Equipment>(m_player, ecs::Equipment{});
     const int radius = std::max(std::abs(spawnX - kTargetX), std::abs(spawnY - kTargetY));
     ZL_INFO("game", "玩家实体生成：格 ({}, {})（目标 ({}, {})，搜索半径 {}）", spawnX, spawnY,
             kTargetX, kTargetY, radius);

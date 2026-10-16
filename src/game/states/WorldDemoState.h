@@ -95,6 +95,8 @@ private:
     float m_playerAttackRange = 1.7f;
     float m_playerAttackKnockback = 3.0f;
     float m_playerAttackStagger = 0.35f;
+    // M6-T2：玩家背包容量（config inventory.playerCapacityKg；生成时写入 Container 组件）
+    float m_playerCapacityKg = 20.0f;
     // M4-T7：点击移动反馈（notice 文本 + 目标格标记）
     std::string m_noticeText;
     float m_noticeTimer = 0.0f;

@@ -20,6 +20,9 @@
   "items": {
     "file": "assets/items.json"
   },
+  "inventory": {
+    "playerCapacityKg": 20.0
+  },
   "world": {
     "mapDir": "assets/maps/village_demo",
     "loadRadius": 3,
