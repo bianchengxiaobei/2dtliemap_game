@@ -13,6 +13,7 @@
 #include "game/states/SandboxState.h"
 #include "game/states/WorldDemoState.h"
 #include "platform/KeyNames.h"
+#include "render/IsoMath.h"
 #include "world/MapLoader.h"
 
 namespace zl::game {
@@ -197,6 +198,27 @@ bool GameApp::Init(int argc, char** argv) {
             }
         });
 
+    // 5.7 LOD 档位（M5-T5）+ 群体行为 + 虚拟化
+    ai::LodSystem::Params lodParams;
+    lodParams.fullRadius = static_cast<float>(m_config.Get<double>("lod.fullRadius", 25.0));
+    lodParams.midRadius = static_cast<float>(m_config.Get<double>("lod.midRadius", 60.0));
+    m_lodSystem = std::make_unique<ai::LodSystem>(lodParams);
+    ai::BoidsSystem::Params boidsParams;
+    boidsParams.neighborRadius =
+        static_cast<float>(m_config.Get<double>("boids.neighborRadius", 2.5));
+    boidsParams.separationRadius =
+        static_cast<float>(m_config.Get<double>("boids.separationRadius", 0.8));
+    boidsParams.separationWeight =
+        static_cast<float>(m_config.Get<double>("boids.separationWeight", 1.6));
+    boidsParams.cohesionWeight =
+        static_cast<float>(m_config.Get<double>("boids.cohesionWeight", 0.5));
+    boidsParams.alignmentWeight =
+        static_cast<float>(m_config.Get<double>("boids.alignmentWeight", 0.4));
+    m_boidsSystem = std::make_unique<ai::BoidsSystem>(boidsParams);
+    m_ctx.lod = m_lodSystem.get();
+    m_ctx.boids = m_boidsSystem.get();
+    m_ctx.virtualHordes = &m_virtualHordes;
+
     // 6. 上下文 + 事件探针
     m_ctx.config = &m_config;
     m_ctx.events = &m_events;
@@ -221,6 +243,12 @@ bool GameApp::Init(int argc, char** argv) {
     //   Combat/Death → SpawnLod → RenderCollect）。
     m_ecs.Systems().AddSystem("SpatialIndexSystem",
                               [this](ecs::EcsWorld& w, float) { m_spatialIndex.Update(w); });
+    // LOD 档位（M5-T5）：紧跟索引之后、感知之前——本 tick 的门控标志供后续系统读取
+    m_ecs.Systems().AddSystem("LodSystem", [this](ecs::EcsWorld& w, float) {
+        const glm::vec2 camGrid = render::FromScreen(m_camera.Center(), 0);
+        m_lodSystem->SetFocus(camGrid.x, camGrid.y);
+        m_lodSystem->Update(w);
+    });
     m_inputSystem = std::make_unique<characters::InputSystem>();
     m_movementSystem = std::make_unique<characters::MovementSystem>();
     m_physicsSyncSystem = std::make_unique<physics::PhysicsSyncSystem>(m_physics.get());
@@ -240,6 +268,26 @@ bool GameApp::Init(int argc, char** argv) {
     // 寻路在 Input 之后（能读到本 tick 输入做"手动优先"判定）、Movement 之前（写意图）
     m_ecs.Systems().AddSystem("PathFollowSystem", [this](ecs::EcsWorld& w, float dt) {
         m_pathFollowSystem->Update(w, dt);
+    });
+    // 群体行为（M5-T5）：改写 PathFollow 写的意图（分离/聚合/对齐），先于 Movement 生效
+    m_ecs.Systems().AddSystem("BoidsSystem",
+                              [this](ecs::EcsWorld& w, float) { m_boidsSystem->Update(w); });
+    // 虚拟群落（M5-T5）：统计层推进（朝玩家漂移）；T7 SpawnLodSystem 负责实体化
+    m_ecs.Systems().AddSystem("VirtualHordeSystem", [this](ecs::EcsWorld& w, float dt) {
+        float px = 0.0f;
+        float py = 0.0f;
+        bool hasPlayer = false;
+        w.Registry().view<ecs::PlayerTag, ecs::Position>().each(
+            [&](const ecs::Entity, const ecs::Position& p) {
+                if (!hasPlayer) {
+                    px = p.x;
+                    py = p.y;
+                    hasPlayer = true;
+                }
+            });
+        if (hasPlayer) {
+            m_virtualHordes.Update(dt, px, py, /*stopDistance=*/12.0f);
+        }
     });
     m_ecs.Systems().AddSystem("MovementSystem", [this](ecs::EcsWorld& w, float dt) {
         m_movementSystem->Update(w, dt);
@@ -300,6 +348,8 @@ void GameApp::Shutdown() {
     m_inputSystem.reset();
     m_movementSystem.reset();
     m_pathFollowSystem.reset();  // 先于服务
+    m_boidsSystem.reset();
+    m_lodSystem.reset();
     m_aiSystem.reset();
     m_perceptionSystem.reset();
     m_pathfinding.reset();       // 在途后台查询经共享 Core 安全收敛

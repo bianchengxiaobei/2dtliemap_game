@@ -634,3 +634,49 @@ HUD 提示 "gunshot! r=30 (walls attenuate)"；GameApp 绑定表补 `DemoGunshot
 → F7 后 `heard=24 alert=12 search=12`（24/40 可闻，其余出界或隔墙衰减；idle/wander 集体转
 去声源查看）→ 4s 后僵尸群回扑射击点 `chase=10 search=8 attack=6` → 最终扎堆 `attack=5`。
 FPS 59~61 / drawcall 3 不变。
+
+---
+
+## 2026-10-16 M5-T5 群体行为（Boids + LOD 降频 + 虚拟化统计）
+
+**BoidsSystem（ai/systems/BoidsSystem；链位 PathFollow → **Boids** → Movement）**
+- 对僵尸的 `MoveIntent`（速度向量）叠加三种转向，再按 `PathFollow.speed`（或默认 2.0）截断：
+  分离（<0.8 格推开，精确重叠时按"无序对 id 哈希 + 大小取反"给严格相背的确定性方向）；
+  聚合/对齐（≤2.5 格邻域重心/平均速度）**仅作用于移动中实体**（不唤醒站立的僵尸）；
+- **邻域查询的关键性能决策**：直接对 chunk 粒度（10 格）空间索引逐候选做 EnTT 组件查询，
+  500 僵尸稠密场景候选被放大 ~16×（实测 Debug **242 ms/tick**，占总 99%）→ 改为每 tick
+  一次候选快照（位置 + 组件指针）+ "格边长 = neighborRadius"的均匀哈希网格（3×3 格全覆盖，
+  纯数组距离运算、桶容量跨帧复用）→ **4.3 ms/tick（Debug）**，降 56×；参数走 config boids.*。
+  （类名对齐 docs/02 的 `ai/ BoidsSystem`；初版 FlockSystem 已废弃删除。）
+
+**LOD 降频（ai/systems/LodSystem；链首，仅次空间索引）**
+- 按实体到相机焦点距离写 `ecs::LodState{tier, updateThisTick, dtScale}`：
+  全速 ≤25 格（每 tick）/ 30Hz ≤60 格（每 2 tick，dtScale=2）/ 10Hz（每 6 tick，dtScale=6）；
+- 消费端门控：感知的**视觉**（听觉与警觉衰减不门控——声源队列逐 tick 即弃，门控会漏听）、
+  AiSystem 转移与动作、PathFollow 提交/跟随/卡住检测、Boids；
+  冻结 tick 的计时以 `dt × dtScale` 补齐（stateTime 与全速语义一致，单测锁定）；
+- 计数/统计（状态分布、seeing/alerted）不受门控影响（快照含冻结实体）。
+
+**虚拟化（ai/VirtualHorde.h/.cpp + GameContext/GameApp 接线）**
+- `VirtualHorde{id, center, spread, count, speed}` + `VirtualHordeStore`：离屏僵尸只存统计，
+  **不入 registry**；聚合推进（朝玩家漂移、驻留距离内停住，O(群落数/tick)）+ `TakeZombies`
+  实体化扣减接口（M5-T7 SpawnLodSystem 消费）；
+- demo：5 群落 × 40 = 200 虚拟僵尸种子在村庄外圈，HUD 新增 `lod: full/mid/far | virtual:
+  hordes/zombies/nearest`（notice 行让位到 12 行）。
+
+**踩坑**
+- `int far = 0;` 编译失败——`far`/`near` 是 windef.h 的**空宏**（Windows 遗留）；
+  LodState 统计字段改名 fullCount/midCount/farCount；
+- 感知系统原先在每僵尸循环里构造 `view<PlayerTag, Position>`：500 僵尸 ×120 tick 下
+  Debug 成本可观（也是排查基准时顺手优化点）→ 每 tick 收集一次目标列表缓存复用。
+
+**测试**（tests/test_boids.cpp，+8 用例：104 → 112 用例 / 117363 断言全绿）
+- 分离方向/严格相背/确定性（叉积不抖动）；聚合对齐仅移动中（站立不被唤醒、近邻触发向右上偏移）；
+  速度截断；邻域外不误伤；LOD 三档划分/节奏/dtScale/焦点移动重评；AiSystem 门控补时等价；
+  虚拟化统计（不入 registry/漂移/驻留/扣减/移除）；
+- **基准**（M5 预验收口径）：500 僵尸 + 200 虚拟 —— Release **0.396 ms/tick**（预算 <4ms ✔）；
+  Debug 10.2ms（分解 boids 4.3 / ai 3.3 / perception 1.1）。已记入 perf-baseline「M5 预验收」。
+
+**冒烟（实机 40 僵尸，截图 m5t5_*）**：HUD `lod: full=32 mid=8`（拉远后 mid=11，焦点分档即时重评）、
+`virtual: hordes=5 zombies=200 nearest=44→30→23`（统计层漂移）；F7 枪声回归无异常；
+尸群不再"完全叠成一坨"，而是环绕玩家约 0.8 格间距的密集环（Boids 分离的视觉验证）。

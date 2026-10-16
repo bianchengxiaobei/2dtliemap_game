@@ -145,39 +145,51 @@ void PerceptionSystem::Update(ecs::EcsWorld& world, float dt) {
     const float decayPerSecond = m_params.alertDecaySeconds > 0.0f ? 1.0f / m_params.alertDecaySeconds : 1.0f;
     const float boost = m_params.soundAlertBoost;
 
+    // 视觉目标（玩家）每 tick 收集一次：typically 1 个
+    m_targetsScratch.clear();
+    registry.view<ecs::PlayerTag, ecs::Position>().each(
+        [&](const entt::entity pe, const ecs::Position& playerPos) {
+            m_targetsScratch.push_back(
+                VisibleTarget{world.IdOf(pe).id, playerPos.x, playerPos.y});
+        });
+
     registry.view<ecs::AiState, ecs::Position, ecs::PerceptionState>().each(
         [&](const entt::entity e, ecs::AiState& ai, const ecs::Position& position,
             ecs::PerceptionState& percep) {
             ++m_stats.perceivers;
-            percep.sinceSeen += dt;
+            // M5-T5：LOD 门控——视觉按档位跳过（计时用 dt×dtScale 补齐）；
+            // 听觉与警觉衰减一律逐 tick（声源队列逐 tick 即弃，门控会漏听）
+            const auto* lod = registry.try_get<ecs::LodState>(e);
+            const bool gated = lod != nullptr && !lod->updateThisTick;
+            const float visionDt = gated ? 0.0f : (lod != nullptr ? dt * lod->dtScale : dt);
+
             percep.sinceHeard += dt;
             percep.alertness = std::max(0.0f, percep.alertness - decayPerSecond * dt);
+            percep.sinceSeen += visionDt;
 
-            // 1) 视觉：可见玩家（取第一个命中的）
-            const auto* facing = registry.try_get<ecs::Facing>(e);
+            // 1) 视觉：可见玩家（取第一个命中的）；LOD 跳过的 tick 保持既有 targetId
             std::uint64_t seenId = 0;
             float seenX = 0.0f;
             float seenY = 0.0f;
-            registry.view<ecs::PlayerTag, ecs::Position>().each(
-                [&](const entt::entity pe, const ecs::Position& playerPos) {
-                    if (seenId != 0) {
-                        return;  // continue：已命中
+            if (!gated) {
+                const auto* facing = registry.try_get<ecs::Facing>(e);
+                for (const VisibleTarget& target : m_targetsScratch) {
+                    if (CanSee(facing, position.x, position.y, target.x, target.y)) {
+                        seenId = target.id;
+                        seenX = target.x;
+                        seenY = target.y;
+                        break;
                     }
-                    if (CanSee(facing, position.x, position.y, playerPos.x, playerPos.y)) {
-                        seenId = world.IdOf(pe).id;
-                        seenX = playerPos.x;
-                        seenY = playerPos.y;
-                    }
-                });
-            if (seenId != 0) {
-                ai.targetId = seenId;
-                percep.lastKnownX = seenX;
-                percep.lastKnownY = seenY;
-                percep.alertness = 1.0f;
-                percep.sinceSeen = 0.0f;
-                ++m_stats.seeing;
-            } else if (ai.targetId != 0) {
-                ai.targetId = 0;  // 丢失当前视觉（lastKnown 保留 → AI 去搜索）
+                }
+                if (seenId != 0) {
+                    ai.targetId = seenId;
+                    percep.lastKnownX = seenX;
+                    percep.lastKnownY = seenY;
+                    percep.alertness = 1.0f;
+                    percep.sinceSeen = 0.0f;
+                } else if (ai.targetId != 0) {
+                    ai.targetId = 0;  // 丢失当前视觉（lastKnown 保留 → AI 去搜索）
+                }
             }
 
             // 2) 听觉（M5-T4）：本 tick 入队的声源 —— 基础半径 + 隔墙衰减判定可闻
@@ -194,6 +206,9 @@ void PerceptionSystem::Update(ecs::EcsWorld& world, float dt) {
                 }
             }
 
+            if (ai.targetId != 0) {
+                ++m_stats.seeing;  // 含 LOD 冻结 tick（保持既有目标）
+            }
             if (percep.alertness > 0.5f) {
                 ++m_stats.alerted;
             }

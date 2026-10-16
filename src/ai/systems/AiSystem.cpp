@@ -82,13 +82,42 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
 
     registry.view<AiState, ecs::Position>().each(
         [&](const entt::entity e, AiState& ai, const ecs::Position& position) {
+            // 状态分布计数（快照：不受 LOD 门控影响，LOD 冻结 tick 按既有状态计入）
+            switch (ai.status) {
+                case AiStatus::Idle:
+                    ++m_stats.idle;
+                    break;
+                case AiStatus::Wander:
+                    ++m_stats.wander;
+                    break;
+                case AiStatus::Chase:
+                    ++m_stats.chase;
+                    break;
+                case AiStatus::SearchLastKnown:
+                    ++m_stats.search;
+                    break;
+                case AiStatus::Attack:
+                    ++m_stats.attack;
+                    break;
+                case AiStatus::Dead:
+                    ++m_stats.dead;
+                    break;
+            }
+
+            // M5-T5：LOD 门控——非本 tick 档位 → 冻结转移与动作（计时下次按 dtScale 补齐）
+            const auto* lod = registry.try_get<ecs::LodState>(e);
+            if (lod != nullptr && !lod->updateThisTick) {
+                return;
+            }
+            const float edt = lod != nullptr ? dt * lod->dtScale : dt;
+
             auto* health = registry.try_get<ecs::Health>(e);
             auto* request = registry.try_get<ecs::PathRequest>(e);
             auto* follow = registry.try_get<ecs::PathFollow>(e);
             auto* perception = registry.try_get<ecs::PerceptionState>(e);
 
-            ai.stateTime += dt;
-            ai.actionTimer = std::max(0.0f, ai.actionTimer - dt);
+            ai.stateTime += edt;
+            ai.actionTimer = std::max(0.0f, ai.actionTimer - edt);
 
             // —— facts：每 tick 计算一次，转移判定只读 ——
             // lastKnown（LastKnownPos）由感知维护：看见 = 玩家位置；听见 = 声源位置
@@ -207,33 +236,12 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                             ai.attackCooldown = kAttackPeriodSeconds;
                             // M5-T6：伤害在此脉冲落地（对玩家 = 被抓）
                         } else {
-                            ai.attackCooldown -= dt;
+                            ai.attackCooldown -= edt;
                         }
                     }
                     break;
                 case AiStatus::Dead:
                     break;  // DeathSystem 负责转尸体；AI 不再动作
-            }
-
-            switch (ai.status) {
-                case AiStatus::Idle:
-                    ++m_stats.idle;
-                    break;
-                case AiStatus::Wander:
-                    ++m_stats.wander;
-                    break;
-                case AiStatus::Chase:
-                    ++m_stats.chase;
-                    break;
-                case AiStatus::SearchLastKnown:
-                    ++m_stats.search;
-                    break;
-                case AiStatus::Attack:
-                    ++m_stats.attack;
-                    break;
-                case AiStatus::Dead:
-                    ++m_stats.dead;
-                    break;
             }
         });
 }

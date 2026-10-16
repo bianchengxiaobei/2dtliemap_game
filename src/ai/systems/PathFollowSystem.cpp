@@ -94,10 +94,13 @@ void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
         }
     }
 
-    // 2) 提交新请求（newRequest 由游戏逻辑/调试写入）
+    // 2) 提交新请求（newRequest 由游戏逻辑/调试写入）；LOD 跳过的实体延到其更新 tick
     registry.view<ecs::PathRequest, ecs::Position>().each(
         [&](const ecs::Entity e, ecs::PathRequest& request, const ecs::Position& position) {
-            (void)e;
+            if (const auto* lod = registry.try_get<ecs::LodState>(e);
+                lod != nullptr && !lod->updateThisTick) {
+                return;
+            }
             if (!request.newRequest) {
                 return;
             }
@@ -115,6 +118,13 @@ void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
     // 3) 沿路点跟随
     registry.view<ecs::PathFollow, ecs::Position>().each(
         [&](const ecs::Entity e, ecs::PathFollow& follow, const ecs::Position& position) {
+            // M5-T5：LOD 跳过的 tick 不推进（意图保持，Movement 沿既有速度续行）
+            const auto* lod = registry.try_get<ecs::LodState>(e);
+            if (lod != nullptr && !lod->updateThisTick) {
+                return;
+            }
+            const float edt = lod != nullptr ? dt * lod->dtScale : dt;
+
             auto* intent = registry.try_get<ecs::MoveIntent>(e);
             auto* request = registry.try_get<ecs::PathRequest>(e);
 
@@ -140,7 +150,7 @@ void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
             }
 
             // M4-T7：卡住检测——窗口内位移过小 → 标记重寻路（下 tick 走阶段 2 重新提交）
-            follow.stuckTimer += dt;
+            follow.stuckTimer += edt;
             if (follow.stuckTimer >= kStuckCheckSeconds) {
                 const float movedX = position.x - follow.anchorX;
                 const float movedY = position.y - follow.anchorY;

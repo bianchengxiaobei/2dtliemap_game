@@ -4,7 +4,10 @@
 #include <memory>
 
 #include "ai/PathfindingService.h"
+#include "ai/VirtualHorde.h"
 #include "ai/systems/AiSystem.h"
+#include "ai/systems/BoidsSystem.h"
+#include "ai/systems/LodSystem.h"
 #include "ai/systems/PathFollowSystem.h"
 #include "ai/systems/PerceptionSystem.h"
 #include "characters/systems/AnimationSystem.h"
@@ -98,6 +101,13 @@ private:
     std::unique_ptr<ai::PerceptionSystem> m_perceptionSystem;
     // M5-T4：OnSound（事件总线）→ PerceptionSystem::PushSound 的订阅
     core::EventBus::SubscriptionId m_soundSubscription = core::EventBus::kInvalidSubscription;
+
+    // LOD（M5-T5）：档位门控（链首，供感知/AI/寻路/群体行为判定）
+    std::unique_ptr<ai::LodSystem> m_lodSystem;
+    // 群体行为（M5-T5）：Boids 式 flocking（PathFollow 之后、Movement 之前）
+    std::unique_ptr<ai::BoidsSystem> m_boidsSystem;
+    // 虚拟化（M5-T5）：离屏僵尸的统计表示（不入 registry；T7 SpawnLodSystem 消费）
+    ai::VirtualHordeStore m_virtualHordes;
 
     // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
     ecs::EcsWorld m_ecs;

@@ -63,6 +63,14 @@ private:
     WalkableQuery m_walkable;
     PerceptionParams m_params;
     std::vector<core::SoundEvent> m_pendingSounds;  // 本 tick 待消费
+    // 视觉目标缓存（每 tick 收集一次"玩家"位置，避免在每僵尸循环里构造 view——
+    // Debug/Release 下 EnTT view 构造都是热路径成本）
+    struct VisibleTarget {
+        std::uint64_t id = 0;
+        float x = 0.0f;
+        float y = 0.0f;
+    };
+    std::vector<VisibleTarget> m_targetsScratch;
     Stats m_stats;
 };
 

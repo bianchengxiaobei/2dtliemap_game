@@ -64,6 +64,18 @@
 | 运行时查询（40 游荡者 + 点击移动，78 次） | 平均 ~0.9 ms，主线程无感知 | — | ✔ |
 | demo 同屏（village 40 游荡者 + 点击移动） | FPS 59~60（Debug） | 60fps | ✔ |
 
+## M5 预验收基线（2026-10-16，M5-T5 后；正式验收在 M5 收尾 T7 后用实机场景复测）
+
+**场景：500 registry 僵尸（全速 LOD 档）+ 200 虚拟僵尸（4 群落×50，统计层）的模拟 tick**
+（单测 `test_boids` 基准；口径 = 主线程模拟链 索引/LOD/感知/AI/Boids/移动/虚拟群落，
+不含物理步进与寻路后台）
+
+| 指标 | Debug | Release | 预算 | 结论 |
+|---|---|---|---|---|
+| 平均模拟 tick | 10.2 ms | **0.396 ms** | < 4 ms | ✔（Release 余量 10×） |
+| 分解（Release） | — | boids 0.321 / ai 0.024 / perception 0.029 / index+lod+move ≈ 0.02 ms | — | Boids 为主要成本 |
+| 优化前（Boids 用 chunk 粒度索引逐候选查组件） | 242 ms/tick（Debug） | — | — | 见 devlog M5-T5（网格缓存后降 56×） |
+
 ## 已知问题与优化候选
 
 1. **多图集交错 drawcall 高**（placeholder_pz 244）：画家序下 4 个来源（Tiles1x 地面 / Erosion 草丛 /

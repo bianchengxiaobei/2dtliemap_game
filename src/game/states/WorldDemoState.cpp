@@ -19,8 +19,10 @@
 #include "core/Log.h"
 #include "ai/PathfindingService.h"
 #include "ai/Passability.h"
+#include "ai/VirtualHorde.h"
 #include "ai/components/AiComponents.h"
 #include "ai/systems/AiSystem.h"
+#include "ai/systems/LodSystem.h"
 #include "ai/systems/PerceptionSystem.h"
 #include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
@@ -390,9 +392,28 @@ void WorldDemoState::SpawnDemoEntities() {
         registry.emplace<ecs::MoveIntent>(e, ecs::MoveIntent{});
         registry.emplace<ecs::PathRequest>(e, ecs::PathRequest{});
         registry.emplace<ecs::PathFollow>(e, ecs::PathFollow{});
+        registry.emplace<ecs::LodState>(e, ecs::LodState{});  // M5-T5：LodSystem 逐帧写档位
     }
     ZL_INFO("ecs", "生成 {} 个 AI 游荡者（AiSystem + PerceptionSystem；区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]）",
             kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1);
+
+    // M5-T5：虚拟僵尸群落 —— 200 只"离屏僵尸"只存统计（不入 registry），
+    // 朝玩家缓慢漂移；T7 SpawnLodSystem 将在焦点接近时实体化
+    if (m_ctx.virtualHordes != nullptr) {
+        m_ctx.virtualHordes->Clear();
+        constexpr int kHordes = 5;
+        constexpr int kPerHorde = 40;  // 合计 200
+        for (int i = 0; i < kHordes; ++i) {
+            const float angle = static_cast<float>(i) * (6.2831853f / kHordes);
+            const float radius = 55.0f + static_cast<float>(i) * 5.0f;
+            m_ctx.virtualHordes->AddHorde(70.0f + std::cos(angle) * radius,
+                                          18.0f + std::sin(angle) * radius, kPerHorde,
+                                          /*spread=*/8.0f);
+        }
+        const auto stats = m_ctx.virtualHordes->GetStats(70.0f, 18.0f);
+        ZL_INFO("ai", "虚拟群落种子：{} 群 / {} 只（统计层，不入 registry；最近 {:.0f} 格）",
+                stats.hordes, stats.zombies, stats.nearestDist);
+    }
 }
 
 // M5-T2 临时"感知"桩已删除：M5-T3 起由 ai::PerceptionSystem（视锥 + 视线 + 听觉）接管。
@@ -1095,9 +1116,21 @@ void WorldDemoState::DrawDebugText() {
     }
     bgfx::dbgTextPrintf(0, 9, 0x07,
                         "WASD/LMB move | F4 cam | F6 demo-kill | F7 gunshot | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+    // M5-T5：LOD 档位 + 虚拟群落统计（虚拟化 = 统计层，不入 registry）
+    if (m_ctx.lod != nullptr) {
+        const ai::LodSystem::Stats lodStats = m_ctx.lod->GetStats();
+        ai::VirtualHordeStore::Stats vStats{};
+        if (m_ctx.virtualHordes != nullptr) {
+            vStats = m_ctx.virtualHordes->GetStats(camGrid.x, camGrid.y);
+        }
+        bgfx::dbgTextPrintf(0, 11, 0x0f,
+                            "lod: full=%d (60Hz) mid=%d (30Hz) far=%d (10Hz) | virtual: hordes=%d zombies=%d nearest=%.0f",
+                            lodStats.fullCount, lodStats.midCount, lodStats.farCount,
+                            vStats.hordes, vStats.zombies, vStats.nearestDist);
+    }
     // M4-T7：点击移动反馈（限时提示：寻路中/已到达/不可达）
     if (m_noticeTimer > 0.0f && !m_noticeText.empty()) {
-        bgfx::dbgTextPrintf(0, 11, static_cast<std::uint8_t>(m_noticeColor), "%s",
+        bgfx::dbgTextPrintf(0, 12, static_cast<std::uint8_t>(m_noticeColor), "%s",
                             m_noticeText.c_str());
     }
 }

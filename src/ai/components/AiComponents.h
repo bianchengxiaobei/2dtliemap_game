@@ -80,4 +80,15 @@ struct PerceptionState {
     float sinceHeard = 1000.0f;
 };
 
+// M5-T5：LOD 档位（LodSystem 按"到相机焦点距离"每 tick 写；AI 相关系统读）。
+//  - tier：0=全速（每 tick）/ 1=30Hz（每 2 tick）/ 2=10Hz（每 6 tick，60Hz 基准）；
+//  - updateThisTick：本 tick 是否轮到该实体做"重"逻辑（视觉/AI 转移/寻路跟随/群体行为）；
+//  - dtScale：轮到时的等效步长 = dt × 倍率（2/6），保证计时语义与全速一致。
+// 听觉与警觉衰减不门控（声音半径大、成本低，且声源队列逐 tick 即弃）。
+struct LodState {
+    std::uint8_t tier = 0;
+    bool updateThisTick = true;
+    float dtScale = 1.0f;
+};
+
 }  // namespace zl::ecs

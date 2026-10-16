@@ -20,8 +20,11 @@ class SpatialIndex;
 
 namespace zl::ai {
 class AiSystem;
+class BoidsSystem;
+class LodSystem;
 class PathfindingService;
 class PerceptionSystem;
+class VirtualHordeStore;
 }  // namespace zl::ai
 
 namespace zl::physics {
@@ -85,6 +88,11 @@ struct GameContext {
 
     // 感知（M5-T3 起）：视觉/听觉（只读统计；逻辑经固定链）
     ai::PerceptionSystem* perception = nullptr;
+
+    // LOD / 群体行为 / 虚拟化（M5-T5 起；只读统计 + 演示种子）
+    ai::LodSystem* lod = nullptr;
+    ai::BoidsSystem* boids = nullptr;
+    ai::VirtualHordeStore* virtualHordes = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;
