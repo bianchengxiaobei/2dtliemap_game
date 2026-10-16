@@ -73,3 +73,24 @@
 - 多图集交错时 drawcall 爆炸（placeholder_pz：地皮 Tiles1x0 + 草丛 Erosion2 + 树 JumboTrees1x0 三图集按画家顺序交错 → ~810 批）。M3-T5 按 chunk 收集 + PZ 式"状态桶/相邻合并"压回 <100；自测数据已记（own 单图集 = 2 批）。
 - Debug 构建在 13k 精灵时偏慢，性能验收统一用 Release 构建。
 
+---
+
+## 2026-10-16 M3-T1 世界数据结构定稿
+
+**结构（src/world/）**
+- `WorldCoords.h`：`FloorDiv/FloorMod` + `CellOf/ChunkOf/SquareLocalOf/ChunkLocalOf` 坐标分解唯一入口（支持负坐标；恒等式有属性测试）。
+- `GridSquare`：x/y/z + 5 个分层对象数组（Floor/Wall/Furniture/Item/Mark，枚举值即绘制顺序）；`RoomId`（-1=室外）；地面便捷接口（`SetFloor` 覆盖语义，供 chunk 重载）。
+- `Chunk`：10×10×kMaxZ 柱块（800 格，`[z][ly][lx]` 布局与"逐层收集渲染"遍历一致）；状态机 `Unloaded→Loading→Loaded→Unloading→Unloaded`（另允许 `Loading→Unloaded` 解析失败回退）；**不变量：进入 Unloaded 自动清空数据**（chunk 复用池安全）。
+- `Cell`：30×30 chunk 槽位稀疏（unique_ptr 按需创建）；世界格坐标直达查询。
+- `World`：uint64 打包 (cx,cy) 的 cell 稀疏哈希网格 + `RemoveEmptyCells()` 回收；正负坐标区域都支持。
+
+**决策**
+- **一个 (cx,cy) 一个 Chunk（含全部 z 层）**：状态机/流式/存档单位与 z 解耦，渲染时逐层遍历；z 维并入 chunk 内部数组。
+- 坐标分解只允许走 WorldCoords：C++ 整数除法朝零截断，`-1/10 == 0` 对坐标分解是错的（应为 -1），这个坑用 FloorDiv 一次性根治。
+
+**顺手修掉的基础设施坑**
+- `ZL_ASSERT` 宏此前从未被实例化过（M1 写下后没人用）：`__VA_OPT__(__VA_ARGS__ " | ")` 会把格式参数粘进字符串字面量导致编译错误；改为 `" | " __VA_ARGS__` 前缀拼接。
+- CMakePresets 缺 `testPresets`：docs/02 §8 约定的 `ctest --preset x64-debug` 之前不可用，已补 debug/release 两个测试预设。
+
+**测试**：`tests/test_world.cpp` 8 用例（含 6 万次坐标往返属性检查）；全量 16 用例 / 115509 断言全绿（`ctest --preset x64-debug`）。
+
