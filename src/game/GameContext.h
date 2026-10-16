@@ -21,6 +21,7 @@ class SpatialIndex;
 namespace zl::ai {
 class AiSystem;
 class PathfindingService;
+class PerceptionSystem;
 }  // namespace zl::ai
 
 namespace zl::physics {
@@ -81,6 +82,9 @@ struct GameContext {
 
     // AI（M5-T2 起）：僵尸状态机（经固定链驱动；此处仅供 HUD 统计等只读访问）
     ai::AiSystem* aiSystem = nullptr;
+
+    // 感知（M5-T3 起）：视觉/听觉（只读统计；逻辑经固定链）
+    ai::PerceptionSystem* perception = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

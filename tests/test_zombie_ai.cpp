@@ -71,6 +71,10 @@ struct AiRig {
         r.emplace<ecs::Collider>(e, ecs::Collider{});
         r.emplace<ecs::Health>(e, ecs::Health{100.0f, 100.0f});
         r.emplace<ecs::AiState>(e, ecs::AiState{});
+        ecs::PerceptionState percep;
+        percep.lastKnownX = x;  // 初始可疑点 = 出生位置（与演示一致）
+        percep.lastKnownY = y;
+        r.emplace<ecs::PerceptionState>(e, percep);
         r.emplace<ecs::MoveIntent>(e, ecs::MoveIntent{});
         r.emplace<ecs::PathRequest>(e, ecs::PathRequest{});
         r.emplace<ecs::PathFollow>(e, ecs::PathFollow{});
@@ -97,6 +101,9 @@ struct AiRig {
 
     ecs::Position& Pos(ecs::Entity e) { return world.Registry().get<ecs::Position>(e); }
     ecs::AiState& Ai(ecs::Entity e) { return world.Registry().get<ecs::AiState>(e); }
+    ecs::PerceptionState& Percep(ecs::Entity e) {
+        return world.Registry().get<ecs::PerceptionState>(e);
+    }
     ecs::PathRequest& Request(ecs::Entity e) {
         return world.Registry().get<ecs::PathRequest>(e);
     }
@@ -156,10 +163,14 @@ TEST_CASE("AiSystem：Chase→Attack→Search→Idle 转移链（含攻击节拍
     rig.Ai(z).idleSeconds = 100.0f;  // 不主动 Wander，排除干扰
 
     // 感知到目标（距离 1.5 > 攻击距离 1.0）→ Chase，并请求走向目标
+    // （真实感知由 PerceptionSystem 负责；本测试直接写感知输出，聚焦 AI 转移逻辑）
     rig.Ai(z).targetId = targetId;
+    rig.Percep(z).lastKnownX = 7.0f;
+    rig.Percep(z).lastKnownY = 5.5f;
     rig.Tick();
     CHECK(rig.Ai(z).status == ecs::AiStatus::Chase);
-    CHECK(rig.Ai(z).lastKnownX == doctest::Approx(7.0f));  // 可见时刷新最后已知位置
+    CHECK(rig.Request(z).goalX == 7);  // 走向最后已知位置
+    CHECK(rig.Request(z).goalY == 5);
     CHECK(rig.Request(z).state != ecs::PathStatus::None);
 
     // 拉近到攻击距离（0.4）→ Attack；意图清零、朝向面向目标
@@ -176,6 +187,7 @@ TEST_CASE("AiSystem：Chase→Attack→Search→Idle 转移链（含攻击节拍
 
     // 目标拉远（> keep 1.5）→ 回 Chase
     rig.Pos(target).x = 8.0f;  // 距离 2.5
+    rig.Percep(z).lastKnownX = 8.0f;
     rig.Tick();
     CHECK(rig.Ai(z).status == ecs::AiStatus::Chase);
 
@@ -195,6 +207,8 @@ TEST_CASE("AiSystem：Chase 全链真走路（PathFollow+Movement 集成到攻�
     const ecs::Entity z = rig.AddZombie(5.5f, 5.5f);
     const ecs::Entity target = rig.AddTarget(14.5f, 5.5f);
     rig.Ai(z).targetId = rig.world.IdOf(target).id;
+    rig.Percep(z).lastKnownX = 14.5f;
+    rig.Percep(z).lastKnownY = 5.5f;
     rig.Ai(z).idleSeconds = 100.0f;
 
     rig.Run(30);  // 0.5s：应已进入 Chase 并在移动
@@ -213,6 +227,8 @@ TEST_CASE("AiSystem：目标移动触发追击重定向（goal 跟随 lastKnown�
     const ecs::Entity z = rig.AddZombie(5.5f, 5.5f);
     const ecs::Entity target = rig.AddTarget(12.5f, 5.5f);
     rig.Ai(z).targetId = rig.world.IdOf(target).id;
+    rig.Percep(z).lastKnownX = 12.5f;
+    rig.Percep(z).lastKnownY = 5.5f;
     rig.Ai(z).idleSeconds = 100.0f;
 
     rig.Run(10);
@@ -220,8 +236,9 @@ TEST_CASE("AiSystem：目标移动触发追击重定向（goal 跟随 lastKnown�
     CHECK(rig.Request(z).goalX == 12);  // 先追向 (12.5, 5.5) → 目标格 (12, 5)
     CHECK(rig.Request(z).goalY == 5);
 
-    // 目标横移 4 格（> 容忍 1.2）→ 下一 tick 重寻路到新位置
+    // 目标横移 4 格（> 容忍 1.2）→ 下一 tick 重寻路到新位置（感知同步刷新 lastKnown）
     rig.Pos(target).y = 9.5f;
+    rig.Percep(z).lastKnownY = 9.5f;
     rig.Run(3);
     CHECK(rig.Request(z).goalY == 9);
     CHECK(rig.Request(z).goalX == 12);
@@ -230,11 +247,11 @@ TEST_CASE("AiSystem：目标移动触发追击重定向（goal 跟随 lastKnown�
     rig.Ai(z).targetId = 0;
     rig.Tick();
     CHECK(rig.Ai(z).status == ecs::AiStatus::SearchLastKnown);
-    CHECK(rig.Ai(z).lastKnownY == doctest::Approx(9.5f));
+    CHECK(rig.Percep(z).lastKnownY == doctest::Approx(9.5f));
     rig.Run(30);
     const float searchGoalDist = Dist(static_cast<float>(rig.Request(z).goalX) + 0.5f,
                                       static_cast<float>(rig.Request(z).goalY) + 0.5f,
-                                      rig.Ai(z).lastKnownX, rig.Ai(z).lastKnownY);
+                                      rig.Percep(z).lastKnownX, rig.Percep(z).lastKnownY);
     CHECK(searchGoalDist <= 8.0f);  // 巡点半径 4 + 就近校正余量
 }
 

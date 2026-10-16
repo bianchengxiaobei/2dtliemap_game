@@ -21,6 +21,7 @@
 #include "ai/Passability.h"
 #include "ai/components/AiComponents.h"
 #include "ai/systems/AiSystem.h"
+#include "ai/systems/PerceptionSystem.h"
 #include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/SpatialIndex.h"
@@ -49,8 +50,6 @@ constexpr float kHoverLineThickness = 2.5f;
 constexpr float kMarkerLineThickness = 3.0f;
 constexpr float kStatsLogInterval = 3.0f;
 constexpr float kPerfLogInterval = 5.0f;
-// M5-T2：临时感知半径（格）——玩家在半径内即被 AI"看见"（M5-T3 换成视锥/射线/听觉）
-constexpr float kDemoSightRadius = 8.0f;
 constexpr uint32_t kGridColor = 0x30ffffff;   // 白色低透明（ABGR: A=0x30）
 constexpr uint32_t kHoverColor = 0xff30e0ff;  // 黄色高亮
 constexpr uint32_t kAxisXColor = 0xc04040ff;  // 红
@@ -379,43 +378,22 @@ void WorldDemoState::SpawnDemoEntities() {
         const float px = m_demoBoxX0 + u01(rng) * (m_demoBoxX1 - m_demoBoxX0);
         const float py = m_demoBoxY0 + u01(rng) * (m_demoBoxY1 - m_demoBoxY0);
         const ecs::Entity e = SpawnCharacter(px, py);
-        // M5-T2：AI 状态机三件套（Idle/Wander 自主循环；追击由感知写入 targetId 触发）
+        // M5-T2/T3：AI 状态机 + 感知（视觉/听觉由 PerceptionSystem 驱动；
+        // 这里只给初始"可疑点" = 出生位置，避免无感知事件时巡点去 (0,0)）
         registry.emplace<ecs::AiState>(e, ecs::AiState{});
+        ecs::PerceptionState percep;
+        percep.lastKnownX = px;
+        percep.lastKnownY = py;
+        registry.emplace<ecs::PerceptionState>(e, percep);
         registry.emplace<ecs::MoveIntent>(e, ecs::MoveIntent{});
         registry.emplace<ecs::PathRequest>(e, ecs::PathRequest{});
         registry.emplace<ecs::PathFollow>(e, ecs::PathFollow{});
     }
-    ZL_INFO("ecs",
-            "生成 {} 个 AI 游荡者（AiSystem 状态机；区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]，"
-            "临时感知半径 {:.0f} 格）",
-            kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1, kDemoSightRadius);
+    ZL_INFO("ecs", "生成 {} 个 AI 游荡者（AiSystem + PerceptionSystem；区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]）",
+            kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1);
 }
 
-// M5-T2 临时"感知"：距离阈值内把玩家标记为 AI 目标（写 targetId；位置刷新由 AiSystem
-// 每 tick 读目标实体完成）。目标离开半径 → 清 targetId，AI 转 SearchLastKnown 靠 lastKnown。
-// M5-T3 落地 PerceptionSystem（视锥 + 视线射线 + 听觉）后删除本函数。
-void WorldDemoState::DemoSightUpdate() {
-    if (m_ctx.ecs == nullptr || m_player == entt::null) {
-        return;
-    }
-    entt::registry& registry = m_ctx.ecs->Registry();
-    const auto* playerPos = registry.try_get<ecs::Position>(m_player);
-    if (playerPos == nullptr) {
-        return;
-    }
-    const std::uint64_t playerId = m_ctx.ecs->IdOf(m_player).id;
-    registry.view<ecs::AiState>().each([&](const ecs::Entity e, ecs::AiState& ai) {
-        const auto* pos = registry.try_get<ecs::Position>(e);
-        const float dx = (pos != nullptr ? pos->x : 0.0f) - playerPos->x;
-        const float dy = (pos != nullptr ? pos->y : 0.0f) - playerPos->y;
-        const bool sensed = pos != nullptr && dx * dx + dy * dy <= kDemoSightRadius * kDemoSightRadius;
-        if (sensed) {
-            ai.targetId = playerId;
-        } else if (ai.targetId == playerId) {
-            ai.targetId = 0;  // 丢失当前感知（lastKnown 保留，AI 去搜索）
-        }
-    });
-}
+// M5-T2 临时"感知"桩已删除：M5-T3 起由 ai::PerceptionSystem（视锥 + 视线 + 听觉）接管。
 
 void WorldDemoState::KillNearestDemoEntity() {
     if (m_ctx.ecs == nullptr) {
@@ -489,9 +467,7 @@ void WorldDemoState::OnExit() {
 void WorldDemoState::OnTick(double tickDt) {
     (void)tickDt;
     ++m_ticksInState;
-    // M5-T2：临时感知（距离标记 targetId）→ AiSystem 下一 tick 依据它做状态转移；
-    // 位移由固定链驱动（AiSystem 写路径/意图 → PathFollow → Movement → PhysicsSync）。
-    DemoSightUpdate();
+    // 感知/AI/位移全部由固定链驱动（Perception → Ai → PathFollow → Movement → PhysicsSync）。
 }
 
 void WorldDemoState::OnFrame(double frameDt, double alpha) {
@@ -1075,14 +1051,19 @@ void WorldDemoState::DrawDebugText() {
             static_cast<unsigned long long>(pathStats.budget), pathStats.pending,
             pathStats.avgMs, m_ctx.pathfinding->CachedChunks(), following);
     }
-    // M5-T2：AI 状态分布（每 tick 统计；swings = 攻击脉冲累计）
+    // M5-T2/T3：AI 状态分布 + 感知统计（每 tick 统计；swings = 攻击脉冲累计）
     if (m_ctx.aiSystem != nullptr) {
         const ai::AiSystem::Stats aiStats = m_ctx.aiSystem->GetStats();
+        const ai::PerceptionSystem::Stats percStats =
+            m_ctx.perception != nullptr ? m_ctx.perception->GetStats()
+                                        : ai::PerceptionSystem::Stats{};
         bgfx::dbgTextPrintf(
             0, 10, 0x0f,
-            "ai: idle=%d wander=%d chase=%d search=%d attack=%d dead=%d | swings=%llu",
+            "ai: idle=%d wander=%d chase=%d search=%d attack=%d dead=%d | swings=%llu | "
+            "seeing=%d alert=%d",
             aiStats.idle, aiStats.wander, aiStats.chase, aiStats.search, aiStats.attack,
-            aiStats.dead, static_cast<unsigned long long>(aiStats.swings));
+            aiStats.dead, static_cast<unsigned long long>(aiStats.swings), percStats.seeing,
+            percStats.alerted);
     }
     bgfx::dbgTextPrintf(0, 9, 0x07,
                         "WASD/LMB move | F4 cam | F6 demo-kill | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");

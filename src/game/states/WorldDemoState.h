@@ -44,8 +44,6 @@ private:
     void CollectWorld();
     void SpawnDemoEntities();
     void DespawnDemoEntities();
-    // M5-T2：临时"感知"（距离阈值）——标记视野内 AI 的 targetId；M5-T3 PerceptionSystem 取代
-    void DemoSightUpdate();
     // M5-T1：演示击杀——离参考点（玩家/相机中心）最近的存活游荡者 HP 归零 → DeathSystem 转尸体
     void KillNearestDemoEntity();
     // M4-T4：玩家（PlayerTag）——chunk 加载完成后在村庄中心附近找可走格生成

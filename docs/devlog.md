@@ -561,3 +561,42 @@ Dead 冻结（不再写意图/请求）。合计 **94 用例 / 117253 断言全�
 点击远处 (79,9) 拉开距离 → HUD 抓拍 `idle=9 wander=20 chase=10 search=1 | attack=0`（丢失
 目标进入 SearchLastKnown），10s 后 `idle=12 wander=18 chase=3 attack=7`（远处巡点超时回收 +
 就近新目标再围上来）。FPS 59~61 / drawcall 3 不变。
+
+---
+
+## 2026-10-16 M5-T3 感知系统（视觉 + 听觉 + 警觉衰减）
+
+**组件与类型**
+- `ecs::PerceptionState{alertness, lastKnownX/Y, sinceSeen, sinceHeard}`（AiComponents.h）：
+  感知系统的输出、AI 的输入。**LastKnownPos 从 AiState 迁到感知侧** —— 谁感知谁维护，
+  AiSystem 只读（看见=玩家位置；听见=声源位置；丢失后 SearchLastKnown 围着它巡点）；
+- `core::SoundEvent{x, y, radius, type} + SoundType`（core/SoundEvent.h）：事件总线载荷类型
+  （M5-T4 投递，本任务先提供消费端 `PerceptionSystem::PushSound`）。
+
+**PerceptionSystem（ai/systems/PerceptionSystem.cpp；链位 Input → **Perception** → Ai → …）**
+- 视觉：距离 ≤ sightRadius → （dist ≤ closeRadius 全向 | 与 Facing 四向轴的视锥 fovDegrees）
+  → 视线粗判（沿视线每 0.5 格步进查"不可走"，未加载=遮挡，与寻路语义一致）；
+  命中 → targetId=玩家 ID、lastKnown=玩家位置、alertness=1、sinceSeen=0；丢失 → targetId=0；
+- 听觉：`PushSound` 入队（主线程），Update 时对每个感知者按 dist ≤ radius 判定 →
+  alertness += 0.6（clamp 1）、sinceHeard=0；看不见时才把可疑点设为声源（看得见时不覆盖）；
+- 衰减：alertness 每秒 -1/alertDecaySeconds（默认 8s 归零）；
+- 参数走 config `perception.*`（sightRadius 12 / closeRadius 2.5 / fovDegrees 110 /
+  alertDecaySeconds 8）；Stats{perceivers, seeing, alerted} 供 HUD。
+
+**AiSystem 接入**
+- 新增听力反应：Idle/Wander 且 `sinceHeard < 1s` → SearchLastKnown（去声源查看），
+  优先于 Wander/Idle 计时；
+- 删除"AI 自己刷新 lastKnown"的过渡逻辑（改由感知唯一维护）。
+
+**demo 清理**：删除 M5-T2 的 DemoSightUpdate 临时感知桩与 kDemoSightRadius；游荡者挂
+PerceptionState（初始可疑点=出生位置）；HUD ai 行追加 `seeing=N alert=N`。
+
+**测试**（tests/test_perception.cpp，+7 用例）：视距/视锥（背后看不见→回到前方又看见）；
+近距全向；视线遮挡（加墙→移除墙恢复）；FOV=360° 参数；听觉（半径内外、警觉 0.6、衰减
+4s≈0.1、6s 归零）；听见→AI 去声源查看→超时回 Idle；**M5 验收链**：看见→Chase→玩家消失
+→SearchLastKnown（目标格=最后看见处）→无果回 Idle。test_zombie_ai 相应改为直接写感知输出
+（聚焦 AI 逻辑）。合计 **101 用例 / 117289 断言全绿**。
+
+**冒烟（实机 40 僵尸）**：尸群围堵时 HUD `seeing=6 alert=6 chase=1 attack=5`（同一场景
+M5-T2 的 360°/8 格桩会全场 aggro —— 视锥 + 遮挡把仇恨限制在"看得见"的个体）；逃离时
+chase↔search 随视线切换，开阔地新尸群重新锁定玩家（截图 `m5t2b_*`）。FPS 59 / drawcall 3。

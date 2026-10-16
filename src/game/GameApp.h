@@ -6,6 +6,7 @@
 #include "ai/PathfindingService.h"
 #include "ai/systems/AiSystem.h"
 #include "ai/systems/PathFollowSystem.h"
+#include "ai/systems/PerceptionSystem.h"
 #include "characters/systems/AnimationSystem.h"
 #include "characters/systems/DeathSystem.h"
 #include "characters/systems/InputSystem.h"
@@ -93,6 +94,8 @@ private:
     std::unique_ptr<ai::PathFollowSystem> m_pathFollowSystem;
     // AI（M5-T2）：僵尸状态机（Input 之后、PathFollow 之前）
     std::unique_ptr<ai::AiSystem> m_aiSystem;
+    // 感知（M5-T3）：视觉/听觉 → AiSystem 之前（本 tick 即被消费）
+    std::unique_ptr<ai::PerceptionSystem> m_perceptionSystem;
 
     // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
     ecs::EcsWorld m_ecs;

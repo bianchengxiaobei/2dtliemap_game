@@ -34,6 +34,7 @@ add_executable(ZomboidLike
     src/ai/PathfindingService.cpp
     src/ai/systems/AiSystem.cpp
     src/ai/systems/PathFollowSystem.cpp
+    src/ai/systems/PerceptionSystem.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/DeathSystem.cpp
     src/characters/systems/InputSystem.cpp
@@ -113,12 +114,14 @@ add_executable(ZomboidLikeTests
     tests/test_pathfinding.cpp
     tests/test_death.cpp
     tests/test_zombie_ai.cpp
+    tests/test_perception.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
     src/ai/PathfindingService.cpp
     src/ai/systems/AiSystem.cpp
     src/ai/systems/PathFollowSystem.cpp
+    src/ai/systems/PerceptionSystem.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/DeathSystem.cpp
     src/characters/systems/InputSystem.cpp

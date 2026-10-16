@@ -29,6 +29,7 @@ constexpr float kChaseGoalTolerance = 1.2f;      // 目标移动超过该距离 
 constexpr float kSearchSeconds = 6.0f;           // 搜索超时 → 放弃回 Idle
 constexpr float kSearchRetargetSeconds = 2.0f;   // 搜索巡点间隔
 constexpr float kSearchRadius = 4.0f;            // 搜索巡点半径（格）
+constexpr float kHearReactSeconds = 1.0f;        // 听见声音后 1s 内 → 去查看（Idle/Wander）
 
 // 确定性伪随机 [0,1)（splitmix64 尾段；同 StableId + 盐 → 同结果，测试可复现）
 float Rand01(std::uint64_t stableId, std::uint64_t salt) {
@@ -84,11 +85,17 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
             auto* health = registry.try_get<ecs::Health>(e);
             auto* request = registry.try_get<ecs::PathRequest>(e);
             auto* follow = registry.try_get<ecs::PathFollow>(e);
+            auto* perception = registry.try_get<ecs::PerceptionState>(e);
 
             ai.stateTime += dt;
             ai.actionTimer = std::max(0.0f, ai.actionTimer - dt);
 
             // —— facts：每 tick 计算一次，转移判定只读 ——
+            // lastKnown（LastKnownPos）由感知维护：看见 = 玩家位置；听见 = 声源位置
+            const float lastKnownX = perception != nullptr ? perception->lastKnownX : position.x;
+            const float lastKnownY = perception != nullptr ? perception->lastKnownY : position.y;
+            const bool heardRecently =
+                perception != nullptr && perception->sinceHeard < kHearReactSeconds;
             const bool dead = health != nullptr && health->current <= 0.0f;
             bool targetVisible = false;
             float targetX = 0.0f;
@@ -100,8 +107,6 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                         targetVisible = true;
                         targetX = tp->x;
                         targetY = tp->y;
-                        ai.lastKnownX = tp->x;  // 当前可感知：刷新最后已知位置
-                        ai.lastKnownY = tp->y;
                     }
                 } else {
                     ai.targetId = 0;  // 目标实体已回收
@@ -119,6 +124,9 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                         EnterState(world, e, ai, AiStatus::Dead, position.x, position.y);
                     } else if (targetVisible) {
                         EnterState(world, e, ai, AiStatus::Chase, position.x, position.y);
+                    } else if (heardRecently) {
+                        EnterState(world, e, ai, AiStatus::SearchLastKnown, position.x,
+                                   position.y);  // 刚听见 → 去声源查看
                     } else if (ai.stateTime >= ai.idleSeconds) {
                         EnterState(world, e, ai, AiStatus::Wander, position.x, position.y);
                     }
@@ -128,6 +136,9 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                         EnterState(world, e, ai, AiStatus::Dead, position.x, position.y);
                     } else if (targetVisible) {
                         EnterState(world, e, ai, AiStatus::Chase, position.x, position.y);
+                    } else if (heardRecently) {
+                        EnterState(world, e, ai, AiStatus::SearchLastKnown, position.x,
+                                   position.y);  // 刚听见 → 中断游荡去查看
                     } else if (!pathBusy) {
                         EnterState(world, e, ai, AiStatus::Idle, position.x, position.y);
                     }
@@ -146,14 +157,14 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                         const bool goalStale =
                             request == nullptr ||
                             DistSq(static_cast<float>(request->goalX) + 0.5f,
-                                   static_cast<float>(request->goalY) + 0.5f, ai.lastKnownX,
-                                   ai.lastKnownY) >
+                                   static_cast<float>(request->goalY) + 0.5f, lastKnownX,
+                                   lastKnownY) >
                                 kChaseGoalTolerance * kChaseGoalTolerance;
                         const bool pendingRepath =
                             request != nullptr && request->state == ecs::PathStatus::Pending;
                         if (request != nullptr && !pendingRepath &&
                             (goalStale || (!pathBusy && ai.actionTimer <= 0.0f))) {
-                            RequestPathTo(world, e, ai.lastKnownX, ai.lastKnownY);
+                            RequestPathTo(world, e, lastKnownX, lastKnownY);
                             ai.actionTimer = kChaseRepathSeconds;
                         }
                     }
@@ -171,8 +182,8 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                         const float angle = Rand01(id, m_tick) * 6.2831853f;
                         const float radius =
                             1.0f + Rand01(id, m_tick ^ 0x51633E2Du) * kSearchRadius;
-                        RequestPathTo(world, e, ai.lastKnownX + std::cos(angle) * radius,
-                                      ai.lastKnownY + std::sin(angle) * radius);
+                        RequestPathTo(world, e, lastKnownX + std::cos(angle) * radius,
+                                      lastKnownY + std::sin(angle) * radius);
                         ai.actionTimer = kSearchRetargetSeconds;
                     }
                     break;
@@ -250,14 +261,20 @@ void AiSystem::EnterState(ecs::EcsWorld& world, ecs::Entity e, AiState& ai, AiSt
             }
             break;
         }
-        case AiStatus::Chase:
-            RequestPathTo(world, e, ai.lastKnownX, ai.lastKnownY);
+        case AiStatus::Chase: {
+            const auto* percep = world.Registry().try_get<ecs::PerceptionState>(e);
+            RequestPathTo(world, e, percep != nullptr ? percep->lastKnownX : px,
+                          percep != nullptr ? percep->lastKnownY : py);
             ai.actionTimer = kChaseRepathSeconds;
             break;
-        case AiStatus::SearchLastKnown:
-            RequestPathTo(world, e, ai.lastKnownX, ai.lastKnownY);
+        }
+        case AiStatus::SearchLastKnown: {
+            const auto* percep = world.Registry().try_get<ecs::PerceptionState>(e);
+            RequestPathTo(world, e, percep != nullptr ? percep->lastKnownX : px,
+                          percep != nullptr ? percep->lastKnownY : py);
             ai.actionTimer = kSearchRetargetSeconds;
             break;
+        }
         case AiStatus::Attack:
             CancelPathAndStop(world, e);
             ai.attackCooldown = 0.0f;  // 贴身立刻落第一击

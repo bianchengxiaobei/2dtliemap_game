@@ -165,10 +165,24 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.physics = m_physics.get();
     m_ctx.pathfinding = m_pathfinding.get();
 
-    // 5.6 AI（M5-T2）：游荡选点需查世界（"未加载 = 不可走"），经 WorldQueries 只读查询
-    m_aiSystem = std::make_unique<ai::AiSystem>(
-        [this](int wx, int wy) { return !IsSquareBlocked(*m_world, wx, wy, 0); });
+    // 5.6 AI（M5-T2）+ 感知（M5-T3）：可走查询共用（"未加载 = 不可走/遮挡"）
+    const auto walkable = [this](int wx, int wy) {
+        return !IsSquareBlocked(*m_world, wx, wy, 0);
+    };
+    m_aiSystem = std::make_unique<ai::AiSystem>(walkable);
+    ai::PerceptionParams perceptionParams;
+    perceptionParams.sightRadius =
+        static_cast<float>(m_config.Get<double>("perception.sightRadius", 12.0));
+    perceptionParams.closeRadius =
+        static_cast<float>(m_config.Get<double>("perception.closeRadius", 2.5));
+    perceptionParams.fovDegrees =
+        static_cast<float>(m_config.Get<double>("perception.fovDegrees", 110.0));
+    perceptionParams.alertDecaySeconds =
+        static_cast<float>(m_config.Get<double>("perception.alertDecaySeconds", 8.0));
+    m_perceptionSystem =
+        std::make_unique<ai::PerceptionSystem>(walkable, perceptionParams);
     m_ctx.aiSystem = m_aiSystem.get();
+    m_ctx.perception = m_perceptionSystem.get();
 
     // 6. 上下文 + 事件探针
     m_ctx.config = &m_config;
@@ -189,9 +203,9 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
 
     // ECS 固定链集中注册（docs/00 §6.1）；顺序 = 执行顺序。
-    // 目前：索引维护 → Input → Ai → PathFollow → Movement → PhysicsSync → Death → Animation；
-    // 后续任务按链序插入（目标链：Input → Ai → PathFollow → Movement → PhysicsSync →
-    //   Perception → Combat/Death → SpawnLod → RenderCollect）。
+    // 目前：索引维护 → Input → Perception → Ai → PathFollow → Movement → PhysicsSync → Death → Animation；
+    // 后续任务按链序插入（目标链：Input → Perception → Ai → PathFollow → Movement → PhysicsSync →
+    //   Combat/Death → SpawnLod → RenderCollect）。
     m_ecs.Systems().AddSystem("SpatialIndexSystem",
                               [this](ecs::EcsWorld& w, float) { m_spatialIndex.Update(w); });
     m_inputSystem = std::make_unique<characters::InputSystem>();
@@ -201,6 +215,10 @@ bool GameApp::Init(int argc, char** argv) {
     m_pathFollowSystem = std::make_unique<ai::PathFollowSystem>(m_pathfinding.get());
     m_ecs.Systems().AddSystem("InputSystem", [this](ecs::EcsWorld& w, float) {
         m_inputSystem->Update(m_input, w);
+    });
+    // 感知在 AI 之前（本 tick 写出的 targetId/lastKnown 同 tick 被 AI 消费）
+    m_ecs.Systems().AddSystem("PerceptionSystem", [this](ecs::EcsWorld& w, float dt) {
+        m_perceptionSystem->Update(w, dt);
     });
     // AI 在 PathFollow 之前（本 tick 写的 goal 同 tick 被提交为后台查询）
     m_ecs.Systems().AddSystem("AiSystem", [this](ecs::EcsWorld& w, float dt) {
@@ -266,6 +284,7 @@ void GameApp::Shutdown() {
     m_movementSystem.reset();
     m_pathFollowSystem.reset();  // 先于服务
     m_aiSystem.reset();
+    m_perceptionSystem.reset();
     m_pathfinding.reset();       // 在途后台查询经共享 Core 安全收敛
     m_physics.reset();  // 物理体先于 chunk 生命周期回调销毁
     m_chunkManager.reset();

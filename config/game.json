@@ -42,6 +42,12 @@
   "pathfinding": {
     "maxExpansions": 200000
   },
+  "perception": {
+    "sightRadius": 12,
+    "closeRadius": 2.5,
+    "fovDegrees": 110,
+    "alertDecaySeconds": 8
+  },
   "input": {
     "bindings": {
       "Quit": "ESCAPE",

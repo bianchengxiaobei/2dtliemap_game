@@ -62,11 +62,22 @@ struct AiState {
     float stateTime = 0.0f;      // 当前状态已持续（秒）
     float actionTimer = 0.0f;    // 通用动作节流（重寻路/搜索巡点间隔，秒）
     float idleSeconds = 3.0f;    // 本次 Idle 时长（进入时按 StableId 确定性随机）
-    std::uint64_t targetId = 0;  // 追击目标 StableId（0 = 当前未感知）
-    float lastKnownX = 0.0f;     // 目标最后已知位置（丢失后 SearchLastKnown 追踪用）
-    float lastKnownY = 0.0f;
+    std::uint64_t targetId = 0;  // 追击目标 StableId（0 = 当前未感知；PerceptionSystem 维护）
     float attackCooldown = 0.0f;     // 攻击节拍计时（<=0 落一次攻击脉冲）
     std::uint32_t attackPulses = 0;  // 累计攻击次数（M5-T6 伤害挂钩点）
+};
+
+// M5-T3：感知状态（PerceptionSystem 写、AiSystem 读）。
+//  - alertness：警觉度 [0,1]（看见 = 1；听见 += boost；每秒 -1/alertDecaySeconds）；
+//  - lastKnown：LastKnownPos —— AI 的"可疑点"（看见 = 玩家位置；听见 = 声源位置；
+//    目标丢失后 SearchLastKnown 就围着它巡点）；
+//  - sinceSeen/sinceHeard：距上次看见/听见（秒）——AI 用它判"刚听见声音"（去查看）。
+struct PerceptionState {
+    float alertness = 0.0f;
+    float lastKnownX = 0.0f;
+    float lastKnownY = 0.0f;
+    float sinceSeen = 1000.0f;
+    float sinceHeard = 1000.0f;
 };
 
 }  // namespace zl::ecs
