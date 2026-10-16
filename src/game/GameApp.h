@@ -10,13 +10,19 @@
 #include "core/GameTime.h"
 #include "core/Input.h"
 #include "core/TaskScheduler.h"
+#include "game/AssetProvider.h"
 #include "game/EventProbe.h"
 #include "game/GameContext.h"
 #include "platform/Window.h"
+#include "render/Atlas.h"
+#include "render/Camera.h"
+#include "render/Renderer.h"
+#include "render/SpriteBatch.h"
+#include "render/Texture2D.h"
 
 namespace zl::game {
 
-// 顶层组装（M1-T7）：服务初始化 → 状态机（Sandbox 占位）→ 固定 tick 主循环。
+// 顶层组装（M1-T7 / M2 扩展）：服务初始化 → 渲染栈 → 状态机 → 固定 tick 主循环。
 class GameApp {
 public:
     static int Run(int argc, char** argv);
@@ -47,9 +53,15 @@ private:
     std::unique_ptr<core::GameLoop> m_loop;
     GameContext m_ctx;
 
-    uint32_t m_resetFlags = 0;
+    // 渲染栈（声明顺序 = 初始化/析构顺序约束：textures → atlases → sprites → renderer）
+    render::TextureManager m_textures;
+    render::AtlasManager m_atlases{m_textures};
+    render::Renderer m_renderer;
+    render::SpriteBatch m_sprites;
+    render::Camera m_camera;
+    AssetProvider m_assets;
+
     double m_lastFrameTime = 0.0;
-    bool m_bgfxInitialized = false;
     bool m_shutdownDone = false;
 };
 

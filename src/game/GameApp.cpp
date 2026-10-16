@@ -6,10 +6,9 @@
 #include <string>
 
 #include <GLFW/glfw3.h>
-#include <bgfx/bgfx.h>
-#include <bgfx/platform.h>
 
 #include "core/Log.h"
+#include "game/states/RenderDemoState.h"
 #include "game/states/SandboxState.h"
 #include "platform/KeyNames.h"
 
@@ -21,8 +20,9 @@ constexpr double kMaxFrameDt = 0.25;
 
 constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"Quit", "ESCAPE"},      {"Pause", "F1"},       {"CycleSpeed", "F2"},
-    {"DemoTasks", "F3"},     {"ReloadBindings", "F5"}, {"MoveUp", "W"},
-    {"MoveDown", "S"},       {"MoveLeft", "A"},     {"MoveRight", "D"},
+    {"DemoTasks", "F3"},     {"ReloadBindings", "F5"}, {"ToggleDebugOverlay", "F9"},
+    {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
+    {"MoveRight", "D"},
 };
 
 double NowSeconds() {
@@ -70,29 +70,24 @@ bool GameApp::Init(int argc, char** argv) {
     if (!m_window.Create(desc)) {
         return false;
     }
-    m_resetFlags = desc.vsync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE;
 
-    // 3. bgfx
-    bgfx::PlatformData pd{};
-    pd.nwh = m_window.NativeHandle();
-    bgfx::Init init;
-    init.type = bgfx::RendererType::Count;
-    init.platformData = pd;
-    init.resolution.width = static_cast<uint32_t>(m_window.FramebufferWidth());
-    init.resolution.height = static_cast<uint32_t>(m_window.FramebufferHeight());
-    init.resolution.reset = m_resetFlags;
-    if (!bgfx::init(init)) {
-        ZL_CRITICAL("render", "bgfx::init 失败");
+    // 3. 渲染栈（M2-T1）
+    render::RendererDesc rd;
+    rd.width = m_window.FramebufferWidth();
+    rd.height = m_window.FramebufferHeight();
+    rd.vsync = desc.vsync;
+    if (!m_renderer.Init(m_window, rd)) {
         return false;
     }
-    m_bgfxInitialized = true;
-    ZL_INFO("render", "bgfx 初始化完成，渲染后端: {}",
-            bgfx::getRendererName(bgfx::getRendererType()));
-    bgfx::setDebug(BGFX_DEBUG_TEXT);
+    if (!m_sprites.Init()) {
+        return false;
+    }
+    m_camera.SetViewport(m_renderer.FramebufferWidth(), m_renderer.FramebufferHeight());
 
     m_window.SetResizeCallback([this](int width, int height) {
         if (width > 0 && height > 0) {
-            bgfx::reset(static_cast<uint32_t>(width), static_cast<uint32_t>(height), m_resetFlags);
+            m_renderer.Resize(width, height);
+            m_camera.SetViewport(width, height);
         }
     });
     m_window.SetKeyCallback([](int key, int action, int mods) {
@@ -128,12 +123,22 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.loop = m_loop.get();
     m_ctx.states = &m_states;
     m_ctx.window = &m_window;
+    m_ctx.renderer = &m_renderer;
+    m_ctx.camera = &m_camera;
+    m_ctx.sprites = &m_sprites;
+    m_ctx.atlases = &m_atlases;
+    m_ctx.assets = &m_assets;
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
 
     m_probe.Attach(m_events);
 
-    // 6. 初始状态（Boot/MainMenu 在后续里程碑接入，M1 直接用 Sandbox）
-    m_states.SetState(std::make_unique<SandboxState>(m_ctx));
+    // 6. 初始状态（Boot/MainMenu 在后续里程碑接入）
+    const std::string startState = m_config.Get<std::string>("game.startState", "render");
+    if (startState == "sandbox") {
+        m_states.SetState(std::make_unique<SandboxState>(m_ctx));
+    } else {
+        m_states.SetState(std::make_unique<RenderDemoState>(m_ctx));
+    }
     m_states.ApplyPendingState();
     m_events.Emit(core::kOnGameStart);
 
@@ -150,10 +155,11 @@ void GameApp::Shutdown() {
 
     m_probe.Detach(m_events);
     m_states.Clear();
-    if (m_bgfxInitialized) {
-        bgfx::shutdown();
-        m_bgfxInitialized = false;
-    }
+    // 渲染资源必须在 bgfx::shutdown 之前释放
+    m_sprites.Shutdown();
+    m_atlases.Clear();
+    m_textures.Clear();
+    m_renderer.Shutdown();
     m_window.Destroy();
     m_loop.reset();
     m_tasks.reset();  // 最后回收线程池
@@ -193,17 +199,12 @@ void GameApp::Tick(double tickDt) {
 }
 
 void GameApp::RenderFrame(double frameDt, double alpha) {
-    const int width = m_window.FramebufferWidth();
-    const int height = m_window.FramebufferHeight();
-    if (width > 0 && height > 0) {
-        bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
-        bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1d1d1dff, 1.0f, 0);
-    }
-    bgfx::touch(0);
+    m_sprites.FrameBegin();
+    m_renderer.BeginFrame();
     if (auto* state = m_states.Current()) {
         state->OnFrame(frameDt, alpha);
     }
-    bgfx::frame();
+    m_renderer.EndFrame();
 }
 
 void GameApp::ApplyInputBindings() {

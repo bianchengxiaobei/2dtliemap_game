@@ -10,7 +10,17 @@
     "dayLengthMinutes": 60,
     "startYear": 2000,
     "startMonth": 7,
-    "startDay": 9
+    "startDay": 9,
+    "startState": "render"
+  },
+  "assets": {
+    "manifest": "assets/asset_manifest.json",
+    "provider": "own"
+  },
+  "renderDemo": {
+    "mapSize": 32,
+    "seed": 42,
+    "decorations": true
   },
   "task": {
     "threads": 0
@@ -22,6 +32,7 @@
       "CycleSpeed": "F2",
       "DemoTasks": "F3",
       "ReloadBindings": "F5",
+      "ToggleDebugOverlay": "F9",
       "MoveUp": "W",
       "MoveDown": "S",
       "MoveLeft": "A",

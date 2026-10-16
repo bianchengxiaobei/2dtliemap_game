@@ -6,7 +6,7 @@ if (ZL_ENABLE_PYTHON)
     set(VCPKG_MANIFEST_FEATURES "python")
 endif()
 
-project(ZomboidLike VERSION 0.1.0 LANGUAGES CXX)
+project(ZomboidLike VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,6 +21,9 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(bgfx CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
+find_package(Stb REQUIRED)
+find_package(doctest CONFIG REQUIRED)
 
 add_executable(ZomboidLike
     src/main.cpp
@@ -32,11 +35,19 @@ add_executable(ZomboidLike
     src/core/Input.cpp
     src/core/Log.cpp
     src/core/TaskScheduler.cpp
+    src/game/AssetProvider.cpp
     src/game/EventProbe.cpp
     src/game/GameApp.cpp
+    src/game/states/RenderDemoState.cpp
     src/game/states/SandboxState.cpp
     src/platform/KeyNames.cpp
     src/platform/Window.cpp
+    src/render/Atlas.cpp
+    src/render/Camera.cpp
+    src/render/IsoMath.cpp
+    src/render/Renderer.cpp
+    src/render/SpriteBatch.cpp
+    src/render/Texture2D.cpp
 )
 
 target_include_directories(ZomboidLike PRIVATE src)
@@ -50,4 +61,25 @@ target_link_libraries(ZomboidLike PRIVATE
     bgfx::bgfx
     spdlog::spdlog
     nlohmann_json::nlohmann_json
+    glm::glm
 )
+
+target_include_directories(ZomboidLike PRIVATE ${Stb_INCLUDE_DIR})
+
+# ---- 单元测试（docs/02 §8：坐标换算等必须先有测试） ----
+enable_testing()
+
+add_executable(ZomboidLikeTests
+    tests/test_main.cpp
+    tests/test_isomath.cpp
+    src/render/IsoMath.cpp
+)
+
+target_include_directories(ZomboidLikeTests PRIVATE src)
+
+target_link_libraries(ZomboidLikeTests PRIVATE
+    doctest::doctest
+    glm::glm
+)
+
+add_test(NAME ZomboidLikeTests COMMAND ZomboidLikeTests)
