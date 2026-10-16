@@ -19,6 +19,7 @@ class SpatialIndex;
 }  // namespace zl::ecs
 
 namespace zl::ai {
+class AiSystem;
 class PathfindingService;
 }  // namespace zl::ai
 
@@ -77,6 +78,9 @@ struct GameContext {
 
     // 寻路（M4-T6 起）：passability 位图缓存 + 后台查询（PathFollowSystem 的依赖）
     ai::PathfindingService* pathfinding = nullptr;
+
+    // AI（M5-T2 起）：僵尸状态机（经固定链驱动；此处仅供 HUD 统计等只读访问）
+    ai::AiSystem* aiSystem = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

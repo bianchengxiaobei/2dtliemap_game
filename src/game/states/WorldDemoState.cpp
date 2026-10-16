@@ -20,6 +20,7 @@
 #include "ai/PathfindingService.h"
 #include "ai/Passability.h"
 #include "ai/components/AiComponents.h"
+#include "ai/systems/AiSystem.h"
 #include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/SpatialIndex.h"
@@ -27,6 +28,7 @@
 #include "ecs/components/PhysicsComponents.h"
 #include "game/EventProbe.h"
 #include "game/CameraFollow.h"
+#include "game/WorldQueries.h"
 #include "physics/PhysicsWorld.h"
 #include "platform/Window.h"
 #include "render/Camera.h"
@@ -47,7 +49,8 @@ constexpr float kHoverLineThickness = 2.5f;
 constexpr float kMarkerLineThickness = 3.0f;
 constexpr float kStatsLogInterval = 3.0f;
 constexpr float kPerfLogInterval = 5.0f;
-constexpr float kWanderRetargetSeconds = 5.0f;  // M4-T6：游荡者重派目标周期
+// M5-T2：临时感知半径（格）——玩家在半径内即被 AI"看见"（M5-T3 换成视锥/射线/听觉）
+constexpr float kDemoSightRadius = 8.0f;
 constexpr uint32_t kGridColor = 0x30ffffff;   // 白色低透明（ABGR: A=0x30）
 constexpr uint32_t kHoverColor = 0xff30e0ff;  // 黄色高亮
 constexpr uint32_t kAxisXColor = 0xc04040ff;  // 红
@@ -185,22 +188,7 @@ ecs::Entity WorldDemoState::SpawnCharacter(float px, float py) {
 }
 
 bool WorldDemoState::IsSolidSquare(int wx, int wy) const {
-    const world::ChunkCoord cc = world::ChunkOf(wx, wy);
-    const world::Chunk* chunk = FindChunk(cc.cx, cc.cy);
-    if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
-        return true;  // 未加载（未知）按阻挡处理：不往未加载区生成玩家
-    }
-    const world::SquareLocal local = world::SquareLocalOf(wx, wy);
-    const world::GridSquare& square = chunk->Square(local.lx, local.ly, 0);
-    for (int i = 0; i < world::kSquareLayerCount; ++i) {
-        for (const world::SquareObject& object :
-             square.Layer(static_cast<world::SquareLayer>(i))) {
-            if (object.blocksMovement) {
-                return true;
-            }
-        }
-    }
-    return false;
+    return IsSquareBlocked(*m_ctx.world, wx, wy, 0);
 }
 
 void WorldDemoState::EnsurePlayerSpawned() {
@@ -386,53 +374,47 @@ void WorldDemoState::SpawnDemoEntities() {
     m_demoBoxY1 = 32.0f;
 
     constexpr int kCount = 40;
-    const uint32_t sprite = ecs::HashName("character.placeholder");
     entt::registry& registry = world.Registry();
-    m_demoEntities.clear();
-    m_demoEntities.reserve(kCount);
     for (int i = 0; i < kCount; ++i) {
         const float px = m_demoBoxX0 + u01(rng) * (m_demoBoxX1 - m_demoBoxX0);
         const float py = m_demoBoxY0 + u01(rng) * (m_demoBoxY1 - m_demoBoxY0);
         const ecs::Entity e = SpawnCharacter(px, py);
-        // M4-T6：寻路游荡三件套（初始无目标、站立；首次重派周期起边走边找新目标）
+        // M5-T2：AI 状态机三件套（Idle/Wander 自主循环；追击由感知写入 targetId 触发）
+        registry.emplace<ecs::AiState>(e, ecs::AiState{});
         registry.emplace<ecs::MoveIntent>(e, ecs::MoveIntent{});
         registry.emplace<ecs::PathRequest>(e, ecs::PathRequest{});
         registry.emplace<ecs::PathFollow>(e, ecs::PathFollow{});
-        m_demoEntities.push_back(e);
     }
     ZL_INFO("ecs",
-            "生成 {} 个寻路游荡者（区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]，精灵名哈希 {:#x}）",
-            kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1, sprite);
+            "生成 {} 个 AI 游荡者（AiSystem 状态机；区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]，"
+            "临时感知半径 {:.0f} 格）",
+            kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1, kDemoSightRadius);
 }
 
-void WorldDemoState::RetargetDemoEntities() {
-    if (m_ctx.ecs == nullptr) {
+// M5-T2 临时"感知"：距离阈值内把玩家标记为 AI 目标（写 targetId；位置刷新由 AiSystem
+// 每 tick 读目标实体完成）。目标离开半径 → 清 targetId，AI 转 SearchLastKnown 靠 lastKnown。
+// M5-T3 落地 PerceptionSystem（视锥 + 视线射线 + 听觉）后删除本函数。
+void WorldDemoState::DemoSightUpdate() {
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
         return;
     }
     entt::registry& registry = m_ctx.ecs->Registry();
-    int assigned = 0;
-    for (const ecs::Entity e : m_demoEntities) {
-        auto* request = registry.try_get<ecs::PathRequest>(e);
-        if (request == nullptr) {
-            continue;
-        }
-        if (request->state == ecs::PathStatus::Pending ||
-            request->state == ecs::PathStatus::Following) {
-            continue;  // 还在寻路/走路
-        }
-        int gx = 0;
-        int gy = 0;
-        if (!PickWanderTarget(&gx, &gy)) {
-            continue;  // 本轮找不到可走目标（等下一轮）
-        }
-        request->goalX = gx;
-        request->goalY = gy;
-        request->newRequest = true;
-        ++assigned;
+    const auto* playerPos = registry.try_get<ecs::Position>(m_player);
+    if (playerPos == nullptr) {
+        return;
     }
-    if (assigned > 0) {
-        ZL_DEBUG("ecs", "寻路游荡：派发 {} 个新目标（实体共 {}）", assigned, m_demoEntities.size());
-    }
+    const std::uint64_t playerId = m_ctx.ecs->IdOf(m_player).id;
+    registry.view<ecs::AiState>().each([&](const ecs::Entity e, ecs::AiState& ai) {
+        const auto* pos = registry.try_get<ecs::Position>(e);
+        const float dx = (pos != nullptr ? pos->x : 0.0f) - playerPos->x;
+        const float dy = (pos != nullptr ? pos->y : 0.0f) - playerPos->y;
+        const bool sensed = pos != nullptr && dx * dx + dy * dy <= kDemoSightRadius * kDemoSightRadius;
+        if (sensed) {
+            ai.targetId = playerId;
+        } else if (ai.targetId == playerId) {
+            ai.targetId = 0;  // 丢失当前感知（lastKnown 保留，AI 去搜索）
+        }
+    });
 }
 
 void WorldDemoState::KillNearestDemoEntity() {
@@ -451,23 +433,20 @@ void WorldDemoState::KillNearestDemoEntity() {
 
     ecs::Entity best = entt::null;
     float bestDistSq = 0.0f;
-    for (const ecs::Entity e : m_demoEntities) {
-        if (!m_ctx.ecs->Alive(e)) {
-            continue;
-        }
-        const auto* health = registry.try_get<ecs::Health>(e);
-        const auto* pos = registry.try_get<ecs::Position>(e);
-        if (health == nullptr || pos == nullptr || health->current <= 0.0f) {
-            continue;
-        }
-        const float dx = pos->x - ref.x;
-        const float dy = pos->y - ref.y;
-        const float distSq = dx * dx + dy * dy;
-        if (best == entt::null || distSq < bestDistSq) {
-            best = e;
-            bestDistSq = distSq;
-        }
-    }
+    registry.view<ecs::AiState, ecs::Health, ecs::Position>().each(
+        [&](const ecs::Entity e, const ecs::AiState&, const ecs::Health& health,
+            const ecs::Position& pos) {
+            if (!m_ctx.ecs->Alive(e) || health.current <= 0.0f) {
+                return;  // continue
+            }
+            const float dx = pos.x - ref.x;
+            const float dy = pos.y - ref.y;
+            const float distSq = dx * dx + dy * dy;
+            if (best == entt::null || distSq < bestDistSq) {
+                best = e;
+                bestDistSq = distSq;
+            }
+        });
     if (best == entt::null) {
         SetNotice("demo kill: no live target nearby", kNoticeFailColor, 2.0f);
         return;
@@ -478,23 +457,6 @@ void WorldDemoState::KillNearestDemoEntity() {
     SetNotice("demo kill: id " + std::to_string(id) + " -> corpse", kNoticeInfoColor, 2.5f);
     ZL_INFO("characters", "演示击杀：稳定 ID {}（格 ({:.1f}, {:.1f})）HP 归零（F6）", id,
             pos != nullptr ? pos->x : 0.0f, pos != nullptr ? pos->y : 0.0f);
-}
-
-bool WorldDemoState::PickWanderTarget(int* gx, int* gy) {
-    std::uniform_real_distribution<float> u01(0.0f, 1.0f);
-    for (int attempt = 0; attempt < 64; ++attempt) {
-        const int wx = static_cast<int>(m_demoBoxX0) +
-                       static_cast<int>(u01(m_demoRng) * (m_demoBoxX1 - m_demoBoxX0));
-        const int wy = static_cast<int>(m_demoBoxY0) +
-                       static_cast<int>(u01(m_demoRng) * (m_demoBoxY1 - m_demoBoxY0));
-        if (IsSolidSquare(wx, wy)) {
-            continue;  // 阻挡格或 chunk 未加载（未加载按阻挡处理）
-        }
-        *gx = wx;
-        *gy = wy;
-        return true;
-    }
-    return false;
 }
 
 void WorldDemoState::DespawnDemoEntities() {
@@ -513,8 +475,6 @@ void WorldDemoState::DespawnDemoEntities() {
             m_ctx.ecs->Destroy(e);
         });
     m_ctx.ecs->Flush();
-    m_demoEntities.clear();
-    m_retargetTimer = 0.0f;
     m_player = entt::null;
 }
 
@@ -527,17 +487,11 @@ void WorldDemoState::OnExit() {
 }
 
 void WorldDemoState::OnTick(double tickDt) {
+    (void)tickDt;
     ++m_ticksInState;
-    // M4-T6：游荡演示——定时给空闲（到达/失败/无路径）的实体派发新随机目标；
-    // 位移由固定链驱动（PathFollowSystem 写意图 → Movement → PhysicsSync）。
-    if (m_ctx.ecs == nullptr || m_demoEntities.empty()) {
-        return;
-    }
-    m_retargetTimer += static_cast<float>(tickDt);
-    if (m_retargetTimer >= kWanderRetargetSeconds) {
-        m_retargetTimer = 0.0f;
-        RetargetDemoEntities();
-    }
+    // M5-T2：临时感知（距离标记 targetId）→ AiSystem 下一 tick 依据它做状态转移；
+    // 位移由固定链驱动（AiSystem 写路径/意图 → PathFollow → Movement → PhysicsSync）。
+    DemoSightUpdate();
 }
 
 void WorldDemoState::OnFrame(double frameDt, double alpha) {
@@ -786,14 +740,7 @@ render::GridPick WorldDemoState::PickMouseCell(const glm::vec2& mousePx) const {
 }
 
 world::Chunk* WorldDemoState::FindChunk(int chunkX, int chunkY) const {
-    const world::CellCoord cell{world::FloorDiv(chunkX, core::kChunksPerCell),
-                                world::FloorDiv(chunkY, core::kChunksPerCell)};
-    world::Cell* owner = m_ctx.world->GetCell(cell.cx, cell.cy);
-    if (owner == nullptr) {
-        return nullptr;
-    }
-    const world::ChunkLocal local = world::ChunkLocalOf(chunkX, chunkY);
-    return owner->GetChunk(local.lcx, local.lcy);
+    return FindChunkInWorld(*m_ctx.world, chunkX, chunkY);
 }
 
 void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int wy, int z,
@@ -1127,6 +1074,15 @@ void WorldDemoState::DrawDebugText() {
             static_cast<unsigned long long>(pathStats.invalid),
             static_cast<unsigned long long>(pathStats.budget), pathStats.pending,
             pathStats.avgMs, m_ctx.pathfinding->CachedChunks(), following);
+    }
+    // M5-T2：AI 状态分布（每 tick 统计；swings = 攻击脉冲累计）
+    if (m_ctx.aiSystem != nullptr) {
+        const ai::AiSystem::Stats aiStats = m_ctx.aiSystem->GetStats();
+        bgfx::dbgTextPrintf(
+            0, 10, 0x0f,
+            "ai: idle=%d wander=%d chase=%d search=%d attack=%d dead=%d | swings=%llu",
+            aiStats.idle, aiStats.wander, aiStats.chase, aiStats.search, aiStats.attack,
+            aiStats.dead, static_cast<unsigned long long>(aiStats.swings));
     }
     bgfx::dbgTextPrintf(0, 9, 0x07,
                         "WASD/LMB move | F4 cam | F6 demo-kill | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");

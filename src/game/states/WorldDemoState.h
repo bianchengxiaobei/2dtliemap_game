@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <random>
 #include <string>
 #include <vector>
 
@@ -45,9 +44,8 @@ private:
     void CollectWorld();
     void SpawnDemoEntities();
     void DespawnDemoEntities();
-    // M4-T6：游荡演示——定时给空闲的演示实体派发随机目标（PathRequest → 后台 A*）
-    void RetargetDemoEntities();
-    bool PickWanderTarget(int* gx, int* gy);
+    // M5-T2：临时"感知"（距离阈值）——标记视野内 AI 的 targetId；M5-T3 PerceptionSystem 取代
+    void DemoSightUpdate();
     // M5-T1：演示击杀——离参考点（玩家/相机中心）最近的存活游荡者 HP 归零 → DeathSystem 转尸体
     void KillNearestDemoEntity();
     // M4-T4：玩家（PlayerTag）——chunk 加载完成后在村庄中心附近找可走格生成
@@ -81,15 +79,11 @@ private:
     int m_collectedChunks = 0;  // 本帧进入收集的已加载 chunk 数
     int m_missingChunks = 0;    // 本帧可见但尚未加载的 chunk 数
 
-    // M4-T6 演示：40 个游荡者（PathRequest 随机目标 → 后台 A* → 路点跟随；
-    // 替代 M4-T2/T3 的盒内漂移脚手架）
+    // M4-T6 演示：游荡者出生区域（M5-T2 起行为由 AiSystem 状态机驱动）
     float m_demoBoxX0 = 0.0f;
     float m_demoBoxY0 = 0.0f;
     float m_demoBoxX1 = 0.0f;
     float m_demoBoxY1 = 0.0f;
-    std::vector<ecs::Entity> m_demoEntities;
-    float m_retargetTimer = 0.0f;
-    std::mt19937 m_demoRng{20261016u};
     // M4-T4：本地玩家（WASD 控制）
     ecs::Entity m_player = entt::null;
     // M4-T7：点击移动反馈（notice 文本 + 目标格标记）

@@ -46,4 +46,27 @@ struct PathFollow {
     float stuckTimer = 0.0f;  // 距上次采样的累计时间
 };
 
+// M5-T2：僵尸 AI 状态。AiSystem 用一张集中转移表消费；目标/最后已知位置由感知
+// 系统（M5-T3）或演示代码维护，节拍字段供伤害管线（M5-T6）挂钩。
+enum class AiStatus : std::uint8_t {
+    Idle = 0,             // 原地发呆（个体化时长）→ Wander / Chase
+    Wander = 1,           // 随机游荡（PathRequest → PathFollow）→ Idle / Chase
+    Chase = 2,            // 追击中（走向最后已知位置；贴近 → Attack，目标丢失去 SearchLastKnown）
+    SearchLastKnown = 3,  // 在最后已知位置附近巡点搜索（超时 → Idle）
+    Attack = 4,           // 贴身攻击（停步朝向 + 节拍脉冲；M5-T6 接伤害）
+    Dead = 5,             // 已死（DeathSystem 转尸体；AI 不再动作）
+};
+
+struct AiState {
+    AiStatus status = AiStatus::Idle;
+    float stateTime = 0.0f;      // 当前状态已持续（秒）
+    float actionTimer = 0.0f;    // 通用动作节流（重寻路/搜索巡点间隔，秒）
+    float idleSeconds = 3.0f;    // 本次 Idle 时长（进入时按 StableId 确定性随机）
+    std::uint64_t targetId = 0;  // 追击目标 StableId（0 = 当前未感知）
+    float lastKnownX = 0.0f;     // 目标最后已知位置（丢失后 SearchLastKnown 追踪用）
+    float lastKnownY = 0.0f;
+    float attackCooldown = 0.0f;     // 攻击节拍计时（<=0 落一次攻击脉冲）
+    std::uint32_t attackPulses = 0;  // 累计攻击次数（M5-T6 伤害挂钩点）
+};
+
 }  // namespace zl::ecs

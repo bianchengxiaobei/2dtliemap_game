@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "ai/PathfindingService.h"
+#include "ai/systems/AiSystem.h"
 #include "ai/systems/PathFollowSystem.h"
 #include "characters/systems/AnimationSystem.h"
 #include "characters/systems/DeathSystem.h"
@@ -90,6 +91,8 @@ private:
     // 寻路（M4-T6）：passability 位图随 chunk 生命周期维护；PathFollowSystem 在固定链中
     std::unique_ptr<ai::PathfindingService> m_pathfinding;
     std::unique_ptr<ai::PathFollowSystem> m_pathFollowSystem;
+    // AI（M5-T2）：僵尸状态机（Input 之后、PathFollow 之前）
+    std::unique_ptr<ai::AiSystem> m_aiSystem;
 
     // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
     ecs::EcsWorld m_ecs;

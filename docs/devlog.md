@@ -514,3 +514,50 @@ z 保留、稳定 ID 不复用；MovementSystem+PhysicsSync+Death 全链路—�
 **冒烟（真实按键 F6）**：村庄内连杀 3（ID 29/35/22 → 尸体 42/43/44，动态体 41→39→38）；
 带玩家走到开阔地再杀 2（ID 20/19 → 尸体 42/43），截图确认尸体（含血泊）无遮挡显示、
 HUD 提示可读、FPS 60 / drawcall 3 不变。
+
+---
+
+## 2026-10-16 M5-T2 僵尸 AI（AiState + AiSystem 转移表）
+
+**组件（ai/components/AiComponents.h 追加）**
+- `AiStatus{Idle,Wander,Chase,SearchLastKnown,Attack,Dead}` + `AiState{status, stateTime,
+  actionTimer, idleSeconds, targetId(StableId), lastKnownX/Y, attackCooldown, attackPulses}`；
+- 目标信息来源约定：感知系统（T3）/演示桩维护 `targetId`（0=当前未感知），
+  `lastKnown` 由 AiSystem 在"目标实体可查到"时每 tick 刷新 —— 目标丢失后 SearchLastKnown
+  自然落到最后已知位置。
+
+**AiSystem（ai/systems/AiSystem.cpp，链位 Input → **Ai** → PathFollow → Movement → …）**
+- 结构对齐"转移条件集中可读"：先算 per-entity facts（dead / targetVisible / pathBusy /
+  targetDist），再进一个 switch —— 每个状态的出口条件一行一条；副作用统一走 `EnterState`
+  （要路 / 停步 / 计时重置）。
+- 转移表：Idle --时长到--> Wander；Idle/Wander --感知到--> Chase；Wander --路径完成--> Idle；
+  Chase --贴身(≤1.0)--> Attack；Chase --目标丢失--> SearchLastKnown；Chase --目标移动>1.2
+  或路径空闲且节流到期--> 重寻路（在途查询不重复提交）；SearchLastKnown --再见--> Chase /
+  --6s 超时--> Idle（期间每 2s 在最后已知位置 ±4 格挑巡点）；Attack --目标丢失--> Search /
+  --拉开>1.5（迟滞）--> Chase（贴身停步 + 朝向目标 + 0.8s 节拍脉冲，M5-T6 伤害挂脉冲）；
+  任意状态 --Health<=0--> Dead（冻结，尸体由 DeathSystem 处理）。
+- 只操作组件（PathRequest/MoveIntent），游荡/巡点选点用 `FindNearestWalkable` 就近校正，
+  可走谓词由 GameApp 注入（"未加载 = 不可走"）；不碰物理/服务 → 可无头单测。
+- 随机全部走 StableId+盐 的确定性哈希（splitmix64 尾段），测试可复现。
+- Stats：六态分布（每帧快照）+ swings（攻击脉冲累计）；HUD 第 10 行显示。
+
+**工程配套**
+- 新增 `game/WorldQueries.h`（FindChunkInWorld / IsSquareBlocked）——WorldDemoState 的
+  FindChunk/IsSolidSquare 与 GameApp 的 AI 谓词共用，删掉两处重复实现；
+- WorldDemoState：删除 M4-T6 的"定时重派目标"脚手架（RetargetDemoEntities/PickWanderTarget/
+  m_demoEntities/m_retargetTimer 全删）；游荡者挂 AiState 由状态机自治；F6 击杀改按
+  view<AiState,Health,Position> 找最近；OnTick 只剩 **DemoSightUpdate**（距离 ≤8 格标记
+  targetId 的临时感知桩，T3 落地 PerceptionSystem 后删除，代码内已注明）。
+
+**测试**（tests/test_zombie_ai.cpp，+5 用例，无头全链 AiSystem+PathFollowSystem(同步)+Movement）：
+Idle→Wander 自主循环（时长随机化/目标可走/走完回 Idle 重新计时）；Chase→Attack→Search→Idle
+转移链（含攻击节拍 ≥2 脉冲、走出 keep 距离回 Chase、目标消失去最后已知位置、6s 超时回 Idle）；
+Chase 全链真走路（贴到攻击距离 ≤1.6 且不偏航）；目标移动重定向（goal 跟随 lastKnown，
+发现的问题：原实现"目标移动但路径在走"时不立即重定向 → 改为 goalStale 时在途也重发）；
+Dead 冻结（不再写意图/请求）。合计 **94 用例 / 117253 断言全绿**。
+
+**冒烟（40 僵尸实机）**：玩家出生在村中心 → 8 格内僵尸立即转 Chase、贴身转 Attack
+（HUD 抓拍 `idle=27 wander=4 chase=6 attack=3 | swings=33`，尸群物理围堵玩家截图）；
+点击远处 (79,9) 拉开距离 → HUD 抓拍 `idle=9 wander=20 chase=10 search=1 | attack=0`（丢失
+目标进入 SearchLastKnown），10s 后 `idle=12 wander=18 chase=3 attack=7`（远处巡点超时回收 +
+就近新目标再围上来）。FPS 59~61 / drawcall 3 不变。
