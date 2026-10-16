@@ -474,3 +474,43 @@ README 状态表 M4 → 已完成，打 tag `v0.4.0`。
 后台 A*（只读快照）+ PathFollow + 点击移动/卡住重寻路全部就位；系统链
 Input → PathFollow → Movement → PhysicsSync → Animation 稳定。85 用例 / 117166 断言
 （Debug 与 Release 双构建全绿）。
+
+---
+
+## 2026-10-16 M5-T1 角色组件集 + 死亡流程
+
+**组件定稿（characters/components/CharacterComponents.h）**
+- `Health{current=100, max=100}`：current<=0 = 死亡（伤害管线 M5-T6 只改数值）；
+- `Needs{hunger/thirst/fatigue}`：PZ 风格归一化 [0,1]（0=满足）；衰减/效果接后续里程碑；
+- `Corpse{sourceId}`：尸体标记，sourceId = 死者稳定 ID（未来搜刮/存档溯源）；
+- `Facing/AnimState` 沿用 M4-T4；`Equipment` 与物品体系强耦合，按 M6-T2 的
+  “ItemInstance + Container/Equipment”一并定义（docs/01 M5-T1 行已注明）。
+
+**DeathSystem（characters/systems/DeathSystem.cpp，固定链 PhysicsSync → Death → Animation）**
+- 判定收集（view 外再处理）→ 实体带 RigidBody 时**先 DestroyBody**（Bullet 不随实体回收，
+  这是 M4 起就存在的泄漏点，死亡是第一条真实销毁路径）→ `Destroy(e)`（延迟）+ 尸体经
+  `QueueCreate`（与销毁同 tick 入队、tick 末统一 Flush，沿用 M4-T1 的生成回合制语义）；
+- 尸体 = Position（原格 + z 保留，楼上死亡楼上留尸）+ SpriteRef("corpse.placeholder") +
+  Corpse：无 Collider/RigidBody/Velocity（不阻挡、不参与物理与积分）；
+- 死亡日志在 Flush 时输出：`实体死亡：稳定 ID N（格 (x,y) z=z）→ 尸体（稳定 ID M）`。
+
+**占位资源**：图集新增 `corpse_1/corpse_2`（横躺 + 身下血泊，两方向变体；own 图集 27 帧）；
+manifest 注册 `corpse.placeholder`（帧选择走 HashPick(stableId)，尸体无 AnimState/Facing）。
+
+**demo 接入（WorldDemoState）**
+- `SpawnCharacter` 挂 Health/Needs（玩家与 40 游荡者同套组件）；HUD player 行加 hp；
+- **F6 演示击杀**：最近存活游荡者 HP 归零 → 下一 tick DeathSystem 转尸体（HUD 提示 +
+  日志）；玩家死亡时清引用自动重生（尸体留在原地，`EnsurePlayerSpawned` 兜底）。
+
+**踩坑与整改：bgfx debug 字体只支持 ASCII/Latin-1** —— HUD 中文提示（M4-T7 的点击反馈）
+实际一直渲染为乱码（冒烟放大截图才发现）。整改：HUD 提示文案全部改英文
+（"demo kill: id 19 -> corpse"、"unreachable: target (75,15)" 等），中文只进日志文件。
+
+**测试**：tests/test_death.cpp 新增 4 用例（组件集共存/默认值/平凡可拷贝；死亡流转
+——物理体先回收、尸体位置与来源 ID、尸体无碰撞无物理；多死者同 tick、二次运行不重复、
+z 保留、稳定 ID 不复用；MovementSystem+PhysicsSync+Death 全链路——致死一击后物理体
+归零、尸体留在死亡瞬间位置）。合计 **89 用例 / 117208 断言全绿**。
+
+**冒烟（真实按键 F6）**：村庄内连杀 3（ID 29/35/22 → 尸体 42/43/44，动态体 41→39→38）；
+带玩家走到开阔地再杀 2（ID 20/19 → 尸体 42/43），截图确认尸体（含血泊）无遮挡显示、
+HUD 提示可读、FPS 60 / drawcall 3 不变。

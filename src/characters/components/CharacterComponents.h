@@ -45,4 +45,25 @@ struct AnimState {
     float time = 0.0f;              // 帧计时累加器（循环取模，不无界增长）
 };
 
+// M5-T1：生命值。current <= 0 = 死亡（DeathSystem 检测 → 生成尸体 + 延迟销毁实体）。
+// 伤害管线（M5-T6 CombatSystem）只修改 current；本组件不携带来源/类型。
+struct Health {
+    float current = 100.0f;
+    float max = 100.0f;
+};
+
+// M5-T1：需求（PZ 风格：0 = 完全满足，1 = 极限）。衰减与效果接后续里程碑，
+// 本任务只定稿数据形态；数值含义固定为归一化 [0,1]，便于 HUD/脚本统一缩放。
+struct Needs {
+    float hunger = 0.0f;   // 饥饿
+    float thirst = 0.0f;   // 口渴
+    float fatigue = 0.0f;  // 疲劳
+};
+
+// M5-T1：尸体（DeathSystem 在死者位置生成：Position + SpriteRef("corpse.placeholder")
+// + 本标记；无 Collider/RigidBody —— 不阻挡、不参与物理，只进渲染收集与空间索引）。
+struct Corpse {
+    std::uint64_t sourceId = 0;  // 死者 StableId（未来搜刮/存档溯源）
+};
+
 }  // namespace zl::ecs

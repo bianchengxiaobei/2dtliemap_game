@@ -207,6 +207,45 @@ def make_character(direction="down", walk_frame=0):
     return canvas
 
 
+def make_corpse(seed, flip=False):
+    """尸体占位（M5-T1）：画布 64x128，横躺身体 + 身下血泊，基准线与角色一致（脚底 y=112）。
+    flip=True 时整体镜像（另一个倒地方向）。"""
+    rng = random.Random(seed)
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    cx, base = 32, 110
+
+    # 血泊（暗红双层：边缘大而淡 + 核心小而深）
+    blood_edge = (118, 22, 18, 170)
+    blood_core = (88, 14, 12, 220)
+    for _ in range(7):
+        bx = cx + rng.randint(-18, 18)
+        by = base + rng.randint(-9, 7)
+        bw = rng.randint(7, 15)
+        bh = rng.randint(3, 6)
+        d.ellipse([bx - bw, by - bh, bx + bw, by + bh], fill=blood_edge)
+    d.ellipse([cx - 15, base - 7, cx + 17, base + 7], fill=blood_core)
+
+    skin = (196, 172, 150, 255)
+    hair = (52, 40, 32, 255)
+    shirt = (86, 92, 106, 255)   # 灰蓝（褪色衣物，与活人蓝衣区分）
+    pants = (58, 56, 62, 255)
+    dark = (26, 24, 28, 255)
+
+    # 横躺：腿（左）→ 躯干（中）→ 头（右），整体压在血泊上
+    d.line([(12, base - 2), (28, base - 5)], fill=pants, width=6)
+    d.line([(13, base + 3), (28, base + 1)], fill=pants, width=5)
+    d.ellipse([26, base - 13, 48, base + 3], fill=shirt, outline=dark)   # 躯干
+    d.line([(30, base - 2), (20, base - 9)], fill=shirt, width=4)        # 压下的手臂
+    d.ellipse([46, base - 12, 60, base + 2], fill=skin, outline=dark)    # 头
+    d.chord([46, base - 12, 60, base + 2], 90, 270, fill=hair)           # 侧脸头发
+    d.rectangle([57, base - 7, 58, base - 6], fill=dark)                 # 闭眼线
+
+    if flip:
+        canvas = ImageOps.mirror(canvas)
+    return canvas
+
+
 def pack_frames(frames, margin=1):
     """shelf 打包：返回合并后的页图与子图矩形表"""
     # 每行限宽 1024
@@ -274,6 +313,13 @@ def main():
         canvas = make_tuft(3000 + i)
         bbox = canvas.getbbox()
         specs.append((f"decor_tuft_{i + 1}", canvas, (bbox[0], bbox[1],
+                     bbox[2] - bbox[0], bbox[3] - bbox[1]), bbox[0], bbox[1], 64, 128))
+
+    # 尸体占位（M5-T1：两个倒地方向变体；含身下血泊）
+    for i, flip in enumerate((False, True)):
+        canvas = make_corpse(5000 + i, flip=flip)
+        bbox = canvas.getbbox()
+        specs.append((f"corpse_{i + 1}", canvas, (bbox[0], bbox[1],
                      bbox[2] - bbox[0], bbox[3] - bbox[1]), bbox[0], bbox[1], 64, 128))
 
     for i in range(3):

@@ -92,6 +92,13 @@
         ]
       }
     },
+    "corpse.placeholder": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "comment": "M5-T1 尸体：帧选择走 HashPick(stableId)（尸体实体无 AnimState/Facing）",
+        "frames": ["corpse_1", "corpse_2"]
+      }
+    },
     "ui.pixel": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",

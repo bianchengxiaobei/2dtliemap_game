@@ -60,6 +60,7 @@
       "PanLeft": "LEFT",
       "PanRight": "RIGHT",
       "ToggleFreeCam": "F4",
+      "DemoKill": "F6",
       "TogglePhysicsDebug": "F10"
     }
   },

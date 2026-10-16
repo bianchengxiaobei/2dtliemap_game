@@ -48,6 +48,8 @@ private:
     // M4-T6：游荡演示——定时给空闲的演示实体派发随机目标（PathRequest → 后台 A*）
     void RetargetDemoEntities();
     bool PickWanderTarget(int* gx, int* gy);
+    // M5-T1：演示击杀——离参考点（玩家/相机中心）最近的存活游荡者 HP 归零 → DeathSystem 转尸体
+    void KillNearestDemoEntity();
     // M4-T4：玩家（PlayerTag）——chunk 加载完成后在村庄中心附近找可走格生成
     void EnsurePlayerSpawned();
     ecs::Entity SpawnCharacter(float px, float py);

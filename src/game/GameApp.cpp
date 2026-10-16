@@ -23,7 +23,7 @@ constexpr double kMaxFrameDt = 0.25;
 constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"Quit", "ESCAPE"},      {"Pause", "F1"},       {"CycleSpeed", "F2"},
     {"DemoTasks", "F3"},     {"ReloadBindings", "F5"}, {"ToggleCruise", "F8"},
-    {"ToggleDebugOverlay", "F9"}, {"TogglePhysicsDebug", "F10"},
+    {"ToggleDebugOverlay", "F9"}, {"TogglePhysicsDebug", "F10"}, {"DemoKill", "F6"},
     {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
     {"MoveRight", "D"},
     // M4-T4：WASD 归玩家；方向键平移相机（自由相机模式，M4-T5）
@@ -183,9 +183,9 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
 
     // ECS 固定链集中注册（docs/00 §6.1）；顺序 = 执行顺序。
-    // 目前：索引维护 → Input → PathFollow → Movement → PhysicsSync → Animation；
+    // 目前：索引维护 → Input → PathFollow → Movement → PhysicsSync → Death → Animation；
     // 后续任务按链序插入（目标链：Input → Ai → PathFollow → Movement → PhysicsSync →
-    //   Perception → Combat → SpawnLod → RenderCollect）。
+    //   Death/Combat → Perception → SpawnLod → RenderCollect）。
     m_ecs.Systems().AddSystem("SpatialIndexSystem",
                               [this](ecs::EcsWorld& w, float) { m_spatialIndex.Update(w); });
     m_inputSystem = std::make_unique<characters::InputSystem>();
@@ -206,6 +206,10 @@ bool GameApp::Init(int argc, char** argv) {
     m_ecs.Systems().AddSystem("PhysicsSyncSystem", [this](ecs::EcsWorld& w, float dt) {
         m_physicsSyncSystem->Update(w, dt);
     });
+    // 死亡流程（M5-T1）：位置已由 PhysicsSync 回写；尸体创建与实体销毁在 tick 末 Flush 生效
+    m_deathSystem = std::make_unique<characters::DeathSystem>(m_physics.get());
+    m_ecs.Systems().AddSystem("DeathSystem",
+                              [this](ecs::EcsWorld& w, float) { m_deathSystem->Update(w); });
     // 动画读"物理实际速度"（撞墙≈0 → 自动进站立帧），因此排在 PhysicsSync 之后
     m_ecs.Systems().AddSystem("AnimationSystem", [this](ecs::EcsWorld& w, float dt) {
         m_animationSystem->Update(w, dt);
@@ -247,6 +251,7 @@ void GameApp::Shutdown() {
     m_loop.reset();
     m_physicsSyncSystem.reset();
     m_animationSystem.reset();
+    m_deathSystem.reset();
     m_inputSystem.reset();
     m_movementSystem.reset();
     m_pathFollowSystem.reset();  // 先于服务

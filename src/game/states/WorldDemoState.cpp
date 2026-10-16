@@ -58,7 +58,9 @@ constexpr uint32_t kUpperZColor = 0x59ffffff;
 constexpr uint32_t kMarkerActiveColor = 0xff40e0ff;  // 黄：寻路中/跟随中（常显）
 constexpr uint32_t kMarkerArriveColor = 0xff50ff60;  // 绿：到达（限时）
 constexpr uint32_t kMarkerFailColor = 0xff3030ff;    // 红：不可达（限时）
-// M4-T7：HUD 提示文本色（bgfx debug text 属性字节）
+// M4-T7：HUD 提示文本色（bgfx debug text 属性字节）。
+// 注意：bgfx 内建 debug 字体只支持 ASCII/Latin-1 —— HUD 提示文案一律用英文（中文只进日志，
+// 否则渲染成乱码；M5-T1 冒烟发现后统一整改）。
 constexpr uint32_t kNoticeInfoColor = 0x0E;  // 黄
 constexpr uint32_t kNoticeOkColor = 0x0A;    // 绿
 constexpr uint32_t kNoticeFailColor = 0x0C;  // 红
@@ -112,7 +114,7 @@ void WorldDemoState::OnEnter() {
     SpawnDemoEntities();
     // M4-T4：玩家实体由 OnFrame 延迟生成（等目标 chunk 加载完成）
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | F4 自由相机 | F6 演示击杀 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
 }
 
 void WorldDemoState::ApplyCameraMode() {
@@ -169,6 +171,8 @@ ecs::Entity WorldDemoState::SpawnCharacter(float px, float py) {
         e, ecs::SpriteRef{ecs::HashName("character.placeholder"), 0, 0xFFFFFFFFu});
     registry.emplace<ecs::Facing>(e, ecs::Facing{});
     registry.emplace<ecs::AnimState>(e, ecs::AnimState{});
+    registry.emplace<ecs::Health>(e, ecs::Health{});  // M5-T1：死亡流程（HP<=0 → 尸体）
+    registry.emplace<ecs::Needs>(e, ecs::Needs{});
 
     // M4-T3：物理胶囊（位置/速度由 Bullet 接管）；M4-T4 动画读物理回写速度
     if (m_ctx.physics != nullptr) {
@@ -200,7 +204,18 @@ bool WorldDemoState::IsSolidSquare(int wx, int wy) const {
 }
 
 void WorldDemoState::EnsurePlayerSpawned() {
-    if (m_player != entt::null || m_ctx.ecs == nullptr) {
+    if (m_ctx.ecs == nullptr) {
+        return;
+    }
+    // M5-T1：玩家死亡（实体已回收）→ 清引用重新生成（尸体留在原地）
+    if (m_player != entt::null && !m_ctx.ecs->Alive(m_player)) {
+        ZL_INFO("game", "玩家实体已死亡，重新生成（旧实体 ID {}）",
+                m_ctx.ecs->IdOf(m_player).id);
+        m_player = entt::null;
+        m_lastPlayerPathState = ecs::PathStatus::None;
+        m_markerPathActive = false;
+    }
+    if (m_player != entt::null) {
         return;
     }
     // 目标点 = 默认相机中心（村庄北）。必须先等目标 chunk 加载完成：
@@ -263,7 +278,7 @@ void WorldDemoState::HandleClickToMove(const render::GridPick& pick) {
                            targetChunk.cy >= meta.chunkY0 &&
                            targetChunk.cy < meta.chunkY0 + meta.chunksY;
     if (!insideMap) {
-        SetNotice("超出地图范围", kNoticeFailColor, 2.5f);
+        SetNotice("out of map bounds", kNoticeFailColor, 2.5f);
         ZL_INFO("game", "点击移动：目标格 ({}, {}) 超出地图（忽略）", targetX, targetY);
         return;
     }
@@ -271,7 +286,7 @@ void WorldDemoState::HandleClickToMove(const render::GridPick& pick) {
     // 2) chunk 已加载校验（未加载 = 通行未知，不发起）
     const world::Chunk* chunk = FindChunk(targetChunk.cx, targetChunk.cy);
     if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
-        SetNotice("目标区域未加载", kNoticeFailColor, 2.5f);
+        SetNotice("target chunk not loaded", kNoticeFailColor, 2.5f);
         ZL_INFO("game", "点击移动：目标格 ({}, {}) 所在 chunk 未加载（忽略）", targetX, targetY);
         return;
     }
@@ -287,7 +302,7 @@ void WorldDemoState::HandleClickToMove(const render::GridPick& pick) {
             targetX, targetY, 4,
             [this](int wx, int wy) { return !IsSolidSquare(wx, wy); }, &nearX, &nearY);
         if (!found) {
-            SetNotice("不可达：目标格 (" + std::to_string(targetX) + "," +
+            SetNotice("unreachable: target (" + std::to_string(targetX) + "," +
                           std::to_string(targetY) + ")",
                       kNoticeFailColor, 3.0f);
             m_markerX = targetX;
@@ -309,7 +324,8 @@ void WorldDemoState::HandleClickToMove(const render::GridPick& pick) {
     request->goalX = targetX;
     request->goalY = targetY;
     request->newRequest = true;
-    SetNotice(adjusted ? "目标已校正，寻路中…" : "寻路中…", kNoticeInfoColor, 1.2f);
+    SetNotice(adjusted ? "adjusted target; pathfinding..." : "pathfinding...", kNoticeInfoColor,
+              1.2f);
     ZL_INFO("game", "点击移动：玩家 → 目标格 ({}, {})", targetX, targetY);
 }
 
@@ -331,13 +347,13 @@ void WorldDemoState::UpdatePathFeedback(double frameDt) {
     const ecs::PathStatus state = request->state;
     if (state != m_lastPlayerPathState) {
         if (state == ecs::PathStatus::Arrived) {
-            SetNotice("已到达目标", kNoticeOkColor, 1.5f);
+            SetNotice("arrived", kNoticeOkColor, 1.5f);
             m_markerX = request->goalX;
             m_markerY = request->goalY;
             m_markerTimer = 1.5f;
             m_markerColor = kMarkerArriveColor;
         } else if (state == ecs::PathStatus::Failed) {
-            SetNotice("不可达：目标格 (" + std::to_string(request->goalX) + "," +
+            SetNotice("unreachable: target (" + std::to_string(request->goalX) + "," +
                           std::to_string(request->goalY) + ")",
                       kNoticeFailColor, 3.0f);
             m_markerX = request->goalX;
@@ -417,6 +433,51 @@ void WorldDemoState::RetargetDemoEntities() {
     if (assigned > 0) {
         ZL_DEBUG("ecs", "寻路游荡：派发 {} 个新目标（实体共 {}）", assigned, m_demoEntities.size());
     }
+}
+
+void WorldDemoState::KillNearestDemoEntity() {
+    if (m_ctx.ecs == nullptr) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+
+    // 参考点：玩家（未生成时用相机中心）
+    glm::vec2 ref = render::FromScreen(m_ctx.camera->Center(), 0);
+    if (m_player != entt::null) {
+        if (const auto* playerPos = registry.try_get<ecs::Position>(m_player)) {
+            ref = {playerPos->x, playerPos->y};
+        }
+    }
+
+    ecs::Entity best = entt::null;
+    float bestDistSq = 0.0f;
+    for (const ecs::Entity e : m_demoEntities) {
+        if (!m_ctx.ecs->Alive(e)) {
+            continue;
+        }
+        const auto* health = registry.try_get<ecs::Health>(e);
+        const auto* pos = registry.try_get<ecs::Position>(e);
+        if (health == nullptr || pos == nullptr || health->current <= 0.0f) {
+            continue;
+        }
+        const float dx = pos->x - ref.x;
+        const float dy = pos->y - ref.y;
+        const float distSq = dx * dx + dy * dy;
+        if (best == entt::null || distSq < bestDistSq) {
+            best = e;
+            bestDistSq = distSq;
+        }
+    }
+    if (best == entt::null) {
+        SetNotice("demo kill: no live target nearby", kNoticeFailColor, 2.0f);
+        return;
+    }
+    registry.get<ecs::Health>(best).current = 0.0f;  // 下一 tick DeathSystem → 尸体
+    const auto* pos = registry.try_get<ecs::Position>(best);
+    const std::uint64_t id = m_ctx.ecs->IdOf(best).id;
+    SetNotice("demo kill: id " + std::to_string(id) + " -> corpse", kNoticeInfoColor, 2.5f);
+    ZL_INFO("characters", "演示击杀：稳定 ID {}（格 ({:.1f}, {:.1f})）HP 归零（F6）", id,
+            pos != nullptr ? pos->x : 0.0f, pos != nullptr ? pos->y : 0.0f);
 }
 
 bool WorldDemoState::PickWanderTarget(int* gx, int* gy) {
@@ -614,6 +675,9 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
         ZL_INFO("render", "F2 倍速循环 → 当前 {}",
                 core::GameTime::SpeedName(m_ctx.gameTime->GetSpeed()));
         events.Emit(EventProbe::kSpeedChangedEvent, m_ctx.gameTime->SpeedScale());
+    }
+    if (input.IsActionPressed("DemoKill")) {
+        KillNearestDemoEntity();  // M5-T1：演示击杀（HP 归零 → 尸体）
     }
     if (input.IsActionPressed("ReloadBindings")) {
         events.Emit(EventProbe::kInputActionEvent, std::string("ReloadBindings"));
@@ -1033,13 +1097,15 @@ void WorldDemoState::DrawDebugText() {
         const auto* playerAnim = registry.try_get<ecs::AnimState>(m_player);
         const auto* playerIntent = registry.try_get<ecs::MoveIntent>(m_player);
         if (playerPos != nullptr) {
+            const auto* playerHealth = registry.try_get<ecs::Health>(m_player);
             bgfx::dbgTextPrintf(
-                0, 7, 0x0f, "player: (%.1f, %.1f) dir=%u frame=%u intent=(%.1f, %.1f)",
+                0, 7, 0x0f, "player: (%.1f, %.1f) dir=%u frame=%u intent=(%.1f, %.1f) hp=%.0f",
                 playerPos->x, playerPos->y,
                 playerFacing != nullptr ? static_cast<unsigned>(playerFacing->dir) : 0u,
                 playerAnim != nullptr ? static_cast<unsigned>(playerAnim->frame) : 0u,
                 playerIntent != nullptr ? playerIntent->x : 0.0f,
-                playerIntent != nullptr ? playerIntent->y : 0.0f);
+                playerIntent != nullptr ? playerIntent->y : 0.0f,
+                playerHealth != nullptr ? playerHealth->current : 0.0f);
         }
     }
     // M4-T6：寻路统计（提交/完成/失败分解 + 后台耗时 + 位图缓存）
@@ -1063,7 +1129,7 @@ void WorldDemoState::DrawDebugText() {
             pathStats.avgMs, m_ctx.pathfinding->CachedChunks(), following);
     }
     bgfx::dbgTextPrintf(0, 9, 0x07,
-                        "WASD/LMB move | F4 free cam | arrows/RMB drag pan | wheel zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+                        "WASD/LMB move | F4 cam | F6 demo-kill | arrows/RMB pan | scroll zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
     // M4-T7：点击移动反馈（限时提示：寻路中/已到达/不可达）
     if (m_noticeTimer > 0.0f && !m_noticeText.empty()) {
         bgfx::dbgTextPrintf(0, 11, static_cast<std::uint8_t>(m_noticeColor), "%s",
