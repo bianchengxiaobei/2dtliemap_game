@@ -1204,3 +1204,34 @@ function <…>`（mod id + 路径行号 + 栈）+ `mod 已禁用`，进程存活
 验收临时物（night_watch / bad_loop / bad_error）随后清理，仓库只保留两个官方示例。
 
 **状态**：M7 完成（T1~T7 + 验收）；测试 182 用例全绿（Debug 118252 / Release 118253）。
+
+---
+
+## 2026-10-17 M8-T1 CMake 开关 + Python 依赖接入
+
+**背景**：M0 骨架里已预埋 `option(ZL_ENABLE_PYTHON OFF)` + `VCPKG_MANIFEST_FEATURES "python"`
++ vcpkg feature（pybind11/python3）；本任务完成真正的 find_package 与链接接入。
+
+**实现**：
+- `CMakeLists.txt`：`if (ZL_ENABLE_PYTHON)` → `find_package(Python3 COMPONENTS Development.Embed REQUIRED)`
+  + `find_package(pybind11 CONFIG REQUIRED)`；两 target（游戏 + 测试）加 `ZL_ENABLE_PYTHON=1`
+  编译定义并链接 `pybind11::embed`。
+- `CMakePresets.json`：新增 `x64-debug-python` / `x64-release-python`（与普通预设**共用同一
+  binaryDir**——切开关即切 vcpkg 依赖集，不复制构建目录）。
+- `src/script/PythonSupport.{h,cpp}`：`IsPythonBackendCompiled()` + `PythonBackendVersion()`
+  （"CPython 3.14.8 / pybind11 3.1.0"）；用 `Py_GetVersion()`（无需初始化解释器）验证与
+  CPython 的**真实链接**，而非只包含头文件。
+- `GameApp` 脚本初始化处新增 debug 日志 `Python 后端：…`；`tests/test_python_backend.cpp`
+  1 用例（按编译开关走两个分支断言）。
+
+**实况/坑**：
+- vcpkg 提供 python3 3.14.8（CPython 源码构建 + extensions，连 openssl/mpdecimal/zstd），
+  pybind11 3.1.0；`Found Python3: …/python314.lib … found components: Development.Embed`——
+  用的是 vcpkg 的 CPython，不是系统 Python。
+- **首次 configure 超过 30 分钟被 shell 超时截断**（vcpkg 在建 CPython）；续跑命令走二进制缓存
+  完成，总 configure 601s。教训：加 manifest 特性后第一次跑预留 ≥40 分钟。
+- OFF→ON→OFF 往返验证：ON 构建 183 用例全绿 + 实机 `Python 后端：CPython 3.14.8 /
+  pybind11 3.1.0`；切回 OFF 后 vcpkg 自动移除 17 个 python 相关包，`dumpbin /DEPENDENTS`
+  确认 exe 无 python DLL，183 全绿。
+- 小尾巴：vcpkg 移除 python3 后 `vcpkg_installed/.../tools/python3` 残留安装期 Python 自己
+  写的 `.pyc`（vcpkg 文件清单追踪不到），手工清理；重建时会重新生成、无影响。

@@ -29,6 +29,12 @@ find_package(doctest CONFIG REQUIRED)
 find_package(Lua REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
 
+if (ZL_ENABLE_PYTHON)
+    # Python 脚本后端依赖（M8-T1）：嵌入式 CPython + pybind11
+    find_package(Python3 COMPONENTS Development.Embed REQUIRED)
+    find_package(pybind11 CONFIG REQUIRED)
+endif()
+
 add_executable(ZomboidLike
     src/main.cpp
     src/ai/AStar.cpp
@@ -83,6 +89,7 @@ add_executable(ZomboidLike
     src/script/LuaRuntime.cpp
     src/script/ModLoader.cpp
     src/script/ModWatcher.cpp
+    src/script/PythonSupport.cpp
     src/script/ScriptApi.cpp
     src/script/ScriptManager.cpp
     src/world/Cell.cpp
@@ -116,6 +123,11 @@ if (WIN32)
     target_link_libraries(ZomboidLike PRIVATE psapi)  # 工作集内存采样（M3-T7 压测）
 endif()
 
+if (ZL_ENABLE_PYTHON)
+    target_compile_definitions(ZomboidLike PRIVATE ZL_ENABLE_PYTHON=1)
+    target_link_libraries(ZomboidLike PRIVATE pybind11::embed)
+endif()
+
 target_include_directories(ZomboidLike PRIVATE ${Stb_INCLUDE_DIR})
 
 # ---- 单元测试（docs/02 §8：坐标换算等必须先有测试） ----
@@ -147,6 +159,7 @@ add_executable(ZomboidLikeTests
     tests/test_event_bridge.cpp
     tests/test_mod_loader.cpp
     tests/test_hot_reload.cpp
+    tests/test_python_backend.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -185,6 +198,7 @@ add_executable(ZomboidLikeTests
     src/script/LuaRuntime.cpp
     src/script/ModLoader.cpp
     src/script/ModWatcher.cpp
+    src/script/PythonSupport.cpp
     src/script/ScriptApi.cpp
     src/script/ScriptManager.cpp
     src/world/Cell.cpp
@@ -211,5 +225,10 @@ target_link_libraries(ZomboidLikeTests PRIVATE
     ${LUA_LIBRARIES}
     ${BULLET_LIBRARIES}
 )
+
+if (ZL_ENABLE_PYTHON)
+    target_compile_definitions(ZomboidLikeTests PRIVATE ZL_ENABLE_PYTHON=1)
+    target_link_libraries(ZomboidLikeTests PRIVATE pybind11::embed)
+endif()
 
 add_test(NAME ZomboidLikeTests COMMAND ZomboidLikeTests)

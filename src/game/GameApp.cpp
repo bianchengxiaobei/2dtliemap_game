@@ -18,6 +18,7 @@
 #include "render/IsoMath.h"
 #include "script/LuaRuntime.h"
 #include "script/ModLoader.h"
+#include "script/PythonSupport.h"
 #include "world/MapLoader.h"
 
 namespace zl::game {
@@ -118,6 +119,7 @@ bool GameApp::Init(int argc, char** argv) {
                         m_modWatcher->WatchedCount(), interval);
             }
         }
+        ZL_DEBUG("script", "Python 后端：{}", script::PythonBackendVersion());
         ZL_INFO("script", "脚本系统就绪（后端 {} 个，API v{}）", m_script.RuntimeCount(),
                 script::ScriptApi::kApiVersion);
     } else {

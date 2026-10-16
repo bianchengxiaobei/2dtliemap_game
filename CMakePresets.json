@@ -22,11 +22,27 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
+    },
+    {
+      "name": "x64-debug-python",
+      "inherits": "x64-debug",
+      "cacheVariables": {
+        "ZL_ENABLE_PYTHON": "ON"
+      }
+    },
+    {
+      "name": "x64-release-python",
+      "inherits": "x64-release",
+      "cacheVariables": {
+        "ZL_ENABLE_PYTHON": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "x64-debug", "configurePreset": "x64-debug" },
-    { "name": "x64-release", "configurePreset": "x64-release" }
+    { "name": "x64-release", "configurePreset": "x64-release" },
+    { "name": "x64-debug-python", "configurePreset": "x64-debug-python" },
+    { "name": "x64-release-python", "configurePreset": "x64-release-python" }
   ],
   "testPresets": [
     {

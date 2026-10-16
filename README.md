@@ -24,7 +24,7 @@
 项目在 E:\Game\ZomboidLike。请按顺序读：
 README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md → docs/02-技术选型与开发规范.md
 （涉及脚本系统时再读 docs/03-脚本系统设计.md；涉及占位资源时读 assets_placeholder_pz/README.md）。
-以 docs/01 的任务清单为唯一任务依据，当前从 M8-T1 开始；写代码遵守 docs/02 的规范；
+以 docs/01 的任务清单为唯一任务依据，当前从 M8-T2 开始；写代码遵守 docs/02 的规范；
 构建命令走 tools/dev.ps1（Ninja 需要 MSVC 环境，如 .\tools\dev.ps1 cmake --build --preset x64-debug）；
 每完成一个任务把清单里对应项勾上，Git 提交信息带任务号（如 feat(render): sprite batch (M2-T3)）。
 ```
@@ -72,7 +72,7 @@ build\x64-debug\ZomboidLike.exe
 | M5 | 角色与僵尸 AI | 完成（v0.5.0，验收 500 僵尸 0.396ms/tick） | |
 | M6 | 物品与容器 | 完成（v0.6.0；T4 背包 UI 顺延至正式 UI） | |
 | M7 | Lua 脚本系统 | 完成（v0.7.0，验收 2026-10-17） | |
-| M8 | Python 脚本后端（可选开关） | 未开始 | |
+| M8 | Python 脚本后端（可选开关） | 进行中（T1 完成：编译开关 + pybind11/CPython 接入） | |
 | M9 | UI 系统 | 未开始 | |
 | M10 | 存档系统 | 未开始 | |
 | M11 | 音频系统 | 未开始 | |
