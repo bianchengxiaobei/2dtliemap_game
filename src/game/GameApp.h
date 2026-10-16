@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "characters/systems/MovementSystem.h"
 #include "core/AppState.h"
 #include "core/Config.h"
 #include "core/EventBus.h"
@@ -15,6 +16,8 @@
 #include "game/AssetProvider.h"
 #include "game/EventProbe.h"
 #include "game/GameContext.h"
+#include "physics/PhysicsSyncSystem.h"
+#include "physics/PhysicsWorld.h"
 #include "platform/Window.h"
 #include "render/Atlas.h"
 #include "render/Camera.h"
@@ -68,6 +71,11 @@ private:
     // 世界 + chunk 流式加载（M3）
     std::unique_ptr<world::World> m_world;
     std::unique_ptr<world::ChunkManager> m_chunkManager;
+
+    // 物理（M4-T3）：静态体随 chunk 生命周期生成/移除；系统实例与注册集中管理
+    std::unique_ptr<physics::PhysicsWorld> m_physics;
+    std::unique_ptr<characters::MovementSystem> m_movementSystem;
+    std::unique_ptr<physics::PhysicsSyncSystem> m_physicsSyncSystem;
 
     // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
     ecs::EcsWorld m_ecs;

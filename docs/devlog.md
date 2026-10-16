@@ -253,3 +253,38 @@ HashName 固定值（与 Python 交叉验证）+组件默认值、**10000 实体
 **测试**（tests/test_spatialindex.cpp，8 用例）：分桶与边界（10.0 属下一 chunk/负数 FloorDiv/
 z 无关）、跨 chunk 换桶、销毁清出（含未 Flush）、范围查询与手工过滤对照、2 万实体全量一致、
 DrawItemLess 全序、FillEntityDrawItem 字段、ViewRect 包含性。合计 48 用例 / 116774 断言全绿。
+
+---
+
+## 2026-10-16 M4-T3 移动与物理集成（Bullet）
+
+**新增**
+- `physics/PhysicsWorld`（pimpl 封装 `btDiscreteDynamicsWorld`）：坐标=游戏格坐标（z 高度，
+  1.0=一层楼），重力 0、角色胶囊 `linearFactor(1,1,0)` 锁平面 + 禁旋转 + CCD 防穿墙；
+  静态体按 chunk 批量生成（z=0 层任一 `solid` 对象 → 每格一个半格 Box）与移除；
+  `btIDebugDraw` 收集线段 + `Step` 耗时（lastMs/EMA）；
+- `ecs::RigidBody` 组件（非拥有 Bullet 句柄）与 `characters::MovementSystem`
+  （有物理体：写速度交给 Bullet；无物理体：直接积分）；
+- `physics::PhysicsSyncSystem`：Step → 体 transform 回读 Position → 实际速度回写 Velocity；
+- `ChunkManager::SetChunkCallbacks`（挂接后 / 卸载前回调，主线程）——GameApp 接线：
+  静态体随流式加载/卸载自动生成/移除（幂等）；
+- `SquareObject::blocksMovement` + 地图 JSON `"solid"` 字段（生成器给
+  wall.brick/wall.door/object.tree 标注；MapLoader 解析、非法类型跳过；mapformat.md 更新）；
+- F10 物理线框（WorldDemoState 画到 Debug view）；演示实体加 `RigidBody`，位移交物理。
+
+**实测**（village_demo，Debug）：静态 64 / 动态 40 / step 0.27~0.35ms；实体被墙/树正确阻挡；
+village 与 stress 巡航（30s、754 块加载/705 卸载）静态体数稳定=驻留相关（49），无泄漏无错误。
+
+**踩坑（线框三连）**
+1. 默认休眠静态体线框是**绿色**（IMGUI 风格默认色）——和草地混在一起看不见 → `setCustomDebugColor`
+   （静态=黄，角色=青）；
+2. 默认胶囊线框是 **8×8 经纬网格**（单角色 156 条线！40 角色+64 盒 = 7008 条线段）→ 点步进四边形
+   直接打爆 SpriteBatch 单帧配额（16384）→ 输出被截断到几乎只剩胶囊；重写 `drawCapsule` 为
+   稀疏表示（1 轴线+4 竖线+上下双环 ≈13 条）→ 1288 条线段 / 7910 四边形（配额内）；
+3. 线框四边形数还可能超预算 → 可见剔除 + 采样间距 10px + 帧上限 13500 兜底。
+
+**测试**（tests/test_physics.cpp，10 用例）：停位精度（顶墙停在 4.2±0.15）、CCD 90 格/s 不穿墙、
+沿墙滑动（x 挡 y 走）、顶墙反向可恢复、批量生成/幂等/卸载/跨 chunk 隔离、线框开关（盒恰 12 条棱）、
+Movement 两分支、全链路（Movement+Sync 240 tick 后 Position 停墙前 + 速度回写归零）、
+500 静态体+50 动态体步进预算（Debug 宽松上限）、MapLoader solid 解析。
+合计 58 用例 / 116821 断言全绿。

@@ -23,11 +23,13 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
+find_package(Bullet CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(doctest CONFIG REQUIRED)
 
 add_executable(ZomboidLike
     src/main.cpp
+    src/characters/systems/MovementSystem.cpp
     src/core/AppState.cpp
     src/core/Config.cpp
     src/core/EventBus.cpp
@@ -48,6 +50,8 @@ add_executable(ZomboidLike
     src/game/states/WorldDemoState.cpp
     src/platform/KeyNames.cpp
     src/platform/Window.cpp
+    src/physics/PhysicsSyncSystem.cpp
+    src/physics/PhysicsWorld.cpp
     src/render/Atlas.cpp
     src/render/Camera.cpp
     src/render/IsoMath.cpp
@@ -63,7 +67,7 @@ add_executable(ZomboidLike
     src/world/World.cpp
 )
 
-target_include_directories(ZomboidLike PRIVATE src)
+target_include_directories(ZomboidLike PRIVATE src ${BULLET_INCLUDE_DIRS})
 
 target_compile_definitions(ZomboidLike PRIVATE
     SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
@@ -76,6 +80,7 @@ target_link_libraries(ZomboidLike PRIVATE
     nlohmann_json::nlohmann_json
     glm::glm
     EnTT::EnTT
+    ${BULLET_LIBRARIES}
 )
 
 if (WIN32)
@@ -94,12 +99,16 @@ add_executable(ZomboidLikeTests
     tests/test_chunkmanager.cpp
     tests/test_ecs.cpp
     tests/test_spatialindex.cpp
+    tests/test_physics.cpp
     tests/test_world.cpp
+    src/characters/systems/MovementSystem.cpp
     src/core/Log.cpp
     src/core/TaskScheduler.cpp
     src/ecs/EcsWorld.cpp
     src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
+    src/physics/PhysicsSyncSystem.cpp
+    src/physics/PhysicsWorld.cpp
     src/render/IsoMath.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp
@@ -110,7 +119,7 @@ add_executable(ZomboidLikeTests
     src/world/World.cpp
 )
 
-target_include_directories(ZomboidLikeTests PRIVATE src)
+target_include_directories(ZomboidLikeTests PRIVATE src ${BULLET_INCLUDE_DIRS})
 
 # 测试需要访问仓库内资源（如 assets/maps/village_demo）
 target_compile_definitions(ZomboidLikeTests PRIVATE ZL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -121,6 +130,7 @@ target_link_libraries(ZomboidLikeTests PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     EnTT::EnTT
+    ${BULLET_LIBRARIES}
 )
 
 add_test(NAME ZomboidLikeTests COMMAND ZomboidLikeTests)

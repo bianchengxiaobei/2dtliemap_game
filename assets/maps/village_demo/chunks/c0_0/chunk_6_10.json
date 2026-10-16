@@ -19,14 +19,16 @@
    "y": 0,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 8,
    "y": 0,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 9,
@@ -40,28 +42,32 @@
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 8,
    "y": 1,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 9,
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 9,
    "y": 1,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 3,

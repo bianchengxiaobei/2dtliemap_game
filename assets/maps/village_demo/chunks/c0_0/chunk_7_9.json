@@ -19,210 +19,240 @@
    "y": 2,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
    "y": 2,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 2,
    "y": 2,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 3,
    "y": 2,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 4,
    "y": 2,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 5,
    "y": 2,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 6,
    "y": 2,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 3,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 6,
    "y": 3,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 4,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 6,
    "y": 4,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 5,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 6,
    "y": 5,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 6,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
    "y": 6,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 2,
    "y": 6,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 3,
    "y": 6,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.door"
+   "sprite": "wall.door",
+   "solid": true
   },
   {
    "x": 4,
    "y": 6,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 5,
    "y": 6,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 6,
    "y": 6,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 8,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 8,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
    "y": 8,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
    "y": 8,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 2,
    "y": 8,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 2,
    "y": 8,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 3,
    "y": 8,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 3,
    "y": 8,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 4,
    "y": 8,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 4,
    "y": 8,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
@@ -257,14 +287,16 @@
    "y": 9,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 4,
    "y": 9,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 6,

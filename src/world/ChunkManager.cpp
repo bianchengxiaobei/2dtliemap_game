@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <utility>
 #include <vector>
 
 #include "core/Log.h"
@@ -61,6 +62,9 @@ void ChunkManager::Update(float cameraGridX, float cameraGridY) {
             const int py = static_cast<std::int32_t>(key & 0xffffffffu);
             Chunk* chunk = FindActiveChunk(px, py);
             if (chunk != nullptr && chunk->State() == ChunkState::Loaded) {
+                if (m_onChunkUnloading) {
+                    m_onChunkUnloading(*chunk, px, py);  // 数据仍可读：关联资源在此移除
+                }
                 chunk->SetState(ChunkState::Unloading);
                 chunk->SetState(ChunkState::Unloaded);  // 不变量：Unloaded ⇒ 数据已清空
                 RemoveActiveChunk(px, py);
@@ -205,6 +209,9 @@ void ChunkManager::HandleFinished(const std::shared_ptr<LoadJob>& job) {
         ZL_DEBUG(kLogModule, "chunk ({},{}) Loading→Loaded（{:.2f} ms，{} 对象，{} 房间）",
                  job->chunkX, job->chunkY, job->ms, job->data.objects.size(),
                  job->data.rooms.size());
+        if (m_onChunkLoaded) {
+            m_onChunkLoaded(*chunk, job->chunkX, job->chunkY);  // 物理静态体等在此生成
+        }
     } else {
         // 解析完成时相机已离开：取消（数据直接丢弃）
         if (chunk != nullptr) {
@@ -227,6 +234,11 @@ Chunk* ChunkManager::FindActiveChunk(int chunkX, int chunkY) {
     }
     const ChunkLocal local = ChunkLocalOf(chunkX, chunkY);
     return cell->GetChunk(local.lcx, local.lcy);
+}
+
+void ChunkManager::SetChunkCallbacks(ChunkCallback onLoaded, ChunkCallback onUnloading) {
+    m_onChunkLoaded = std::move(onLoaded);
+    m_onChunkUnloading = std::move(onUnloading);
 }
 
 double ChunkManager::LoadMsPercentile(double percentile) const {

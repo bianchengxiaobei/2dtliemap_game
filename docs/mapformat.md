@@ -82,6 +82,7 @@ z 为世界层（0=地面，见 `core::kMaxZ`）。
 | `layer` | string | ✔ | ∈ `floor` / `wall` / `furniture` / `item` / `mark`；`floor` 仅用于 **z≥1 的楼上地面**（z=0 地面由 `floors` 字段表达） |
 | `sprite` | string | ✔ | 逻辑名（AssetProvider 解析，如 `wall.brick`） |
 | `ox`, `oy` | int | | 附加像素偏移（微调锚点），缺省 0 |
+| `solid` | bool | | **阻挡移动**（M4 起）：true → 该格生成物理静态碰撞体（M4-T3）、参与 A* passability（M4-T6）；缺省 false；必须显式布尔（其它类型该条目整体跳过） |
 
 **rooms 条目**：矩形 `[x, x+w) × [y, y+h)`（局部坐标），加载时把覆盖格的 `RoomId` 设为 `id`；
 `id` 在地图内唯一（生成器保证），`name` 是可读标签；`z` 可选（缺省 0，楼上房间为 1）。

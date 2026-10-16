@@ -254,6 +254,15 @@ bool MapLoader::LoadChunk(const Meta& meta, int chunkX, int chunkY, ChunkData* o
             }
             object.ox = static_cast<std::int16_t>(ox);
             object.oy = static_cast<std::int16_t>(oy);
+
+            // solid（可选，M4 物理）：必须显式 bool，缺省 false
+            if (node.contains("solid")) {
+                if (!node["solid"].is_boolean()) {
+                    ZL_WARN(kLogModule, "objects 条目 solid 非布尔已跳过: {}", path);
+                    continue;
+                }
+                object.solid = node["solid"].get<bool>();
+            }
             out->objects.push_back(std::move(object));
         }
     }

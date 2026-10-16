@@ -26,6 +26,9 @@ struct SquareObject {
     std::string sprite;   // 逻辑名，如 "tile.floor.grass"、"wall.brick"
     int16_t offsetX = 0;  // 相对格中心（地面接触点）的附加像素偏移
     int16_t offsetY = 0;  // 供大尺寸精灵微调锚点，默认 0
+    // 阻挡移动（M4 起）：物理静态碰撞体（M4-T3）与 A* passability（M4-T6）共用；
+    // 由地图数据显式标注（floor/草丛等装饰不标）
+    bool blocksMovement = false;
 };
 
 // 单格。动态实体（角色/僵尸/抛掷物）不挂在格上，由 ECS 统一管理（docs/00 §4.2）。

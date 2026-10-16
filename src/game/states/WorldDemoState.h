@@ -40,6 +40,7 @@ private:
     void HandleFrameInput(double frameDt);
     void CollectWorld();
     void SpawnDemoEntities();
+    void DespawnDemoEntities();
     void UpdateCruise(double frameDt);
     void LogPerfSample(const char* tag);
     void PushObject(const world::SquareObject& object, int wx, int wy, int z,
@@ -47,6 +48,7 @@ private:
     world::Chunk* FindChunk(int chunkX, int chunkY) const;
     void DrawWorld();
     void DrawDebugOverlay();
+    void DrawPhysicsDebug();
     void DrawDebugText();
     glm::vec2 MouseToFramebuffer(const glm::vec2& mousePx) const;
     render::GridPick PickMouseCell(const glm::vec2& mousePx) const;
@@ -58,12 +60,14 @@ private:
     int m_collectedChunks = 0;  // 本帧进入收集的已加载 chunk 数
     int m_missingChunks = 0;    // 本帧可见但尚未加载的 chunk 数
 
-    // M4-T2 演示脚手架：ECS 实体在盒内漂移（M4-T3 MovementSystem 接管后删除）
+    // M4-T2 演示脚手架：ECS 实体在盒内漂移（M4-T4 玩家控制接入后删除）
     float m_demoBoxX0 = 0.0f;
     float m_demoBoxY0 = 0.0f;
     float m_demoBoxX1 = 0.0f;
     float m_demoBoxY1 = 0.0f;
     int m_demoEntityCount = 0;
+    bool m_physicsDebug = false;  // F10：Bullet 线框
+    int m_wireDiagCount = 0;      // 线框诊断日志计数（开启后头几帧）
 
     glm::vec2 m_prevMouse{0.0f, 0.0f};
     bool m_prevMouseValid = false;

@@ -30,6 +30,18 @@ CHAR_OF = {v: k for k, v in LEGEND.items()}
 DEFAULT_CHAR = CHAR_OF[DEFAULT_FLOOR]
 
 
+# 阻挡移动的精灵（M4 物理/A*）：写对象时附 "solid": true（解析端缺省 false，向后兼容）
+SOLID_SPRITES = {"wall.brick", "wall.door", "object.tree"}
+
+
+def _object_json(o, x0, y0):
+    """对象 tuple → chunk 文件 JSON 条目（solid 仅在 true 时写出，保持文件精简）"""
+    entry = {"x": o[0] - x0, "y": o[1] - y0, "z": o[2], "layer": o[3], "sprite": o[4]}
+    if o[4] in SOLID_SPRITES:
+        entry["solid"] = True
+    return entry
+
+
 class MapData:
     def __init__(self, chunks_x, chunks_y):
         self.chunks_x = chunks_x
@@ -266,7 +278,7 @@ def write_map(mapd, out_dir, meta):
                 payload["floors"] = floors
             if objs:
                 payload["objects"] = [
-                    {"x": o[0] - x0, "y": o[1] - y0, "z": o[2], "layer": o[3], "sprite": o[4]}
+                    _object_json(o, x0, y0)
                     for o in objs
                 ]
             if rooms_in:

@@ -21,7 +21,8 @@ void ApplyChunkData(ChunkData& data, Chunk& chunk) {
 
     for (ChunkObjectData& object : data.objects) {
         chunk.Square(object.localX, object.localY, object.z)
-            .AddObject(object.layer, {std::move(object.sprite), object.ox, object.oy});
+            .AddObject(object.layer,
+                       {std::move(object.sprite), object.ox, object.oy, object.solid});
     }
 
     for (const RoomRectData& room : data.rooms) {

@@ -19,14 +19,16 @@
    "y": 8,
    "z": 0,
    "layer": "furniture",
-   "sprite": "object.tree"
+   "sprite": "object.tree",
+   "solid": true
   },
   {
    "x": 2,
    "y": 9,
    "z": 0,
    "layer": "furniture",
-   "sprite": "object.tree"
+   "sprite": "object.tree",
+   "solid": true
   }
  ]
 }

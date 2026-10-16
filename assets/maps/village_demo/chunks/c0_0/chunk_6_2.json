@@ -19,49 +19,56 @@
    "y": 0,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 8,
    "y": 0,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 4,
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 5,
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.door"
+   "sprite": "wall.door",
+   "solid": true
   },
   {
    "x": 6,
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 7,
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 8,
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   }
  ],
  "rooms": [

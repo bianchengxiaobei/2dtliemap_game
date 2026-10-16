@@ -19,7 +19,8 @@
    "y": 7,
    "z": 0,
    "layer": "furniture",
-   "sprite": "object.tree"
+   "sprite": "object.tree",
+   "solid": true
   }
  ]
 }

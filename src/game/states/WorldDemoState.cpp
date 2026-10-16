@@ -11,6 +11,7 @@
 #endif
 
 #include "core/Config.h"
+#include "core/Constants.h"
 #include "core/EventBus.h"
 #include "core/GameLoop.h"
 #include "core/GameTime.h"
@@ -19,7 +20,9 @@
 #include "ecs/EcsWorld.h"
 #include "ecs/SpatialIndex.h"
 #include "ecs/components/CommonComponents.h"
+#include "ecs/components/PhysicsComponents.h"
 #include "game/EventProbe.h"
+#include "physics/PhysicsWorld.h"
 #include "platform/Window.h"
 #include "render/Camera.h"
 #include "render/IsoMath.h"
@@ -88,10 +91,10 @@ void WorldDemoState::OnEnter() {
                 m_cruiseCenterX, m_cruiseCenterY, m_cruiseRadius, m_cruiseSpeed, m_cruiseMinutes);
     }
 
-    // M4-T2：ECS 演示实体（村庄附近漂移；M4-T3 MovementSystem 接管后改为正式角色）
+    // M4-T2/T3：ECS 演示实体（村庄附近漂移；物理体由 Bullet 驱动）
     SpawnDemoEntities();
 
-    ZL_INFO("render", "按键：WASD/右键拖拽 平移 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+    ZL_INFO("render", "按键：WASD/右键拖拽 平移 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
 }
 
 void WorldDemoState::SpawnDemoEntities() {
@@ -122,40 +125,63 @@ void WorldDemoState::SpawnDemoEntities() {
             e, ecs::Velocity{std::cos(angle) * speed, std::sin(angle) * speed});
         registry.emplace<ecs::Collider>(e, ecs::Collider{});
         registry.emplace<ecs::SpriteRef>(e, ecs::SpriteRef{sprite, 0, 0xFFFFFFFFu});
+
+        // M4-T3：物理体（胶囊参数与 Collider 一致）；位置/速度由 Bullet 接管
+        if (m_ctx.physics != nullptr) {
+            const ecs::Collider def;
+            ecs::RigidBody rigid;
+            rigid.body = m_ctx.physics->CreateCharacterBody(def.radius, def.height, px, py, 0);
+            registry.emplace<ecs::RigidBody>(e, rigid);
+        }
     }
     m_demoEntityCount = kCount;
     ZL_INFO("ecs", "生成 {} 个演示实体（漂移盒 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]，精灵名哈希 {:#x}）",
             kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1, sprite);
 }
 
+void WorldDemoState::DespawnDemoEntities() {
+    if (m_ctx.ecs == nullptr) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    registry.view<ecs::Position, ecs::Velocity>().each(
+        [&](const ecs::Entity e, ecs::Position&, ecs::Velocity&) {
+            if (m_ctx.physics != nullptr) {
+                if (const auto* rigid = registry.try_get<ecs::RigidBody>(e);
+                    rigid != nullptr && rigid->body != nullptr) {
+                    m_ctx.physics->DestroyBody(rigid->body);
+                }
+            }
+            m_ctx.ecs->Destroy(e);
+        });
+    m_ctx.ecs->Flush();
+    m_demoEntityCount = 0;
+}
+
 void WorldDemoState::OnExit() {
+    // 先清演示实体（含物理体），再汇报统计
+    DespawnDemoEntities();
     const auto& stats = m_ctx.chunkManager->GetStats();
     ZL_INFO("render", "退出 WorldDemo：本状态共 {} tick；chunk 累计 加载 {} / 卸载 {} / 取消 {}",
             m_ticksInState, stats.totalLoaded, stats.totalUnloaded, stats.totalCancelled);
 }
 
 void WorldDemoState::OnTick(double tickDt) {
+    (void)tickDt;
     ++m_ticksInState;
-    // M4-T2 演示脚手架：实体在盒内漂移（位置积分 + 边界反弹）；
-    // M4-T3 起由 MovementSystem + PhysicsWorld 接管，本段删除。
+    // M4-T3：位移由 MovementSystem + PhysicsSyncSystem（固定链）驱动；
+    // 这里只剩"入场导向"脚手架——实体出盒后把速度分量反向（撞墙的自然阻挡交给物理）。
     if (m_ctx.ecs != nullptr && m_demoEntityCount > 0) {
-        const float dt = static_cast<float>(tickDt);
         m_ctx.ecs->Registry().view<ecs::Position, ecs::Velocity>().each(
-            [&](const ecs::Entity, ecs::Position& p, ecs::Velocity& v) {
-                p.x += v.x * dt;
-                p.y += v.y * dt;
+            [&](const ecs::Entity, const ecs::Position& p, ecs::Velocity& v) {
                 if (p.x < m_demoBoxX0) {
-                    p.x = m_demoBoxX0;
                     v.x = std::fabs(v.x);
                 } else if (p.x > m_demoBoxX1) {
-                    p.x = m_demoBoxX1;
                     v.x = -std::fabs(v.x);
                 }
                 if (p.y < m_demoBoxY0) {
-                    p.y = m_demoBoxY0;
                     v.y = std::fabs(v.y);
                 } else if (p.y > m_demoBoxY1) {
-                    p.y = m_demoBoxY1;
                     v.y = -std::fabs(v.y);
                 }
             });
@@ -181,6 +207,7 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     std::sort(m_items.begin(), m_items.end(), render::DrawItemLess);
     DrawWorld();
     DrawDebugOverlay();
+    DrawPhysicsDebug();
     DrawDebugText();
 
     m_statsTimer += static_cast<float>(frameDt);
@@ -191,13 +218,16 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
         ZL_INFO("render",
                 "世界统计: FPS={:.0f} | 实例={} | 四边形={} | 批次={} | drawcall={} | zoom={:.2f} | "
                 "chunk 驻留={} 加载中={} | 相机格=({:.0f},{:.0f}) | 累计加载={} 卸载={} 取消={} 失败={} | "
-                "ECS={} 索引={}",
+                "ECS={} 索引={} | 物理: 静态={} 动态={} step={:.2f}ms",
                 stats.fps, m_items.size(), m_ctx.sprites->QuadsThisFrame(),
                 m_ctx.sprites->DrawCallsThisFrame(), stats.drawCalls, m_ctx.camera->Zoom(),
                 chunkStats.loadedChunks, chunkStats.loadingChunks, camGrid.x, camGrid.y,
                 chunkStats.totalLoaded, chunkStats.totalUnloaded, chunkStats.totalCancelled,
                 chunkStats.totalFailed, m_ctx.ecs != nullptr ? m_ctx.ecs->AliveCount() : 0u,
-                m_ctx.spatialIndex != nullptr ? m_ctx.spatialIndex->EntityCount() : 0u);
+                m_ctx.spatialIndex != nullptr ? m_ctx.spatialIndex->EntityCount() : 0u,
+                m_ctx.physics != nullptr ? m_ctx.physics->StaticBodyCount() : 0u,
+                m_ctx.physics != nullptr ? m_ctx.physics->DynamicBodyCount() : 0u,
+                m_ctx.physics != nullptr ? m_ctx.physics->AvgStepMs() : 0.0);
     }
 
     // 压测采样（巡航期间每 5s 一条 perf 行）
@@ -242,11 +272,15 @@ void WorldDemoState::LogPerfSample(const char* tag) {
     const double maxMs = m_ctx.chunkManager->LoadMsPercentile(1.0);
     ZL_INFO("perf",
             "[{}] t={:.0f}s | FPS={:.0f} | 实例={} 四边形={} | drawcall={} | chunk 驻留={} 加载中={} | "
-            "单块解析 P50={:.2f}ms P95={:.2f}ms max={:.2f}ms（样本 {}）| 累计加载={} | 工作集={:.1f}MB",
+            "单块解析 P50={:.2f}ms P95={:.2f}ms max={:.2f}ms（样本 {}）| 累计加载={} | "
+            "物理 静态={} 动态={} step={:.2f}ms | 工作集={:.1f}MB",
             tag, m_cruiseElapsed, stats.fps, m_items.size(), m_ctx.sprites->QuadsThisFrame(),
             stats.drawCalls, chunkStats.loadedChunks, chunkStats.loadingChunks, p50, p95, maxMs,
             m_ctx.chunkManager->RecentLoadMs().size(),
             static_cast<unsigned long long>(chunkStats.totalLoaded),
+            m_ctx.physics != nullptr ? m_ctx.physics->StaticBodyCount() : 0u,
+            m_ctx.physics != nullptr ? m_ctx.physics->DynamicBodyCount() : 0u,
+            m_ctx.physics != nullptr ? m_ctx.physics->AvgStepMs() : 0.0,
             static_cast<double>(WorkingSetBytes()) / (1024.0 * 1024.0));
 }
 
@@ -285,6 +319,14 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     if (input.IsActionPressed("ToggleDebugOverlay")) {
         m_showGrid = !m_showGrid;
         ZL_INFO("render", "F9 网格叠加: {}", m_showGrid ? "开" : "关");
+    }
+    if (input.IsActionPressed("TogglePhysicsDebug")) {
+        m_physicsDebug = !m_physicsDebug;
+        m_wireDiagCount = 0;
+        if (m_ctx.physics != nullptr) {
+            m_ctx.physics->SetDebugDraw(m_physicsDebug);
+        }
+        ZL_INFO("physics", "F10 物理线框: {}", m_physicsDebug ? "开" : "关");
     }
     if (input.IsActionPressed("ToggleCruise")) {
         m_cruiseEnabled = !m_cruiseEnabled;
@@ -555,6 +597,72 @@ void WorldDemoState::DrawDebugOverlay() {
         batch.DrawLine(left, top, kHoverLineThickness, kHoverColor);
     }
     batch.End();
+}
+
+void WorldDemoState::DrawPhysicsDebug() {
+    if (m_ctx.physics == nullptr || !m_ctx.physics->DebugDrawEnabled()) {
+        return;
+    }
+    const std::vector<physics::PhysicsWorld::DebugLine>& lines = m_ctx.physics->DebugLines();
+    if (lines.empty()) {
+        return;
+    }
+    const std::vector<AssetProvider::Entry>* frames = m_ctx.assets->Frames("ui.pixel");
+    if (frames == nullptr || frames->empty() || (*frames)[0].atlas == nullptr) {
+        return;
+    }
+    const AssetProvider::Entry& entry = (*frames)[0];
+    const render::AtlasFrame& white = *entry.frame;
+
+    render::Camera& camera = *m_ctx.camera;
+    const glm::mat4 view = camera.ViewMatrix();
+    const glm::mat4 proj = camera.ProjMatrix();
+    bgfx::setViewTransform(static_cast<bgfx::ViewId>(render::ViewId::Debug), &view, &proj);
+
+    render::SpriteBatch& batch = *m_ctx.sprites;
+    batch.Begin(static_cast<bgfx::ViewId>(render::ViewId::Debug));
+
+    // 线段 → 采样点四边形的集合（SpriteBatch 只画轴对齐四边形，点步进对任意角度都成立）。
+    // 注意：线框四边形数量是"线段像素长度 / 采样间距"量级（实测 Bullet 一次 ~7000 条线段），
+    // 必须做可见剔除 + 帧预算，否则会打爆 SpriteBatch 的单批上限（16384 四边形/帧）。
+    constexpr float kDotSize = 3.4f;   // 单个采样点（四边形）边长
+    constexpr float kDotStep = 10.0f;  // 采样间距（线框呈虚线感，调试足够）
+    constexpr int kMaxWireQuads = 13500;
+    const glm::vec2 half = camera.VisibleSize() * 0.5f + glm::vec2(160.0f, 320.0f);
+    const glm::vec2 minW = camera.Center() - half;
+    const glm::vec2 maxW = camera.Center() + half;
+    constexpr float kFloorPx = static_cast<float>(core::kFloorPx);
+
+    int quads = 0;
+    for (const physics::PhysicsWorld::DebugLine& line : lines) {
+        if (quads >= kMaxWireQuads) {
+            break;
+        }
+        const glm::vec2 a = render::ToScreen(line.x0, line.y0) - glm::vec2(0.0f, line.z0 * kFloorPx);
+        const glm::vec2 b = render::ToScreen(line.x1, line.y1) - glm::vec2(0.0f, line.z1 * kFloorPx);
+        // 屏幕 AABB 剔除（完全在视野外的线段直接跳过）
+        if (std::min(a.x, b.x) > maxW.x || std::max(a.x, b.x) < minW.x ||
+            std::min(a.y, b.y) > maxW.y || std::max(a.y, b.y) < minW.y) {
+            continue;
+        }
+        const glm::vec2 delta = b - a;
+        const float length = glm::length(delta);
+        const int steps = static_cast<int>(length / kDotStep) + 1;
+        for (int i = 0; i <= steps && quads < kMaxWireQuads; ++i, ++quads) {
+            const float t = static_cast<float>(i) / static_cast<float>(steps);
+            const glm::vec2 point = a + delta * t;
+            batch.DrawSprite(entry.atlas->Texture(),
+                             {point.x - kDotSize * 0.5f, point.y - kDotSize * 0.5f, kDotSize,
+                              kDotSize},
+                             white.u0, white.v0, white.u1, white.v1, line.color);
+        }
+    }
+    batch.End();
+
+    ++m_wireDiagCount;
+    if (m_wireDiagCount <= 2) {
+        ZL_INFO("physics", "线框诊断：线段 {} 条，绘制四边形 {} 个", lines.size(), quads);
+    }
 }
 
 void WorldDemoState::DrawDebugText() {

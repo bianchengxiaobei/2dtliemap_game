@@ -18,6 +18,10 @@ class EcsWorld;
 class SpatialIndex;
 }  // namespace zl::ecs
 
+namespace zl::physics {
+class PhysicsWorld;
+}  // namespace zl::physics
+
 namespace zl::platform {
 class Window;
 }
@@ -63,6 +67,9 @@ struct GameContext {
     // ECS（M4 起）
     ecs::EcsWorld* ecs = nullptr;
     ecs::SpatialIndex* spatialIndex = nullptr;
+
+    // 物理（M4-T3 起）
+    physics::PhysicsWorld* physics = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

@@ -23,7 +23,7 @@ constexpr double kMaxFrameDt = 0.25;
 constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"Quit", "ESCAPE"},      {"Pause", "F1"},       {"CycleSpeed", "F2"},
     {"DemoTasks", "F3"},     {"ReloadBindings", "F5"}, {"ToggleCruise", "F8"},
-    {"ToggleDebugOverlay", "F9"},
+    {"ToggleDebugOverlay", "F9"}, {"TogglePhysicsDebug", "F10"},
     {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
     {"MoveRight", "D"},
 };
@@ -139,6 +139,18 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.world = m_world.get();
     m_ctx.chunkManager = m_chunkManager.get();
 
+    // 5.5 物理（M4-T3）：chunk 静态碰撞体随流式加载/卸载批量生成/移除
+    m_physics = std::make_unique<physics::PhysicsWorld>();
+    m_chunkManager->SetChunkCallbacks(
+        [this](world::Chunk& chunk, int cx, int cy) {
+            m_physics->BuildChunkStatics(cx, cy, chunk);
+        },
+        [this](world::Chunk& chunk, int cx, int cy) {
+            (void)chunk;  // 数据仍可读，但静态体按 chunk 键移除即可
+            m_physics->RemoveChunkStatics(cx, cy);
+        });
+    m_ctx.physics = m_physics.get();
+
     // 6. 上下文 + 事件探针
     m_ctx.config = &m_config;
     m_ctx.events = &m_events;
@@ -158,10 +170,18 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
 
     // ECS 固定链集中注册（docs/00 §6.1）；顺序 = 执行顺序。
-    // 目前仅索引维护；后续任务按链序插入（Input → Ai → PathFollow → Movement →
-    // PhysicsSync → Perception → Combat → SpawnLod → RenderCollect）。
+    // 目前：索引维护 → Movement → PhysicsSync；后续任务按链序插入
+    // （Input → Ai → PathFollow → Movement → PhysicsSync → Perception → Combat → SpawnLod → RenderCollect）。
     m_ecs.Systems().AddSystem("SpatialIndexSystem",
                               [this](ecs::EcsWorld& w, float) { m_spatialIndex.Update(w); });
+    m_movementSystem = std::make_unique<characters::MovementSystem>();
+    m_physicsSyncSystem = std::make_unique<physics::PhysicsSyncSystem>(m_physics.get());
+    m_ecs.Systems().AddSystem("MovementSystem", [this](ecs::EcsWorld& w, float dt) {
+        m_movementSystem->Update(w, dt);
+    });
+    m_ecs.Systems().AddSystem("PhysicsSyncSystem", [this](ecs::EcsWorld& w, float dt) {
+        m_physicsSyncSystem->Update(w, dt);
+    });
 
     m_probe.Attach(m_events);
 
@@ -197,6 +217,9 @@ void GameApp::Shutdown() {
     m_renderer.Shutdown();
     m_window.Destroy();
     m_loop.reset();
+    m_physicsSyncSystem.reset();
+    m_movementSystem.reset();
+    m_physics.reset();  // 物理体先于 chunk 生命周期回调销毁
     m_chunkManager.reset();
     m_world.reset();
     m_tasks.reset();  // 最后回收线程池

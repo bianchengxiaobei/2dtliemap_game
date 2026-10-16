@@ -19,14 +19,16 @@
    "y": 0,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 0,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
@@ -61,28 +63,32 @@
    "y": 0,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 5,
    "y": 0,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 1,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
@@ -117,28 +123,32 @@
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 5,
    "y": 1,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 2,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 2,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
@@ -173,14 +183,16 @@
    "y": 2,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 5,
    "y": 2,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 6,
@@ -194,14 +206,16 @@
    "y": 3,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 3,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
@@ -236,98 +250,112 @@
    "y": 3,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 5,
    "y": 3,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 4,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 0,
    "y": 4,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
    "y": 4,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
    "y": 4,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 2,
    "y": 4,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 2,
    "y": 4,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 3,
    "y": 4,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.door"
+   "sprite": "wall.door",
+   "solid": true
   },
   {
    "x": 3,
    "y": 4,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.door"
+   "sprite": "wall.door",
+   "solid": true
   },
   {
    "x": 4,
    "y": 4,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 4,
    "y": 4,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 5,
    "y": 4,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 5,
    "y": 4,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.brick"
+   "sprite": "wall.brick",
+   "solid": true
   }
  ],
  "rooms": [

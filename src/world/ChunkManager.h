@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -45,6 +46,12 @@ public:
 
     // 主线程每帧调用：消费后台解析结果（挂接/取消/重试/放弃）
     void ProcessResults();
+
+    // 生命周期回调（主线程调用；nullptr = 不通知）：
+    //   onLoaded：数据挂接完成（Loaded）后——物理静态体/寻路缓存等在此生成；
+    //   onUnloading：卸载**前**（数据仍可读）——在此移除关联资源。
+    using ChunkCallback = std::function<void(Chunk& chunk, int chunkX, int chunkY)>;
+    void SetChunkCallbacks(ChunkCallback onLoaded, ChunkCallback onUnloading);
 
     const Stats& GetStats() const { return m_stats; }
     const std::deque<double>& RecentLoadMs() const { return m_recentLoadMs; }
@@ -103,6 +110,8 @@ private:
 
     Stats m_stats;
     std::deque<double> m_recentLoadMs;
+    ChunkCallback m_onChunkLoaded;
+    ChunkCallback m_onChunkUnloading;
 };
 
 }  // namespace zl::world

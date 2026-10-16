@@ -23,6 +23,7 @@ struct ChunkObjectData {
     std::string sprite;  // 逻辑名（AssetProvider 解析）
     std::int16_t ox = 0;
     std::int16_t oy = 0;
+    bool solid = false;  // 阻挡移动（M4 物理/A*；JSON 可选字段 "solid"）
 };
 
 struct RoomRectData {
