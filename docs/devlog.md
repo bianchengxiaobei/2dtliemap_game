@@ -194,3 +194,31 @@
 - 篡改/缺失地图不崩溃：坏 chunk 3 次重试后放弃记 error（单测覆盖）；稀疏缺失 = 默认地形是正常路径；
 - MapLoader 单测全绿（31 用例 / 11.6 万断言）。
 
+---
+
+## 2026-10-16 M4-T1 ECS 骨架（EnTT 接入）
+
+**新增**
+- src/ecs/EcsWorld（registry 封装）：Create（自动附着 StableId + 双向映射）、QueueCreate（延迟创建）、
+  Destroy（**一律延迟**，无效句柄/重复销毁安全）、Flush（先销毁后创建）、Update（flush → 系统链 → flush）；
+- src/ecs/SystemScheduler：**注册顺序 = 执行顺序**、SetEnabled 调试开关、每系统 lastMs/avgMs 耗时统计；
+- src/ecs/components/CommonComponents.h：公共组件定稿 Position / Velocity / Collider / SpriteRef / StableId；
+  HashName（FNV-1a 32）把逻辑资源名压成稳定 id，SpriteRef 只存哈希（M4-T2 在 AssetProvider 侧建反查表）；
+  碰撞分类位 kColliderStatic/Character/Item/Projectile（M4-T3 对齐 Bullet）；
+- 接入：GameContext 增加 ecs::EcsWorld*，GameApp::Tick 内 m_ecs.Update(dt)（系统链），
+  状态逻辑后再 m_ecs.Flush()（状态里入队的创建/销毁也 tick 末统一回收）。
+
+**踩坑 / 决策**
+- EnTT 3.16 的 
+egistry **没有 size()**（大量旧教程写 
+egistry.size() 会编译失败）→ AliveCount 自维护 O(1) 计数；
+- Destroy 语义定为：Alive() **立即为假**（已入队），但内存延迟回收（本 tick 内 
+egistry.valid() 仍真，
+  别的系统读到的是本帧最后状态）——测试锁定这个边界，提醒后续系统一律用 Alive() 判断；
+- 固定更新链（docs/00 §6.1：Input→Ai→PathFollow→Movement→PhysicsSync→Perception→Combat→SpawnLod→RenderCollect）
+  在 GameApp::Init 集中注册，T2~T7 逐项填入。
+
+**测试**（tests/test_ecs.cpp，9 用例）：创建/ID 单调唯一/双向查找、延迟销毁、遍历中销毁+延迟创建、
+QueueCreate 顺序与放弃、无效句柄与重复销毁、系统内销毁的可见性边界、Scheduler 顺序/开关/耗时统计、
+HashName 固定值（与 Python 交叉验证）+组件默认值、**10000 实体×3 轮创建/销毁压力（storage 容量复用不增长）**。
+合计 40 用例 / 116705 断言全绿；游戏冒烟启动无错误。

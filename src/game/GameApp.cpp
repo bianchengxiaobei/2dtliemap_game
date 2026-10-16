@@ -153,6 +153,7 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.sprites = &m_sprites;
     m_ctx.atlases = &m_atlases;
     m_ctx.assets = &m_assets;
+    m_ctx.ecs = &m_ecs;
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
 
     m_probe.Attach(m_events);
@@ -221,9 +222,12 @@ void GameApp::MainLoop() {
 void GameApp::Tick(double tickDt) {
     m_gameTime.Tick();
     m_events.EmitQueued(core::kOnTick, static_cast<int64_t>(m_loop->TotalTicks()));
+    // ECS 系统（注册顺序即执行顺序，SystemScheduler 集中注册）；Update 内含 tick 首尾两次 flush
+    m_ecs.Update(static_cast<float>(tickDt));
     if (auto* state = m_states.Current()) {
         state->OnTick(tickDt);
     }
+    m_ecs.Flush();  // 状态逻辑里入队的创建/销毁也在本 tick 末统一 flush
     m_events.FlushQueued();
 }
 

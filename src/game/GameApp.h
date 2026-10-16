@@ -10,6 +10,7 @@
 #include "core/GameTime.h"
 #include "core/Input.h"
 #include "core/TaskScheduler.h"
+#include "ecs/EcsWorld.h"
 #include "game/AssetProvider.h"
 #include "game/EventProbe.h"
 #include "game/GameContext.h"
@@ -66,6 +67,9 @@ private:
     // 世界 + chunk 流式加载（M3）
     std::unique_ptr<world::World> m_world;
     std::unique_ptr<world::ChunkManager> m_chunkManager;
+
+    // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
+    ecs::EcsWorld m_ecs;
 
     double m_lastFrameTime = 0.0;
     bool m_shutdownDone = false;

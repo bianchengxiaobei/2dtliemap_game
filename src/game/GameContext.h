@@ -13,6 +13,10 @@ class Input;
 class TaskScheduler;
 }  // namespace zl::core
 
+namespace zl::ecs {
+class EcsWorld;
+}  // namespace zl::ecs
+
 namespace zl::platform {
 class Window;
 }
@@ -54,6 +58,9 @@ struct GameContext {
     // 世界与流式加载（M3 起）
     world::World* world = nullptr;
     world::ChunkManager* chunkManager = nullptr;
+
+    // ECS（M4 起）
+    ecs::EcsWorld* ecs = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

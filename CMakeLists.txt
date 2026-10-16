@@ -22,6 +22,7 @@ find_package(bgfx CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
+find_package(EnTT CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(doctest CONFIG REQUIRED)
 
@@ -35,6 +36,8 @@ add_executable(ZomboidLike
     src/core/Input.cpp
     src/core/Log.cpp
     src/core/TaskScheduler.cpp
+    src/ecs/EcsWorld.cpp
+    src/ecs/SystemScheduler.cpp
     src/game/AssetProvider.cpp
     src/game/EventProbe.cpp
     src/game/GameApp.cpp
@@ -70,6 +73,7 @@ target_link_libraries(ZomboidLike PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     glm::glm
+    EnTT::EnTT
 )
 
 if (WIN32)
@@ -86,9 +90,12 @@ add_executable(ZomboidLikeTests
     tests/test_isomath.cpp
     tests/test_maploader.cpp
     tests/test_chunkmanager.cpp
+    tests/test_ecs.cpp
     tests/test_world.cpp
     src/core/Log.cpp
     src/core/TaskScheduler.cpp
+    src/ecs/EcsWorld.cpp
+    src/ecs/SystemScheduler.cpp
     src/render/IsoMath.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp
@@ -109,6 +116,7 @@ target_link_libraries(ZomboidLikeTests PRIVATE
     glm::glm
     spdlog::spdlog
     nlohmann_json::nlohmann_json
+    EnTT::EnTT
 )
 
 add_test(NAME ZomboidLikeTests COMMAND ZomboidLikeTests)
