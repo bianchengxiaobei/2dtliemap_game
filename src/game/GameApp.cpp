@@ -142,17 +142,27 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.world = m_world.get();
     m_ctx.chunkManager = m_chunkManager.get();
 
-    // 5.5 物理（M4-T3）：chunk 静态碰撞体随流式加载/卸载批量生成/移除
+    // 5.5 物理（M4-T3）+ 寻路（M4-T6）：chunk 生命周期回调（静态碰撞体 / 通行位图）
     m_physics = std::make_unique<physics::PhysicsWorld>();
+    const world::MapLoader::Meta& mapMeta = m_chunkManager->Map();
+    ai::AStarOptions pathOptions;
+    pathOptions.maxExpansions = m_config.Get<int>("pathfinding.maxExpansions", 200000);
+    m_pathfinding = std::make_unique<ai::PathfindingService>(
+        m_tasks.get(), ai::MapChunkBounds{mapMeta.chunkX0, mapMeta.chunkY0, mapMeta.chunksX,
+                                          mapMeta.chunksY},
+        pathOptions);
     m_chunkManager->SetChunkCallbacks(
         [this](world::Chunk& chunk, int cx, int cy) {
             m_physics->BuildChunkStatics(cx, cy, chunk);
+            m_pathfinding->OnChunkLoaded(chunk);
         },
         [this](world::Chunk& chunk, int cx, int cy) {
-            (void)chunk;  // 数据仍可读，但静态体按 chunk 键移除即可
+            (void)chunk;  // 数据仍可读，但静态体/位图按 chunk 键移除即可
             m_physics->RemoveChunkStatics(cx, cy);
+            m_pathfinding->OnChunkUnloading(cx, cy);
         });
     m_ctx.physics = m_physics.get();
+    m_ctx.pathfinding = m_pathfinding.get();
 
     // 6. 上下文 + 事件探针
     m_ctx.config = &m_config;
@@ -173,17 +183,22 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
 
     // ECS 固定链集中注册（docs/00 §6.1）；顺序 = 执行顺序。
-    // 目前：索引维护 → Input → Movement → PhysicsSync → Animation；后续任务按链序插入
-    // （目标链：Input → Ai → PathFollow → Movement → PhysicsSync → Perception → Combat →
-    //   SpawnLod → RenderCollect）。
+    // 目前：索引维护 → Input → PathFollow → Movement → PhysicsSync → Animation；
+    // 后续任务按链序插入（目标链：Input → Ai → PathFollow → Movement → PhysicsSync →
+    //   Perception → Combat → SpawnLod → RenderCollect）。
     m_ecs.Systems().AddSystem("SpatialIndexSystem",
                               [this](ecs::EcsWorld& w, float) { m_spatialIndex.Update(w); });
     m_inputSystem = std::make_unique<characters::InputSystem>();
     m_movementSystem = std::make_unique<characters::MovementSystem>();
     m_physicsSyncSystem = std::make_unique<physics::PhysicsSyncSystem>(m_physics.get());
     m_animationSystem = std::make_unique<characters::AnimationSystem>();
+    m_pathFollowSystem = std::make_unique<ai::PathFollowSystem>(m_pathfinding.get());
     m_ecs.Systems().AddSystem("InputSystem", [this](ecs::EcsWorld& w, float) {
         m_inputSystem->Update(m_input, w);
+    });
+    // 寻路在 Input 之后（能读到本 tick 输入做"手动优先"判定）、Movement 之前（写意图）
+    m_ecs.Systems().AddSystem("PathFollowSystem", [this](ecs::EcsWorld& w, float dt) {
+        m_pathFollowSystem->Update(w, dt);
     });
     m_ecs.Systems().AddSystem("MovementSystem", [this](ecs::EcsWorld& w, float dt) {
         m_movementSystem->Update(w, dt);
@@ -234,6 +249,8 @@ void GameApp::Shutdown() {
     m_animationSystem.reset();
     m_inputSystem.reset();
     m_movementSystem.reset();
+    m_pathFollowSystem.reset();  // 先于服务
+    m_pathfinding.reset();       // 在途后台查询经共享 Core 安全收敛
     m_physics.reset();  // 物理体先于 chunk 生命周期回调销毁
     m_chunkManager.reset();
     m_world.reset();

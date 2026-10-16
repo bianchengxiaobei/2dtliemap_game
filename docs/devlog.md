@@ -357,3 +357,53 @@ FPS 59~60、物理 step 0.35ms。
 MapPixelBounds（四角紧包围盒 + village 120×120 具体值）、Camera::SetBounds 夹取（1.0x/1.5x 换算/
 ClearBounds）、跟随集成（目标远在地图外 → 收敛到夹取点 (-3200, 360)）。
 合计 69 用例 / 117047 断言全绿。
+
+---
+
+## 2026-10-16 M4-T6 A* 寻路（ECS 化）
+
+**新增**（`src/ai/`）
+- `Passability.h/.cpp`：`ChunkPassability`（10×10 位图，z=0 地面层，与物理静态体同源
+  `SquareObject::blocksMovement`）+ `PathSnapshot` 只读快照（chunk 矩形 + 行位图；
+  未填充 chunk / 区域外一律"阻挡"——未知区不可通行，贴地图边界自然封闭）；
+- `AStar.cpp`：8 向 A*——Octile 启发式、**对角 √2 代价**（0.01 精度内实测）、
+  **禁止穿角**（对角移动要求两个正交邻格可走）、展开预算（超限 BudgetExceeded）、
+  重复节点惰性删除（closed 标记）；起点即使在阻挡格也允许（可走出被堵点），
+  目标格阻挡直接 Unreachable。纯函数、无状态、线程安全；
+- `PathfindingService`：passability **chunk 级缓存**（随 ChunkManager 回调加载构建/卸载删除，
+  即"局部重建"）；`Submit` 主线程立即拷贝快照（起终点包围盒 + 1 chunk 边距、夹取地图范围、
+  单轴 64 chunk / 总 2048 chunk 防守上限）→ `TaskScheduler` 后台线程 A* 只读快照；
+  结果回投带锁队列（`TryTakeResult` FIFO）。跨线程状态全在共享 `Core`（shared_ptr，
+  服务先于线程池析构也安全——在途任务持 Core，结果静默丢弃）。
+  `tasks == nullptr` 时降级同步执行（单测用）；
+- `components/AiComponents.h`：`PathRequest{goal, newRequest, queryId, state}`、
+  `PathFollow{waypoints, index, speed, reachRadius}`、`PathStatus`（None/Pending/Following/
+  Arrived/Failed）；
+- `systems/PathFollowSystem`（固定链：**Input 之后、Movement 之前**）三阶段：
+  1) 消费完成结果（queryId 匹配在途请求，实体已销毁/重发则丢弃）→ Found 写路点进入
+  Following（速度 = LocalControl.walkSpeed 或默认 2.0）；失败清路点 + 意图清零；
+  2) `newRequest` → Submit 后台查询；
+  3) 沿路点写 `MoveIntent`（连续消费已到达路点，到达半径 0.35 格）；
+  **手动优先**：本地控制实体本 tick 被 InputSystem 写入非零意图 → 取消路径（输入意图原样保留；
+  在途结果按 queryId 失配丢弃）。到达/失败后不再触碰意图（避免覆盖读点击后的键盘输入）。
+
+**接线**：GameApp 系统链改为 `SpatialIndex → Input → PathFollow → Movement → PhysicsSync →
+Animation`；chunk 生命周期回调同链追加 `OnChunkLoaded/OnChunkUnloading`（与物理静态体同一回调）；
+config `pathfinding.maxExpansions=200000`；GameContext 增 `pathfinding` 指针。
+WorldDemoState **删除盒内漂移脚手架**，改为 40 个寻路游荡者：每 5s 给空闲实体
+拒绝采样派发随机可走目标（未加载 chunk 按阻挡跳过），HUD 增 `path:` 统计行（查询/失败分解/
+平均耗时/位图缓存/跟随数），"世界统计"日志增寻路段。
+
+**测试**（tests/test_pathfinding.cpp，14 用例）：位图分层与 z 语义、快照未填充/区域外语义、
+直线与对角 √2 代价、绕墙走缺口、禁止穿角（双角堵死不可达/单角可绕）、目标围死/越界/目标阻挡、
+展开预算截断、**2270 格蛇形路径 2.09ms（Debug，验收 <5ms）**、服务缓存+同步模式+卸载失效、
+越界即时失败、全链路（请求→A*→路点跟随：不穿墙、穿缺口、到达、意图清零）、不可达→Failed、
+手动输入取消寻路、真实线程池异步查询。合计 **83 用例 / 117155 断言全绿**。
+
+**冒烟**（village_demo，20s+）：40 游荡者；首轮 40 个查询全部后台完成（平均 ~1ms，最慢 3.7ms
+322 展开）；持续多轮重派 → 最终 查询=78 完成=73 不可达=5（其中 1 个实体因出生在密闭房屋内
+反复不可达——物理推出前会持续失败，记录为已知）；FPS 59~60（单帧 20.2ms 尖峰 1 次），
+物理 step 0.55ms；HUD `path:` 与到达/失败日志链完整。
+
+**教训**：蛇形性能测试第一版把奇数行连通口设计成"整列 7 格宽"，A* 直接走竖井捷径
+（188 格）——测试地理设计错误会让 1000 格验收失真；改为左右交替单格连通口后为 2270 格。

@@ -39,6 +39,9 @@
     "follow": true,
     "followRate": 8.0
   },
+  "pathfinding": {
+    "maxExpansions": 200000
+  },
   "input": {
     "bindings": {
       "Quit": "ESCAPE",

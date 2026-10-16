@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <random>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -42,6 +43,9 @@ private:
     void CollectWorld();
     void SpawnDemoEntities();
     void DespawnDemoEntities();
+    // M4-T6：游荡演示——定时给空闲的演示实体派发随机目标（PathRequest → 后台 A*）
+    void RetargetDemoEntities();
+    bool PickWanderTarget(int* gx, int* gy);
     // M4-T4：玩家（PlayerTag）——chunk 加载完成后在村庄中心附近找可走格生成
     void EnsurePlayerSpawned();
     ecs::Entity SpawnCharacter(float px, float py);
@@ -68,12 +72,15 @@ private:
     int m_collectedChunks = 0;  // 本帧进入收集的已加载 chunk 数
     int m_missingChunks = 0;    // 本帧可见但尚未加载的 chunk 数
 
-    // M4-T2/T3 演示脚手架：ECS 实体在盒内漂移（M4-T6 寻路接入后删除）
+    // M4-T6 演示：40 个游荡者（PathRequest 随机目标 → 后台 A* → 路点跟随；
+    // 替代 M4-T2/T3 的盒内漂移脚手架）
     float m_demoBoxX0 = 0.0f;
     float m_demoBoxY0 = 0.0f;
     float m_demoBoxX1 = 0.0f;
     float m_demoBoxY1 = 0.0f;
-    int m_demoEntityCount = 0;
+    std::vector<ecs::Entity> m_demoEntities;
+    float m_retargetTimer = 0.0f;
+    std::mt19937 m_demoRng{20261016u};
     // M4-T4：本地玩家（WASD 控制）
     ecs::Entity m_player = entt::null;
     // M4-T5：相机模式（F4 切换；follow 平滑跟随玩家并夹取到地图边界）

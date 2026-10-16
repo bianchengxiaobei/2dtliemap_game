@@ -1,0 +1,166 @@
+#include "ai/systems/PathFollowSystem.h"
+
+#include <cmath>
+
+#include "ai/PathfindingService.h"
+#include "ai/components/AiComponents.h"
+#include "characters/components/CharacterComponents.h"
+#include "core/Log.h"
+#include "ecs/EcsWorld.h"
+#include "ecs/components/CommonComponents.h"
+
+namespace zl::ai {
+namespace {
+
+constexpr const char* kLogModule = "ai";
+constexpr float kAiDefaultSpeed = 2.0f;  // 无 LocalControl 实体的跟随速度（格/秒）
+
+namespace ecs = zl::ecs;
+
+// 后台结果 → 组件：Found 写路点进入 Following；其余一律 Failed（清路点、清零意图）
+void ApplyResult(ecs::EcsWorld& world, const ecs::Entity e, ecs::PathRequest& request,
+                 const PathResult& result) {
+    entt::registry& registry = world.Registry();
+    switch (result.path.outcome) {
+        case AStarResult::Outcome::Found: {
+            ecs::PathFollow& follow = registry.get_or_emplace<ecs::PathFollow>(e);
+            follow.waypoints.clear();
+            follow.waypoints.reserve(result.path.cells.size());
+            for (const GridCell& cell : result.path.cells) {
+                follow.waypoints.push_back(ecs::Waypoint{static_cast<float>(cell.x) + 0.5f,
+                                                         static_cast<float>(cell.y) + 0.5f});
+            }
+            follow.index = 0;
+            follow.status = ecs::PathStatus::Following;
+            if (const auto* control = registry.try_get<ecs::LocalControl>(e)) {
+                follow.speed = control->walkSpeed;
+            } else {
+                follow.speed = kAiDefaultSpeed;
+            }
+            request.state = ecs::PathStatus::Following;
+            ZL_DEBUG(kLogModule, "寻路完成：稳定 ID {} | 路点 {} | 展开 {} | 代价 {:.2f} | {:.2f}ms",
+                     world.IdOf(e).id, follow.waypoints.size(), result.path.expanded,
+                     result.path.cost, result.path.ms);
+            break;
+        }
+        default: {
+            request.state = ecs::PathStatus::Failed;
+            if (auto* follow = registry.try_get<ecs::PathFollow>(e); follow != nullptr) {
+                follow->status = ecs::PathStatus::Failed;
+                follow->waypoints.clear();
+                follow->index = 0;
+            }
+            if (auto* intent = registry.try_get<ecs::MoveIntent>(e); intent != nullptr) {
+                intent->x = 0.0f;
+                intent->y = 0.0f;
+            }
+            ZL_DEBUG(kLogModule, "寻路失败：稳定 ID {} 目标格 ({}, {}) outcome={}",
+                     world.IdOf(e).id, request.goalX, request.goalY,
+                     static_cast<int>(result.path.outcome));
+            break;
+        }
+    }
+}
+
+}  // namespace
+
+void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
+    (void)dt;
+    entt::registry& registry = world.Registry();
+
+    // 1) 消费后台完成结果（按 queryId 匹配在途请求；实体已销毁/重发则丢弃）
+    if (m_service != nullptr) {
+        PathResult result;
+        while (m_service->TryTakeResult(&result)) {
+            registry.view<ecs::PathRequest>().each(
+                [&](const ecs::Entity e, ecs::PathRequest& request) {
+                    if (request.state != ecs::PathStatus::Pending ||
+                        request.queryId != result.queryId) {
+                        return;  // continue
+                    }
+                    if (!world.Alive(e)) {  // view 内句柄恒有效，此处仅为防御
+                        return;
+                    }
+                    ApplyResult(world, e, request, result);
+                });
+        }
+    }
+
+    // 2) 提交新请求（newRequest 由游戏逻辑/调试写入）
+    registry.view<ecs::PathRequest, ecs::Position>().each(
+        [&](const ecs::Entity e, ecs::PathRequest& request, const ecs::Position& position) {
+            (void)e;
+            if (!request.newRequest) {
+                return;
+            }
+            request.newRequest = false;
+            if (m_service == nullptr) {
+                request.state = ecs::PathStatus::Failed;
+                return;
+            }
+            request.queryId = m_service->Submit(static_cast<int>(std::floor(position.x)),
+                                                static_cast<int>(std::floor(position.y)),
+                                                request.goalX, request.goalY);
+            request.state = ecs::PathStatus::Pending;
+        });
+
+    // 3) 沿路点跟随
+    registry.view<ecs::PathFollow, ecs::Position>().each(
+        [&](const ecs::Entity e, ecs::PathFollow& follow, const ecs::Position& position) {
+            auto* intent = registry.try_get<ecs::MoveIntent>(e);
+            auto* request = registry.try_get<ecs::PathRequest>(e);
+
+            // 手动优先：本地控制实体本 tick 已被 InputSystem 写入非零意图 → 取消路径
+            // （在途结果因 state/queryId 失配被丢弃；输入意图原样保留）
+            if (follow.status == ecs::PathStatus::Following && intent != nullptr &&
+                registry.any_of<ecs::LocalControl>(e) &&
+                (intent->x != 0.0f || intent->y != 0.0f)) {
+                follow.status = ecs::PathStatus::None;
+                follow.waypoints.clear();
+                follow.index = 0;
+                if (request != nullptr) {
+                    request->state = ecs::PathStatus::None;
+                    request->queryId = 0;
+                }
+                ZL_DEBUG(kLogModule, "手动移动取消寻路（稳定 ID {}）", world.IdOf(e).id);
+                return;
+            }
+            if (follow.status != ecs::PathStatus::Following) {
+                return;  // Arrived/Failed/None：不再触碰意图（避免覆盖后续输入）
+            }
+
+            // 连续消费已到达的路点（低速大步长时一 tick 可跨多个）
+            while (follow.index < follow.waypoints.size()) {
+                const ecs::Waypoint& waypoint = follow.waypoints[follow.index];
+                const float dx = waypoint.x - position.x;
+                const float dy = waypoint.y - position.y;
+                if (dx * dx + dy * dy <= follow.reachRadius * follow.reachRadius) {
+                    ++follow.index;
+                    continue;
+                }
+                const float length = std::sqrt(dx * dx + dy * dy);
+                if (intent != nullptr) {
+                    intent->x = dx / length * follow.speed;
+                    intent->y = dy / length * follow.speed;
+                }
+                return;
+            }
+
+            // 全部路点走完 = 到达（意图清零一次；后续 tick 不再触碰）
+            follow.status = ecs::PathStatus::Arrived;
+            follow.waypoints.clear();
+            follow.index = 0;
+            if (intent != nullptr) {
+                intent->x = 0.0f;
+                intent->y = 0.0f;
+            }
+            if (request != nullptr) {
+                request->state = ecs::PathStatus::Arrived;
+            }
+            ZL_DEBUG(kLogModule, "寻路到达：稳定 ID {} 终点格 ({}, {})", world.IdOf(e).id,
+                     request != nullptr ? request->goalX : 0,
+                     request != nullptr ? request->goalY : 0);
+        });
+}
+
+}  // namespace zl::ai

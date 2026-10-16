@@ -17,6 +17,8 @@
 #include "core/GameTime.h"
 #include "core/Input.h"
 #include "core/Log.h"
+#include "ai/PathfindingService.h"
+#include "ai/components/AiComponents.h"
 #include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/SpatialIndex.h"
@@ -43,6 +45,7 @@ constexpr float kGridLineThickness = 1.2f;
 constexpr float kHoverLineThickness = 2.5f;
 constexpr float kStatsLogInterval = 3.0f;
 constexpr float kPerfLogInterval = 5.0f;
+constexpr float kWanderRetargetSeconds = 5.0f;  // M4-T6：游荡者重派目标周期
 constexpr uint32_t kGridColor = 0x30ffffff;   // 白色低透明（ABGR: A=0x30）
 constexpr uint32_t kHoverColor = 0xff30e0ff;  // 黄色高亮
 constexpr uint32_t kAxisXColor = 0xc04040ff;  // 红
@@ -233,7 +236,7 @@ void WorldDemoState::SpawnDemoEntities() {
     std::mt19937 rng(20261016u);
     std::uniform_real_distribution<float> u01(0.0f, 1.0f);
 
-    // 漂移盒对准默认相机视野（村北，world (70,18) 附近）
+    // 游荡区域对准默认相机视野（村北，world (70,18) 附近）
     m_demoBoxX0 = 44.0f;
     m_demoBoxY0 = 4.0f;
     m_demoBoxX1 = 96.0f;
@@ -242,18 +245,68 @@ void WorldDemoState::SpawnDemoEntities() {
     constexpr int kCount = 40;
     const uint32_t sprite = ecs::HashName("character.placeholder");
     entt::registry& registry = world.Registry();
+    m_demoEntities.clear();
+    m_demoEntities.reserve(kCount);
     for (int i = 0; i < kCount; ++i) {
         const float px = m_demoBoxX0 + u01(rng) * (m_demoBoxX1 - m_demoBoxX0);
         const float py = m_demoBoxY0 + u01(rng) * (m_demoBoxY1 - m_demoBoxY0);
-        const float angle = u01(rng) * 6.2831853f;
-        const float speed = 0.8f + u01(rng) * 1.6f;
         const ecs::Entity e = SpawnCharacter(px, py);
-        registry.patch<ecs::Velocity>(
-            e, [&](ecs::Velocity& v) { v = {std::cos(angle) * speed, std::sin(angle) * speed}; });
+        // M4-T6：寻路游荡三件套（初始无目标、站立；首次重派周期起边走边找新目标）
+        registry.emplace<ecs::MoveIntent>(e, ecs::MoveIntent{});
+        registry.emplace<ecs::PathRequest>(e, ecs::PathRequest{});
+        registry.emplace<ecs::PathFollow>(e, ecs::PathFollow{});
+        m_demoEntities.push_back(e);
     }
-    m_demoEntityCount = kCount;
-    ZL_INFO("ecs", "生成 {} 个演示实体（漂移盒 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]，精灵名哈希 {:#x}）",
+    ZL_INFO("ecs",
+            "生成 {} 个寻路游荡者（区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]，精灵名哈希 {:#x}）",
             kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1, sprite);
+}
+
+void WorldDemoState::RetargetDemoEntities() {
+    if (m_ctx.ecs == nullptr) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    int assigned = 0;
+    for (const ecs::Entity e : m_demoEntities) {
+        auto* request = registry.try_get<ecs::PathRequest>(e);
+        if (request == nullptr) {
+            continue;
+        }
+        if (request->state == ecs::PathStatus::Pending ||
+            request->state == ecs::PathStatus::Following) {
+            continue;  // 还在寻路/走路
+        }
+        int gx = 0;
+        int gy = 0;
+        if (!PickWanderTarget(&gx, &gy)) {
+            continue;  // 本轮找不到可走目标（等下一轮）
+        }
+        request->goalX = gx;
+        request->goalY = gy;
+        request->newRequest = true;
+        ++assigned;
+    }
+    if (assigned > 0) {
+        ZL_DEBUG("ecs", "寻路游荡：派发 {} 个新目标（实体共 {}）", assigned, m_demoEntities.size());
+    }
+}
+
+bool WorldDemoState::PickWanderTarget(int* gx, int* gy) {
+    std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+    for (int attempt = 0; attempt < 64; ++attempt) {
+        const int wx = static_cast<int>(m_demoBoxX0) +
+                       static_cast<int>(u01(m_demoRng) * (m_demoBoxX1 - m_demoBoxX0));
+        const int wy = static_cast<int>(m_demoBoxY0) +
+                       static_cast<int>(u01(m_demoRng) * (m_demoBoxY1 - m_demoBoxY0));
+        if (IsSolidSquare(wx, wy)) {
+            continue;  // 阻挡格或 chunk 未加载（未加载按阻挡处理）
+        }
+        *gx = wx;
+        *gy = wy;
+        return true;
+    }
+    return false;
 }
 
 void WorldDemoState::DespawnDemoEntities() {
@@ -272,7 +325,8 @@ void WorldDemoState::DespawnDemoEntities() {
             m_ctx.ecs->Destroy(e);
         });
     m_ctx.ecs->Flush();
-    m_demoEntityCount = 0;
+    m_demoEntities.clear();
+    m_retargetTimer = 0.0f;
     m_player = entt::null;
 }
 
@@ -285,29 +339,16 @@ void WorldDemoState::OnExit() {
 }
 
 void WorldDemoState::OnTick(double tickDt) {
-    (void)tickDt;
     ++m_ticksInState;
-    // M4-T3：位移由 MovementSystem + PhysicsSyncSystem（固定链）驱动；
-    // 这里只剩"入场导向"脚手架——实体出盒后把速度分量反向（撞墙的自然阻挡交给物理）。
-    // M4-T4：玩家（有 MoveIntent 的实体）不参与漂移盒约束（意图由 InputSystem 全量重写）。
-    if (m_ctx.ecs != nullptr && m_demoEntityCount > 0) {
-        entt::registry& registry = m_ctx.ecs->Registry();
-        registry.view<ecs::Position, ecs::Velocity>().each(
-            [&](const ecs::Entity e, const ecs::Position& p, ecs::Velocity& v) {
-                if (registry.any_of<ecs::PlayerTag, ecs::MoveIntent>(e)) {
-                    return;
-                }
-                if (p.x < m_demoBoxX0) {
-                    v.x = std::fabs(v.x);
-                } else if (p.x > m_demoBoxX1) {
-                    v.x = -std::fabs(v.x);
-                }
-                if (p.y < m_demoBoxY0) {
-                    v.y = std::fabs(v.y);
-                } else if (p.y > m_demoBoxY1) {
-                    v.y = -std::fabs(v.y);
-                }
-            });
+    // M4-T6：游荡演示——定时给空闲（到达/失败/无路径）的实体派发新随机目标；
+    // 位移由固定链驱动（PathFollowSystem 写意图 → Movement → PhysicsSync）。
+    if (m_ctx.ecs == nullptr || m_demoEntities.empty()) {
+        return;
+    }
+    m_retargetTimer += static_cast<float>(tickDt);
+    if (m_retargetTimer >= kWanderRetargetSeconds) {
+        m_retargetTimer = 0.0f;
+        RetargetDemoEntities();
     }
 }
 
@@ -342,10 +383,14 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
         m_statsTimer = 0.0f;
         const render::Renderer::Stats stats = m_ctx.renderer->GetStats();
         const auto& chunkStats = m_ctx.chunkManager->GetStats();
+        ai::PathfindingService::Stats pathStats{};
+        if (m_ctx.pathfinding != nullptr) {
+            pathStats = m_ctx.pathfinding->GetStats();
+        }
         ZL_INFO("render",
                 "世界统计: FPS={:.0f} | 实例={} | 四边形={} | 批次={} | drawcall={} | zoom={:.2f} | "
                 "chunk 驻留={} 加载中={} | 相机格=({:.0f},{:.0f}) | 累计加载={} 卸载={} 取消={} 失败={} | "
-                "ECS={} 索引={} | 物理: 静态={} 动态={} step={:.2f}ms",
+                "ECS={} 索引={} | 物理: 静态={} 动态={} step={:.2f}ms | 寻路: 查询={} 完成={} 平均={:.2f}ms",
                 stats.fps, m_items.size(), m_ctx.sprites->QuadsThisFrame(),
                 m_ctx.sprites->DrawCallsThisFrame(), stats.drawCalls, m_ctx.camera->Zoom(),
                 chunkStats.loadedChunks, chunkStats.loadingChunks, camGrid.x, camGrid.y,
@@ -354,7 +399,9 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
                 m_ctx.spatialIndex != nullptr ? m_ctx.spatialIndex->EntityCount() : 0u,
                 m_ctx.physics != nullptr ? m_ctx.physics->StaticBodyCount() : 0u,
                 m_ctx.physics != nullptr ? m_ctx.physics->DynamicBodyCount() : 0u,
-                m_ctx.physics != nullptr ? m_ctx.physics->AvgStepMs() : 0.0);
+                m_ctx.physics != nullptr ? m_ctx.physics->AvgStepMs() : 0.0,
+                static_cast<unsigned long long>(pathStats.submitted),
+                static_cast<unsigned long long>(pathStats.completed), pathStats.avgMs);
     }
 
     // 压测采样（巡航期间每 5s 一条 perf 行）
@@ -849,7 +896,27 @@ void WorldDemoState::DrawDebugText() {
                 playerIntent != nullptr ? playerIntent->y : 0.0f);
         }
     }
-    bgfx::dbgTextPrintf(0, 8, 0x07,
+    // M4-T6：寻路统计（提交/完成/失败分解 + 后台耗时 + 位图缓存）
+    if (m_ctx.pathfinding != nullptr && m_ctx.ecs != nullptr) {
+        const ai::PathfindingService::Stats pathStats = m_ctx.pathfinding->GetStats();
+        int following = 0;
+        m_ctx.ecs->Registry().view<ecs::PathFollow>().each(
+            [&](const ecs::Entity, const ecs::PathFollow& follow) {
+                if (follow.status == ecs::PathStatus::Following) {
+                    ++following;
+                }
+            });
+        bgfx::dbgTextPrintf(
+            0, 8, 0x0f,
+            "path: query=%llu found=%llu unreach=%llu invalid=%llu budget=%llu | pending=%d avg=%.2fms | cached=%zu | following=%d",
+            static_cast<unsigned long long>(pathStats.submitted),
+            static_cast<unsigned long long>(pathStats.found),
+            static_cast<unsigned long long>(pathStats.unreachable),
+            static_cast<unsigned long long>(pathStats.invalid),
+            static_cast<unsigned long long>(pathStats.budget), pathStats.pending,
+            pathStats.avgMs, m_ctx.pathfinding->CachedChunks(), following);
+    }
+    bgfx::dbgTextPrintf(0, 9, 0x07,
                         "WASD move | F4 free cam | arrows/RMB drag pan | wheel zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
 }
 

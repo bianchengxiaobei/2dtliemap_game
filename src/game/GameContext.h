@@ -18,6 +18,10 @@ class EcsWorld;
 class SpatialIndex;
 }  // namespace zl::ecs
 
+namespace zl::ai {
+class PathfindingService;
+}  // namespace zl::ai
+
 namespace zl::physics {
 class PhysicsWorld;
 }  // namespace zl::physics
@@ -70,6 +74,9 @@ struct GameContext {
 
     // 物理（M4-T3 起）
     physics::PhysicsWorld* physics = nullptr;
+
+    // 寻路（M4-T6 起）：passability 位图缓存 + 后台查询（PathFollowSystem 的依赖）
+    ai::PathfindingService* pathfinding = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;
