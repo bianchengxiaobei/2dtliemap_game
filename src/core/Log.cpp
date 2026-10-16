@@ -67,6 +67,14 @@ void ShutdownLogging() {
     spdlog::shutdown();
 }
 
+void SetLogLevel(std::string_view level) {
+    const auto lvl = spdlog::level::from_str(std::string(level));
+    if (s_logger) {
+        s_logger->set_level(lvl);
+    }
+    spdlog::set_level(lvl);
+}
+
 spdlog::logger* Log() {
     if (s_logger) {
         return s_logger.get();

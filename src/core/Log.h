@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 #include <spdlog/spdlog.h>
 
 // 日志使用规范（docs/02 §5.5）：
@@ -12,6 +14,9 @@ namespace zl::core {
 void InitLogging();
 
 void ShutdownLogging();
+
+// 运行时调整级别（配置 log.level）：trace/debug/info/warn/error/critical
+void SetLogLevel(std::string_view level);
 
 // 全局日志器（未初始化时为默认 logger）
 spdlog::logger* Log();

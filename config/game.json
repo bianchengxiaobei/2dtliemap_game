@@ -1,0 +1,34 @@
+{
+  "window": {
+    "width": 1280,
+    "height": 720,
+    "title": "ZomboidLike",
+    "vsync": true
+  },
+  "game": {
+    "tickRate": 60,
+    "dayLengthMinutes": 60,
+    "startYear": 2000,
+    "startMonth": 7,
+    "startDay": 9
+  },
+  "task": {
+    "threads": 0
+  },
+  "input": {
+    "bindings": {
+      "Quit": "ESCAPE",
+      "Pause": "F1",
+      "CycleSpeed": "F2",
+      "DemoTasks": "F3",
+      "ReloadBindings": "F5",
+      "MoveUp": "W",
+      "MoveDown": "S",
+      "MoveLeft": "A",
+      "MoveRight": "D"
+    }
+  },
+  "log": {
+    "level": "debug"
+  }
+}

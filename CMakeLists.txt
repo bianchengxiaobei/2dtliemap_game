@@ -20,10 +20,23 @@ endif()
 find_package(glfw3 CONFIG REQUIRED)
 find_package(bgfx CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 add_executable(ZomboidLike
     src/main.cpp
+    src/core/AppState.cpp
+    src/core/Config.cpp
+    src/core/EventBus.cpp
+    src/core/GameLoop.cpp
+    src/core/GameTime.cpp
+    src/core/Input.cpp
     src/core/Log.cpp
+    src/core/TaskScheduler.cpp
+    src/game/EventProbe.cpp
+    src/game/GameApp.cpp
+    src/game/states/SandboxState.cpp
+    src/platform/KeyNames.cpp
+    src/platform/Window.cpp
 )
 
 target_include_directories(ZomboidLike PRIVATE src)
@@ -36,4 +49,5 @@ target_link_libraries(ZomboidLike PRIVATE
     glfw
     bgfx::bgfx
     spdlog::spdlog
+    nlohmann_json::nlohmann_json
 )
