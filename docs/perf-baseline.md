@@ -38,6 +38,32 @@
 | drawcall | **3** | **244**（⚠ 超预算，见下） |
 | FPS（Debug） | 59~60 | 59~60 |
 
+## M4 验收基线（2026-10-16，M4 验收）
+
+**场景 1：物理步进（单测基准 `test_physics`：5 chunk 全墙 500 静态体 + 50 随机速度角色体，60 tick）**
+
+| 指标 | Debug | Release | 预算 | 结论 |
+|---|---|---|---|---|
+| 平均步进 | 1.066 ms/帧 | **0.139 ms/帧** | < 2 ms/帧 | ✔（Release 余量 14×） |
+| 运行时 demo（village 64 静态体 / 40 游荡者 + 玩家） | step 0.55 ms | — | — | ✔ |
+
+**场景 2：ECS 压力（单测 `test_ecs`：10000 实体 × 3 轮 创建/销毁，实体含 Position/Velocity/Collider/SpriteRef）**
+
+| 指标 | 结果 | 判定 |
+|---|---|---|
+| 每轮存活/StableId 数归零 | 10000 → 0，三轮一致 | ✔ 无泄漏 |
+| 组件 storage size 归零（4 种组件） | 每轮后 0 | ✔ |
+| EnTT storage 容量复用 | 第 2/3 轮 capacity == 第 1 轮 | ✔ 无增长 |
+| Debug + Release 全量测试 | 85 用例 / 117166 断言全绿（两构建） | ✔ |
+
+**场景 3：寻路（M4-T6/T7 单测 + 冒烟，Debug）**
+
+| 指标 | 值 | 预算 | 结论 |
+|---|---|---|---|
+| 2270 格蛇形路径（单测，全展开） | 2.09 ms（后台线程） | < 5 ms | ✔ |
+| 运行时查询（40 游荡者 + 点击移动，78 次） | 平均 ~0.9 ms，主线程无感知 | — | ✔ |
+| demo 同屏（village 40 游荡者 + 点击移动） | FPS 59~60（Debug） | 60fps | ✔ |
+
 ## 已知问题与优化候选
 
 1. **多图集交错 drawcall 高**（placeholder_pz 244）：画家序下 4 个来源（Tiles1x 地面 / Erosion 草丛 /
@@ -56,3 +82,4 @@
 |---|---|---|---|
 | 2026-10-16 | M2 验收 | 128×128 地图 @0.5x，Release | 13063 精灵同屏 60fps（16.2ms），drawcall 3 |
 | 2026-10-16 | M3-T7 | stress 100×100 巡航，Debug 5min / Release 1min | 7253 块加载 / P95 0.84ms（Release 0.37ms）/ 驻留 49 恒定 / Release FPS 60 稳定 |
+| 2026-10-16 | M4 验收 | 物理 500 静态体基准（Debug/Release）+ ECS 10000×3 压力 | Release 0.139ms/帧（<2ms ✔）/ Debug 1.066ms；ECS storage 复用无泄漏 |

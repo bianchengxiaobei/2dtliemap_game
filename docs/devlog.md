@@ -452,3 +452,25 @@ WorldDemoState **删除盒内漂移脚手架**，改为 40 个寻路游荡者：
    每次一条查询 ~0.2ms，先接受）。
 4) 玩家会被漫游者物理顶开数格（拥挤推挤），点击后相机随玩家移动——冒烟坐标宁可相对
    相机/玩家动态计算或按日志实际目标格解读，不要假设静止。
+
+---
+
+## 2026-10-16 M4 验收（里程碑完成，tag v0.4.0）
+
+两项遗留验收（此前为"预演"级测试，本次转为正式验收并补 Release 数据）：
+
+- **500 静态体物理步进 < 2ms/帧**：`test_physics` 基准（5 chunk 全墙 500 静态体 + 50 随机
+  速度角色体，60 tick 平均）——**Release 0.139 ms/帧**、Debug 1.066 ms/帧；断言改为
+  Release 严格 <2ms（NDEBUG 分支）/ Debug <20ms 宽松上限，并打印 `[bench]` 行便于记录。
+- **10000 实体创建/销毁无泄漏（storage 复用）**：`test_ecs` 3 轮 × 10000 实体（含
+  Position/Velocity/Collider/SpriteRef），每轮存活与 StableId 归零、4 种 storage size 归零、
+  第 2/3 轮 capacity == 第 1 轮（EnTT 池复用确认）。Debug + Release 双构建全绿。
+
+数据写入 `docs/perf-baseline.md` 新增「M4 验收基线」节（含 M4-T6/T7 寻路数据：2270 格单测
+2.09ms、运行时平均 ~0.9ms/查询、demo 59~60fps）。验收清单两项勾选，docs/01 状态表与
+README 状态表 M4 → 已完成，打 tag `v0.4.0`。
+
+**M4 阶段小结**：ECS（EnTT）+ SpatialIndex + Bullet 物理 + chunk 级 passability 位图 +
+后台 A*（只读快照）+ PathFollow + 点击移动/卡住重寻路全部就位；系统链
+Input → PathFollow → Movement → PhysicsSync → Animation 稳定。85 用例 / 117166 断言
+（Debug 与 Release 双构建全绿）。

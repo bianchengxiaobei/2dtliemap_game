@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -277,8 +278,19 @@ TEST_CASE("预算冒烟：500 静态体 + 50 动态体步进（Debug 宽松上�
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin)
             .count();
     const double avgMs = totalMs / 60.0;
+    std::printf("[bench] 物理步进：500 静态体 + 50 动态体 avg=%.3f ms/帧（%s）\n", avgMs,
+#ifdef NDEBUG
+                "release"
+#else
+                "debug"
+#endif
+    );
     CHECK(physics.AvgStepMs() > 0.0);
-    CHECK(avgMs < 20.0);  // Debug 宽松上限（正式验收按 Release < 2ms 记录到 perf-baseline）
+#ifdef NDEBUG
+    CHECK(avgMs < 2.0);  // M4 验收线：500 静态体物理步进 < 2ms/帧（Release）
+#else
+    CHECK(avgMs < 20.0);  // Debug 宽松上限（正式验收按 Release < 2ms 记入 perf-baseline）
+#endif
 }
 
 TEST_CASE("MapLoader：objects solid 字段解析（缺省 false / 非法跳过）") {

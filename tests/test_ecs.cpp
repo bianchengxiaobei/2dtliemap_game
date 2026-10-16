@@ -226,7 +226,7 @@ TEST_CASE("公共组件：HashName 固定值、组件默认值与分类位") {
     static_assert(std::is_trivially_copyable_v<StableId>);
 }
 
-TEST_CASE("压力：10000 实体三轮创建/销毁，storage 复用无泄漏（M4 验收预演）") {
+TEST_CASE("压力：10000 实体三轮创建/销毁，storage 复用无泄漏（M4 验收）") {
     EcsWorld world;
     constexpr int kCount = 10000;
     std::size_t capacityAfterFirst = 0;
