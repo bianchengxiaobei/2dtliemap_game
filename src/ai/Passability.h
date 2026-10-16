@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "core/Constants.h"
@@ -62,5 +63,11 @@ private:
     std::vector<std::uint16_t> m_rows;      // [chunk 行][ly][chunk 列] 的行位图
     std::vector<std::uint8_t> m_filled;     // 每 chunk 是否已填充（0 = 全阻挡）
 };
+
+// M4-T7：螺旋环搜索——返回距 (x,y) 最近的"可走"格（含自身，r=0 起逐环外扩；
+// 环内按 dy、dx 升序扫描，结果确定）。maxRadius 内找不到返回 false。
+// walkable 由调用方给定（点击移动：目标格校验时用 !IsSolidSquare）。
+bool FindNearestWalkable(int x, int y, int maxRadius,
+                         const std::function<bool(int, int)>& walkable, int* outX, int* outY);
 
 }  // namespace zl::ai

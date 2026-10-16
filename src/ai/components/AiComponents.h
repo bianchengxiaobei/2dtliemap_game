@@ -40,6 +40,10 @@ struct PathFollow {
     float speed = 4.0f;               // 跟随速度（格/秒）
     float reachRadius = 0.35f;        // 路点到达半径（< 半格，防跨格抖动）
     PathStatus status = PathStatus::None;
+    // M4-T7：进度跟踪（卡住检测 → 自动重寻路）
+    float anchorX = 0.0f;   // 上次采样位置（每 stuckWindow 更新）
+    float anchorY = 0.0f;
+    float stuckTimer = 0.0f;  // 距上次采样的累计时间
 };
 
 }  // namespace zl::ecs

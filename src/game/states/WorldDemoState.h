@@ -2,10 +2,12 @@
 
 #include <cstdint>
 #include <random>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
 
+#include "ai/components/AiComponents.h"
 #include "core/AppState.h"
 #include "ecs/EcsWorld.h"
 #include "game/AssetProvider.h"
@@ -50,6 +52,11 @@ private:
     void EnsurePlayerSpawned();
     ecs::Entity SpawnCharacter(float px, float py);
     bool IsSolidSquare(int wx, int wy) const;
+    // M4-T7：点击移动——屏幕拾取 → 目标格校验（越界/未加载/就近可走格）→ 写 PathRequest
+    void HandleClickToMove(const render::GridPick& pick);
+    // M4-T7：寻路反馈——玩家路径状态跃迁（到达/失败）→ HUD 提示 + 目标格标记
+    void UpdatePathFeedback(double frameDt);
+    void SetNotice(std::string text, uint32_t color, float seconds);
     // M4-T5：相机跟随（follow=平滑跟随玩家+地图边界；自由=方向键/拖拽，无边界）
     void ApplyCameraMode();
     void UpdateCameraFollow(double frameDt);
@@ -83,6 +90,16 @@ private:
     std::mt19937 m_demoRng{20261016u};
     // M4-T4：本地玩家（WASD 控制）
     ecs::Entity m_player = entt::null;
+    // M4-T7：点击移动反馈（notice 文本 + 目标格标记）
+    std::string m_noticeText;
+    float m_noticeTimer = 0.0f;
+    uint32_t m_noticeColor = 0x0F;
+    int m_markerX = 0;
+    int m_markerY = 0;
+    float m_markerTimer = 0.0f;
+    bool m_markerPathActive = false;  // 寻路中（Pending/Following）：目标标记常显
+    uint32_t m_markerColor = 0xFFFFFFFFu;
+    ecs::PathStatus m_lastPlayerPathState = ecs::PathStatus::None;
     // M4-T5：相机模式（F4 切换；follow 平滑跟随玩家并夹取到地图边界）
     bool m_followCamera = true;
     bool m_followSnapped = false;  // 下次跟随直接落位（刚切换/生成时不做缓动）

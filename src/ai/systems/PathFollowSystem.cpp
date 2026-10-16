@@ -14,6 +14,9 @@ namespace {
 
 constexpr const char* kLogModule = "ai";
 constexpr float kAiDefaultSpeed = 2.0f;  // 无 LocalControl 实体的跟随速度（格/秒）
+// M4-T7：卡住检测窗口——窗口内位移小于阈值 → 从当前位置重寻路
+constexpr float kStuckCheckSeconds = 1.2f;
+constexpr float kStuckMinMoveSq = 0.2f * 0.2f;  // (格/窗口)²
 
 namespace ecs = zl::ecs;
 
@@ -32,6 +35,12 @@ void ApplyResult(ecs::EcsWorld& world, const ecs::Entity e, ecs::PathRequest& re
             }
             follow.index = 0;
             follow.status = ecs::PathStatus::Following;
+            follow.stuckTimer = 0.0f;
+            if (const auto* position = registry.try_get<ecs::Position>(e);
+                position != nullptr) {
+                follow.anchorX = position->x;  // 进度跟踪基准 = 当前位置
+                follow.anchorY = position->y;
+            }
             if (const auto* control = registry.try_get<ecs::LocalControl>(e)) {
                 follow.speed = control->walkSpeed;
             } else {
@@ -65,7 +74,6 @@ void ApplyResult(ecs::EcsWorld& world, const ecs::Entity e, ecs::PathRequest& re
 }  // namespace
 
 void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
-    (void)dt;
     entt::registry& registry = world.Registry();
 
     // 1) 消费后台完成结果（按 queryId 匹配在途请求；实体已销毁/重发则丢弃）
@@ -111,10 +119,12 @@ void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
             auto* request = registry.try_get<ecs::PathRequest>(e);
 
             // 手动优先：本地控制实体本 tick 已被 InputSystem 写入非零意图 → 取消路径
-            // （在途结果因 state/queryId 失配被丢弃；输入意图原样保留）
-            if (follow.status == ecs::PathStatus::Following && intent != nullptr &&
-                registry.any_of<ecs::LocalControl>(e) &&
-                (intent->x != 0.0f || intent->y != 0.0f)) {
+            // （覆盖"在路上"与"在途查询"两种状态；输入意图原样保留）
+            const bool pendingPath =
+                request != nullptr && request->state == ecs::PathStatus::Pending;
+            if (intent != nullptr && registry.any_of<ecs::LocalControl>(e) &&
+                (intent->x != 0.0f || intent->y != 0.0f) &&
+                (follow.status == ecs::PathStatus::Following || pendingPath)) {
                 follow.status = ecs::PathStatus::None;
                 follow.waypoints.clear();
                 follow.index = 0;
@@ -127,6 +137,23 @@ void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
             }
             if (follow.status != ecs::PathStatus::Following) {
                 return;  // Arrived/Failed/None：不再触碰意图（避免覆盖后续输入）
+            }
+
+            // M4-T7：卡住检测——窗口内位移过小 → 标记重寻路（下 tick 走阶段 2 重新提交）
+            follow.stuckTimer += dt;
+            if (follow.stuckTimer >= kStuckCheckSeconds) {
+                const float movedX = position.x - follow.anchorX;
+                const float movedY = position.y - follow.anchorY;
+                const bool stuck = movedX * movedX + movedY * movedY < kStuckMinMoveSq;
+                if (stuck && request != nullptr && !request->newRequest &&
+                    request->state != ecs::PathStatus::Pending) {
+                    request->newRequest = true;
+                    ZL_DEBUG(kLogModule, "卡住重寻路：稳定 ID {} 目标格 ({}, {})",
+                             world.IdOf(e).id, request->goalX, request->goalY);
+                }
+                follow.anchorX = position.x;
+                follow.anchorY = position.y;
+                follow.stuckTimer = 0.0f;
             }
 
             // 连续消费已到达的路点（低速大步长时一 tick 可跨多个）

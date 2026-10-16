@@ -374,6 +374,68 @@ TEST_CASE("M4-T6 PathFollowSystem：手动输入取消寻路（手动优先）")
     CHECK(registry.get<ecs::MoveIntent>(e).y == doctest::Approx(0.0f));
 }
 
+TEST_CASE("M4-T7 passability：FindNearestWalkable 螺旋环序") {
+    SUBCASE("自身可走直接返回") {
+        int x = 0;
+        int y = 0;
+        CHECK(ai::FindNearestWalkable(7, 9, 4, [](int, int) { return true; }, &x, &y));
+        CHECK(x == 7);
+        CHECK(y == 9);
+    }
+    SUBCASE("中心九宫格阻挡 → 第二环首命中（确定性）") {
+        const auto walkable = [](int gx, int gy) {
+            return std::abs(gx - 5) > 1 || std::abs(gy - 5) > 1;
+        };
+        int x = 0;
+        int y = 0;
+        CHECK(ai::FindNearestWalkable(5, 5, 4, walkable, &x, &y));
+        CHECK(x == 3);  // r=2 环按 dy、dx 升序 → 首个 (3,3)
+        CHECK(y == 3);
+    }
+    SUBCASE("半径不够 → false") {
+        int x = 0;
+        int y = 0;
+        CHECK_FALSE(ai::FindNearestWalkable(5, 5, 1, [](int, int) { return false; }, &x, &y));
+    }
+}
+
+TEST_CASE("M4-T7 PathFollowSystem：卡住 → 自动重寻路（1.2s 窗口）") {
+    ai::PathfindingService service(nullptr, ai::MapChunkBounds{0, 0, 2, 2});
+    world::Chunk chunk(0, 0);  // 全空 = 全可走
+    service.OnChunkLoaded(chunk);
+
+    ecs::EcsWorld world;
+    ai::PathFollowSystem pathFollow(&service);
+    const ecs::Entity e = world.Create();
+    entt::registry& registry = world.Registry();
+    registry.emplace<ecs::Position>(e, ecs::Position{1.5f, 1.5f, 0});
+    registry.emplace<ecs::Velocity>(e, ecs::Velocity{});
+    registry.emplace<ecs::MoveIntent>(e, ecs::MoveIntent{});
+    registry.emplace<ecs::PathFollow>(e, ecs::PathFollow{});
+    ecs::PathRequest request;
+    request.goalX = 8;
+    request.goalY = 8;
+    request.newRequest = true;
+    registry.emplace<ecs::PathRequest>(e, request);
+
+    constexpr float dt = 1.0f / 60.0f;
+    SUBCASE("原地不动 → 触发一次重寻路") {
+        for (int tick = 0; tick < 100; ++tick) {  // 1.67s
+            pathFollow.Update(world, dt);
+        }
+        CHECK(service.GetStats().submitted >= 2u);  // 初次提交 + 卡住重寻路
+        CHECK(service.GetStats().submitted <= 3u);  // 但不该每 tick 刷查询
+        CHECK(registry.get<ecs::PathFollow>(e).status == ecs::PathStatus::Following);
+    }
+    SUBCASE("持续前进 → 不触发") {
+        for (int tick = 0; tick < 100; ++tick) {
+            pathFollow.Update(world, dt);
+            registry.get<ecs::Position>(e).x += 0.05f;  // 0.05 格/tick > 阈值
+        }
+        CHECK(service.GetStats().submitted == 1u);
+    }
+}
+
 TEST_CASE("M4-T6 PathfindingService：后台线程异步查询（真实线程池）") {
     core::TaskScheduler tasks(2);
     ai::PathfindingService service(&tasks, ai::MapChunkBounds{0, 0, 2, 2});

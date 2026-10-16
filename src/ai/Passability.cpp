@@ -1,5 +1,8 @@
 #include "ai/Passability.h"
 
+#include <algorithm>
+#include <cstdlib>
+
 #include "world/Chunk.h"
 #include "world/GridSquare.h"
 #include "world/WorldCoords.h"
@@ -65,6 +68,25 @@ bool PathSnapshot::IsBlocked(int gx, int gy) const {
     const world::SquareLocal local = world::SquareLocalOf(gx, gy);
     const std::uint16_t row = m_rows[chunkIndex * core::kChunkSize + local.ly];
     return ((row >> local.lx) & 1u) != 0;
+}
+
+bool FindNearestWalkable(int x, int y, int maxRadius,
+                         const std::function<bool(int, int)>& walkable, int* outX, int* outY) {
+    for (int radius = 0; radius <= maxRadius; ++radius) {
+        for (int dy = -radius; dy <= radius; ++dy) {
+            for (int dx = -radius; dx <= radius; ++dx) {
+                if (std::max(std::abs(dx), std::abs(dy)) != radius) {
+                    continue;  // 只看当前环
+                }
+                if (walkable(x + dx, y + dy)) {
+                    *outX = x + dx;
+                    *outY = y + dy;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 }  // namespace zl::ai

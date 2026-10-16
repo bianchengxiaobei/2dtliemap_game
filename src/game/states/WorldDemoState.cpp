@@ -18,6 +18,7 @@
 #include "core/Input.h"
 #include "core/Log.h"
 #include "ai/PathfindingService.h"
+#include "ai/Passability.h"
 #include "ai/components/AiComponents.h"
 #include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
@@ -43,6 +44,7 @@ namespace {
 constexpr float kPanSpeedPxPerSecond = 900.0f;
 constexpr float kGridLineThickness = 1.2f;
 constexpr float kHoverLineThickness = 2.5f;
+constexpr float kMarkerLineThickness = 3.0f;
 constexpr float kStatsLogInterval = 3.0f;
 constexpr float kPerfLogInterval = 5.0f;
 constexpr float kWanderRetargetSeconds = 5.0f;  // M4-T6：游荡者重派目标周期
@@ -52,6 +54,14 @@ constexpr uint32_t kAxisXColor = 0xc04040ff;  // 红
 constexpr uint32_t kAxisYColor = 0xc040ff40;  // 绿
 // 上层（z≥1）透明度策略（M3-T6 临时方案）：楼上整体 35% 不透明，看得到室内
 constexpr uint32_t kUpperZColor = 0x59ffffff;
+// M4-T7：寻路目标标记（SpriteBatch 色，格式同 kHoverColor）
+constexpr uint32_t kMarkerActiveColor = 0xff40e0ff;  // 黄：寻路中/跟随中（常显）
+constexpr uint32_t kMarkerArriveColor = 0xff50ff60;  // 绿：到达（限时）
+constexpr uint32_t kMarkerFailColor = 0xff3030ff;    // 红：不可达（限时）
+// M4-T7：HUD 提示文本色（bgfx debug text 属性字节）
+constexpr uint32_t kNoticeInfoColor = 0x0E;  // 黄
+constexpr uint32_t kNoticeOkColor = 0x0A;    // 绿
+constexpr uint32_t kNoticeFailColor = 0x0C;  // 红
 
 // 工作集内存（压测记录用；非 Windows 返回 0）
 uint64_t WorkingSetBytes() {
@@ -102,7 +112,7 @@ void WorldDemoState::OnEnter() {
     SpawnDemoEntities();
     // M4-T4：玩家实体由 OnFrame 延迟生成（等目标 chunk 加载完成）
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
 }
 
 void WorldDemoState::ApplyCameraMode() {
@@ -202,29 +212,146 @@ void WorldDemoState::EnsurePlayerSpawned() {
     if (target == nullptr || target->State() != world::ChunkState::Loaded) {
         return;  // 下帧再试
     }
-    // 螺旋外扩找可走格
-    for (int r = 0; r <= 24; ++r) {
-        for (int dy = -r; dy <= r; ++dy) {
-            for (int dx = -r; dx <= r; ++dx) {
-                if (std::max(std::abs(dx), std::abs(dy)) != r) {
-                    continue;  // 只看当前环
-                }
-                const int wx = kTargetX + dx;
-                const int wy = kTargetY + dy;
-                if (IsSolidSquare(wx, wy)) {
-                    continue;
-                }
-                m_player = SpawnCharacter(static_cast<float>(wx) + 0.5f,
-                                          static_cast<float>(wy) + 0.5f);
-                entt::registry& registry = m_ctx.ecs->Registry();
-                registry.emplace<ecs::PlayerTag>(m_player);
-                registry.emplace<ecs::LocalControl>(m_player, ecs::LocalControl{});
-                registry.emplace<ecs::MoveIntent>(m_player, ecs::MoveIntent{});
-                ZL_INFO("game", "玩家实体生成：格 ({}, {})（目标 ({}, {})，搜索半径 {}）", wx, wy,
-                        kTargetX, kTargetY, r);
-                return;
-            }
+    // 螺旋外扩找可走格（M4-T7：改用 ai::FindNearestWalkable 统一环序）
+    int spawnX = 0;
+    int spawnY = 0;
+    const bool found = ai::FindNearestWalkable(
+        kTargetX, kTargetY, 24, [this](int wx, int wy) { return !IsSolidSquare(wx, wy); },
+        &spawnX, &spawnY);
+    if (!found) {
+        return;  // 全扫不到（理论不出现）：下帧再试
+    }
+    m_player = SpawnCharacter(static_cast<float>(spawnX) + 0.5f,
+                              static_cast<float>(spawnY) + 0.5f);
+    entt::registry& registry = m_ctx.ecs->Registry();
+    registry.emplace<ecs::PlayerTag>(m_player);
+    registry.emplace<ecs::LocalControl>(m_player, ecs::LocalControl{});
+    registry.emplace<ecs::MoveIntent>(m_player, ecs::MoveIntent{});
+    registry.emplace<ecs::PathRequest>(m_player, ecs::PathRequest{});  // M4-T7：点击移动
+    registry.emplace<ecs::PathFollow>(m_player, ecs::PathFollow{});
+    const int radius = std::max(std::abs(spawnX - kTargetX), std::abs(spawnY - kTargetY));
+    ZL_INFO("game", "玩家实体生成：格 ({}, {})（目标 ({}, {})，搜索半径 {}）", spawnX, spawnY,
+            kTargetX, kTargetY, radius);
+}
+
+void WorldDemoState::SetNotice(std::string text, uint32_t color, float seconds) {
+    m_noticeText = std::move(text);
+    m_noticeColor = color;
+    m_noticeTimer = seconds;
+}
+
+void WorldDemoState::HandleClickToMove(const render::GridPick& pick) {
+    if (m_ctx.ecs == nullptr || m_player == entt::null || !pick.hit) {
+        return;  // 玩家未生成 / 拾取无效
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* request = registry.try_get<ecs::PathRequest>(m_player);
+    if (request == nullptr) {
+        ZL_WARN("game", "点击移动：玩家缺少 PathRequest 组件（内部错误）");
+        return;
+    }
+
+    int targetX = pick.x;
+    int targetY = pick.y;
+
+    // 1) 地图范围校验（chunk 边界闭区间）
+    const world::MapLoader::Meta& meta = m_ctx.chunkManager->Map();
+    const world::ChunkCoord targetChunk = world::ChunkOf(targetX, targetY);
+    const bool insideMap = meta.chunksX > 0 && meta.chunksY > 0 &&
+                           targetChunk.cx >= meta.chunkX0 &&
+                           targetChunk.cx < meta.chunkX0 + meta.chunksX &&
+                           targetChunk.cy >= meta.chunkY0 &&
+                           targetChunk.cy < meta.chunkY0 + meta.chunksY;
+    if (!insideMap) {
+        SetNotice("超出地图范围", kNoticeFailColor, 2.5f);
+        ZL_INFO("game", "点击移动：目标格 ({}, {}) 超出地图（忽略）", targetX, targetY);
+        return;
+    }
+
+    // 2) chunk 已加载校验（未加载 = 通行未知，不发起）
+    const world::Chunk* chunk = FindChunk(targetChunk.cx, targetChunk.cy);
+    if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
+        SetNotice("目标区域未加载", kNoticeFailColor, 2.5f);
+        ZL_INFO("game", "点击移动：目标格 ({}, {}) 所在 chunk 未加载（忽略）", targetX, targetY);
+        return;
+    }
+
+    // 3) 目标格校验：阻挡 → 就近可走格（Chebyshev 环 ≤4；仍找不到 = 不可达，直接反馈）
+    bool adjusted = false;
+    if (IsSolidSquare(targetX, targetY)) {
+        int nearX = 0;
+        int nearY = 0;
+        const int clickedX = targetX;
+        const int clickedY = targetY;
+        const bool found = ai::FindNearestWalkable(
+            targetX, targetY, 4,
+            [this](int wx, int wy) { return !IsSolidSquare(wx, wy); }, &nearX, &nearY);
+        if (!found) {
+            SetNotice("不可达：目标格 (" + std::to_string(targetX) + "," +
+                          std::to_string(targetY) + ")",
+                      kNoticeFailColor, 3.0f);
+            m_markerX = targetX;
+            m_markerY = targetY;
+            m_markerTimer = 3.0f;
+            m_markerColor = kMarkerFailColor;
+            ZL_INFO("game", "点击移动：目标格 ({}, {}) 附近无可行格（不可达反馈）", targetX,
+                    targetY);
+            return;
         }
+        adjusted = true;
+        targetX = nearX;
+        targetY = nearY;
+        ZL_INFO("game", "点击移动：目标格 ({}, {}) 阻挡 → 就近可走格 ({}, {})", clickedX,
+                clickedY, targetX, targetY);
+    }
+
+    // 4) 写 PathRequest（PathFollowSystem 下一 tick 提交后台查询）
+    request->goalX = targetX;
+    request->goalY = targetY;
+    request->newRequest = true;
+    SetNotice(adjusted ? "目标已校正，寻路中…" : "寻路中…", kNoticeInfoColor, 1.2f);
+    ZL_INFO("game", "点击移动：玩家 → 目标格 ({}, {})", targetX, targetY);
+}
+
+void WorldDemoState::UpdatePathFeedback(double frameDt) {
+    if (m_noticeTimer > 0.0f) {
+        m_noticeTimer = std::max(0.0f, m_noticeTimer - static_cast<float>(frameDt));
+    }
+    if (m_markerTimer > 0.0f) {
+        m_markerTimer = std::max(0.0f, m_markerTimer - static_cast<float>(frameDt));
+    }
+    m_markerPathActive = false;
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return;
+    }
+    const auto* request = m_ctx.ecs->Registry().try_get<ecs::PathRequest>(m_player);
+    if (request == nullptr) {
+        return;
+    }
+    const ecs::PathStatus state = request->state;
+    if (state != m_lastPlayerPathState) {
+        if (state == ecs::PathStatus::Arrived) {
+            SetNotice("已到达目标", kNoticeOkColor, 1.5f);
+            m_markerX = request->goalX;
+            m_markerY = request->goalY;
+            m_markerTimer = 1.5f;
+            m_markerColor = kMarkerArriveColor;
+        } else if (state == ecs::PathStatus::Failed) {
+            SetNotice("不可达：目标格 (" + std::to_string(request->goalX) + "," +
+                          std::to_string(request->goalY) + ")",
+                      kNoticeFailColor, 3.0f);
+            m_markerX = request->goalX;
+            m_markerY = request->goalY;
+            m_markerTimer = 3.0f;
+            m_markerColor = kMarkerFailColor;
+        }
+        m_lastPlayerPathState = state;
+    }
+    if (state == ecs::PathStatus::Pending || state == ecs::PathStatus::Following) {
+        m_markerX = request->goalX;  // 寻路中/跟随中：黄色目标标记常显
+        m_markerY = request->goalY;
+        m_markerPathActive = true;
+        m_markerColor = kMarkerActiveColor;
     }
 }
 
@@ -355,6 +482,7 @@ void WorldDemoState::OnTick(double tickDt) {
 void WorldDemoState::OnFrame(double frameDt, double alpha) {
     (void)alpha;
     HandleFrameInput(frameDt);
+    UpdatePathFeedback(frameDt);  // M4-T7：点击移动反馈（提示文字/目标标记计时与状态跃迁）
     UpdateCruise(frameDt);
     UpdateCameraFollow(frameDt);  // M4-T5：跟随在巡航之后（巡航接管时不生效）
 
@@ -570,6 +698,11 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     m_hoverHit = pick.hit;
     m_hoverX = pick.x;
     m_hoverY = pick.y;
+
+    // M4-T7：左键点击移动（拾取 → 校验 → PathRequest；巡航期间不接管）
+    if (input.IsMouseButtonPressed(0) && !(m_cruiseEnabled && !m_cruiseFinished)) {
+        HandleClickToMove(pick);
+    }
 }
 
 glm::vec2 WorldDemoState::MouseToFramebuffer(const glm::vec2& mousePx) const {
@@ -780,6 +913,19 @@ void WorldDemoState::DrawDebugOverlay() {
         batch.DrawLine(bottom, left, kHoverLineThickness, kHoverColor);
         batch.DrawLine(left, top, kHoverLineThickness, kHoverColor);
     }
+    // M4-T7：寻路目标标记（黄=进行中常显；绿/红=到达/不可达 限时）
+    if (m_markerPathActive || m_markerTimer > 0.0f) {
+        const glm::vec2 center =
+            render::ToScreen(static_cast<float>(m_markerX), static_cast<float>(m_markerY));
+        const glm::vec2 top = center + glm::vec2(0.0f, -22.0f);
+        const glm::vec2 right = center + glm::vec2(44.0f, 0.0f);
+        const glm::vec2 bottom = center + glm::vec2(0.0f, 22.0f);
+        const glm::vec2 left = center + glm::vec2(-44.0f, 0.0f);
+        batch.DrawLine(top, right, kMarkerLineThickness, m_markerColor);
+        batch.DrawLine(right, bottom, kMarkerLineThickness, m_markerColor);
+        batch.DrawLine(bottom, left, kMarkerLineThickness, m_markerColor);
+        batch.DrawLine(left, top, kMarkerLineThickness, m_markerColor);
+    }
     batch.End();
 }
 
@@ -917,7 +1063,12 @@ void WorldDemoState::DrawDebugText() {
             pathStats.avgMs, m_ctx.pathfinding->CachedChunks(), following);
     }
     bgfx::dbgTextPrintf(0, 9, 0x07,
-                        "WASD move | F4 free cam | arrows/RMB drag pan | wheel zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+                        "WASD/LMB move | F4 free cam | arrows/RMB drag pan | wheel zoom | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+    // M4-T7：点击移动反馈（限时提示：寻路中/已到达/不可达）
+    if (m_noticeTimer > 0.0f && !m_noticeText.empty()) {
+        bgfx::dbgTextPrintf(0, 11, static_cast<std::uint8_t>(m_noticeColor), "%s",
+                            m_noticeText.c_str());
+    }
 }
 
 }  // namespace zl::game
