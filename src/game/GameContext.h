@@ -24,6 +24,7 @@ class BoidsSystem;
 class LodSystem;
 class PathfindingService;
 class PerceptionSystem;
+class SpawnLodSystem;
 class VirtualHordeStore;
 }  // namespace zl::ai
 
@@ -100,6 +101,9 @@ struct GameContext {
 
     // 战斗（M5-T6 起）：伤害管线入口（演示/脚本可直调 ApplyDamage）+ HUD 统计
     characters::CombatSystem* combat = nullptr;
+
+    // 刷怪与虚拟化（M5-T7 起）：密度目标/实体化/虚拟化（只读统计）
+    ai::SpawnLodSystem* spawnLod = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

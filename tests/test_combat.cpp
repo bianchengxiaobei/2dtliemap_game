@@ -380,3 +380,59 @@ TEST_CASE("感知：倒地/死亡玩家不再是视觉目标（僵尸立即丢�
     CHECK(registry.get<ecs::AiState>(zombie).targetId == 0u);
     CHECK(perception.GetStats().seeing == 0);
 }
+
+TEST_CASE("CombatSystem：倒地/死亡攻击者的挥击被忽略（冒烟抓出：死人出刀封口）") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+
+    // 攻击者 A：已倒地（Dying）但残留 pending 挥击（玩家倒地窗口内按空格）
+    const auto downed = world.Create();
+    registry.emplace<Position>(downed, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(downed, Health{-5.0f, 100.0f});
+    registry.emplace<ecs::Dying>(downed);
+    ecs::AttackIntent intentA;
+    intentA.dirX = 1.0f;
+    intentA.range = 1.5f;
+    intentA.damage = 40.0f;
+    intentA.pending = true;
+    registry.emplace<ecs::AttackIntent>(downed, intentA);
+
+    // 攻击者 B：HP 归零但还没挂 Dying 组件（DeathSystem 之前的同 tick 残留）
+    const auto zeroHp = world.Create();
+    registry.emplace<Position>(zeroHp, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(zeroHp, Health{0.0f, 100.0f});
+    ecs::AttackIntent intentB;
+    intentB.dirX = 1.0f;
+    intentB.range = 1.5f;
+    intentB.damage = 40.0f;
+    intentB.pending = true;
+    registry.emplace<ecs::AttackIntent>(zeroHp, intentB);
+
+    // 锥内目标：不应被"死人"打到
+    const auto victim = world.Create();
+    registry.emplace<Position>(victim, Position{1.0f, 0.0f, 0});
+    registry.emplace<Health>(victim, Health{100.0f, 100.0f});
+
+    CombatSystem combat;
+    combat.Update(world, kDt);
+    CHECK(registry.get<Health>(victim).current == doctest::Approx(100.0f));
+    CHECK(combat.GetStats().swings == 0u);   // 未消费成挥击
+    CHECK(combat.GetStats().hits == 0u);
+    CHECK_FALSE(registry.get<ecs::AttackIntent>(downed).pending);  // pending 已清（不悬留）
+    CHECK_FALSE(registry.get<ecs::AttackIntent>(zeroHp).pending);
+
+    // 活着的攻击者同参数 → 正常结算（对照组）
+    const auto alive = world.Create();
+    registry.emplace<Position>(alive, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(alive, Health{100.0f, 100.0f});
+    ecs::AttackIntent intentC;
+    intentC.dirX = 1.0f;
+    intentC.range = 1.5f;
+    intentC.damage = 40.0f;
+    intentC.pending = true;
+    registry.emplace<ecs::AttackIntent>(alive, intentC);
+    combat.Update(world, kDt);
+    CHECK(registry.get<Health>(victim).current == doctest::Approx(60.0f));
+    CHECK(combat.GetStats().swings == 1u);
+    CHECK(combat.GetStats().hits == 1u);
+}

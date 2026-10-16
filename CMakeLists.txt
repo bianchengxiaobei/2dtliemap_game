@@ -38,6 +38,7 @@ add_executable(ZomboidLike
     src/ai/systems/LodSystem.cpp
     src/ai/systems/PathFollowSystem.cpp
     src/ai/systems/PerceptionSystem.cpp
+    src/ai/systems/SpawnLodSystem.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/CombatSystem.cpp
     src/characters/systems/DeathSystem.cpp
@@ -58,6 +59,7 @@ add_executable(ZomboidLike
     src/game/EventProbe.cpp
     src/game/GameApp.cpp
     src/game/RenderCollectSystem.cpp
+    src/game/ZombieFactory.cpp
     src/game/states/RenderDemoState.cpp
     src/game/states/SandboxState.cpp
     src/game/states/WorldDemoState.cpp
@@ -121,6 +123,7 @@ add_executable(ZomboidLikeTests
     tests/test_perception.cpp
     tests/test_boids.cpp
     tests/test_combat.cpp
+    tests/test_spawn_lod.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -131,6 +134,7 @@ add_executable(ZomboidLikeTests
     src/ai/systems/LodSystem.cpp
     src/ai/systems/PathFollowSystem.cpp
     src/ai/systems/PerceptionSystem.cpp
+    src/ai/systems/SpawnLodSystem.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/CombatSystem.cpp
     src/characters/systems/DeathSystem.cpp

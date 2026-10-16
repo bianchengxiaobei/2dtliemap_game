@@ -128,6 +128,15 @@ void CombatSystem::Update(ecs::EcsWorld& world, float dt) {
                 return;  // continue
             }
             attack.pending = false;  // 只消费一次
+            // 倒地/死亡攻击者不挥击（冒烟抓出：倒地窗口内残留的挥击会"死人出刀"；
+            // 僵尸侧由 AiSystem 的硬直/死亡冻结兜底，此处统一封口）
+            if (!world.Alive(attacker) || registry.any_of<ecs::Dying>(attacker)) {
+                return;  // continue
+            }
+            if (const auto* actorHealth = registry.try_get<ecs::Health>(attacker);
+                actorHealth != nullptr && actorHealth->current <= 0.0f) {
+                return;  // continue
+            }
             ++m_stats.swings;
 
             const float dirLen =

@@ -732,3 +732,48 @@ playerStagger 0.35 / deathFallSeconds 0.5）+ `Attack: SPACE`。
 （被撕咬硬直实时可见）、`virtual nearest=29`（M5-T5 无回归）。
 **已知调优项**：≥5 只僵尸围咬时玩家被连续硬直难以脱身（PZ 式"被抓住"；平衡与逃生留 M6+
 武器/推挤），重生点固定原地（安全点选择留后续）。
+
+---
+
+## 2026-10-16 M5-T7 刷怪与虚拟化（人口守恒：live ⇄ virtual 双向转换）
+
+**SpawnLodSystem**（`ai/systems/SpawnLodSystem`，链位 Death → **SpawnLod** → Animation）
+- 同一批僵尸三种形态、人口守恒：`live(registry) + virtual(群落统计) ≈ populationTarget`
+  —— 转换只改形态不改总量；击杀才会减少总量，补给只补缺口（不会"分身"）；
+- **密度目标（补给）**：总量低于 target 时按 refillPerSecond 把缺口补成虚拟僵尸，
+  落在焦点周围 [refillRadius, +band] 环带（近距 AddOrMerge 归并既有群落），
+  由 VirtualHordeSystem 的漂移逐步带近 —— "区域密度"由此自适应维持；
+- **实体化**：群落中心进 materializeRadius（32 格）→ 按全局速率拆出实体入 registry：
+  出生点 = 群落中心 ± spread 圆盘采样 + 可走格吸附（FindNearestWalkable）+
+  **推离焦点至 minSpawnDistance（30 格）保证在弹出的视野外**；maxLive（320）封顶；
+- **虚拟化（回差防抖）**：实体超 virtualizeRadius（48 格）→ despawn 钩子回收物理体 →
+  销毁实体 → AddOrMerge 折回群落统计；32/48 的回差带消除边界来回转换抖动；
+- 倒地（Dying）/已死亡实体不参与虚拟化（归 DeathSystem）；速率按帧累计（perSecond × dt）、
+  单 tick 上限 8 个（倍速保护）；每 5s 一条 DEBUG 统计（冒烟时间序列证据）。
+
+**VirtualHordeStore::AddOrMerge**：虚拟化回收与密度补给共用——最近群落中心 ≤ mergeRadius
+则就地并入（统计粒度不需精确质心），否则新建。
+
+**ZombieFactory**（`game/ZombieFactory`）：僵尸组件构成单一出处（AI/感知/寻路/战斗/LOD/物理
+全套）；WorldDemoState 初始 40 只种子改为调工厂（净删 20 行），GameApp 的 SpawnLodSystem
+实体化回调共用同一工厂 —— 演示种子与流式实体完全同构。
+
+**接线**：config `spawner.*`（populationTarget 240 / maxLive 320 / 32/16 / 30 / 48/12 /
+2 / 40+20 / 15）；HUD 新增第 14 行 `spawn: live/virtual/hordes | mat/virt/refill`；
+focus 与 LodSystem 同源（相机中心）。
+
+**冒烟（实机 + 3 张 HUD/日志证据）**
+- 初始：`live=40 virtual=200 hordes=5 | mat=0 virt=0 refill=0`（demo 种子 40+200=240 恰好满员）；
+- F4 自由相机左移 ~60 格（焦点远离）→ **虚拟化**：`live=44 virtual=196 hordes=10 | mat=40
+  virt=36`，最近群落 49 格（回差带外），守恒 240；
+- 相机移回 → **实体化**：`live=93 virtual=147 | mat=121 virt=68`，最近群落 31 格（持续出笼），守恒 240；
+- 空格连杀 7 只 → **补给**：`refill=7`、`live=82 virtual=158`，守恒逐项对账精确
+  （40 + 51mat − 2virt − 7kills = 82 ✓）—— HUD 行 14 截图 m5t7c_refill。
+- 冒烟抓出并修复边缘 bug：**倒地窗口内残留的玩家挥击仍会"死人出刀"**（来源 ID 已倒地，
+  击杀日志打脸）→ CombatSystem 消费 AttackIntent 时统一校验攻击者
+  （Alive + 非 Dying + HP>0），新增单测锁定。
+
+**测试**（tests/test_spawn_lod.cpp 新增 7 用例）：AddOrMerge 归并语义；实体化速率/扣减/
+格中心吸附；maxLive 与单 tick 上限双封顶；虚拟化折回+归并+回差防抖；倒地/死亡不越权；
+补给环形放置+到目标即停；守恒（实体化/虚拟化后 live+virtual 不变，焦点移动场景）。
+CombatSystem 增补"倒地攻击者挥击忽略"用例。**127 用例 / Debug 117543 / Release 117544 断言全绿**。

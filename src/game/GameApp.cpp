@@ -8,7 +8,9 @@
 #include <GLFW/glfw3.h>
 
 #include "core/Log.h"
+#include "ecs/components/PhysicsComponents.h"
 #include "game/WorldQueries.h"
+#include "game/ZombieFactory.h"
 #include "game/states/RenderDemoState.h"
 #include "game/states/SandboxState.h"
 #include "game/states/WorldDemoState.h"
@@ -236,6 +238,45 @@ bool GameApp::Init(int argc, char** argv) {
     const float deathFallSeconds =
         static_cast<float>(m_config.Get<double>("combat.deathFallSeconds", 0.5));
 
+    // 5.9 刷怪与虚拟化（M5-T7）：区域密度目标 + 离屏实体化/虚拟化（人口守恒）
+    ai::SpawnLodSystem::Params spawnParams;
+    spawnParams.populationTarget = m_config.Get<int>("spawner.populationTarget", 240);
+    spawnParams.maxLive = m_config.Get<int>("spawner.maxLive", 320);
+    spawnParams.materializeRadius =
+        static_cast<float>(m_config.Get<double>("spawner.materializeRadius", 32.0));
+    spawnParams.materializePerSecond =
+        static_cast<float>(m_config.Get<double>("spawner.materializePerSecond", 16.0));
+    spawnParams.minSpawnDistance =
+        static_cast<float>(m_config.Get<double>("spawner.minSpawnDistance", 30.0));
+    spawnParams.virtualizeRadius =
+        static_cast<float>(m_config.Get<double>("spawner.virtualizeRadius", 48.0));
+    spawnParams.virtualizePerSecond =
+        static_cast<float>(m_config.Get<double>("spawner.virtualizePerSecond", 12.0));
+    spawnParams.refillPerSecond =
+        static_cast<float>(m_config.Get<double>("spawner.refillPerSecond", 2.0));
+    spawnParams.refillRadius =
+        static_cast<float>(m_config.Get<double>("spawner.refillRadius", 40.0));
+    spawnParams.refillBandWidth =
+        static_cast<float>(m_config.Get<double>("spawner.refillBandWidth", 20.0));
+    spawnParams.mergeRadius =
+        static_cast<float>(m_config.Get<double>("spawner.mergeRadius", 15.0));
+    m_spawnLodSystem = std::make_unique<ai::SpawnLodSystem>(
+        walkable,
+        [this](ecs::EcsWorld& w, float px, float py) {
+            return SpawnZombie(w, m_physics.get(), px, py);
+        },
+        [this](ecs::EcsWorld& w, ecs::Entity e) {
+            if (m_physics == nullptr) {
+                return;
+            }
+            if (const auto* rigid = w.Registry().try_get<ecs::RigidBody>(e);
+                rigid != nullptr && rigid->body != nullptr) {
+                m_physics->DestroyBody(rigid->body);  // 实体销毁前回收物理体
+            }
+        },
+        m_virtualHordes, spawnParams);
+    m_ctx.spawnLod = m_spawnLodSystem.get();
+
     // 6. 上下文 + 事件探针
     m_ctx.config = &m_config;
     m_ctx.events = &m_events;
@@ -323,6 +364,13 @@ bool GameApp::Init(int argc, char** argv) {
     m_deathSystem = std::make_unique<characters::DeathSystem>(m_physics.get(), deathFallSeconds);
     m_ecs.Systems().AddSystem("DeathSystem",
                               [this](ecs::EcsWorld& w, float dt) { m_deathSystem->Update(w, dt); });
+    // 刷怪与虚拟化（M5-T7）：在死亡结算之后（倒地窗口的实体不参与虚拟化）、动画之前；
+    // 实体化生成的新实体本 tick 不参与移动（Movement 已过），下一 tick 起全链生效
+    m_ecs.Systems().AddSystem("SpawnLodSystem", [this](ecs::EcsWorld& w, float dt) {
+        const glm::vec2 camGrid = render::FromScreen(m_camera.Center(), 0);
+        m_spawnLodSystem->SetFocus(camGrid.x, camGrid.y);
+        m_spawnLodSystem->Update(w, dt);
+    });
     // 动画读"物理实际速度"（撞墙≈0 → 自动进站立帧），因此排在 PhysicsSync 之后
     m_ecs.Systems().AddSystem("AnimationSystem", [this](ecs::EcsWorld& w, float dt) {
         m_animationSystem->Update(w, dt);
@@ -370,6 +418,7 @@ void GameApp::Shutdown() {
     m_animationSystem.reset();
     m_deathSystem.reset();
     m_combatSystem.reset();
+    m_spawnLodSystem.reset();
     m_inputSystem.reset();
     m_movementSystem.reset();
     m_pathFollowSystem.reset();  // 先于服务

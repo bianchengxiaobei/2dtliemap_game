@@ -10,6 +10,7 @@
 #include "ai/systems/LodSystem.h"
 #include "ai/systems/PathFollowSystem.h"
 #include "ai/systems/PerceptionSystem.h"
+#include "ai/systems/SpawnLodSystem.h"
 #include "characters/systems/AnimationSystem.h"
 #include "characters/systems/CombatSystem.h"
 #include "characters/systems/DeathSystem.h"
@@ -111,6 +112,8 @@ private:
     std::unique_ptr<ai::BoidsSystem> m_boidsSystem;
     // 虚拟化（M5-T5）：离屏僵尸的统计表示（不入 registry；T7 SpawnLodSystem 消费）
     ai::VirtualHordeStore m_virtualHordes;
+    // 刷怪与虚拟化（M5-T7）：密度目标 + 实体化/虚拟化（Death 之后、Animation 之前）
+    std::unique_ptr<ai::SpawnLodSystem> m_spawnLodSystem;
 
     // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
     ecs::EcsWorld m_ecs;

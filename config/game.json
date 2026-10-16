@@ -75,6 +75,19 @@
     "playerStaggerSeconds": 0.35,
     "deathFallSeconds": 0.5
   },
+  "spawner": {
+    "populationTarget": 240,
+    "maxLive": 320,
+    "materializeRadius": 32.0,
+    "materializePerSecond": 16.0,
+    "minSpawnDistance": 30.0,
+    "virtualizeRadius": 48.0,
+    "virtualizePerSecond": 12.0,
+    "refillPerSecond": 2.0,
+    "refillRadius": 40.0,
+    "refillBandWidth": 20.0,
+    "mergeRadius": 15.0
+  },
   "input": {
     "bindings": {
       "Quit": "ESCAPE",

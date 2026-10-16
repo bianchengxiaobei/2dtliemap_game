@@ -19,6 +19,29 @@ std::uint64_t VirtualHordeStore::AddHorde(float cx, float cy, int count, float s
     return horde.id;
 }
 
+std::uint64_t VirtualHordeStore::AddOrMerge(float cx, float cy, int count, float spread,
+                                            float mergeRadius) {
+    if (count <= 0) {
+        return 0;
+    }
+    VirtualHorde* best = nullptr;
+    float bestSq = mergeRadius * mergeRadius;
+    for (VirtualHorde& horde : m_hordes) {
+        const float dx = horde.centerX - cx;
+        const float dy = horde.centerY - cy;
+        const float distSq = dx * dx + dy * dy;
+        if (distSq <= bestSq) {
+            bestSq = distSq;
+            best = &horde;
+        }
+    }
+    if (best != nullptr) {
+        best->count += count;  // 就地归并：中心/散布保持（统计粒度，无需精确质心）
+        return best->id;
+    }
+    return AddHorde(cx, cy, count, spread);
+}
+
 bool VirtualHordeStore::RemoveHorde(std::uint64_t id) {
     for (std::size_t i = 0; i < m_hordes.size(); ++i) {
         if (m_hordes[i].id == id) {

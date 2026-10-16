@@ -24,6 +24,7 @@
 #include "ai/systems/AiSystem.h"
 #include "ai/systems/LodSystem.h"
 #include "ai/systems/PerceptionSystem.h"
+#include "ai/systems/SpawnLodSystem.h"
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
 #include "characters/systems/AnimationSystem.h"
@@ -35,6 +36,7 @@
 #include "game/EventProbe.h"
 #include "game/CameraFollow.h"
 #include "game/WorldQueries.h"
+#include "game/ZombieFactory.h"
 #include "physics/PhysicsWorld.h"
 #include "platform/Window.h"
 #include "render/Camera.h"
@@ -388,29 +390,17 @@ void WorldDemoState::SpawnDemoEntities() {
     m_demoBoxY1 = 32.0f;
 
     constexpr int kCount = 40;
-    entt::registry& registry = world.Registry();
     for (int i = 0; i < kCount; ++i) {
         const float px = m_demoBoxX0 + u01(rng) * (m_demoBoxX1 - m_demoBoxX0);
         const float py = m_demoBoxY0 + u01(rng) * (m_demoBoxY1 - m_demoBoxY0);
-        const ecs::Entity e = SpawnCharacter(px, py);
-        // M5-T2/T3：AI 状态机 + 感知（视觉/听觉由 PerceptionSystem 驱动；
-        // 这里只给初始"可疑点" = 出生位置，避免无感知事件时巡点去 (0,0)）
-        registry.emplace<ecs::AiState>(e, ecs::AiState{});
-        ecs::PerceptionState percep;
-        percep.lastKnownX = px;
-        percep.lastKnownY = py;
-        registry.emplace<ecs::PerceptionState>(e, percep);
-        registry.emplace<ecs::MoveIntent>(e, ecs::MoveIntent{});
-        registry.emplace<ecs::PathRequest>(e, ecs::PathRequest{});
-        registry.emplace<ecs::PathFollow>(e, ecs::PathFollow{});
-        registry.emplace<ecs::LodState>(e, ecs::LodState{});  // M5-T5：LodSystem 逐帧写档位
-        registry.emplace<ecs::AttackIntent>(e, ecs::AttackIntent{});  // M5-T6：攻击脉冲 -> 伤害
+        SpawnZombie(world, m_ctx.physics, px, py);  // M5-T7：僵尸工厂（与实体化共用构成）
     }
     ZL_INFO("ecs", "生成 {} 个 AI 游荡者（AiSystem + PerceptionSystem；区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]）",
             kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1);
 
-    // M5-T5：虚拟僵尸群落 —— 200 只"离屏僵尸"只存统计（不入 registry），
-    // 朝玩家缓慢漂移；T7 SpawnLodSystem 将在焦点接近时实体化
+    // M5-T5/T7：虚拟僵尸群落种子（统计层，不入 registry）—— 演示的 200 只"离屏僵尸"；
+    // SpawnLodSystem 会把 populationTarget 内、焦点半径外的实体折回这里（AddOrMerge），
+    // 焦点接近时再实体化 —— live + virtual 与 populationTarget 对齐（人口守恒）
     if (m_ctx.virtualHordes != nullptr) {
         m_ctx.virtualHordes->Clear();
         constexpr int kHordes = 5;
@@ -1235,6 +1225,16 @@ void WorldDemoState::DrawDebugText() {
             static_cast<unsigned long long>(combatStats.swings),
             static_cast<unsigned long long>(combatStats.hits), combatStats.damageDealt,
             static_cast<unsigned long long>(combatStats.kills), combatStats.staggered);
+    }
+    // M5-T7：刷怪/虚拟化统计（live/virtual 存量 + 本局累计 实体化/虚拟化/补给）
+    if (m_ctx.spawnLod != nullptr) {
+        const ai::SpawnLodSystem::Stats spawnStats = m_ctx.spawnLod->GetStats();
+        bgfx::dbgTextPrintf(0, 14, 0x0f,
+                            "spawn: live=%d virtual=%d hordes=%d | mat=%llu virt=%llu refill=%llu",
+                            spawnStats.live, spawnStats.virtualZombies, spawnStats.hordes,
+                            static_cast<unsigned long long>(spawnStats.materialized),
+                            static_cast<unsigned long long>(spawnStats.virtualized),
+                            static_cast<unsigned long long>(spawnStats.spawned));
     }
 }
 

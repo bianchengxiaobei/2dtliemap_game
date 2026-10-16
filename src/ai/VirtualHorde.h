@@ -28,6 +28,9 @@ public:
     };
 
     std::uint64_t AddHorde(float cx, float cy, int count, float spread = 6.0f);
+    // M5-T7：按位置归并添加（实体化回收 / 人口补给共用）：最近群落中心距离 ≤ mergeRadius
+    // 则并入（保持原中心与散布），否则在 (cx,cy) 新建。返回承接的群落 id。
+    std::uint64_t AddOrMerge(float cx, float cy, int count, float spread, float mergeRadius);
     bool RemoveHorde(std::uint64_t id);
     // 实体化扣减（T7 用）：返回实际扣减数；扣空自动移除群落
     int TakeZombies(std::uint64_t id, int n);
