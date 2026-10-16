@@ -20,6 +20,10 @@
   "items": {
     "file": "assets/items.json"
   },
+  "script": {
+    "enabled": true,
+    "backend": "lua"
+  },
   "inventory": {
     "playerCapacityKg": 20.0,
     "pickupRadius": 1.6

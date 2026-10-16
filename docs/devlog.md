@@ -935,3 +935,35 @@ UseFirstConsumable 消耗语义，T5 版）；150 用例全绿（Debug 117857 / 
 **里程碑数字**：M6 共 5 任务（T4 顺延正式 UI）；测试从 127 → 150 用例；系统/内容：
 物品定义注册表（JSON v1 严格校验+行号报错）、容器/装备规则、地面物品实体（空间索引睡眠化）、
 拾取/丢弃/装备/使用临时按键闭环（正式 UI 后迁移）。下一步：M7 Lua 脚本系统（事件 + API + 热重载）。
+
+---
+
+## 2026-10-16 M7-T1 IScriptRuntime 抽象 + ScriptManager
+
+**交付**：`src/core/ScriptEvent.h`（脚本事件 = 事件名 + 命名字段 variant）、
+`src/script/IScriptRuntime.h`（ModInfo/ModError/后端接口）、`src/script/ScriptManager.h/.cpp`
+（后端注册表 + mod 路由 + 派发 + 错误隔离）+ `tests/test_script.cpp`（8 用例，FakeRuntime 夹具）。
+
+**接口设计（对 docs/03 §3 的落点说明）**：
+- 派发接口落在 **ScriptManager 层**（跨后端按 loadOrder 全量派发）；runtime 侧提供
+  `DispatchEventToMod(modId, ev) -> vector<ModError>`，使「错误 → 禁用该 mod」能精确归因
+  （docs 原稿的 runtime.DispatchEvent(ev) 无法定位出错 mod）；
+- runtime 只管「执行 + 捕获错误」，禁用/日志/路由策略全部在 manager（职责单一，便于
+  T2 LuaRuntime 聚焦 sol2 细节）。
+
+**错误隔离策略（本任务核心）**：
+- LoadMod 失败（含脚本语法错误，错误串带回路径+行号）→ 该 mod 不进入已加载表；
+- 派发期脚本错误 → `ZL_ERROR` 记 mod id + 事件名 + 错误（含路径行号）→ 标记该 mod 禁用，
+  后续事件跳过（禁用≠卸载，IsModLoaded 仍为 true）；其它 mod 与游戏不受影响；
+- 恢复路径：ReloadMod 成功即解除禁用（T6 热重载会复用）；重载失败按 docs/03 §8
+  简单版策略保持禁用；
+- 子目标全部可测：FakeRuntime 注入 加载/重载/派发 三类失败做黑盒验证。
+
+**接线**：GameApp Init 1.6（`script.enabled` 配置键，默认 true）→ `InitializeAll()` +
+就绪日志；Shutdown 在状态机销毁前 `ShutdownAll()`（逆序关闭 + 清 mod 记录，可重复调用）；
+config/game.json 新增 `script.enabled/script.backend`（T2/T5 消费）。T1 无后端实例，
+启动日志为 `脚本系统就绪（后端 0 个）`，Lua 后端 T2 注册。
+
+**测试**：158 用例全绿（Debug 117938 / Release 117939 断言）；覆盖 注册/重名拒绝、
+初始化失败隔离、加载路由（未注册后端/未就绪/运行时失败/重复加载）、按 loadOrder 派发 +
+命名字段传递、错误禁用 + 跳过、重载恢复/失败保持、卸载、ShutdownAll。

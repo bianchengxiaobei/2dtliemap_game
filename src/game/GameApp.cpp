@@ -84,6 +84,14 @@ bool GameApp::Init(int argc, char** argv) {
     }
     m_ctx.items = &m_itemRegistry;
 
+    // 1.6 脚本系统（M7-T1）：门面就绪；后端实例在 M7-T2 注册（script.backend 决定默认后端）
+    if (m_config.Get<bool>("script.enabled", true)) {
+        m_script.InitializeAll();
+        ZL_INFO("script", "脚本系统就绪（后端 {} 个）", m_script.RuntimeCount());
+    } else {
+        ZL_INFO("script", "脚本系统已禁用（script.enabled=false）");
+    }
+
     // 2. 窗口
     platform::Window::Desc desc;
     desc.width = m_config.Get<int>("window.width", 1280);
@@ -417,6 +425,7 @@ void GameApp::Shutdown() {
         m_events.Unsubscribe(m_soundSubscription);  // 先于感知系统销毁
         m_soundSubscription = core::EventBus::kInvalidSubscription;
     }
+    m_script.ShutdownAll();  // 脚本先于世界/状态销毁（M7 起脚本可能引用世界状态）
     m_states.Clear();
     // 渲染资源必须在 bgfx::shutdown 之前释放
     m_sprites.Shutdown();

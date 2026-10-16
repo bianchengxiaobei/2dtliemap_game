@@ -37,6 +37,7 @@
 #include "render/Renderer.h"
 #include "render/SpriteBatch.h"
 #include "render/Texture2D.h"
+#include "script/ScriptManager.h"
 #include "world/ChunkManager.h"
 #include "world/World.h"
 
@@ -122,6 +123,9 @@ private:
 
     // 物品定义注册表（M6-T1）：启动时加载 assets/items.json（校验失败以空表继续）
     items::ItemRegistry m_itemRegistry;
+
+    // 脚本系统（M7-T1）：后端注册表 + mod 生命周期门面；后端实例由 M7-T2（Lua）注册
+    script::ScriptManager m_script;
 
     double m_lastFrameTime = 0.0;
     bool m_shutdownDone = false;

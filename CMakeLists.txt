@@ -77,6 +77,7 @@ add_executable(ZomboidLike
     src/render/Renderer.cpp
     src/render/SpriteBatch.cpp
     src/render/Texture2D.cpp
+    src/script/ScriptManager.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp
     src/world/ChunkData.cpp
@@ -131,6 +132,7 @@ add_executable(ZomboidLikeTests
     tests/test_items.cpp
     tests/test_inventory.cpp
     tests/test_ground_items.cpp
+    tests/test_script.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -162,6 +164,7 @@ add_executable(ZomboidLikeTests
     src/physics/PhysicsWorld.cpp
     src/render/Camera.cpp
     src/render/IsoMath.cpp
+    src/script/ScriptManager.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp
     src/world/ChunkData.cpp
