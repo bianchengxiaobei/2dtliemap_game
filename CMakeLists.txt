@@ -48,6 +48,10 @@ add_executable(ZomboidLike
     src/render/Renderer.cpp
     src/render/SpriteBatch.cpp
     src/render/Texture2D.cpp
+    src/world/Cell.cpp
+    src/world/Chunk.cpp
+    src/world/GridSquare.cpp
+    src/world/World.cpp
 )
 
 target_include_directories(ZomboidLike PRIVATE src)
@@ -72,7 +76,13 @@ enable_testing()
 add_executable(ZomboidLikeTests
     tests/test_main.cpp
     tests/test_isomath.cpp
+    tests/test_world.cpp
+    src/core/Log.cpp
     src/render/IsoMath.cpp
+    src/world/Cell.cpp
+    src/world/Chunk.cpp
+    src/world/GridSquare.cpp
+    src/world/World.cpp
 )
 
 target_include_directories(ZomboidLikeTests PRIVATE src)
@@ -80,6 +90,7 @@ target_include_directories(ZomboidLikeTests PRIVATE src)
 target_link_libraries(ZomboidLikeTests PRIVATE
     doctest::doctest
     glm::glm
+    spdlog::spdlog
 )
 
 add_test(NAME ZomboidLikeTests COMMAND ZomboidLikeTests)

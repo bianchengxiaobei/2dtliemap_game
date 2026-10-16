@@ -14,7 +14,7 @@
 namespace zl::core {
 namespace {
 
-constexpr const char* kVersion = "0.1.0";
+constexpr const char* kVersion = "0.2.0";
 constexpr const char* kLogDir = "logs";
 constexpr const char* kLogFile = "logs/zomboidlike.log";
 constexpr std::size_t kLogMaxBytes = 5 * 1024 * 1024;

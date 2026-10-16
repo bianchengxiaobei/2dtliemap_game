@@ -42,12 +42,12 @@ spdlog::logger* Log();
 
 // 断言：Debug 下中断，Release 下记 critical 日志（docs/02 §5.2）
 // 用法：ZL_ASSERT(ptr != nullptr);  ZL_ASSERT(x > 0, "x 不能为负: {}", x);
-#define ZL_ASSERT(cond, ...)                                                                    \
-    do {                                                                                        \
-        if (!(cond)) {                                                                          \
-            SPDLOG_LOGGER_CRITICAL(::zl::core::Log(),                                           \
-                                   __VA_OPT__(__VA_ARGS__ " | ") "断言失败 [{}]: `{}`",         \
-                                   "core", #cond);                                              \
-            ZL_DEBUG_BREAK();                                                                   \
-        }                                                                                       \
+#define ZL_ASSERT(cond, ...)                                                                        \
+    do {                                                                                            \
+        if (!(cond)) {                                                                              \
+            SPDLOG_LOGGER_CRITICAL(::zl::core::Log(),                                               \
+                                   "断言失败 [{}]: `{}`" __VA_OPT__(" | " __VA_ARGS__), "core",     \
+                                   #cond);                                                          \
+            ZL_DEBUG_BREAK();                                                                       \
+        }                                                                                           \
     } while (0)
