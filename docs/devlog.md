@@ -222,3 +222,34 @@ egistry.valid() 仍真，
 QueueCreate 顺序与放弃、无效句柄与重复销毁、系统内销毁的可见性边界、Scheduler 顺序/开关/耗时统计、
 HashName 固定值（与 Python 交叉验证）+组件默认值、**10000 实体×3 轮创建/销毁压力（storage 容量复用不增长）**。
 合计 40 用例 / 116705 断言全绿；游戏冒烟启动无错误。
+
+---
+
+## 2026-10-16 M4-T2 空间索引 + 实体渲染收集
+
+**新增**
+- `src/ecs/SpatialIndex`：chunk 粒度均匀网格索引——每 tick 增量维护（扫 Position，
+  新建入桶/跨 chunk 换桶/销毁清出）；查询为只读回调式（`ForEachInChunks` 闭区间，零分配）；
+  z 不参与分桶，楼层/距离过滤由调用方做；
+- `src/render/DrawList.h`：`DrawItem`/`HashPick`/`DrawItemLess` 从 WorldDemoState 抽出为公共类型
+  （世界对象与实体共用一份列表 + 唯一排序入口）；DrawItem 新增 `tieBreaker`（实体用 StableId 决胜）；
+- `src/game/RenderCollectSystem`：渲染帧在场景对象收集后，把可见实体的高度精灵追加进同一份
+  DrawItem 列表（`kEntityLayerBase = kSquareLayerCount`，实体排在同格世界层之后）；
+  `FillEntityDrawItem` 为纯函数（脚底锚点 = 格中心，z≥1 同世界规则压 35% 透明）便于单测；
+- `AssetProvider::FramesByHash`：SpriteRef 只存 `HashName(逻辑名)`，provider 侧建反查表（含碰撞告警）；
+- 占位资源：`gen_placeholder_atlas.py` 新增小人帧 `character_placeholder`（64x128，脚底 y=112），
+  manifest 新增 `character.placeholder` 逻辑名；
+- 演示：WorldDemoState 生成 40 个实体在盒内漂移（**脚手架**，M4-T3 MovementSystem 接管后删除），
+  经空间索引 → 收集 → 统一排序渲染；HUD/日志加 ECS/索引计数。
+
+**实测**（village_demo，Debug）：实例 5034→5074（+40 实体）、drawcall 仍 3、FPS 59~61；
+实体与树/墙正确互相遮挡（截图 m4_entities.png）；世界统计含 ECS=40 索引=40。
+
+**踩坑**
+- **索引清理顺序**：先清已销毁、再扫 Position 会把「已入销毁队列但 registry 仍 valid」的实体
+  重新加回桶 → 第二步必须按 `EcsWorld::Alive()` 跳过（实体语义死亡 ≠ registry 无效，测试锁定）；
+- ViewRect 边界语义定为 `[min, max+1)` 闭合（含上/右边界格），测试锁定。
+
+**测试**（tests/test_spatialindex.cpp，8 用例）：分桶与边界（10.0 属下一 chunk/负数 FloorDiv/
+z 无关）、跨 chunk 换桶、销毁清出（含未 Flush）、范围查询与手工过滤对照、2 万实体全量一致、
+DrawItemLess 全序、FillEntityDrawItem 字段、ViewRect 包含性。合计 48 用例 / 116774 断言全绿。

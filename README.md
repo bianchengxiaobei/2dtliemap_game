@@ -24,7 +24,7 @@
 项目在 E:\Game\ZomboidLike。请按顺序读：
 README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md → docs/02-技术选型与开发规范.md
 （涉及脚本系统时再读 docs/03-脚本系统设计.md；涉及占位资源时读 assets_placeholder_pz/README.md）。
-以 docs/01 的任务清单为唯一任务依据，当前从 M4-T2 开始；写代码遵守 docs/02 的规范；
+以 docs/01 的任务清单为唯一任务依据，当前从 M4-T3 开始；写代码遵守 docs/02 的规范；
 构建命令走 tools/dev.ps1（Ninja 需要 MSVC 环境，如 .\tools\dev.ps1 cmake --build --preset x64-debug）；
 每完成一个任务把清单里对应项勾上，Git 提交信息带任务号（如 feat(render): sprite batch (M2-T3)）。
 ```
@@ -33,7 +33,7 @@ README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md �
 
 1. **README.md（本文件）** —— 全局视图、入口
 2. **docs/00-架构总览.md** —— 动手前通读（分层/世界模型/ECS/渲染/决策记录）
-3. **docs/01-里程碑与任务清单.md** —— ★ 每天的任务依据（当前进度：M4-T1 已完成；M0 仅剩跨机验收；下一步 M4-T2）
+3. **docs/01-里程碑与任务清单.md** —— ★ 每天的任务依据（当前进度：M4-T2 已完成；M0 仅剩跨机验收；下一步 M4-T3）
 4. **docs/02-技术选型与开发规范.md** —— 建工程、写代码前（依赖/目录/编码规范/占位资源策略）
 5. **docs/03-脚本系统设计.md** —— M7/M8 阶段再读
 6. **assets_placeholder_pz/README.md** —— 用占位资源、重新解包 PZ 纹理时读
@@ -68,7 +68,7 @@ build\x64-debug\ZomboidLike.exe
 | M1 | 核心框架（主循环/tick/事件/输入/配置） | 已完成 | 2026-10-16 |
 | M2 | 渲染地基（等距瓦片可见） | 已完成 | 2026-10-16 |
 | M3 | 世界模型与流式加载 | 已完成 | 2026-10-16 |
-| M4 | ECS（EnTT）、物理与寻路 | 进行中（T1 完成） | |
+| M4 | ECS（EnTT）、物理与寻路 | 进行中（T1/T2 完成） | |
 | M5 | 角色与僵尸 AI | 未开始 | |
 | M6 | 物品与容器 | 未开始 | |
 | M7 | Lua 脚本系统 | 未开始 | |

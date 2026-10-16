@@ -15,6 +15,7 @@ class TaskScheduler;
 
 namespace zl::ecs {
 class EcsWorld;
+class SpatialIndex;
 }  // namespace zl::ecs
 
 namespace zl::platform {
@@ -61,6 +62,7 @@ struct GameContext {
 
     // ECS（M4 起）
     ecs::EcsWorld* ecs = nullptr;
+    ecs::SpatialIndex* spatialIndex = nullptr;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

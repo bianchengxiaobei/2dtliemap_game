@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/Log.h"
+#include "ecs/components/CommonComponents.h"
 
 namespace zl::game {
 namespace {
@@ -42,6 +43,7 @@ bool AssetProvider::Init(const std::string& manifestPath, const std::string& pro
                          render::AtlasManager& atlases) {
     m_provider = provider;
     m_resolved.clear();
+    m_byHash.clear();
 
     std::ifstream file(manifestPath);
     if (!file.is_open()) {
@@ -86,6 +88,16 @@ bool AssetProvider::Init(const std::string& manifestPath, const std::string& pro
             ZL_DEBUG("assets", "逻辑资源: {} -> {} 帧", logicalName, entries.size());
         }
         m_resolved.emplace(logicalName, std::move(entries));
+    }
+
+    // 哈希反查表（M4-T2：ECS SpriteRef 只存 HashName(逻辑名)）
+    for (const auto& [logicalName, entries] : m_resolved) {
+        const std::uint32_t hash = ecs::HashName(logicalName);
+        const auto [it, inserted] = m_byHash.emplace(hash, &entries);
+        if (!inserted && it->second != &entries) {
+            ZL_WARN("assets", "资源哈希碰撞（FNV-1a 32）: {} 与既有逻辑名同哈希 {:#x}", logicalName,
+                    hash);
+        }
     }
 
     ZL_INFO("assets", "AssetProvider 就绪：provider={}，逻辑资源 {} 项（own 回退 {} 项）", m_provider,

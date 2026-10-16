@@ -157,6 +157,33 @@ def make_wall(seed, door=False):
     return canvas
 
 
+def make_character():
+    """小人占位（M4 实体演示用）：画布 64x128，脚底对齐 y=112（格中心）。
+    简单色块：裤子/上衣/手臂/头 + 描边，保证和地面/树对比清晰。"""
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    cx, feet = 32, 112
+    skin = (224, 184, 148, 255)
+    hair = (66, 50, 38, 255)
+    shirt = (58, 96, 172, 255)
+    pants = (52, 54, 74, 255)
+    dark = (30, 28, 34, 255)
+    # 腿（两条）
+    d.rectangle([cx - 7, feet - 22, cx - 1, feet - 1], fill=pants, outline=dark)
+    d.rectangle([cx + 1, feet - 22, cx + 7, feet - 1], fill=pants, outline=dark)
+    # 躯干
+    d.rectangle([cx - 9, feet - 44, cx + 9, feet - 20], fill=shirt, outline=dark)
+    # 手臂
+    d.rectangle([cx - 13, feet - 43, cx - 9, feet - 24], fill=shirt, outline=dark)
+    d.rectangle([cx + 9, feet - 43, cx + 13, feet - 24], fill=shirt, outline=dark)
+    # 头 + 头发 + 眼睛
+    d.ellipse([cx - 8, feet - 60, cx + 8, feet - 44], fill=skin, outline=dark)
+    d.chord([cx - 8, feet - 60, cx + 8, feet - 44], 180, 360, fill=hair)
+    d.rectangle([cx - 4, feet - 53, cx - 3, feet - 52], fill=dark)
+    d.rectangle([cx + 3, feet - 53, cx + 4, feet - 52], fill=dark)
+    return canvas
+
+
 def pack_frames(frames, margin=1):
     """shelf 打包：返回合并后的页图与子图矩形表"""
     # 每行限宽 1024
@@ -205,6 +232,13 @@ def main():
 
     specs.append(("wall_brick_1", make_wall(2200), (0, 112, 64, 112), 0, 112, 64, 224))
     specs.append(("wall_door_1", make_wall(2201, door=True), (0, 112, 64, 112), 0, 112, 64, 224))
+
+    # 小人占位（M4 实体渲染演示）：脚底（y=112，格中心）向上画
+    char_canvas = make_character()
+    cbbox = char_canvas.getbbox()
+    specs.append(("character_placeholder", char_canvas,
+                  (cbbox[0], cbbox[1], cbbox[2] - cbbox[0], cbbox[3] - cbbox[1]),
+                  cbbox[0], cbbox[1], 64, 128))
 
     for i in range(3):
         canvas = make_tuft(3000 + i)

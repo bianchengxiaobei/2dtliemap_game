@@ -11,6 +11,7 @@
 #include "core/Input.h"
 #include "core/TaskScheduler.h"
 #include "ecs/EcsWorld.h"
+#include "ecs/SpatialIndex.h"
 #include "game/AssetProvider.h"
 #include "game/EventProbe.h"
 #include "game/GameContext.h"
@@ -70,6 +71,7 @@ private:
 
     // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
     ecs::EcsWorld m_ecs;
+    ecs::SpatialIndex m_spatialIndex;
 
     double m_lastFrameTime = 0.0;
     bool m_shutdownDone = false;

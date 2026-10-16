@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <random>
 #include <string>
 #include <string_view>
@@ -34,9 +35,16 @@ public:
     // 从变体里随机挑一个（缺失时返回空 Entry）
     Entry Pick(std::string_view logical, std::mt19937& rng) const;
 
+    // ECS 通道（M4-T2）：SpriteRef 只存 HashName(逻辑名)，这里按哈希反查
+    const std::vector<Entry>* FramesByHash(std::uint32_t hash) const {
+        const auto it = m_byHash.find(hash);
+        return it == m_byHash.end() ? nullptr : it->second;
+    }
+
 private:
     std::string m_provider;
     std::unordered_map<std::string, std::vector<Entry>> m_resolved;
+    std::unordered_map<std::uint32_t, const std::vector<Entry>*> m_byHash;  // HashName → 变体表
 };
 
 }  // namespace zl::game

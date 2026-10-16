@@ -9,6 +9,7 @@
 
 #include <entt/entt.hpp>
 
+#include "ecs/EntityHash.h"
 #include "ecs/SystemScheduler.h"
 #include "ecs/components/CommonComponents.h"
 
@@ -70,10 +71,6 @@ public:
     std::size_t StableIdCount() const { return m_byStableId.size(); }
 
 private:
-    struct EntityKey {
-        std::size_t operator()(Entity e) const noexcept { return static_cast<std::size_t>(e); }
-    };
-
     entt::registry m_registry;
     SystemScheduler m_systems;
 
@@ -82,7 +79,7 @@ private:
     std::uint64_t m_nextStableId = 1;
 
     std::vector<Entity> m_destroyQueue;
-    std::unordered_set<Entity, EntityKey> m_destroyQueued;  // 去重（O(1) 查“是否待销毁”）
+    std::unordered_set<Entity, EntityHash> m_destroyQueued;  // 去重（O(1) 查“是否待销毁”）
     std::vector<SpawnFn> m_createQueue;
     std::size_t m_aliveCount = 0;  // == 已 Create 未回收（EnTT 3.16 registry 无 size()，自维护）
 };

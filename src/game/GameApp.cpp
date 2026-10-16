@@ -154,7 +154,14 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.atlases = &m_atlases;
     m_ctx.assets = &m_assets;
     m_ctx.ecs = &m_ecs;
+    m_ctx.spatialIndex = &m_spatialIndex;
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
+
+    // ECS 固定链集中注册（docs/00 §6.1）；顺序 = 执行顺序。
+    // 目前仅索引维护；后续任务按链序插入（Input → Ai → PathFollow → Movement →
+    // PhysicsSync → Perception → Combat → SpawnLod → RenderCollect）。
+    m_ecs.Systems().AddSystem("SpatialIndexSystem",
+                              [this](ecs::EcsWorld& w, float) { m_spatialIndex.Update(w); });
 
     m_probe.Attach(m_events);
 

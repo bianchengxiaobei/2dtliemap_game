@@ -76,6 +76,12 @@
         ]
       }
     },
+    "character.placeholder": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["character_placeholder"]
+      }
+    },
     "ui.pixel": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",

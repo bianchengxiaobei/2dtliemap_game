@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <string>
 
 #if defined(_WIN32)
@@ -15,6 +16,9 @@
 #include "core/GameTime.h"
 #include "core/Input.h"
 #include "core/Log.h"
+#include "ecs/EcsWorld.h"
+#include "ecs/SpatialIndex.h"
+#include "ecs/components/CommonComponents.h"
 #include "game/EventProbe.h"
 #include "platform/Window.h"
 #include "render/Camera.h"
@@ -40,16 +44,6 @@ constexpr uint32_t kAxisXColor = 0xc04040ff;  // 红
 constexpr uint32_t kAxisYColor = 0xc040ff40;  // 绿
 // 上层（z≥1）透明度策略（M3-T6 临时方案）：楼上整体 35% 不透明，看得到室内
 constexpr uint32_t kUpperZColor = 0x59ffffff;
-
-// 变体选取哈希：同一格每帧稳定（不闪烁），不同格/层/盐值分布不同
-uint32_t HashPick(int x, int y, uint32_t salt) {
-    uint32_t h = static_cast<uint32_t>(x) * 73856093u ^ static_cast<uint32_t>(y) * 19349663u ^
-                 salt * 83492791u;
-    h ^= h >> 13;
-    h *= 0x5bd1e995u;
-    h ^= h >> 15;
-    return h;
-}
 
 // 工作集内存（压测记录用；非 Windows 返回 0）
 uint64_t WorkingSetBytes() {
@@ -94,7 +88,44 @@ void WorldDemoState::OnEnter() {
                 m_cruiseCenterX, m_cruiseCenterY, m_cruiseRadius, m_cruiseSpeed, m_cruiseMinutes);
     }
 
+    // M4-T2：ECS 演示实体（村庄附近漂移；M4-T3 MovementSystem 接管后改为正式角色）
+    SpawnDemoEntities();
+
     ZL_INFO("render", "按键：WASD/右键拖拽 平移 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F1 暂停 | F2 倍速 | F5 热重载 | ESC 退出");
+}
+
+void WorldDemoState::SpawnDemoEntities() {
+    if (m_ctx.ecs == nullptr) {
+        return;  // 无 ECS 上下文（理论不出现）：纯世界渲染降级
+    }
+    ecs::EcsWorld& world = *m_ctx.ecs;
+    std::mt19937 rng(20261016u);
+    std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+
+    // 漂移盒对准默认相机视野（村北，world (70,18) 附近）
+    m_demoBoxX0 = 44.0f;
+    m_demoBoxY0 = 4.0f;
+    m_demoBoxX1 = 96.0f;
+    m_demoBoxY1 = 32.0f;
+
+    constexpr int kCount = 40;
+    const uint32_t sprite = ecs::HashName("character.placeholder");
+    entt::registry& registry = world.Registry();
+    for (int i = 0; i < kCount; ++i) {
+        const ecs::Entity e = world.Create();
+        const float px = m_demoBoxX0 + u01(rng) * (m_demoBoxX1 - m_demoBoxX0);
+        const float py = m_demoBoxY0 + u01(rng) * (m_demoBoxY1 - m_demoBoxY0);
+        const float angle = u01(rng) * 6.2831853f;
+        const float speed = 0.8f + u01(rng) * 1.6f;
+        registry.emplace<ecs::Position>(e, ecs::Position{px, py, 0});
+        registry.emplace<ecs::Velocity>(
+            e, ecs::Velocity{std::cos(angle) * speed, std::sin(angle) * speed});
+        registry.emplace<ecs::Collider>(e, ecs::Collider{});
+        registry.emplace<ecs::SpriteRef>(e, ecs::SpriteRef{sprite, 0, 0xFFFFFFFFu});
+    }
+    m_demoEntityCount = kCount;
+    ZL_INFO("ecs", "生成 {} 个演示实体（漂移盒 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]，精灵名哈希 {:#x}）",
+            kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1, sprite);
 }
 
 void WorldDemoState::OnExit() {
@@ -104,8 +135,31 @@ void WorldDemoState::OnExit() {
 }
 
 void WorldDemoState::OnTick(double tickDt) {
-    (void)tickDt;
     ++m_ticksInState;
+    // M4-T2 演示脚手架：实体在盒内漂移（位置积分 + 边界反弹）；
+    // M4-T3 起由 MovementSystem + PhysicsWorld 接管，本段删除。
+    if (m_ctx.ecs != nullptr && m_demoEntityCount > 0) {
+        const float dt = static_cast<float>(tickDt);
+        m_ctx.ecs->Registry().view<ecs::Position, ecs::Velocity>().each(
+            [&](const ecs::Entity, ecs::Position& p, ecs::Velocity& v) {
+                p.x += v.x * dt;
+                p.y += v.y * dt;
+                if (p.x < m_demoBoxX0) {
+                    p.x = m_demoBoxX0;
+                    v.x = std::fabs(v.x);
+                } else if (p.x > m_demoBoxX1) {
+                    p.x = m_demoBoxX1;
+                    v.x = -std::fabs(v.x);
+                }
+                if (p.y < m_demoBoxY0) {
+                    p.y = m_demoBoxY0;
+                    v.y = std::fabs(v.y);
+                } else if (p.y > m_demoBoxY1) {
+                    p.y = m_demoBoxY1;
+                    v.y = -std::fabs(v.y);
+                }
+            });
+    }
 }
 
 void WorldDemoState::OnFrame(double frameDt, double alpha) {
@@ -119,6 +173,12 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     m_ctx.chunkManager->ProcessResults();
 
     CollectWorld();
+    // M4-T2：ECS 实体 → 同列表的"高度精灵"通道；之后统一全局画家序排序
+    if (m_ctx.ecs != nullptr && m_ctx.spatialIndex != nullptr) {
+        RenderCollectSystem::Collect(*m_ctx.ecs, *m_ctx.spatialIndex, *m_ctx.assets, m_view,
+                                     m_items);
+    }
+    std::sort(m_items.begin(), m_items.end(), render::DrawItemLess);
     DrawWorld();
     DrawDebugOverlay();
     DrawDebugText();
@@ -130,12 +190,14 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
         const auto& chunkStats = m_ctx.chunkManager->GetStats();
         ZL_INFO("render",
                 "世界统计: FPS={:.0f} | 实例={} | 四边形={} | 批次={} | drawcall={} | zoom={:.2f} | "
-                "chunk 驻留={} 加载中={} | 相机格=({:.0f},{:.0f}) | 累计加载={} 卸载={} 取消={} 失败={}",
+                "chunk 驻留={} 加载中={} | 相机格=({:.0f},{:.0f}) | 累计加载={} 卸载={} 取消={} 失败={} | "
+                "ECS={} 索引={}",
                 stats.fps, m_items.size(), m_ctx.sprites->QuadsThisFrame(),
                 m_ctx.sprites->DrawCallsThisFrame(), stats.drawCalls, m_ctx.camera->Zoom(),
                 chunkStats.loadedChunks, chunkStats.loadingChunks, camGrid.x, camGrid.y,
                 chunkStats.totalLoaded, chunkStats.totalUnloaded, chunkStats.totalCancelled,
-                chunkStats.totalFailed);
+                chunkStats.totalFailed, m_ctx.ecs != nullptr ? m_ctx.ecs->AliveCount() : 0u,
+                m_ctx.spatialIndex != nullptr ? m_ctx.spatialIndex->EntityCount() : 0u);
     }
 
     // 压测采样（巡航期间每 5s 一条 perf 行）
@@ -318,13 +380,13 @@ void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int w
         return;  // 逻辑名缺失（应在 manifest 检查，运行时静默跳过）
     }
     const AssetProvider::Entry& entry =
-        (*frames)[HashPick(wx, wy, static_cast<uint32_t>(layer)) % frames->size()];
+        (*frames)[render::HashPick(wx, wy, static_cast<uint32_t>(layer)) % frames->size()];
     if (entry.atlas == nullptr || entry.frame == nullptr) {
         return;
     }
     const render::AtlasFrame& frame = *entry.frame;
 
-    DrawItem item;
+    render::DrawItem item;
     item.texture = entry.atlas->Texture();
     item.rect = render::SpriteDrawRect(static_cast<float>(wx), static_cast<float>(wy), z, frame.fx,
                                        frame.fy, frame.ox, frame.oy, frame.w, frame.h);
@@ -341,6 +403,7 @@ void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int w
     item.diag = wx + wy;
     item.gx = wx;
     item.layer = static_cast<int>(layer);
+    item.tieBreaker = 0;  // 世界对象同格同层视为无序（0）
     m_items.push_back(item);
 }
 
@@ -359,10 +422,14 @@ void WorldDemoState::CollectWorld() {
     const glm::vec2 g1 = render::FromScreen(maxW, 0);
     const glm::vec2 g2 = render::FromScreen({minW.x, maxW.y}, 0);
     const glm::vec2 g3 = render::FromScreen({maxW.x, minW.y}, 0);
-    const int gxMin = static_cast<int>(std::floor(std::min({g0.x, g1.x, g2.x, g3.x}))) - 1;
-    const int gxMax = static_cast<int>(std::ceil(std::max({g0.x, g1.x, g2.x, g3.x}))) + 1;
-    const int gyMin = static_cast<int>(std::floor(std::min({g0.y, g1.y, g2.y, g3.y}))) - 1;
-    const int gyMax = static_cast<int>(std::ceil(std::max({g0.y, g1.y, g2.y, g3.y}))) + 1;
+    m_view.gxMin = static_cast<int>(std::floor(std::min({g0.x, g1.x, g2.x, g3.x}))) - 1;
+    m_view.gxMax = static_cast<int>(std::ceil(std::max({g0.x, g1.x, g2.x, g3.x}))) + 1;
+    m_view.gyMin = static_cast<int>(std::floor(std::min({g0.y, g1.y, g2.y, g3.y}))) - 1;
+    m_view.gyMax = static_cast<int>(std::ceil(std::max({g0.y, g1.y, g2.y, g3.y}))) + 1;
+    const int gxMin = m_view.gxMin;
+    const int gxMax = m_view.gxMax;
+    const int gyMin = m_view.gyMin;
+    const int gyMax = m_view.gyMax;
 
     const int cx0 = world::FloorDiv(gxMin, core::kChunkSize);
     const int cx1 = world::FloorDiv(gxMax, core::kChunkSize);
@@ -407,22 +474,7 @@ void WorldDemoState::CollectWorld() {
         }
     }
 
-    // 两段排序：地面批先画（stage 0，内部顺序无关紧要）；其余按全局画家序
-    std::sort(m_items.begin(), m_items.end(), [](const DrawItem& a, const DrawItem& b) {
-        if (a.stage != b.stage) {
-            return a.stage < b.stage;
-        }
-        if (a.z != b.z) {
-            return a.z < b.z;
-        }
-        if (a.diag != b.diag) {
-            return a.diag < b.diag;
-        }
-        if (a.gx != b.gx) {
-            return a.gx < b.gx;
-        }
-        return a.layer < b.layer;
-    });
+    // 排序：地面批 + 对象批统一画家序（含 M4-T2 追加的实体高度精灵），见 OnFrame
 }
 
 void WorldDemoState::DrawWorld() {
@@ -437,7 +489,7 @@ void WorldDemoState::DrawWorld() {
 
     render::SpriteBatch& batch = *m_ctx.sprites;
     batch.Begin(static_cast<bgfx::ViewId>(render::ViewId::World));
-    for (const DrawItem& item : m_items) {
+    for (const render::DrawItem& item : m_items) {
         const render::SpriteRect& rect = item.rect;
         if (rect.x + rect.w < minW.x || rect.x > maxW.x || rect.y + rect.h < minW.y ||
             rect.y > maxW.y) {

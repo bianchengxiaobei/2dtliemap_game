@@ -37,10 +37,12 @@ add_executable(ZomboidLike
     src/core/Log.cpp
     src/core/TaskScheduler.cpp
     src/ecs/EcsWorld.cpp
+    src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
     src/game/AssetProvider.cpp
     src/game/EventProbe.cpp
     src/game/GameApp.cpp
+    src/game/RenderCollectSystem.cpp
     src/game/states/RenderDemoState.cpp
     src/game/states/SandboxState.cpp
     src/game/states/WorldDemoState.cpp
@@ -91,10 +93,12 @@ add_executable(ZomboidLikeTests
     tests/test_maploader.cpp
     tests/test_chunkmanager.cpp
     tests/test_ecs.cpp
+    tests/test_spatialindex.cpp
     tests/test_world.cpp
     src/core/Log.cpp
     src/core/TaskScheduler.cpp
     src/ecs/EcsWorld.cpp
+    src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
     src/render/IsoMath.cpp
     src/world/Cell.cpp
