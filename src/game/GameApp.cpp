@@ -18,6 +18,7 @@
 #include "render/IsoMath.h"
 #include "script/LuaRuntime.h"
 #include "script/ModLoader.h"
+#include "script/PythonRuntime.h"
 #include "script/PythonSupport.h"
 #include "world/MapLoader.h"
 
@@ -94,6 +95,11 @@ bool GameApp::Init(int argc, char** argv) {
         auto luaRuntime = std::make_unique<script::LuaRuntime>();
         luaRuntime->SetApi(&m_scriptApi);
         m_script.RegisterRuntime(std::move(luaRuntime));
+#ifdef ZL_ENABLE_PYTHON
+        auto pythonRuntime = std::make_unique<script::PythonRuntime>();
+        pythonRuntime->SetApi(&m_scriptApi);
+        m_script.RegisterRuntime(std::move(pythonRuntime));
+#endif
         m_script.InitializeAll();
         // M7-T4：事件桥接（EventBus → 脚本 Events.On）；manager 借此在重载后发 OnModReload
         m_script.SetEventBus(&m_events);

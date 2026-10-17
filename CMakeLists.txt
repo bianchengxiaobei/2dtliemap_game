@@ -30,9 +30,15 @@ find_package(Lua REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
 
 if (ZL_ENABLE_PYTHON)
-    # Python 脚本后端依赖（M8-T1）：嵌入式 CPython + pybind11
+    # Python 脚本后端依赖（M8-T1）：嵌入式 CPython + pybind11。
+    # 说明（M8-T2）：Debug 构建同样链接 release 版 python3xx.lib——vcpkg 的 python3
+    # debug 树只有 _d.lib，没有对应的运行时/标准库；统一用 release CPython（含标准库，
+    # 位于 <vcpkg_installed>/<triplet>/tools/python3）。
     find_package(Python3 COMPONENTS Development.Embed REQUIRED)
     find_package(pybind11 CONFIG REQUIRED)
+    set_target_properties(Python3::Python PROPERTIES MAP_IMPORTED_CONFIG_DEBUG RELEASE)
+    set(ZL_PYTHON_HOME_DEFAULT "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/python3")
+    message(STATUS "ZL Python home: ${ZL_PYTHON_HOME_DEFAULT}")
 endif()
 
 add_executable(ZomboidLike
@@ -89,6 +95,7 @@ add_executable(ZomboidLike
     src/script/LuaRuntime.cpp
     src/script/ModLoader.cpp
     src/script/ModWatcher.cpp
+    src/script/PythonRuntime.cpp
     src/script/PythonSupport.cpp
     src/script/ScriptApi.cpp
     src/script/ScriptManager.cpp
@@ -124,7 +131,8 @@ if (WIN32)
 endif()
 
 if (ZL_ENABLE_PYTHON)
-    target_compile_definitions(ZomboidLike PRIVATE ZL_ENABLE_PYTHON=1)
+    target_compile_definitions(ZomboidLike PRIVATE ZL_ENABLE_PYTHON=1
+        ZL_PYTHON_HOME_DEFAULT="${ZL_PYTHON_HOME_DEFAULT}")
     target_link_libraries(ZomboidLike PRIVATE pybind11::embed)
 endif()
 
@@ -160,6 +168,7 @@ add_executable(ZomboidLikeTests
     tests/test_mod_loader.cpp
     tests/test_hot_reload.cpp
     tests/test_python_backend.cpp
+    tests/test_python_runtime.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -198,6 +207,7 @@ add_executable(ZomboidLikeTests
     src/script/LuaRuntime.cpp
     src/script/ModLoader.cpp
     src/script/ModWatcher.cpp
+    src/script/PythonRuntime.cpp
     src/script/PythonSupport.cpp
     src/script/ScriptApi.cpp
     src/script/ScriptManager.cpp
@@ -227,8 +237,23 @@ target_link_libraries(ZomboidLikeTests PRIVATE
 )
 
 if (ZL_ENABLE_PYTHON)
-    target_compile_definitions(ZomboidLikeTests PRIVATE ZL_ENABLE_PYTHON=1)
+    target_compile_definitions(ZomboidLikeTests PRIVATE ZL_ENABLE_PYTHON=1
+        ZL_PYTHON_HOME_DEFAULT="${ZL_PYTHON_HOME_DEFAULT}")
     target_link_libraries(ZomboidLikeTests PRIVATE pybind11::embed)
+endif()
+
+if (ZL_ENABLE_PYTHON)
+    # vcpkg 的 python3 运行时 DLL 只放在 tools/python3（不在 bin 目录，applocal 不会拷）；
+    # 开发构建把它复制到 exe 旁边，保证 OS 能加载 python3xx.dll。
+    file(GLOB ZL_PYTHON_RUNTIME_DLLS "${ZL_PYTHON_HOME_DEFAULT}/python*.dll")
+    if (EXISTS "${ZL_PYTHON_HOME_DEFAULT}/z.dll")  # python314.dll 的 zlib 依赖（vcpkg 自带）
+        list(APPEND ZL_PYTHON_RUNTIME_DLLS "${ZL_PYTHON_HOME_DEFAULT}/z.dll")
+    endif()
+    foreach(zl_target ZomboidLike ZomboidLikeTests)
+        add_custom_command(TARGET ${zl_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ZL_PYTHON_RUNTIME_DLLS}
+                    $<TARGET_FILE_DIR:${zl_target}>)
+    endforeach()
 endif()
 
 add_test(NAME ZomboidLikeTests COMMAND ZomboidLikeTests)

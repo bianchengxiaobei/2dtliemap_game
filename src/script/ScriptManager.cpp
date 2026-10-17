@@ -84,6 +84,9 @@ bool ScriptManager::LoadMod(const ModInfo& mod, std::string& errorOut) {
     RuntimeEntry* entry = FindEntry(mod.backend);
     if (entry == nullptr) {
         errorOut = "未注册的脚本后端：" + mod.backend + "（mod " + mod.id + "）";
+        if (mod.backend == "python") {
+            errorOut += "；本构建未启用 Python 后端（CMake 选项 ZL_ENABLE_PYTHON，见 docs/03 §2）";
+        }
         ZL_ERROR(kModule, "mod 加载失败 [{}]：{}", mod.id, errorOut);
         return false;
     }

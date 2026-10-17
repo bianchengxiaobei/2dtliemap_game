@@ -54,6 +54,27 @@ public:
         out << source;
     }
 
+    // Python 版（M8-T2：backend=python，入口 scripts/main.py）
+    zl::script::ModInfo MakeModPy(const std::string& id, const std::string& source) {
+        WritePy(id, source);
+        zl::script::ModInfo mod;
+        mod.id = id;
+        mod.name = id;
+        mod.version = "1.0.0";
+        mod.backend = "python";
+        mod.rootPath = (root / id).string();
+        mod.mainScript = "scripts/main.py";
+        return mod;
+    }
+
+    void WritePy(const std::string& id, const std::string& source) {
+        const std::filesystem::path dir = root / id / "scripts";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        std::ofstream out(dir / "main.py", std::ios::binary | std::ios::trunc);
+        out << source;
+    }
+
     // 写 mods/<id>/mod.json（M7-T5 ModLoader 测试）
     void WriteManifest(const std::string& id, const std::string& jsonText) {
         const std::filesystem::path dir = root / id;

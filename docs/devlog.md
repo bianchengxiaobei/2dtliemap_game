@@ -1235,3 +1235,42 @@ function <…>`（mod id + 路径行号 + 栈）+ `mod 已禁用`，进程存活
   确认 exe 无 python DLL，183 全绿。
 - 小尾巴：vcpkg 移除 python3 后 `vcpkg_installed/.../tools/python3` 残留安装期 Python 自己
   写的 `.pyc`（vcpkg 文件清单追踪不到），手工清理；重建时会重新生成、无影响。
+
+---
+
+## 2026-10-17 M8-T2 PythonRuntime（pybind11 嵌入 + 沙箱）
+
+**实现**：`src/script/PythonRuntime.{h,cpp}`（仅 ZL_ENABLE_PYTHON=ON 编入实现）：
+- 嵌入 CPython：`PyConfig` + `py::initialize_interpreter(&config, …)`；GIL 纪律——所有脚本
+  入口（加载/重载/卸载/派发）统一 `py::gil_scoped_acquire`，脚本只在主线程执行；
+- 沙箱：每个 mod 独立 globals + 受限 builtins——`print` 重定向 `[script-py] [mod-id]`、
+  `__import__` 白名单（math/random/json/re/time/datetime/…，其余 ImportError）、
+  删除 open/eval/exec/compile/input 等；
+- 错误隔离：compile(filename=真实路径)+`PyEval_EvalCode` 执行，`py::error_already_set`
+  → errorOut（含 Python traceback 与 `File "路径", line N`）→ 上层记日志/禁用；
+- 重载语义与 Lua 一致：先在新 globals 执行，成功才替换（失败保留旧版）。
+- GameApp 在 ON 构建注册第二后端；ScriptManager 对"未注册的 python 后端"追加
+  "本构建未启用 Python 后端"提示（M8 验收第 2 条）；ModLoader 默认入口按 backend 选
+  `scripts/main.py` / `scripts/main.lua`。
+
+**踩坑（重要）**：
+1. **嵌入找不到标准库**：`Py_InitializeFromConfig` 报 `Failed to import encodings module`，
+   加错误路径不清会自动变成崩溃。根因：vcpkg 的 python3 运行时+stdlib 在
+   `vcpkg_installed/<triplet>/tools/python3/`，不在 dll 默认搜索路径。修复：显式
+   `PyConfig.home`；查找顺序 env `ZL_PYTHON_HOME` → exe 旁 `python/` → 编译期默认。
+2. **Debug 树没有可用运行时**：vcpkg python3 debug 只有 `python314_d.lib`，无 stdlib。
+   统一改为两配置都链接 release CPython（`MAP_IMPORTED_CONFIG_DEBUG RELEASE`）+ 拷贝
+   `python314.dll`、`z.dll`（python314.dll 依赖 zlib，applocal 只管 bin 目录，抓不到）。
+3. **pybind11 3.x `py::exec` 只有 `str` 重载**：`py::exec(codeObject, globals)` 会隐式把
+   code 转成 `"<code object …>"` 字符串再编译 → 永远 `SyntaxError: invalid syntax
+   (<string>, line 1)`（连合法脚本都挂）。改用 `PyEval_EvalCode(code, globals, globals)`。
+4. `py::kwargs` 参数必须**按值**声明（`const py::kwargs&` 不满足 kwargs 标记 trait）。
+5. `py::is_initialized()` 在 pybind11 3.x 已移除 → 用 `Py_IsInitialized()`。
+6. 测试进程**不要反复 finalize/initialize**（pybind11 内部状态易残留）：测试用共享
+   runtime 单例（故意泄漏到进程结束），与游戏内单实例生命周期一致。
+
+**验证**：ON 构建 187 用例全绿（新增 4 个 M8-T2 用例：加载+print 重定向（含中文）、
+import 白名单/危险内建、语法/运行时错误归因（路径+traceback）、重载替换与失败保留）；
+实机 smoke_py（backend=python）：`注册脚本后端：python（共 2 个）`、
+`[script-py] [smoke_py] smoke_py loaded, pi=3.1416`、中文输出、`mod 已加载`，进程存活。
+OFF 构建 184 用例全绿（PythonRuntime.cpp 空 TU、测试走占位分支）——默认构建仍零 Python 依赖。

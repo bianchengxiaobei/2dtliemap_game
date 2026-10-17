@@ -73,7 +73,10 @@ bool ModLoader::ParseModInfo(const std::string& jsonText, const std::filesystem:
         out.apiVersion = api;
 
         out.backend = doc.value("backend", defaultBackend);
-        out.mainScript = doc.value("main", std::string("scripts/main.lua"));
+        // 入口脚本默认按后端区分（M8-T2）：python 用 main.py，其余维持 main.lua
+        const std::string defaultMain =
+            out.backend == "python" ? "scripts/main.py" : "scripts/main.lua";
+        out.mainScript = doc.value("main", defaultMain);
         out.loadOrder = doc.value("loadOrder", 100);
         out.rootPath = modDir.string();
         return true;
