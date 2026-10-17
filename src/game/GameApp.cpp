@@ -155,10 +155,19 @@ bool GameApp::Init(int argc, char** argv) {
     }
     m_camera.SetViewport(m_renderer.FramebufferWidth(), m_renderer.FramebufferHeight());
 
+    m_ui = std::make_unique<ui::UiSystem>();
+    if (!m_ui->Init(m_window, m_renderer.FramebufferWidth(), m_renderer.FramebufferHeight())) {
+        ZL_WARN("core", "UI 初始化失败，以无 UI 模式继续");
+        m_ui.reset();
+    }
+
     m_window.SetResizeCallback([this](int width, int height) {
         if (width > 0 && height > 0) {
             m_renderer.Resize(width, height);
             m_camera.SetViewport(width, height);
+            if (m_ui) {
+                m_ui->Resize(width, height);
+            }
         }
     });
     m_window.SetKeyCallback([](int key, int action, int mods) {
@@ -473,6 +482,10 @@ void GameApp::Shutdown() {
     m_script.ShutdownAll();  // 脚本先于世界/状态销毁（M7 起脚本可能引用世界状态）
     m_states.Clear();
     // 渲染资源必须在 bgfx::shutdown 之前释放
+    if (m_ui) {
+        m_ui->Shutdown();
+        m_ui.reset();
+    }
     m_sprites.Shutdown();
     m_atlases.Clear();
     m_textures.Clear();
@@ -508,6 +521,10 @@ void GameApp::MainLoop() {
         double frameDt = NowSeconds() - m_lastFrameTime;
         m_lastFrameTime = NowSeconds();
         frameDt = std::clamp(frameDt, 0.0, kMaxFrameDt);
+
+        if (m_ui) {
+            m_ui->Update(m_input);
+        }
 
         m_loop->SetTimeScale(m_gameTime.SpeedScale());
         m_loop->Frame(frameDt, [this](double tickDt) { Tick(tickDt); },
@@ -550,6 +567,9 @@ void GameApp::RenderFrame(double frameDt, double alpha) {
     m_renderer.BeginFrame();
     if (auto* state = m_states.Current()) {
         state->OnFrame(frameDt, alpha);
+    }
+    if (m_ui) {
+        m_ui->Render();
     }
     m_renderer.EndFrame();
 }

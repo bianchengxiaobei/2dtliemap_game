@@ -49,6 +49,8 @@ public:
     void SetResizeCallback(std::function<void(int, int)> callback);
     // 原始按键回调（key, action, mods），用于调试/日志
     void SetKeyCallback(std::function<void(int, int, int)> callback);
+    // 文本输入（Unicode 码点），供 UI 文本框使用
+    void SetCharCallback(std::function<void(unsigned int)> callback);
 
 private:
     GLFWwindow* m_window = nullptr;
@@ -60,6 +62,7 @@ private:
     float m_pendingScrollY = 0.0f;
     std::function<void(int, int)> m_resizeCallback;
     std::function<void(int, int, int)> m_keyCallback;
+    std::function<void(unsigned int)> m_charCallback;
 };
 
 }  // namespace zl::platform

@@ -79,6 +79,13 @@ bool Window::Create(const Desc& desc) {
         (void)scancode;
     });
 
+    glfwSetCharCallback(m_window, [](GLFWwindow* w, unsigned int codepoint) {
+        auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w));
+        if (self->m_charCallback) {
+            self->m_charCallback(codepoint);
+        }
+    });
+
     ZL_INFO("platform", "窗口创建: {} {}x{}", desc.title, desc.width, desc.height);
     return true;
 }
@@ -136,6 +143,10 @@ void Window::SetResizeCallback(std::function<void(int, int)> callback) {
 
 void Window::SetKeyCallback(std::function<void(int, int, int)> callback) {
     m_keyCallback = std::move(callback);
+}
+
+void Window::SetCharCallback(std::function<void(unsigned int)> callback) {
+    m_charCallback = std::move(callback);
 }
 
 }  // namespace zl::platform

@@ -87,4 +87,32 @@ bool Input::IsMouseButtonDown(int button) const {
     return m_mouseDown[button];
 }
 
+bool Input::IsMouseButtonReleased(int button) const {
+    if (button < 0 || button >= kMouseButtonCount) {
+        return false;
+    }
+    return !m_mouseDown[button] && m_mousePrev[button];
+}
+
+bool Input::IsKeyDown(int keyCode) const {
+    if (keyCode < 0 || keyCode >= kKeyCount) {
+        return false;
+    }
+    return m_keyDown[keyCode];
+}
+
+bool Input::IsKeyPressed(int keyCode) const {
+    if (keyCode < 0 || keyCode >= kKeyCount) {
+        return false;
+    }
+    return m_keyDown[keyCode] && !m_keyPrev[keyCode];
+}
+
+bool Input::IsKeyReleased(int keyCode) const {
+    if (keyCode < 0 || keyCode >= kKeyCount) {
+        return false;
+    }
+    return !m_keyDown[keyCode] && m_keyPrev[keyCode];
+}
+
 }  // namespace zl::core

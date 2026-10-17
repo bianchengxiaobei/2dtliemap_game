@@ -1370,3 +1370,44 @@ None/0 参回调/import 白名单/print 接日志）；`docs/03 §10` 对照清�
 **状态**：M8 完成（T1~T4 + 验收）。测试基线：OFF 185 / ON 191（Debug）。
 下一步 M9 UI 系统（最大里程碑：UiContext/控件/字体/HUD/背包/菜单；第一个验收点是
 "全鼠标完成 拾取→装备→使用→丢弃"）。
+
+---
+
+## 2026-10-17 M9-T1 RmlUi 接入（bgfx 后端 + 输入 + 字体）
+
+**框架决策落地**：vcpkg `rmlui[freetype]` 6.3（baseline 2026-10-15），CMake `find_package(RmlUi)`
+→ `RmlUi::RmlUi`，两个 target 都链接。UI 独立走 bgfx View 1，不改现有世界渲染管线。
+
+**实现**：
+- `RmlBgfxRenderInterface`：`CompileGeometry` 保存顶点/索引，`RenderGeometry` 每 draw 灌
+  transient buffer（顶点位置加 translation）；纹理管理用 handle 表（0=白纹理）；
+  RmlUi 6 顶点色/生成纹理均预乘 alpha，混合用
+  `BGFX_STATE_BLEND_FUNC_SEPARATE(ONE, INV_SRC_ALPHA, ONE, INV_SRC_ALPHA)`；直接复用
+  `vs_sprite/fs_sprite`（`u_viewProj` + 正交投影），scissor 用 bgfx::setScissor；
+- `RmlSystemInterface`：GetElapsedTime/日志桥接 spdlog/JoinPath；FileInterface 用默认实现；
+- `UiSystem`：Rml::Initialise、上下文随 framebuffer 缩放、加载 `assets/ui/debug.rml`、
+  每帧输入→`Context::Update`→`Render`；F11 显隐；Window 新增 GLFW char 回调，Input 新增
+  原始键/鼠标边沿查询；CJK 字体 `assets/fonts/NotoSansSC-Regular.otf`（8.3MB，OFL，已入库）；
+- 测试：`tests/test_ui.cpp`（键位映射/修饰键/边沿 + 无渲染器 RmlUi 文档加载与点击路由）。
+  OFF 187 用例全绿，ON（Python）193 全绿。
+
+**实机验证**：1280×720 下调试面板（标题/中文说明/按钮/输入框/滚动列表/滚动条）显示正常；
+点击 `+` 计数 0→1；滚轮滚动列表到底部（内容被正确裁剪）；点击文本框后输入 `RmlUi123`
+正常回显；F11 隐藏/显示生效；进程稳定，drawcall 35 左右。已知：UI 与游戏输入尚未互斥
+（滚轮同时缩放相机、点击同时给玩家下移动指令）→ M9-T4/T5 处理。
+
+**踩坑**（全部写进 docs/02 和本记录）：
+1. **rgba() alpha 是 0~255**，不是 CSS 的 0~1：`rgba(18,24,30,0.92)` 被 atoi 解析为
+   alpha=0 → 面板全透明（排查时用 `#ff00ff` 才定位到）；改用 8 位十六进制 `#12181eeb`。
+2. **div 默认 inline**：RmlUi 默认样式没有 `div{display:block}`，标题/副标题挤在同一行、
+   输入列表按词换行；补 `div { display: block; }`（具体控件用 class/id 覆盖 inline-block）。
+3. **滚动条没有默认皮肤**：`overflow-y: scroll` 时未给 `scrollbarvertical { width: ... }`
+   → 滚动内容区宽度算成 0（所有文字按单字换行）；补滚动条样式后恢复 370px。
+4. **RCSS 不支持 `border`/`border-style` 简写**：解析报错会让整条规则失效 → 拆成
+   `border-width`/`border-color`（仍不支持 style）；`background` 简写同样不用，改
+   `background-color`。
+5. **border-radius 背景消失**：RmlUi 6 的圆角背景走 clip mask/layer，我们的 RenderInterface
+   还没实现 `RenderToClipMask`/`PushLayer` → 背景整块不画；T1 先方形直角，T2 补 clip mask/
+   layer 后再启用圆角。
+6. 键盘/鼠标短按（<1 帧）可能丢：当前用 Input 边沿轮询；实测按住 150ms 的点击可正常触发。
+   后续如需要再做窗口回调事件队列。

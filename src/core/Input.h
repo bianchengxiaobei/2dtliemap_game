@@ -37,6 +37,11 @@ public:
     float ScrollDeltaY() const { return m_scrollY; }
     bool IsMouseButtonPressed(int button) const;
     bool IsMouseButtonDown(int button) const;
+    bool IsMouseButtonReleased(int button) const;
+
+    bool IsKeyDown(int keyCode) const;
+    bool IsKeyPressed(int keyCode) const;
+    bool IsKeyReleased(int keyCode) const;
 
 private:
     static constexpr int kMouseButtonCount = 8;

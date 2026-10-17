@@ -41,6 +41,7 @@
 #include "script/ModWatcher.h"
 #include "script/ScriptApi.h"
 #include "script/ScriptManager.h"
+#include "ui/UiSystem.h"
 #include "world/ChunkManager.h"
 #include "world/World.h"
 
@@ -84,6 +85,7 @@ private:
     render::SpriteBatch m_sprites;
     render::Camera m_camera;
     AssetProvider m_assets;
+    std::unique_ptr<ui::UiSystem> m_ui;
 
     // 世界 + chunk 流式加载（M3）
     std::unique_ptr<world::World> m_world;

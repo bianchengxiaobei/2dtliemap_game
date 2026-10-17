@@ -16,6 +16,7 @@
     "doctest",
     "sqlite3",
     "miniaudio",
+    { "name": "rmlui", "features": ["freetype"] },
     {
       "name": "bgfx",
       "features": ["tools"],

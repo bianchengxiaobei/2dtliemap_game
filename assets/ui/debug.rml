@@ -1,0 +1,33 @@
+<rml>
+<head>
+    <title>ZomboidLike UI Debug</title>
+    <link type="text/rcss" href="debug.rcss"/>
+</head>
+<body>
+    <div id="panel">
+        <div id="title">ZomboidLike · RmlUi 6.3</div>
+        <div id="subtitle">bgfx View 1 · RmlUi + FreeType · 中文 / English / 12345</div>
+        <div class="row">
+            <div class="btn" id="dec">−</div>
+            <div id="count">0</div>
+            <div class="btn" id="inc">+</div>
+        </div>
+        <input type="text" id="name" placeholder="输入中文 / English"/>
+        <div id="scroll">
+            <div class="item">绷带 ×2 · bandage</div>
+            <div class="item">斧头 ×1 · axe</div>
+            <div class="item">罐头 ×3 · canned food</div>
+            <div class="item">水壶 ×1 · water bottle</div>
+            <div class="item">幸存者 · survivor</div>
+            <div class="item">僵尸 40 · zombies</div>
+            <div class="item">健康 76 / 100</div>
+            <div class="item">时间 07:30 · day 1</div>
+            <div class="item">背包容量 12.5 / 20 kg</div>
+            <div class="item">快捷栏 1 2 3 4 5</div>
+            <div class="item">滚轮滚动测试 · scroll test</div>
+            <div class="item">最后一行 · last row</div>
+        </div>
+        <div id="hint">F11 隐藏/显示 · 点击 + / − 验证事件路由</div>
+    </div>
+</body>
+</rml>
