@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "core/EventBus.h"
 #include "core/Log.h"
 #include "script/ScriptApi.h"
 
@@ -153,12 +154,40 @@ py::dict MakeModGlobals(const std::string& modId, const std::string& path) {
     return globals;
 }
 
+// M8-T3：一次性定时器（seconds 为游戏秒；回调在后续 OnTick 派发时泵出）。
+struct Timer {
+    py::function fn;
+    double dueMinutes = 0.0;
+};
+
+// 事件名 → 订阅函数列表（每 mod 独立；Events.On/Off 随时可变）。
+using HandlerMap = std::unordered_map<std::string, std::vector<py::function>>;
+
+// 事件字段 → dict（与 Lua 侧同名字段；monostate 跳过）。
+py::dict MakeEventArgDict(const core::ScriptEvent& event) {
+    py::dict out;
+    for (const core::ScriptField& field : event.fields) {
+        if (const auto* value = std::get_if<std::int64_t>(&field.value)) {
+            out[py::str(field.name)] = *value;
+        } else if (const auto* value = std::get_if<double>(&field.value)) {
+            out[py::str(field.name)] = *value;
+        } else if (const auto* value = std::get_if<bool>(&field.value)) {
+            out[py::str(field.name)] = *value;
+        } else if (const auto* value = std::get_if<std::string>(&field.value)) {
+            out[py::str(field.name)] = *value;
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 struct PythonRuntime::Impl {
     struct ModEntry {
         ModInfo info;
         py::dict globals;
+        std::shared_ptr<HandlerMap> handlers;          // 事件订阅（按 mod 隔离）
+        std::shared_ptr<std::vector<Timer>> timers;    // SetTimer 定时器
     };
 
     bool initialized = false;
@@ -167,6 +196,174 @@ struct PythonRuntime::Impl {
 
     std::unordered_map<std::string, ModEntry> mods;
     std::vector<std::string> loadedIds;
+
+    // Host API（M8-T3）：与 Lua 侧同名同参数，绑定为 per-mod 命名空间对象。
+    // api 为 nullptr 时绑定安全默认值。
+    void BindApi(py::dict& globals, const std::string& modId,
+                 const std::shared_ptr<HandlerMap>& handlers,
+                 const std::shared_ptr<std::vector<Timer>>& timers) {
+        const ScriptApi* scriptApi = api;
+        const auto makeNamespace = [] {
+            return py::module_::import("types").attr("SimpleNamespace")();
+        };
+
+        py::object game = makeNamespace();
+        game.attr("GetTick") = py::cpp_function([scriptApi]() -> std::int64_t {
+            return scriptApi != nullptr ? scriptApi->GetTick() : 0;
+        });
+        game.attr("GetPlayerId") = py::cpp_function([scriptApi]() -> std::uint64_t {
+            return scriptApi != nullptr ? scriptApi->GetPlayerId() : 0;
+        });
+        game.attr("GetTime") = py::cpp_function([scriptApi]() -> py::dict {
+            const core::DateTime dt =
+                scriptApi != nullptr ? scriptApi->GetTime() : core::DateTime{};
+            py::dict out;
+            out["year"] = dt.year;
+            out["month"] = dt.month;
+            out["day"] = dt.day;
+            out["hour"] = dt.hour;
+            out["minute"] = dt.minute;
+            out["totalMinutes"] = scriptApi != nullptr ? scriptApi->GetTotalGameMinutes() : 0.0;
+            return out;
+        });
+        game.attr("SetTimer") = py::cpp_function(
+            [scriptApi, timers](double seconds, py::function fn) {
+                Timer timer;
+                timer.fn = std::move(fn);
+                const double now = scriptApi != nullptr ? scriptApi->GetTotalGameMinutes() : 0.0;
+                timer.dueMinutes = now + (seconds > 0.0 ? seconds : 0.0) / 60.0;
+                timers->push_back(std::move(timer));
+            },
+            py::arg("seconds"), py::arg("fn"));
+        globals["Game"] = game;
+
+        py::object log = makeNamespace();
+        log.attr("Info") = py::cpp_function([modId](const std::string& message) {
+            ZL_INFO("script-mod", "[{}] {}", modId, message);
+        });
+        log.attr("Warn") = py::cpp_function([modId](const std::string& message) {
+            ZL_WARN("script-mod", "[{}] {}", modId, message);
+        });
+        log.attr("Error") = py::cpp_function([modId](const std::string& message) {
+            ZL_ERROR("script-mod", "[{}] {}", modId, message);
+        });
+        globals["Log"] = log;
+
+        py::object player = makeNamespace();
+        player.attr("GetPosition") = py::cpp_function([scriptApi]() -> py::object {
+            ScriptVec3 position;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerPosition(position)) {
+                return py::none();
+            }
+            py::dict out;
+            out["x"] = position.x;
+            out["y"] = position.y;
+            out["z"] = position.z;
+            return out;
+        });
+        player.attr("Teleport") = py::cpp_function(
+            [scriptApi](double x, double y, int z) -> bool {
+                return scriptApi != nullptr && scriptApi->TeleportPlayer(
+                                                   static_cast<float>(x), static_cast<float>(y), z);
+            },
+            py::arg("x"), py::arg("y"), py::arg("z") = 0);
+        player.attr("GetHealth") = py::cpp_function([scriptApi]() -> py::object {
+            float hp = 0.0f;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerHealth(hp)) {
+                return py::none();
+            }
+            return py::float_(static_cast<double>(hp));
+        });
+        player.attr("AddItem") = py::cpp_function(
+            [scriptApi](const std::string& defId, int count) -> int {
+                return scriptApi != nullptr ? scriptApi->AddPlayerItem(defId, count) : 0;
+            },
+            py::arg("defId"), py::arg("count") = 1);
+        globals["Player"] = player;
+
+        py::object world = makeNamespace();
+        world.attr("IsPassable") = py::cpp_function([scriptApi](int gx, int gy) -> bool {
+            return scriptApi != nullptr && scriptApi->IsPassable(gx, gy);
+        });
+        world.attr("SpawnItem") = py::cpp_function(
+            [scriptApi](const std::string& defId, double x, double y, int z) -> bool {
+                return scriptApi != nullptr && scriptApi->SpawnItem(
+                                                   defId, static_cast<float>(x),
+                                                   static_cast<float>(y), z);
+            },
+            py::arg("defId"), py::arg("x"), py::arg("y"), py::arg("z") = 0);
+        globals["World"] = world;
+
+        py::object zombies = makeNamespace();
+        zombies.attr("Count") = py::cpp_function([scriptApi]() -> int {
+            return scriptApi != nullptr ? scriptApi->ZombieCount() : 0;
+        });
+        zombies.attr("Spawn") = py::cpp_function(
+            [scriptApi](double x, double y, int z) -> std::uint64_t {
+                if (scriptApi == nullptr) {
+                    return 0;
+                }
+                return scriptApi->SpawnZombie(static_cast<float>(x), static_cast<float>(y), z);
+            },
+            py::arg("x"), py::arg("y"), py::arg("z") = 0);
+        zombies.attr("GetPosition") = py::cpp_function(
+            [scriptApi](std::uint64_t handle) -> py::object {
+                ScriptVec3 position;
+                if (scriptApi == nullptr || !scriptApi->GetZombiePosition(handle, position)) {
+                    return py::none();
+                }
+                py::dict out;
+                out["x"] = position.x;
+                out["y"] = position.y;
+                out["z"] = position.z;
+                return out;
+            },
+            py::arg("handle"));
+        globals["Zombies"] = zombies;
+
+        py::object itemsApi = makeNamespace();
+        itemsApi.attr("Exists") = py::cpp_function([scriptApi](const std::string& defId) -> bool {
+            return scriptApi != nullptr && scriptApi->ItemExists(defId);
+        });
+        itemsApi.attr("GetName") = py::cpp_function(
+            [scriptApi](const std::string& defId) -> std::string {
+                return scriptApi != nullptr ? scriptApi->ItemName(defId) : std::string();
+            },
+            py::arg("defId"));
+        globals["Items"] = itemsApi;
+
+        py::object events = makeNamespace();
+        events.attr("On") = py::cpp_function(
+            [handlers](const std::string& name, py::function fn) {
+                if (name.empty()) {
+                    return;
+                }
+                (*handlers)[name].push_back(std::move(fn));
+            },
+            py::arg("name"), py::arg("fn"));
+        events.attr("Off") = py::cpp_function(
+            [handlers](const std::string& name, py::object fn) {
+                const auto it = handlers->find(name);
+                if (it == handlers->end()) {
+                    return;  // 未订阅
+                }
+                if (fn.is_none()) {
+                    handlers->erase(it);  // 取消该事件的全部订阅
+                    return;
+                }
+                std::vector<py::function>& list = it->second;
+                list.erase(std::remove_if(list.begin(), list.end(),
+                                          [&fn](const py::function& handler) {
+                                              return handler.is(fn);
+                                          }),
+                           list.end());
+                if (list.empty()) {
+                    handlers->erase(it);
+                }
+            },
+            py::arg("name"), py::arg("fn") = py::none());
+        globals["Events"] = events;
+    }
 
     bool LoadOrReloadMod(const ModInfo& mod, bool isReload, std::string& errorOut) {
         if (!initialized) {
@@ -194,8 +391,12 @@ struct PythonRuntime::Impl {
         // GIL 纪律（docs/03 §9.2）：所有脚本调用只在主线程；入口统一 acquire。
         py::gil_scoped_acquire gil;
 
-        // 先在临时 globals 执行；成功才替换旧版本（重载失败保留旧版本）
+        // 先在临时 globals 执行；成功才替换旧版本（重载失败保留旧版本；
+        // 旧的订阅/定时器随旧 entry 一起释放 → 重载 = 清订阅后重执行）
+        const auto handlers = std::make_shared<HandlerMap>();
+        const auto timers = std::make_shared<std::vector<Timer>>();
         py::dict globals = MakeModGlobals(mod.id, path);
+        BindApi(globals, mod.id, handlers, timers);
         try {
             // 经 compile(filename=路径) 得到带真实文件名的 code 对象，异常定位更准
             // 不能用 py::exec：pybind11 3.x 只提供 str 重载，会隐式把 code 对象转成
@@ -216,7 +417,7 @@ struct PythonRuntime::Impl {
             return false;
         }
 
-        mods.insert_or_assign(mod.id, ModEntry{mod, std::move(globals)});
+        mods.insert_or_assign(mod.id, ModEntry{mod, std::move(globals), handlers, timers});
         if (!isReload) {
             loadedIds.push_back(mod.id);
         }
@@ -324,12 +525,71 @@ void PythonRuntime::UnloadMod(const std::string& modId) {
 
 std::vector<ModError> PythonRuntime::DispatchEventToMod(const std::string& modId,
                                                         const core::ScriptEvent& ev) {
-    (void)ev;
-    if (!m_impl->initialized || m_impl->mods.count(modId) == 0) {
-        return {};
+    std::vector<ModError> errors;
+    if (!m_impl->initialized) {
+        return errors;
     }
-    // M8-T3：Events.On 订阅表在此派发；T2 阶段 Python 侧尚无订阅 API。
-    return {};
+    const auto it = m_impl->mods.find(modId);
+    if (it == m_impl->mods.end()) {
+        return errors;
+    }
+    Impl::ModEntry& entry = it->second;
+
+    // GIL 纪律：派发只发生在主线程；入口统一 acquire。
+    py::gil_scoped_acquire gil;
+
+    auto handleError = [&](const std::string& prefix, const std::exception& e) {
+        errors.push_back(ModError{modId, prefix + e.what()});
+    };
+
+    // 1) 定时器泵：仅在 OnTick 派发时检查（秒 → 游戏分钟，取当前游戏时钟）
+    if (ev.name == core::kOnTick) {
+        const double now = m_impl->api != nullptr ? m_impl->api->GetTotalGameMinutes() : 0.0;
+        std::vector<Timer> due;
+        std::vector<Timer>& timers = *entry.timers;
+        for (auto timer = timers.begin(); timer != timers.end();) {
+            if (timer->dueMinutes <= now) {
+                due.push_back(std::move(*timer));
+                timer = timers.erase(timer);
+            } else {
+                ++timer;
+            }
+        }
+        for (Timer& timer : due) {
+            try {
+                timer.fn();
+            } catch (const py::error_already_set& e) {
+                handleError("SetTimer 回调错误：", e);
+                return errors;  // mod 即将被禁用：不再继续泵
+            } catch (const std::exception& e) {
+                handleError("SetTimer 回调错误：", e);
+                return errors;
+            }
+        }
+    }
+
+    // 2) Events.On 订阅派发（先拷贝本轮函数列表：回调中 On/Off 不影响当前遍历）
+    const auto hit = entry.handlers->find(ev.name);
+    if (hit == entry.handlers->end()) {
+        return errors;
+    }
+    const std::vector<py::function> handlers = hit->second;
+    if (handlers.empty()) {
+        return errors;
+    }
+    const py::dict arg = MakeEventArgDict(ev);
+    for (const py::function& handler : handlers) {
+        try {
+            handler(arg);
+        } catch (const py::error_already_set& e) {
+            handleError("事件 " + ev.name + " 处理错误：", e);
+            return errors;
+        } catch (const std::exception& e) {
+            handleError("事件 " + ev.name + " 处理错误：", e);
+            return errors;
+        }
+    }
+    return errors;
 }
 
 const std::vector<std::string>& PythonRuntime::LoadedMods() const {

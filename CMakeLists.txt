@@ -169,6 +169,7 @@ add_executable(ZomboidLikeTests
     tests/test_hot_reload.cpp
     tests/test_python_backend.cpp
     tests/test_python_runtime.cpp
+    tests/test_python_api.cpp
     tests/test_world.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp

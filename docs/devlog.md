@@ -1274,3 +1274,30 @@ import 白名单/危险内建、语法/运行时错误归因（路径+traceback�
 实机 smoke_py（backend=python）：`注册脚本后端：python（共 2 个）`、
 `[script-py] [smoke_py] smoke_py loaded, pi=3.1416`、中文输出、`mod 已加载`，进程存活。
 OFF 构建 184 用例全绿（PythonRuntime.cpp 空 TU、测试走占位分支）——默认构建仍零 Python 依赖。
+
+---
+
+## 2026-10-17 M8-T3 同一 API 薄绑定 + 事件（Python）
+
+**实现**：`PythonRuntime` 为每个 mod 绑定 per-mod `types.SimpleNamespace`：
+- `Game`（GetTick/GetPlayerId/GetTime/SetTimer）、`Log`（Info/Warn/Error）、
+  `Player`（GetPosition/Teleport/GetHealth/AddItem）、`World`（IsPassable/SpawnItem）、
+  `Zombies`（Count/Spawn/GetPosition）、`Items`（Exists/GetName）、`Events`（On/Off）——
+  函数名、参数、默认值与 Lua 侧逐一对齐（mod.json api=1 无需区分后端）。
+- 返回约定：位置/时间返回 dict（`pos['x']`、`t['year']`），无玩家/无效句柄返回 `None`；
+  事件回调参数为字段 dict（`e['tick']`）。
+- 事件语义与 Lua 完全一致：`Events.On` 追加、`Events.Off(name)` 清空该事件、
+  `Events.Off(name, fn)` 按 **PyObject 同一性**移除；派发前拷贝本轮函数列表
+  （回调里 On/Off 不影响当前遍历）；错误包 `事件 X 处理错误：<traceback>` 归因 mod。
+- `Game.SetTimer` 与 Lua 同一泵机制：OnTick 派发前把到期定时器移出并调用，
+  回调错误包 `SetTimer 回调错误：…`。
+- 周期：每 mod 的订阅表/定时器随 ModEntry 生命周期（重载=旧表释放、新表重执行）。
+
+**验证**：
+- 新增 `tests/test_python_api.cpp` 4 用例：① API 全套断言（含 C++ 侧复核
+  Teleport 位移 + AddItem 入包）；② On/Off（按函数移除 / Off(name) 清空）+ 事件字段；
+  ③ SetTimer 按游戏时间泵出（0 秒当 tick、30 秒推进 1 游戏分钟后）；④ 回调抛
+  ValueError → ModError 含 "事件 OnTick 处理错误："+ValueError+boom+main.py。
+- ON 构建 191 用例全绿；实机 smoke_py：`tick=0/120/240, zombies=40`、
+  `timer fired at totalMinutes=0.05`、`pi=3.14`，进程存活；冒烟 mod 已删。
+- OFF 构建 185 用例全绿（Python 用例走占位分支），默认构建仍零 Python 依赖。
