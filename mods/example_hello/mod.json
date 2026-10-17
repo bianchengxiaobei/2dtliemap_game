@@ -1,0 +1,7 @@
+{
+  "id": "example_hello",
+  "name": "Example Hello",
+  "version": "1.0.0",
+  "api": 1,
+  "loadOrder": 100
+}

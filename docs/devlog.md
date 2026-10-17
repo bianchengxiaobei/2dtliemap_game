@@ -1301,3 +1301,44 @@ OFF 构建 184 用例全绿（PythonRuntime.cpp 空 TU、测试走占位分支�
 - ON 构建 191 用例全绿；实机 smoke_py：`tick=0/120/240, zombies=40`、
   `timer fired at totalMinutes=0.05`、`pi=3.14`，进程存活；冒烟 mod 已删。
 - OFF 构建 185 用例全绿（Python 用例走占位分支），默认构建仍零 Python 依赖。
+
+---
+
+## 2026-10-17 M8-T4 示例 mod Python 版 + 切换验证
+
+**示例结构改为"后端无关"**：`mods/example_hello_lua` / `example_reactive_lua` 重命名为
+`example_hello` / `example_reactive`，`mod.json` 去掉 `backend`/`main`（由 `script.backend`
+决定），目录内同时提供 `scripts/main.lua` 与 `scripts/main.py`（同 id、同行为）——
+一个 mod 用 config 一键切换后端，不再需要两份目录。（历史 devlog/任务记录中的旧名仅指当时的
+Lua 版。）
+
+**Python 版内容**（与 Lua 逐行行为对齐）：
+- hello：`import math` + 打印 pi → 等 `Game.GetPlayerId() != 0` 发开局物品 → 每 600 tick
+  `survivor at …` 周期报告。
+- reactive：`OnGameStart` 重置计数 + `SetTimer(5)` 提示 → 击杀计数与 5 杀奖励 →
+  `OnItemPickup/OnSound(Gunshot)/OnPlayerDeath` 日志。
+
+**实测抓到并修复的真 bug**：Lua 的 `function()` 回调会忽略派发器传入的事件表，但 Python 的
+`def on_game_start():` 收到 1 个实参会直接 TypeError（`--script.backend=python` 实机首跑，
+reactive 在 OnGameStart 被禁用）。修复：派发前判断 `__code__.co_argcount == 0 &&
+!CO_VARARGS` → 无参调用，否则照常传事件 dict（对齐 Lua 语义）；测试补 `lambda: Log.Info
+('noarg')` 用例。这个事故同时成了"报错不崩 + 归因清晰"的现场证据（日志含 mod id/路径行号/
+traceback，进程存活）。
+
+**实机对照**（ON 构建；对照清单见 docs/03 §10，已逐条勾）：
+- 默认 lua：`2 个目录，加载 2`；starter items、tip、survivor 周期日志正常（重命名回归 ✓）。
+- `--script.backend=python`：hello/reactive 均以 backend=python 加载；`hello mod loaded
+  (pi=3.14)`、`starter items: bandage x2, axe x1`、`reactive mod ready …`、`tip: press F6 …`、
+  `survivor at …` 全部与 Lua 版一致。
+- 热重载：运行中改 `example_hello/scripts/main.py` 文案 → `mod 重载成功：[example_hello]` +
+  重执行日志 + 新文案 `survivor@py-v2 at …` 立即出现（文件已还原）。
+- 刷僵尸能力：临时 mod `verify_tick_py`（backend=python）tick 600 刷 1 只 →
+  `tick-spawn: zombies=41 (handle=52)`；用后删除。
+- 0 参回调修复后复跑：`reactive mod ready` / `tip:` 正常，无禁用。
+
+**文档**：`docs/modding.md` 增加 §7.1「Python 后端」（启用方式：预设 `x64-debug-python` /
+`-DZL_ENABLE_PYTHON=ON` + `script.backend=python`；API 与 Lua 同名；差异清单：dict 返回/
+None/0 参回调/import 白名单/print 接日志）；`docs/03 §10` 对照清单填满。
+
+**验证**：ON 构建 191 用例全绿（+0 新用例，M8-T3 用例扩展 0 参断言）；本任务 C++ 改动均在
+`#ifdef ZL_ENABLE_PYTHON` 内，OFF（默认）构建行为不变（185 用例基线不受影响）。

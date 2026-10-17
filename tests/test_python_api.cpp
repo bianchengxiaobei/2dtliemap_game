@@ -162,6 +162,9 @@ TEST_CASE("M8-T3：Events.On/Off 与事件字段（Python）") {
     const script::ModInfo mod = mods.MakeModPy("py_events", R"py(
 Events.On('OnTick', lambda e: Log.Info('tick=%d' % e['tick']))
 
+# 与 Lua 对齐：0 形参回调也应被正常调用（Lua 会忽略多余实参）
+Events.On('OnTick', lambda: Log.Info('noarg'))
+
 def once(e):
     Log.Info('once=%d' % e['tick'])
     Events.Off('OnTick', once)
@@ -183,6 +186,7 @@ Events.On('OnPlayerMove', move)
     std::string captured = logs.Str();
     CHECK(captured.find("tick=5") != std::string::npos);
     CHECK(captured.find("once=5") != std::string::npos);
+    CHECK(captured.find("noarg") != std::string::npos);
 
     CHECK(runtime->DispatchEventToMod("py_events", MakeTickEvent(6)).empty());
     captured = logs.Str();

@@ -1,6 +1,7 @@
-# ZomboidLike Mod 开发指南（Lua / API v1）
+# ZomboidLike Mod 开发指南（Lua / Python 可选，API v1）
 
-> 适用版本：M7 脚本系统 v1 · 参考示例：`mods/example_hello_lua`、`mods/example_reactive_lua`
+> 适用版本：M7/M8 脚本系统 v1 · 参考示例：`mods/example_hello`、`mods/example_reactive`
+> （两个示例目录都同时带 `scripts/main.lua` 与 `scripts/main.py`，用 `script.backend` 切换）
 > 设计稿（内部实现说明）：`docs/03-脚本系统设计.md`
 
 ---
@@ -75,8 +76,8 @@ end)
 | `name` | 否 | = id | 展示名 |
 | `version` | 否 | `"0.0.0"` | 仅记录/日志 |
 | `api` | 否 | 当前版本（1） | **过新会被拒绝加载**（提示"需要更新的 API 版本"）；偏旧告警但尽力加载 |
-| `backend` | 否 | `config/game.json` 的 `script.backend`（默认 `lua`） | `lua`；`python` 在未启用该后端的构建上会被跳过 |
-| `main` | 否 | `scripts/main.lua` | 入口脚本（相对 mod 根目录） |
+| `backend` | 否 | `config/game.json` 的 `script.backend`（默认 `lua`） | `lua` / `python`（python 需启用该后端的构建：CMake 预设 `x64-debug-python`；未启用时该 mod 会被跳过并提示"本构建未启用 Python 后端"） |
+| `main` | 否 | 按后端：`scripts/main.lua` / `scripts/main.py` | 入口脚本（相对 mod 根目录） |
 | `loadOrder` | 否 | `100` | 越小越先加载/派发事件（同值按加载先后） |
 
 任何一项不合法（JSON 坏、类型不对、api 过新、后端不存在……）都只会**跳过这一个 mod** 并在日志说明原因，不影响其它 mod 与游戏本体。
@@ -234,10 +235,45 @@ mod 不能读写任意文件、不能起进程、不能加载额外的 lua 文�
 
 | 示例 | 演示点 | 进游戏后看什么 |
 |---|---|---|
-| `mods/example_hello_lua` | 最小结构：启动日志、等玩家生成后发开局物品、`OnTick` 周期查询玩家/僵尸 | 进游戏约 1 秒后日志 `starter items: bandage x2, axe x1`；每约 10 秒一行 `survivor at ...` |
-| `mods/example_reactive_lua` | 事件反应：击杀奖励（5 杀送绷带）、拾取日志、枪声日志、死亡提示、`SetTimer` | 按 `F6` 演示击杀看 `zombie N down (kills=...)`；按 `F7` 看 `gunshot at ...`；按 `F` 拾取看 `picked up ...` |
+| `mods/example_hello` | 最小结构：启动日志、等玩家生成后发开局物品、`OnTick` 周期查询玩家/僵尸 | 进游戏约 1 秒后日志 `starter items: bandage x2, axe x1`；每约 10 秒一行 `survivor at ...` |
+| `mods/example_reactive` | 事件反应：击杀奖励（5 杀送绷带）、拾取日志、枪声日志、死亡提示、`SetTimer` | 按 `F6` 演示击杀看 `zombie N down (kills=...)`；按 `F7` 看 `gunshot at ...`；按 `F` 拾取看 `picked up ...` |
 
-两者都可以直接改文件保存体验热重载（例如把 `example_reactive_lua` 里"每 5 杀"改成"每 2 杀"）。
+两者都可以直接改文件保存体验热重载（例如把 `example_reactive` 里"每 5 杀"改成"每 2 杀"）。
+每个示例目录同时提供 `scripts/main.lua` 与 `scripts/main.py`（同 id、同行为）——
+改 `config/game.json` 的 `script.backend`（或命令行 `--script.backend=python`）即可切换，
+用同一份 mod 对照两个后端。
+
+### 7.1 Python 后端（可选，M8）
+
+启用：CMake 用预设 `x64-debug-python`（或 `-DZL_ENABLE_PYTHON=ON`）构建；运行期把
+`config/game.json` → `script.backend` 设为 `python`（或加 `--script.backend=python`）。
+未启用该后端的构建里，backend=python 的 mod 会以清晰错误跳过，不影响其它 mod。
+
+Python 与 Lua 的 Host API 完全同名同参数，只是写法不同：
+
+```python
+import math
+
+Log.Info('hi, pi=%.2f' % math.pi)
+
+def on_tick(e):
+    if e['tick'] % 600 == 0:
+        p = Player.GetPosition()
+        if p is not None:
+            Log.Info('pos %.1f,%.1f | hp=%s' % (p['x'], p['y'], Player.GetHealth()))
+
+Events.On('OnTick', on_tick)
+Game.SetTimer(5, lambda: Log.Info('五游戏秒后提示一次'))
+```
+
+差异清单（与 Lua 对照）：
+- 位置/时间返回 **dict**（`p['x']`、`t['year']`），无玩家/无效句柄返回 `None`；
+- 事件回调参数是字段 dict（`e['tick']`）；**0 形参回调也可用**（与 Lua 忽略多余实参一致）；
+- `Events.Off(name, fn)` 按函数对象同一性移除；`Events.Off(name)` 清空该事件全部订阅；
+- `print(...)` 也接到游戏日志（`[script-py] [mod-id]`）；`import` 白名单：
+  `math/random/string/json/re/itertools/functools/collections/time/datetime/...`，
+  其余 `ImportError`；`open/eval/exec/compile` 等不可用（防手滑，非强安全边界）；
+- 入口默认 `scripts/main.py`（可在 `mod.json` 的 `main` 显式指定）。
 
 ---
 
@@ -260,4 +296,4 @@ mod 不能读写任意文件、不能起进程、不能加载额外的 lua 文�
 - `OnZombieDead.killer` 恒 0；`OnPlayerMove` 仅点击移动到达；`OnSaveBegin/End` 生产端未接。
 - `Zombies.Count` 只统计实体僵尸（离屏虚拟僵尸不计）。
 - 死循环防护边界见 §6.4。
-- Python 后端（M8 规划）将提供同一套 Host API / 事件表；当前构建默认仅 Lua。
+- Python 后端（M8）与 Lua 共用同一套 Host API / 事件表（差异见 §7.1）；默认构建仍只带 Lua。

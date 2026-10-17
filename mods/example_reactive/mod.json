@@ -1,0 +1,7 @@
+{
+  "id": "example_reactive",
+  "name": "Example Reactive",
+  "version": "1.0.0",
+  "api": 1,
+  "loadOrder": 110
+}

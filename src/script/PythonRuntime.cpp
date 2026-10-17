@@ -163,6 +163,22 @@ struct Timer {
 // 事件名 → 订阅函数列表（每 mod 独立；Events.On/Off 随时可变）。
 using HandlerMap = std::unordered_map<std::string, std::vector<py::function>>;
 
+// 与 Lua 行为对齐：Lua 的 `function()` 回调会忽略多余实参，Python 不会。
+// 对"0 形参且无 *args"的可调用对象按无参方式调用（否则照常传事件 dict）。
+bool WantsNoArguments(const py::function& handler) {
+    if (!py::hasattr(handler, "__code__")) {
+        return false;  // 内建/可调用对象：按常规传参
+    }
+    try {
+        const py::object code = handler.attr("__code__");
+        const int argCount = py::cast<int>(code.attr("co_argcount"));
+        const int flags = py::cast<int>(code.attr("co_flags"));
+        return argCount == 0 && (flags & 0x04) == 0;  // CO_VARARGS = 0x04
+    } catch (const py::error_already_set&) {
+        return false;
+    }
+}
+
 // 事件字段 → dict（与 Lua 侧同名字段；monostate 跳过）。
 py::dict MakeEventArgDict(const core::ScriptEvent& event) {
     py::dict out;
@@ -580,7 +596,11 @@ std::vector<ModError> PythonRuntime::DispatchEventToMod(const std::string& modId
     const py::dict arg = MakeEventArgDict(ev);
     for (const py::function& handler : handlers) {
         try {
-            handler(arg);
+            if (WantsNoArguments(handler)) {
+                handler();
+            } else {
+                handler(arg);
+            }
         } catch (const py::error_already_set& e) {
             handleError("事件 " + ev.name + " 处理错误：", e);
             return errors;
