@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <string>
 
 #include <GLFW/glfw3.h>
 #include <RmlUi/Core.h>
+#include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <bgfx/bgfx.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -98,6 +100,9 @@ bool UiSystem::Init(platform::Window& window, int fbWidth, int fbHeight) {
     m_document->Show();
     m_visible = true;
     m_counterElement = m_document->GetElementById("count");
+    m_disableSampleElement = m_document->GetElementById("disabled-sample");
+    m_volumeElement = m_document->GetElementById("volume");
+    m_volumeValueElement = m_document->GetElementById("volume-value");
 
     AddClickHandler("inc", [this] {
         ++m_counter;
@@ -110,6 +115,27 @@ bool UiSystem::Init(platform::Window& window, int fbWidth, int fbHeight) {
         if (m_counterElement != nullptr) {
             m_counterElement->SetInnerRML(std::to_string(m_counter));
         }
+    });
+    AddEventHandler("toggle-disable", "click", [this] {
+        if (m_disableSampleElement == nullptr) {
+            return;
+        }
+        if (m_disableSampleElement->HasAttribute("disabled")) {
+            m_disableSampleElement->RemoveAttribute("disabled");
+            m_disableSampleElement->SetInnerRML("禁用示例按钮");
+        } else {
+            m_disableSampleElement->SetAttribute("disabled", Rml::String("disabled"));
+            m_disableSampleElement->SetInnerRML("启用示例按钮");
+        }
+    });
+    AddEventHandler("volume", "change", [this] {
+        if (m_volumeElement == nullptr || m_volumeValueElement == nullptr) {
+            return;
+        }
+        auto* input = static_cast<Rml::ElementFormControlInput*>(m_volumeElement);
+        const double value = std::strtod(input->GetValue().c_str(), nullptr);
+        m_volumeValueElement->SetInnerRML(
+            std::to_string(static_cast<int>(std::lround(value))));
     });
 
     window.SetCharCallback([this](unsigned int codepoint) { HandleChar(codepoint); });
@@ -131,6 +157,9 @@ void UiSystem::Shutdown() {
     }
     m_listeners.clear();
     m_counterElement = nullptr;
+    m_disableSampleElement = nullptr;
+    m_volumeElement = nullptr;
+    m_volumeValueElement = nullptr;
     m_document = nullptr;
     if (m_context != nullptr) {
         Rml::RemoveContext("main");
@@ -258,6 +287,11 @@ void UiSystem::HandleChar(unsigned int codepoint) {
 }
 
 void UiSystem::AddClickHandler(const char* elementId, std::function<void()> action) {
+    AddEventHandler(elementId, "click", std::move(action));
+}
+
+void UiSystem::AddEventHandler(const char* elementId, const char* event,
+                               std::function<void()> action) {
     if (m_document == nullptr) {
         return;
     }
@@ -267,7 +301,7 @@ void UiSystem::AddClickHandler(const char* elementId, std::function<void()> acti
         return;
     }
     auto listener = std::make_unique<FunctionListener>(std::move(action));
-    element->AddEventListener("click", listener.get());
+    element->AddEventListener(event, listener.get());
     m_listeners.push_back(std::move(listener));
 }
 

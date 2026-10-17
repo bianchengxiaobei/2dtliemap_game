@@ -127,3 +127,48 @@ body { font-family: zl_ui; width: 100%; height: 100%; }
     Rml::RemoveContext("test");
     Rml::Shutdown();
 }
+
+TEST_CASE("M9-T2 主题文档、圆角与 Tab 焦点") {
+    NullRenderInterface renderInterface;
+    NullSystemInterface systemInterface;
+    Rml::SetRenderInterface(&renderInterface);
+    Rml::SetSystemInterface(&systemInterface);
+    REQUIRE(Rml::Initialise());
+
+    const std::string fontPath =
+        std::string(ZL_SOURCE_DIR) + "/assets/fonts/NotoSansSC-Regular.otf";
+    CHECK(Rml::LoadFontFace(fontPath, "zl_ui", Rml::Style::FontStyle::Normal,
+                            Rml::Style::FontWeight::Normal));
+
+    Rml::Context* context = Rml::CreateContext("theme", Rml::Vector2i(1280, 720));
+    REQUIRE(context != nullptr);
+    const std::string documentPath = std::string(ZL_SOURCE_DIR) + "/assets/ui/debug.rml";
+    Rml::ElementDocument* document = context->LoadDocument(documentPath);
+    REQUIRE(document != nullptr);
+    document->Show();
+    context->Update();
+
+    Rml::Element* panel = document->GetElementById("panel");
+    REQUIRE(panel != nullptr);
+    CHECK(panel->GetComputedValues().border_top_left_radius() > 0.0f);
+    CHECK(document->GetElementById("scroll") != nullptr);
+    CHECK(document->GetElementById("volume") != nullptr);
+    CHECK(document->GetElementById("ninepatch-demo") != nullptr);
+    CHECK(document->GetElementById("disabled-sample")->HasAttribute("disabled"));
+
+    context->ProcessKeyDown(Rml::Input::KI_TAB, 0);
+    context->Update();
+    Rml::Element* firstFocus = context->GetFocusElement();
+    CHECK(firstFocus != nullptr);
+    context->ProcessKeyUp(Rml::Input::KI_TAB, 0);
+
+    context->ProcessKeyDown(Rml::Input::KI_TAB, 0);
+    context->Update();
+    Rml::Element* secondFocus = context->GetFocusElement();
+    CHECK(secondFocus != nullptr);
+    CHECK(secondFocus != firstFocus);
+    context->ProcessKeyUp(Rml::Input::KI_TAB, 0);
+
+    Rml::RemoveContext("theme");
+    Rml::Shutdown();
+}

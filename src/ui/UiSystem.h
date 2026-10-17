@@ -47,6 +47,8 @@ public:
 private:
     void HandleChar(unsigned int codepoint);
     void AddClickHandler(const char* elementId, std::function<void()> action);
+    void AddEventHandler(const char* elementId, const char* event,
+                         std::function<void()> action);
 
     platform::Window* m_window = nullptr;
     std::unique_ptr<RmlBgfxRenderInterface> m_renderer;
@@ -54,6 +56,9 @@ private:
     Rml::Context* m_context = nullptr;
     Rml::ElementDocument* m_document = nullptr;
     Rml::Element* m_counterElement = nullptr;
+    Rml::Element* m_disableSampleElement = nullptr;
+    Rml::Element* m_volumeElement = nullptr;
+    Rml::Element* m_volumeValueElement = nullptr;
     std::vector<std::unique_ptr<Rml::EventListener>> m_listeners;
     std::deque<unsigned int> m_pendingChars;
 

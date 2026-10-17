@@ -1411,3 +1411,40 @@ None/0 参回调/import 白名单/print 接日志）；`docs/03 §10` 对照清�
    layer 后再启用圆角。
 6. 键盘/鼠标短按（<1 帧）可能丢：当前用 Input 边沿轮询；实测按住 150ms 的点击可正常触发。
    后续如需要再做窗口回调事件队列。
+
+---
+
+## 2026-10-17 M9-T2 主题与基础控件
+
+**主题**：新增 `assets/ui/theme.rcss`，定义面板/卡片/标题/按钮（primary/次要/禁用/悬停/按下/focus-visible）/
+文本输入/滚动列表/滚动条/滑条皮肤；`debug.rml` 改为组件展示页（计数器、禁用切换、图片、
+九宫格、文本框、滑条、滚动列表、Tab 提示）。新增 `ui_demo.png`（图片控件）与 `ui_theme.png`
+（九宫格贴图，`@spritesheet` + `decorator: ninepatch`）。
+
+**输入/交互**：`UiSystem` 增加禁用按钮切换（Set/RemoveAttribute）与滑条 `change` 事件
+（`ElementFormControlInput::GetValue`，解析后取整回显）；Tab 焦点导航直接使用 RmlUi 内建
+导航，`:focus-visible` 黄色描边验证通过。
+
+**渲染**：`RmlBgfxRenderInterface` 增加 stencil clip mask：`EnableClipMask`/`RenderToClipMask`
+用 8 位引用计数，Set 写引用、Intersect 读取，`BGFX_CLEAR_STENCIL` 每帧清理；遮罩几何走
+transient buffer + `bgfx::setStencil`，配合 scissor 实现滚动列表的圆角裁剪。圆角背景本身
+仍是直接几何，不依赖 mask。
+
+**实机验证**：计数 0→2、按钮禁用/启用切换、滑条 65→88 且回显、Tab 焦点、滚轮滚到列表末尾；
+`ui_t2_final.png` / `ui_t2_counter.png` / `ui_t2_toggle.png` / `ui_t2_slider2.png` /
+`ui_t2_tabfocus.png` / `ui_t2_scroll.png`。测试 188 全绿（新增主题文档/圆角/Tab 用例）。
+
+**踩坑**：
+1. **RCSS 不接受 UTF-8 BOM**：RmlUi 会打印 warning 并**丢弃整份样式表**（面板突然变成
+   全宽、没有背景）；编辑工具可能给旧文件加 BOM，资源写盘后要检查/去掉 BOM（docs/02 已记）。
+2. **九宫格**需要 `@spritesheet` 定义外框/内框 sprite，再 `decorator: ninepatch(a, b, 1.0) border-box`；
+   只注册 decorator 不定义 sprite 会静默不显示。
+3. **滑条**类型类名是 `input.range`（不是属性选择器），内部子元素是非 DOM 的
+   `slidertrack`/`sliderprogress`/`sliderbar`，必须按 `input.range xxx` 作用域写样式，
+   否则宽高/颜色全无。`GetValue()` 返回 `"88.000000"`，回显前要解析格式化。
+4. **面板 `overflow: hidden` + 内部圆角 clip mask 的嵌套**：当前简化状态机（RmlUi 的
+   mask 状态缓存 + 引用计数）下会出现部分内容整块消失（滑条/列表/九宫格）。主题改为
+   面板不裁切（内容都有内边距），滚动列表自身的圆角裁剪正常；面板级嵌套 mask 留到 T5
+   做状态机/离屏层时再解决。
+5. 调试 stencil 时确认 bgfx/D3D11 的 backbuffer 是 D24S8；mask 绘制需带
+   `BGFX_STATE_DEPTH_TEST_ALWAYS` 与 `setStencil(front, back)`，且每帧 `BGFX_CLEAR_STENCIL`。

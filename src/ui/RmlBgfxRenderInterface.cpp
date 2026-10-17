@@ -18,6 +18,18 @@ namespace {
 
 static_assert(sizeof(Rml::Vertex) == 20, "RmlUi 顶点必须是紧凑 20 字节");
 
+uint32_t StencilWrite(uint8_t reference) {
+    return BGFX_STENCIL_TEST_ALWAYS | BGFX_STENCIL_FUNC_REF(reference) |
+           BGFX_STENCIL_FUNC_RMASK(0xff) | BGFX_STENCIL_OP_FAIL_S_KEEP |
+           BGFX_STENCIL_OP_FAIL_Z_KEEP | BGFX_STENCIL_OP_PASS_Z_REPLACE;
+}
+
+uint32_t StencilTestEqual(uint8_t reference) {
+    return BGFX_STENCIL_TEST_EQUAL | BGFX_STENCIL_FUNC_REF(reference) |
+           BGFX_STENCIL_FUNC_RMASK(0xff) | BGFX_STENCIL_OP_FAIL_S_KEEP |
+           BGFX_STENCIL_OP_FAIL_Z_KEEP | BGFX_STENCIL_OP_PASS_Z_KEEP;
+}
+
 bgfx::ShaderHandle CreateShaderForBackend(const uint8_t* dx11Data, size_t dx11Size,
                                           const uint8_t* glslData, size_t glslSize,
                                           const char* what) {
@@ -74,6 +86,7 @@ bool RmlBgfxRenderInterface::Init(bgfx::ViewId view) {
     }
 
     m_view = view;
+    bgfx::setViewClear(view, BGFX_CLEAR_STENCIL, 0, 1.0f, 0);
     m_initialized = true;
     ZL_INFO("ui", "RmlUi bgfx 渲染接口初始化完成（view {}）", static_cast<int>(view));
     return true;
@@ -136,57 +149,12 @@ void RmlBgfxRenderInterface::RenderGeometry(Rml::CompiledGeometryHandle geometry
         return;
     }
     const GeometryData& data = m_geometries[geometry - 1];
-    if (data.vertices.empty() || data.indices.empty()) {
-        return;
-    }
-
-    bgfx::TransientVertexBuffer tvb;
-    bgfx::allocTransientVertexBuffer(&tvb, static_cast<uint32_t>(data.vertices.size()), m_layout);
-    if (tvb.data == nullptr) {
-        return;
-    }
-    auto* dst = reinterpret_cast<Rml::Vertex*>(tvb.data);
-    for (size_t i = 0; i < data.vertices.size(); ++i) {
-        dst[i] = data.vertices[i];
-        dst[i].position.x += translation.x;
-        dst[i].position.y += translation.y;
-    }
-
-    bgfx::TransientIndexBuffer tib;
-    bgfx::allocTransientIndexBuffer(&tib, static_cast<uint32_t>(data.indices.size()));
-    if (tib.data == nullptr) {
-        return;
-    }
-    std::memcpy(tib.data, data.indices.data(), data.indices.size() * sizeof(uint16_t));
-
-    if (m_scissorEnabled) {
-        const int x0 = std::clamp(m_scissor.Left(), 0, m_width);
-        const int y0 = std::clamp(m_scissor.Top(), 0, m_height);
-        const int x1 = std::clamp(m_scissor.Right(), 0, m_width);
-        const int y1 = std::clamp(m_scissor.Bottom(), 0, m_height);
-        const uint16_t sx = static_cast<uint16_t>(x0);
-        const uint16_t sy = static_cast<uint16_t>(y0);
-        const uint16_t sw = static_cast<uint16_t>(std::max(x1 - x0, 0));
-        const uint16_t sh = static_cast<uint16_t>(std::max(y1 - y0, 0));
-        bgfx::setScissor(sx, sy, sw, sh);
-    } else {
-        bgfx::setScissor(0, 0, static_cast<uint16_t>(std::max(m_width, 0)),
-                         static_cast<uint16_t>(std::max(m_height, 0)));
-    }
-
-    bgfx::setVertexBuffer(0, &tvb);
-    bgfx::setIndexBuffer(&tib);
-    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
-                   BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_ONE,
-                                                  BGFX_STATE_BLEND_INV_SRC_ALPHA,
-                                                  BGFX_STATE_BLEND_ONE,
-                                                  BGFX_STATE_BLEND_INV_SRC_ALPHA));
-    bgfx::TextureHandle tex = TextureFromHandle(texture);
-    if (!bgfx::isValid(tex)) {
-        tex = m_whiteTexture;
-    }
-    bgfx::setTexture(0, m_sampler, tex);
-    bgfx::submit(m_view, m_program);
+    const uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                           BGFX_STATE_BLEND_FUNC_SEPARATE(
+                               BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_INV_SRC_ALPHA,
+                               BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_INV_SRC_ALPHA);
+    SubmitGeometry(data.vertices.data(), data.vertices.size(), data.indices.data(),
+                   data.indices.size(), translation, texture, state, ActiveMaskStencil(), true);
 }
 
 void RmlBgfxRenderInterface::ReleaseGeometry(Rml::CompiledGeometryHandle geometry) {
@@ -252,6 +220,141 @@ void RmlBgfxRenderInterface::ReleaseTexture(Rml::TextureHandle texture) {
 void RmlBgfxRenderInterface::EnableScissorRegion(bool enable) { m_scissorEnabled = enable; }
 
 void RmlBgfxRenderInterface::SetScissorRegion(Rml::Rectanglei region) { m_scissor = region; }
+
+void RmlBgfxRenderInterface::EnableClipMask(bool enable) {
+    m_clipMaskEnabled = enable;
+    if (!enable) {
+        m_maskRef = 0;
+    }
+}
+
+void RmlBgfxRenderInterface::RenderToClipMask(Rml::ClipMaskOperation operation,
+                                              Rml::CompiledGeometryHandle geometry,
+                                              Rml::Vector2f translation) {
+    if (!m_initialized || geometry == 0 || geometry > m_geometries.size()) {
+        return;
+    }
+    m_clipMaskEnabled = true;
+    if (operation == Rml::ClipMaskOperation::Set ||
+        operation == Rml::ClipMaskOperation::SetInverse) {
+        ++m_maskRef;
+        if (m_maskRef == 0) {
+            DrawFullscreenMask(0);
+            m_maskRef = 1;
+        }
+    }
+    if (m_maskRef == 0) {
+        m_maskRef = 1;
+    }
+
+    if (operation == Rml::ClipMaskOperation::Set) {
+        DrawMaskGeometry(geometry, translation, StencilWrite(m_maskRef));
+    } else if (operation == Rml::ClipMaskOperation::SetInverse) {
+        DrawFullscreenMask(m_maskRef);
+        DrawMaskGeometry(geometry, translation, StencilWrite(0));
+    } else {
+        DrawMaskGeometry(geometry, translation, StencilTestEqual(m_maskRef));
+    }
+}
+
+uint32_t RmlBgfxRenderInterface::ActiveMaskStencil() const {
+    if (m_clipMaskEnabled && m_maskRef != 0) {
+        return StencilTestEqual(m_maskRef);
+    }
+    return BGFX_STENCIL_NONE;
+}
+
+void RmlBgfxRenderInterface::DrawMaskGeometry(Rml::CompiledGeometryHandle geometry,
+                                              Rml::Vector2f translation, uint32_t stencil) {
+    if (geometry == 0 || geometry > m_geometries.size()) {
+        return;
+    }
+    const GeometryData& data = m_geometries[geometry - 1];
+    SubmitGeometry(data.vertices.data(), data.vertices.size(), data.indices.data(),
+                   data.indices.size(), translation, 0, BGFX_STATE_DEPTH_TEST_ALWAYS, stencil, true);
+}
+
+void RmlBgfxRenderInterface::DrawFullscreenMask(uint8_t reference) {
+    const float w = static_cast<float>(m_width);
+    const float h = static_cast<float>(m_height);
+    const Rml::Vertex vertices[4] = {
+        {{0.0f, 0.0f}, Rml::ColourbPremultiplied(255, 255, 255, 255), {0.0f, 0.0f}},
+        {{w, 0.0f}, Rml::ColourbPremultiplied(255, 255, 255, 255), {1.0f, 0.0f}},
+        {{w, h}, Rml::ColourbPremultiplied(255, 255, 255, 255), {1.0f, 1.0f}},
+        {{0.0f, h}, Rml::ColourbPremultiplied(255, 255, 255, 255), {0.0f, 1.0f}},
+    };
+    const uint16_t indices[6] = {0, 1, 2, 0, 2, 3};
+    SubmitGeometry(vertices, 4, indices, 6, {0.0f, 0.0f}, 0, BGFX_STATE_DEPTH_TEST_ALWAYS, StencilWrite(reference), false);
+}
+
+void RmlBgfxRenderInterface::ApplyScissor(bool fullViewport) {
+    int x0 = 0;
+    int y0 = 0;
+    int x1 = m_width;
+    int y1 = m_height;
+    if (!fullViewport && m_scissorEnabled) {
+        x0 = std::clamp(m_scissor.Left(), 0, m_width);
+        y0 = std::clamp(m_scissor.Top(), 0, m_height);
+        x1 = std::clamp(m_scissor.Right(), 0, m_width);
+        y1 = std::clamp(m_scissor.Bottom(), 0, m_height);
+    }
+    const uint16_t sx = static_cast<uint16_t>(x0);
+    const uint16_t sy = static_cast<uint16_t>(y0);
+    const uint16_t sw = static_cast<uint16_t>(std::max(x1 - x0, 0));
+    const uint16_t sh = static_cast<uint16_t>(std::max(y1 - y0, 0));
+    bgfx::setScissor(sx, sy, sw, sh);
+}
+
+void RmlBgfxRenderInterface::SubmitGeometry(const Rml::Vertex* vertices, size_t vertexCount,
+                                            const uint16_t* indices, size_t indexCount,
+                                            Rml::Vector2f translation,
+                                            Rml::TextureHandle texture, uint64_t state,
+                                            uint32_t stencil, bool useScissor) {
+    if (!m_initialized || vertices == nullptr || indices == nullptr || vertexCount == 0 ||
+        indexCount == 0) {
+        return;
+    }
+    if (useScissor && m_scissorEnabled) {
+        const int x0 = std::clamp(m_scissor.Left(), 0, m_width);
+        const int y0 = std::clamp(m_scissor.Top(), 0, m_height);
+        const int x1 = std::clamp(m_scissor.Right(), 0, m_width);
+        const int y1 = std::clamp(m_scissor.Bottom(), 0, m_height);
+        if (x1 <= x0 || y1 <= y0) {
+            return;
+        }
+    }
+
+    bgfx::TransientVertexBuffer tvb;
+    bgfx::allocTransientVertexBuffer(&tvb, static_cast<uint32_t>(vertexCount), m_layout);
+    if (tvb.data == nullptr) {
+        return;
+    }
+    auto* dst = reinterpret_cast<Rml::Vertex*>(tvb.data);
+    for (size_t i = 0; i < vertexCount; ++i) {
+        dst[i] = vertices[i];
+        dst[i].position.x += translation.x;
+        dst[i].position.y += translation.y;
+    }
+
+    bgfx::TransientIndexBuffer tib;
+    bgfx::allocTransientIndexBuffer(&tib, static_cast<uint32_t>(indexCount));
+    if (tib.data == nullptr) {
+        return;
+    }
+    std::memcpy(tib.data, indices, indexCount * sizeof(uint16_t));
+
+    ApplyScissor(!useScissor);
+    bgfx::setVertexBuffer(0, &tvb);
+    bgfx::setIndexBuffer(&tib);
+    bgfx::setState(state);
+    bgfx::setStencil(stencil, stencil);
+    bgfx::TextureHandle tex = TextureFromHandle(texture);
+    if (!bgfx::isValid(tex)) {
+        tex = m_whiteTexture;
+    }
+    bgfx::setTexture(0, m_sampler, tex);
+    bgfx::submit(m_view, m_program);
+}
 
 Rml::TextureHandle RmlBgfxRenderInterface::MakeTexture(const void* data, uint32_t byteSize,
                                                        int width, int height,

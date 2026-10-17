@@ -1,18 +1,55 @@
 <rml>
 <head>
-    <title>ZomboidLike UI Debug</title>
+    <title>ZomboidLike UI Theme</title>
+    <link type="text/rcss" href="theme.rcss"/>
     <link type="text/rcss" href="debug.rcss"/>
 </head>
 <body>
-    <div id="panel">
-        <div id="title">ZomboidLike · RmlUi 6.3</div>
-        <div id="subtitle">bgfx View 1 · RmlUi + FreeType · 中文 / English / 12345</div>
-        <div class="row">
-            <div class="btn" id="dec">−</div>
-            <div id="count">0</div>
-            <div class="btn" id="inc">+</div>
+    <div id="panel" class="panel">
+        <div id="badge">RmlUi 6.3</div>
+        <div id="title" class="title">ZomboidLike · UI 组件</div>
+        <div id="subtitle" class="muted">bgfx View 1 · 中文 / English / 12345 · F11 显隐</div>
+
+        <div class="card">
+            <div class="section-title">计数器 Counter</div>
+            <div class="row">
+                <div class="btn" id="dec">−</div>
+                <div id="count">0</div>
+                <div class="btn" id="inc">+</div>
+                <div class="hint-inline">点击按钮验证事件</div>
+            </div>
         </div>
-        <input type="text" id="name" placeholder="输入中文 / English"/>
+
+        <div class="row buttons-row">
+            <div class="btn primary" id="toggle-disable">启用示例按钮</div>
+            <div class="btn" id="disabled-sample" disabled="disabled">禁用示例按钮</div>
+            <div class="btn" id="secondary">次要按钮</div>
+        </div>
+
+        <div class="card">
+            <div class="section-title">资源 Resources</div>
+            <div class="image-row">
+                <img id="demo-image" src="ui_demo.png"/>
+                <div class="image-meta">
+                    <div class="label">ui_demo.png</div>
+                    <div class="muted">LoadTexture + stb_image</div>
+                    <div class="muted">圆角 / 边框 / 悬停态</div>
+                </div>
+            </div>
+            <div id="ninepatch-demo">九宫格 Ninepatch：decorator 拉伸</div>
+        </div>
+
+        <div class="card">
+            <div class="section-title">控件 Controls</div>
+            <input type="text" id="name" placeholder="输入中文 / English"/>
+            <div class="row slider-row">
+                <div class="slider-label label">音量</div>
+                <input type="range" id="volume" min="0" max="100" value="65"/>
+                <div id="volume-value">65</div>
+            </div>
+        </div>
+
+        <div class="section-title list-title">滚动列表 List</div>
         <div id="scroll">
             <div class="item">绷带 ×2 · bandage</div>
             <div class="item">斧头 ×1 · axe</div>
@@ -27,7 +64,7 @@
             <div class="item">滚轮滚动测试 · scroll test</div>
             <div class="item">最后一行 · last row</div>
         </div>
-        <div id="hint">F11 隐藏/显示 · 点击 + / − 验证事件路由</div>
+        <div id="hint">Tab 切换焦点 · Enter / 空格 激活 · 滚轮滚动列表</div>
     </div>
 </body>
 </rml>
