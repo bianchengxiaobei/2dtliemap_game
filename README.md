@@ -24,7 +24,7 @@
 项目在 E:\Game\ZomboidLike。请按顺序读：
 README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md → docs/02-技术选型与开发规范.md
 （涉及脚本系统时再读 docs/03-脚本系统设计.md；涉及占位资源时读 assets_placeholder_pz/README.md）。
-以 docs/01 的任务清单为唯一任务依据，当前从 M8 验收开始；写代码遵守 docs/02 的规范；
+以 docs/01 的任务清单为唯一任务依据，当前从 M9-T1 开始；写代码遵守 docs/02 的规范；
 构建命令走 tools/dev.ps1（Ninja 需要 MSVC 环境，如 .\tools\dev.ps1 cmake --build --preset x64-debug）；
 每完成一个任务把清单里对应项勾上，Git 提交信息带任务号（如 feat(render): sprite batch (M2-T3)）。
 ```
@@ -33,7 +33,7 @@ README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md �
 
 1. **README.md（本文件）** —— 全局视图、入口
 2. **docs/00-架构总览.md** —— 动手前通读（分层/世界模型/ECS/渲染/决策记录）
-3. **docs/01-里程碑与任务清单.md** —— ★ 每天的任务依据（当前进度：M6 已完成并验收（v0.6.0；T4 顺延至正式 UI）；M7 已完成并验收（v0.7.0，Lua 脚本系统全链路）；M8 任务完成、待验收；M0 仅剩跨机验收；下一步 M8 验收（三条标准达标后打 v0.8.0））；**docs/modding.md** —— 玩家 mod 开发指南（API v1，Lua/Python）
+3. **docs/01-里程碑与任务清单.md** —— ★ 每天的任务依据（当前进度：M6 已完成并验收（v0.6.0；T4 顺延至正式 UI）；M7 已完成并验收（v0.7.0，Lua 脚本系统全链路）；M8 已完成并验收（v0.8.0，Python 可选后端）；M0 仅剩跨机验收；下一步 M9-T1 UiContext 与控件树））；**docs/modding.md** —— 玩家 mod 开发指南（API v1，Lua/Python）
 4. **docs/02-技术选型与开发规范.md** —— 建工程、写代码前（依赖/目录/编码规范/占位资源策略）
 5. **docs/03-脚本系统设计.md** —— M7/M8 阶段再读
 6. **assets_placeholder_pz/README.md** —— 用占位资源、重新解包 PZ 纹理时读
@@ -72,7 +72,7 @@ build\x64-debug\ZomboidLike.exe
 | M5 | 角色与僵尸 AI | 完成（v0.5.0，验收 500 僵尸 0.396ms/tick） | |
 | M6 | 物品与容器 | 完成（v0.6.0；T4 背包 UI 顺延至正式 UI） | |
 | M7 | Lua 脚本系统 | 完成（v0.7.0，验收 2026-10-17） | |
-| M8 | Python 脚本后端（可选开关） | 任务全部完成（T1~T4）；待验收 | |
+| M8 | Python 脚本后端（可选开关） | 完成（v0.8.0，验收 2026-10-17） | |
 | M9 | UI 系统 | 未开始 | |
 | M10 | 存档系统 | 未开始 | |
 | M11 | 音频系统 | 未开始 | |

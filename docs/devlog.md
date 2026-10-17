@@ -1342,3 +1342,31 @@ None/0 参回调/import 白名单/print 接日志）；`docs/03 §10` 对照清�
 
 **验证**：ON 构建 191 用例全绿（+0 新用例，M8-T3 用例扩展 0 参断言）；本任务 C++ 改动均在
 `#ifdef ZL_ENABLE_PYTHON` 内，OFF（默认）构建行为不变（185 用例基线不受影响）。
+
+---
+
+## 2026-10-17 M8 验收（可选 Python 后端，tag v0.8.0）
+
+**三条标准现场**：
+
+1. **config 切 python 行为一致**：`config/game.json` 改 `script.backend: "python"` 后实机：
+   3 个 mod 全加载，两示例以 python 版运行——`hello mod loaded (pi=3.14)`、
+   `player ready, giving starter items...`、`starter items: bandage x2, axe x1`、
+   `reactive mod ready: kill 5 zombies to earn a bandage`、`tip: press F6 …`（SetTimer）、
+   约 10 秒 `survivor at 69.1, 23.6 (z=0) | health=76.0 | zombies=40`。逐条核对
+   `docs/03 §10` 对照清单并全部勾选（含热重载改 .py 2 秒生效、OnTick 刷僵尸）。
+2. **Python 报错不崩 + 未编译清晰报错**：
+   - `break_py`（backend=python，OnTick 抛 RuntimeError）→
+     `mod [break_py] 脚本错误（事件 OnTick）：事件 OnTick 处理错误：RuntimeError: acceptance boom`
+     + `mods/break_py/scripts/main.py(2): bad` → `mod 已禁用`，进程存活，其余 mod 正常；
+   - 切回 OFF 构建后同一 mod → `未注册的脚本后端：python（mod break_py）；本构建未启用
+     Python 后端（CMake 选项 ZL_ENABLE_PYTHON，见 docs/03 §2）`，扫描 `加载 2，跳过 1`，
+     两示例照常运行，进程存活。
+3. **默认构建零 Python 依赖**：OFF reconfigure 后 vcpkg 移除 python3/pybind11
+   （`vcpkg_installed/.../lib/python314.lib`、`share/pybind11` 均不存在），
+   `dumpbin /DEPENDENTS ZomboidLike.exe` 无 python，exe 目录无 python*.dll（旧产物已清），
+   184→185 用例全绿，启动日志 `Python 后端：未编译（ZL_ENABLE_PYTHON=OFF）`。
+
+**状态**：M8 完成（T1~T4 + 验收）。测试基线：OFF 185 / ON 191（Debug）。
+下一步 M9 UI 系统（最大里程碑：UiContext/控件/字体/HUD/背包/菜单；第一个验收点是
+"全鼠标完成 拾取→装备→使用→丢弃"）。
