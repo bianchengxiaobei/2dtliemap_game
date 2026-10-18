@@ -160,7 +160,7 @@ Events.Off("事件名", 某个函数)              -- 只取消指定函数
 | `OnZombieSpawn` | 僵尸实体生成/实体化 | `zombieId, x, y, z` |
 | `OnZombieDead` | 僵尸死亡（转尸体时） | `zombieId, killer`（`killer` 当前恒 0，伤害来源追踪未实现） |
 | `OnItemPickup` / `OnItemDrop` | 玩家拾取/丢弃物品 | `itemId, defId, count` |
-| `OnSound` | 世界声音（脚步/枪声等） | `x, y, z, radius, soundType`（`soundType`：`"Generic"/"Gunshot"/"Impact"`） |
+| `OnSound` | 世界声音（脚步/枪声等） | `x, y, z, radius, soundType, clip`（`soundType`：`"Generic"/"Gunshot"/"Impact"/"Footstep"/"ZombieGrowl"/"Ui"`；`clip` 为可选逻辑音效名） |
 | `OnChunkLoaded` / `OnChunkUnloaded` | 地图 chunk 加载/卸载 | `cx, cy` |
 | `OnModReload` | 某 mod 热重载成功后 | `modId` |
 | `OnSaveBegin` / `OnSaveEnd` | 存档前后（预留，生产端待存档系统接入） | `slotName` |

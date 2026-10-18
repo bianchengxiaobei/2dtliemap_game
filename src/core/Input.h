@@ -32,9 +32,14 @@ public:
     // 主循环每帧最先调用：生成上一帧快照、清空滚轮增量
     void NewFrame();
 
+    // M9-T4：UI 有焦点时阻断游戏输入（HUD 无焦点时照常透传）。
+    // UiSystem 在每帧处理完 UI 后设置，NewFrame 重置为 false。
+    void SetGameplayBlocked(bool blocked) { m_gameplayBlocked = blocked; }
+    bool IsGameplayBlocked() const { return m_gameplayBlocked; }
+
     float MouseX() const { return m_mouseX; }
     float MouseY() const { return m_mouseY; }
-    float ScrollDeltaY() const { return m_scrollY; }
+    float ScrollDeltaY() const { return m_gameplayBlocked ? 0.0f : m_scrollY; }
     bool IsMouseButtonPressed(int button) const;
     bool IsMouseButtonDown(int button) const;
     bool IsMouseButtonReleased(int button) const;
@@ -55,6 +60,7 @@ private:
     float m_mouseX = 0.0f;
     float m_mouseY = 0.0f;
     float m_scrollY = 0.0f;
+    bool m_gameplayBlocked = false;
 };
 
 }  // namespace zl::core

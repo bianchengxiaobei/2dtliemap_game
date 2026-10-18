@@ -34,24 +34,88 @@ body {
 }
 
 .section-title {
-    font-size: 12px;
+    font-size: 13px;
     color: #9fb3c8;
     margin-bottom: 6px;
 }
 
 .title {
-    font-size: 20px;
+    font-size: 22px;
     color: #ffd479;
 }
 
 .muted {
     color: #8fa4b8;
-    font-size: 12px;
+    font-size: 13px;
 }
 
 .label {
     color: #d7e2ec;
-    font-size: 14px;
+    font-size: 15px;
+}
+
+.text-xs {
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.text-sm {
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.text-base {
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+.text-lg {
+    font-size: 18px;
+    line-height: 1.5;
+}
+
+.text-xl {
+    font-size: 22px;
+    line-height: 1.35;
+}
+
+b,
+strong,
+.weight-bold {
+    font-weight: bold;
+}
+
+.weight-regular {
+    font-weight: normal;
+}
+
+.wrap-demo {
+    width: 100%;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.ellipsis {
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.rich-accent {
+    color: #ffd479;
+}
+
+.rich-danger {
+    color: #ff8a7a;
+}
+
+#atlas-stats {
+    margin-top: 4px;
+}
+
+#atlas-stats.over-budget {
+    color: #ff8a7a;
 }
 
 .row {
@@ -68,7 +132,7 @@ body {
     border-color: #3d566d;
     border-radius: 6px;
     color: #e6edf3;
-    font-size: 14px;
+    font-size: 15px;
     text-align: center;
     cursor: pointer;
 }
@@ -115,7 +179,7 @@ input {
     border-color: #34495c;
     border-radius: 6px;
     color: #ffffff;
-    font-size: 14px;
+    font-size: 15px;
 }
 
 input:focus-visible {

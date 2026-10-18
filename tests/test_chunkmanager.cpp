@@ -73,6 +73,8 @@ TEST_CASE("ChunkManager：相机进入 → 加载 7×7 窗口并挂接数据（M
     world::Chunk* house = cell->GetChunk(6, 1);
     REQUIRE(house != nullptr);
     CHECK(house->State() == world::ChunkState::Loaded);
+    CHECK(house->HasBaseline());
+    CHECK_FALSE(house->IsDirty());
     CHECK(house->Square(5, 8, 0).RoomId() == 3);
     REQUIRE(house->Square(5, 8, 0).Floor() != nullptr);
     CHECK(house->Square(5, 8, 0).Floor()->sprite == "tile.floor.wood");

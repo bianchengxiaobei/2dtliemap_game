@@ -1,5 +1,6 @@
 #include "ecs/EcsWorld.h"
 
+#include <limits>
 #include <utility>
 
 #include "core/Log.h"
@@ -11,6 +12,21 @@ EcsWorld::Entity EcsWorld::Create() {
     const std::uint64_t id = m_nextStableId++;
     m_registry.emplace<StableId>(e, StableId{id});
     m_byStableId.emplace(id, e);
+    ++m_aliveCount;
+    return e;
+}
+
+EcsWorld::Entity EcsWorld::CreateWithStableId(std::uint64_t stableId) {
+    if (stableId == 0 || stableId == std::numeric_limits<std::uint64_t>::max() ||
+        m_byStableId.contains(stableId)) {
+        return kNull;
+    }
+    const Entity e = m_registry.create();
+    m_registry.emplace<StableId>(e, StableId{stableId});
+    m_byStableId.emplace(stableId, e);
+    if (stableId >= m_nextStableId) {
+        m_nextStableId = stableId + 1;
+    }
     ++m_aliveCount;
     return e;
 }

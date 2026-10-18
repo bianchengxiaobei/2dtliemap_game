@@ -41,6 +41,8 @@ public:
 
     void Set(std::string_view path, const nlohmann::json& value);
     bool Has(std::string_view path) const { return FindNode(path) != nullptr; }
+    // M9-T6：设置页把运行时修改写回配置文件（临时文件 + 替换，失败不清空原文件）。
+    bool Save(std::string* error = nullptr);
 
     const nlohmann::json& Raw() const { return m_data; }
     const std::filesystem::path& Path() const { return m_path; }
@@ -56,6 +58,7 @@ private:
     std::filesystem::path m_path;
     nlohmann::json m_fileData = nlohmann::json::object();
     nlohmann::json m_cmdOverrides = nlohmann::json::object();
+    nlohmann::json m_runtimeOverrides = nlohmann::json::object();
     nlohmann::json m_data = nlohmann::json::object();
 };
 

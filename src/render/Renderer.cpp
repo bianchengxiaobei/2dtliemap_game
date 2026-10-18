@@ -1,6 +1,12 @@
 #include "render/Renderer.h"
 
 #include <algorithm>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
+#include <utility>
+#include <vector>
 
 #include <bgfx/platform.h>
 #include <bx/timer.h>
@@ -9,6 +15,118 @@
 #include "platform/Window.h"
 
 namespace zl::render {
+
+class ScreenshotCallback final : public bgfx::CallbackI {
+public:
+    bool Poll(ScreenshotImage* out) {
+        if (out == nullptr) {
+            return false;
+        }
+        std::lock_guard lock(m_mutex);
+        if (m_pending.empty()) {
+            return false;
+        }
+        *out = std::move(m_pending.front());
+        m_pending.erase(m_pending.begin());
+        return true;
+    }
+
+    void fatal(const char* filePath, std::uint16_t line, bgfx::Fatal::Enum code,
+               const char* message) override {
+        ZL_CRITICAL("render", "bgfx fatal {}:{} code={} {}", filePath != nullptr ? filePath : "?",
+                    line, static_cast<int>(code), message != nullptr ? message : "");
+        std::abort();
+    }
+
+    void traceVargs(const char* filePath, std::uint16_t line, const char* format,
+                    va_list args) override {
+        (void)filePath;
+        (void)line;
+        char buffer[2048]{};
+        if (format != nullptr) {
+            std::vsnprintf(buffer, sizeof(buffer), format, args);
+        }
+        ZL_DEBUG("bgfx", "{}", buffer);
+    }
+
+    void profilerBegin(const char* name, std::uint32_t color, const char* filePath,
+                       std::uint16_t line) override {
+        (void)name;
+        (void)color;
+        (void)filePath;
+        (void)line;
+    }
+
+    void profilerBeginLiteral(const char* name, std::uint32_t color,
+                              const char* filePath, std::uint16_t line) override {
+        (void)name;
+        (void)color;
+        (void)filePath;
+        (void)line;
+    }
+
+    void profilerEnd() override {}
+
+    std::uint32_t cacheReadSize(std::uint64_t id) override {
+        (void)id;
+        return 0;
+    }
+
+    bool cacheRead(std::uint64_t id, void* data, std::uint32_t size) override {
+        (void)id;
+        (void)data;
+        (void)size;
+        return false;
+    }
+
+    void cacheWrite(std::uint64_t id, const void* data, std::uint32_t size) override {
+        (void)id;
+        (void)data;
+        (void)size;
+    }
+
+    void screenShot(const char* filePath, std::uint32_t width,
+                    std::uint32_t height, std::uint32_t pitch, const void* data,
+                    std::uint32_t size, bool yflip) override {
+        ScreenshotImage image;
+        if (!ConvertBgraToRgba(data, width, height, pitch, size, yflip, &image)) {
+            ZL_WARN("render", "屏幕截图数据无效: {}x{} pitch={}", width, height, pitch);
+            return;
+        }
+        if (filePath != nullptr) {
+            image.filePath = filePath;
+        }
+        std::lock_guard lock(m_mutex);
+        if (m_pending.size() >= 4) {
+            m_pending.erase(m_pending.begin());
+        }
+        m_pending.push_back(std::move(image));
+    }
+
+    void captureBegin(std::uint32_t width, std::uint32_t height,
+                      std::uint32_t pitch, bgfx::TextureFormat::Enum format,
+                      bool yflip) override {
+        (void)width;
+        (void)height;
+        (void)pitch;
+        (void)format;
+        (void)yflip;
+    }
+
+    void captureEnd() override {}
+
+    void captureFrame(const void* data, std::uint32_t size) override {
+        (void)data;
+        (void)size;
+    }
+
+private:
+    std::mutex m_mutex;
+    std::vector<ScreenshotImage> m_pending;
+};
+
+Renderer::Renderer() = default;
+Renderer::~Renderer() = default;
 
 bool Renderer::Init(platform::Window& window, const RendererDesc& desc) {
     bgfx::PlatformData pd{};
@@ -21,9 +139,12 @@ bool Renderer::Init(platform::Window& window, const RendererDesc& desc) {
     init.resolution.height = static_cast<uint32_t>(std::max(desc.height, 1));
     m_resetFlags = desc.vsync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE;
     init.resolution.reset = m_resetFlags;
+    m_screenshotCallback = std::make_unique<ScreenshotCallback>();
+    init.callback = m_screenshotCallback.get();
 
     if (!bgfx::init(init)) {
         ZL_CRITICAL("render", "bgfx::init 失败");
+        m_screenshotCallback.reset();
         return false;
     }
     m_initialized = true;
@@ -41,6 +162,22 @@ void Renderer::Shutdown() {
         bgfx::shutdown();
         m_initialized = false;
     }
+    m_screenshotCallback.reset();
+    m_screenshotPath.clear();
+}
+
+bool Renderer::RequestScreenshot(std::string filePath) {
+    if (!m_initialized || m_screenshotCallback == nullptr || filePath.empty()) {
+        return false;
+    }
+    m_screenshotPath = std::move(filePath);
+    bgfx::requestScreenShot(BGFX_INVALID_HANDLE, m_screenshotPath.c_str());
+    return true;
+}
+
+bool Renderer::PollScreenshot(ScreenshotImage* out) {
+    return m_screenshotCallback != nullptr &&
+           m_screenshotCallback->Poll(out);
 }
 
 void Renderer::Resize(int fbWidth, int fbHeight) {

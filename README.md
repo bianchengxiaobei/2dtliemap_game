@@ -21,10 +21,10 @@
 本 README 是整个项目的**唯一入口**。新开 AI 对话写代码时，把下面这段直接发给它：
 
 ```
-项目在 E:\Game\ZomboidLike。请按顺序读：
+项目在 <项目根目录>（本机 E:\Game\ZomboidLike）。请按顺序读：
 README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md → docs/02-技术选型与开发规范.md
 （涉及脚本系统时再读 docs/03-脚本系统设计.md；涉及占位资源时读 assets_placeholder_pz/README.md）。
-以 docs/01 的任务清单为唯一任务依据，当前从 M9-T3 开始；写代码遵守 docs/02 的规范；
+以 docs/01 的任务清单为唯一任务依据，当前里程碑已全部完成（M12 为可选范围）；写代码遵守 docs/02 的规范；
 构建命令走 tools/dev.ps1（Ninja 需要 MSVC 环境，如 .\tools\dev.ps1 cmake --build --preset x64-debug）；
 每完成一个任务把清单里对应项勾上，Git 提交信息带任务号（如 feat(render): sprite batch (M2-T3)）。
 ```
@@ -33,7 +33,7 @@ README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md �
 
 1. **README.md（本文件）** —— 全局视图、入口
 2. **docs/00-架构总览.md** —— 动手前通读（分层/世界模型/ECS/渲染/决策记录）
-3. **docs/01-里程碑与任务清单.md** —— ★ 每天的任务依据（当前进度：M6 已完成并验收（v0.6.0；T4 顺延至正式 UI）；M7 已完成并验收（v0.7.0，Lua 脚本系统全链路）；M8 已完成并验收（v0.8.0，Python 可选后端）；M0 仅剩跨机验收；M9 进行中（T1 RmlUi + bgfx 接入、T2 主题与基础控件完成），下一步 M9-T3 字体与文本））；**docs/modding.md** —— 玩家 mod 开发指南（API v1，Lua/Python）
+3. **docs/01-里程碑与任务清单.md** —— ★ 每天的任务依据（当前进度：M1–M12 已完成；M12 完成输入命令化、本地环回、性能冲刺与内容扩充；M0 仅剩跨机验收）；**docs/modding.md** —— 玩家 mod 开发指南（API v1，Lua/Python）
 4. **docs/02-技术选型与开发规范.md** —— 建工程、写代码前（依赖/目录/编码规范/占位资源策略）
 5. **docs/03-脚本系统设计.md** —— M7/M8 阶段再读
 6. **assets_placeholder_pz/README.md** —— 用占位资源、重新解包 PZ 纹理时读
@@ -48,15 +48,28 @@ README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md �
 | Git | 任意新版 | `winget install Git.Git` |
 | vcpkg | 最新 | `git clone https://github.com/microsoft/vcpkg E:\Dev\vcpkg`，然后运行 `bootstrap-vcpkg.bat`，设环境变量 `VCPKG_ROOT=E:\Dev\vcpkg` |
 
+设置并验证工具链（新开 PowerShell；`VCPKG_ROOT` 应指向 vcpkg 仓库根目录）：
+
+```powershell
+[Environment]::SetEnvironmentVariable("VCPKG_ROOT", "E:\Dev\vcpkg", "User")
+$env:VCPKG_ROOT = "E:\Dev\vcpkg"
+cmake --version
+ninja --version
+git --version
+& "$env:VCPKG_ROOT\vcpkg.exe" version
+```
+
 ## 快速开始
 
 > 工程骨架在 M0-T2 创建（见任务清单）。骨架就绪后的日常命令（Ninja 需要 MSVC 环境：普通 PowerShell 用 `tools/dev.ps1` 包装；已开「x64 Native Tools 命令提示符」时可直接跑 cmake）：
 
 ```powershell
-.\tools\dev.ps1 cmake --preset x64-debug        # 配置（首次会自动装依赖，需要几分钟）
+.\tools\dev.ps1 cmake --preset x64-debug        # 配置；首次会下载/编译 vcpkg 依赖，可能 10~20 分钟
 .\tools\dev.ps1 cmake --build --preset x64-debug
 build\x64-debug\ZomboidLike.exe
 ```
+
+> 首次配置前确保已按上节设置 `VCPKG_ROOT`；`dev.ps1` 会自动加载 VS2022 x64 环境（`cl`/`INCLUDE`/`LIB`）。
 
 ## 里程碑状态
 
@@ -64,7 +77,7 @@ build\x64-debug\ZomboidLike.exe
 
 | 里程碑 | 内容 | 状态 | 完成日期 |
 |---|---|---|---|
-| M0 | 环境与工程骨架 | 进行中（仅剩跨机验收） | 2026-10-16（主体） |
+| M0 | 环境与工程骨架 | 进行中（仅剩换机验收；本机干净目录预验通过） | 2026-10-16（主体） |
 | M1 | 核心框架（主循环/tick/事件/输入/配置） | 已完成 | 2026-10-16 |
 | M2 | 渲染地基（等距瓦片可见） | 已完成 | 2026-10-16 |
 | M3 | 世界模型与流式加载 | 已完成 | 2026-10-16 |
@@ -73,10 +86,10 @@ build\x64-debug\ZomboidLike.exe
 | M6 | 物品与容器 | 完成（v0.6.0；T4 背包 UI 顺延至正式 UI） | |
 | M7 | Lua 脚本系统 | 完成（v0.7.0，验收 2026-10-17） | |
 | M8 | Python 脚本后端（可选开关） | 完成（v0.8.0，验收 2026-10-17） | |
-| M9 | UI 系统 | 进行中（T1/T2 完成） | |
-| M10 | 存档系统 | 未开始 | |
-| M11 | 音频系统 | 未开始 | |
-| M12 | 打磨与联机命令层预留（可选） | 未开始 | |
+| M9 | UI 系统 | 完成（T1–T6，验收 2026-10-17） | |
+| M10 | 存档系统 | 完成（T1–T5，验收 2026-10-18） | |
+| M11 | 音频系统 | 完成（T1–T4，验收 2026-10-18） | |
+| M12 | 打磨与联机命令层预留（可选） | 完成（T1–T4，验收 2026-10-18） | 2026-10-18 |
 
 ## 许可与合规
 

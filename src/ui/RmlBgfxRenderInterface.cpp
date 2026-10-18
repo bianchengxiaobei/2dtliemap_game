@@ -96,12 +96,13 @@ void RmlBgfxRenderInterface::Shutdown() {
     if (!m_initialized) {
         return;
     }
-    for (bgfx::TextureHandle& texture : m_textures) {
-        if (bgfx::isValid(texture)) {
-            bgfx::destroy(texture);
+    for (TextureRecord& texture : m_textures) {
+        if (bgfx::isValid(texture.handle)) {
+            bgfx::destroy(texture.handle);
         }
     }
     m_textures.clear();
+    m_fontAtlasStats = {};
     m_geometries.clear();
     if (bgfx::isValid(m_whiteTexture)) {
         bgfx::destroy(m_whiteTexture);
@@ -192,7 +193,7 @@ Rml::TextureHandle RmlBgfxRenderInterface::LoadTexture(Rml::Vector2i& texture_di
     }
     texture_dimensions = Rml::Vector2i(width, height);
     const Rml::TextureHandle handle =
-        MakeTexture(pixels, static_cast<uint32_t>(pixelCount * 4), width, height, false);
+        MakeTexture(pixels, static_cast<uint32_t>(pixelCount * 4), width, height, false, false);
     stbi_image_free(pixels);
     return handle;
 }
@@ -203,17 +204,20 @@ Rml::TextureHandle RmlBgfxRenderInterface::GenerateTexture(Rml::Span<const Rml::
         return 0;
     }
     return MakeTexture(source.data(), static_cast<uint32_t>(source.size()),
-                       source_dimensions.x, source_dimensions.y, false);
+                       source_dimensions.x, source_dimensions.y, false, true);
 }
 
 void RmlBgfxRenderInterface::ReleaseTexture(Rml::TextureHandle texture) {
     if (texture == 0 || texture > m_textures.size()) {
         return;
     }
-    bgfx::TextureHandle& handle = m_textures[texture - 1];
-    if (bgfx::isValid(handle)) {
-        bgfx::destroy(handle);
-        handle = BGFX_INVALID_HANDLE;
+    TextureRecord& record = m_textures[texture - 1];
+    if (bgfx::isValid(record.handle)) {
+        bgfx::destroy(record.handle);
+        record.handle = BGFX_INVALID_HANDLE;
+    }
+    if (record.fontAtlas) {
+        RefreshFontAtlasStats();
     }
 }
 
@@ -357,8 +361,8 @@ void RmlBgfxRenderInterface::SubmitGeometry(const Rml::Vertex* vertices, size_t 
 }
 
 Rml::TextureHandle RmlBgfxRenderInterface::MakeTexture(const void* data, uint32_t byteSize,
-                                                       int width, int height,
-                                                       bool pointSampling) {
+                                                       int width, int height, bool pointSampling,
+                                                       bool fontAtlas) {
     if (width <= 0 || height <= 0 || data == nullptr || byteSize == 0) {
         return 0;
     }
@@ -371,7 +375,10 @@ Rml::TextureHandle RmlBgfxRenderInterface::MakeTexture(const void* data, uint32_
     if (!bgfx::isValid(handle)) {
         return 0;
     }
-    m_textures.push_back(handle);
+    m_textures.push_back(TextureRecord{handle, width, height, fontAtlas});
+    if (fontAtlas) {
+        RefreshFontAtlasStats();
+    }
     return static_cast<Rml::TextureHandle>(m_textures.size());
 }
 
@@ -379,7 +386,23 @@ bgfx::TextureHandle RmlBgfxRenderInterface::TextureFromHandle(Rml::TextureHandle
     if (handle == 0 || handle > m_textures.size()) {
         return BGFX_INVALID_HANDLE;
     }
-    return m_textures[handle - 1];
+    return m_textures[handle - 1].handle;
+}
+
+void RmlBgfxRenderInterface::RefreshFontAtlasStats() {
+    FontAtlasStats stats;
+    for (const TextureRecord& texture : m_textures) {
+        if (!texture.fontAtlas || !bgfx::isValid(texture.handle)) {
+            continue;
+        }
+        ++stats.pages;
+        const int dimension = std::max(texture.width, texture.height);
+        stats.maxDimension =
+            std::max(stats.maxDimension, static_cast<uint32_t>(dimension));
+        stats.bytes += static_cast<uint64_t>(texture.width) *
+                       static_cast<uint64_t>(texture.height) * 4;
+    }
+    m_fontAtlasStats = stats;
 }
 
 }  // namespace zl::ui

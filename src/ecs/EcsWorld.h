@@ -32,6 +32,8 @@ public:
     // 立即创建并附着 StableId（主线程逻辑用；遍历 view 过程中请改用 QueueCreate）
     Entity Create();
 
+    Entity CreateWithStableId(std::uint64_t stableId);
+
     // 延迟创建：fn 在 Flush 时执行（可返回 kNull 放弃创建）
     using SpawnFn = std::function<Entity(EcsWorld&)>;
     void QueueCreate(SpawnFn fn);

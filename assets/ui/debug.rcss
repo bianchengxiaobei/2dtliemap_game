@@ -1,3 +1,49 @@
+#type-panel {
+    position: absolute;
+    left: 16px;
+    top: 400px;
+    width: 840px;
+    padding: 10px 14px 8px 14px;
+}
+
+#type-panel .title {
+    margin-bottom: 2px;
+}
+
+#type-panel .muted {
+    margin-bottom: 4px;
+}
+
+.type-col {
+    display: inline-block;
+    width: 260px;
+    margin-right: 10px;
+    vertical-align: top;
+}
+
+.type-col:last-child {
+    margin-right: 0px;
+}
+
+.weight-line {
+    margin-top: 8px;
+    font-size: 13px;
+}
+
+.weight-line span,
+.weight-line b {
+    margin-right: 8px;
+}
+
+.ellipsis-title,
+.atlas-title {
+    margin-top: 8px;
+}
+
+.rich-line {
+    line-height: 1.7;
+}
+
 #panel {
     position: absolute;
     right: 16px;

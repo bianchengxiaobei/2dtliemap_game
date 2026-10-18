@@ -15,6 +15,14 @@ struct LocalControl {
     float walkSpeed = 4.0f;  // 步行速度（格/秒）
 };
 
+// M12-T1：命令化的屏幕方向输入（-1..1，y 向下）。
+// 玩家命令 Move 写入本组件，InputSystem 每 tick 做等距矫正并落到 MoveIntent；
+// 组件保持纯数据，网络侧只传屏幕方向，不依赖相机/世界矩阵。
+struct MoveInput {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
 // 期望速度（格/秒，世界格空间）：InputSystem / AI 写入，MovementSystem 消费。
 // 语义 = "本 tick 想以这个速度移动"；写入方每 tick 全量重写（无输入 = 零向量）。
 struct MoveIntent {

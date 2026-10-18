@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <string_view>
 
 namespace zl::platform {
@@ -8,5 +9,8 @@ namespace zl::platform {
 // 支持：A-Z、0-9、F1-F12、方向键、SPACE/ESCAPE/ENTER/TAB、SHIFT/CTRL/ALT、
 //      BACKSPACE/DELETE/INSERT/HOME/END/PAGEUP/PAGEDOWN 及常用标点。
 int KeyCodeFromName(std::string_view name);
+
+// GLFW 键值 → 配置里的规范键名（W / SPACE / F1 …）；未识别返回空串。
+std::string KeyNameFromCode(int keyCode);
 
 }  // namespace zl::platform

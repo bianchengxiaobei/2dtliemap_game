@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <unordered_set>
@@ -44,6 +45,27 @@ TEST_CASE("EcsWorld：创建附着 StableId、单调唯一、双向查找") {
     CHECK(world.IdOf(extra).id == 101u);           // 从 1 开始单调递增
     CHECK(world.FindById(999999u) == EcsWorld::kNull);
     CHECK(world.IdOf(EcsWorld::kNull).id == 0u);
+}
+
+TEST_CASE("EcsWorld：读档重建保留 StableId 并推进后续分配") {
+    EcsWorld world;
+    const auto restored = world.CreateWithStableId(42);
+    REQUIRE(restored != EcsWorld::kNull);
+    CHECK(world.Alive(restored));
+    CHECK(world.IdOf(restored).id == 42u);
+    CHECK(world.FindById(42u) == restored);
+
+    const auto next = world.Create();
+    CHECK(world.IdOf(next).id == 43u);
+    CHECK(world.AliveCount() == 2u);
+    CHECK(world.StableIdCount() == 2u);
+
+    CHECK(world.CreateWithStableId(42u) == EcsWorld::kNull);
+    CHECK(world.CreateWithStableId(0u) == EcsWorld::kNull);
+    CHECK(world.CreateWithStableId(std::numeric_limits<std::uint64_t>::max()) ==
+          EcsWorld::kNull);
+    CHECK(world.AliveCount() == 2u);
+    CHECK(world.StableIdCount() == 2u);
 }
 
 TEST_CASE("EcsWorld：Destroy 延迟生效，Flush 后回收且稳定 ID 失效") {

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 #include "core/Log.h"
 
@@ -96,6 +97,61 @@ int RemoveItem(ecs::Container& container, std::string_view defId, int count) {
         }
     }
     return removed;
+}
+
+bool TakeAt(ecs::Container& container, std::size_t index, int count,
+            ecs::ItemInstance* out) {
+    if (index >= container.items.size() || count <= 0) {
+        return false;
+    }
+    ecs::ItemInstance& entry = container.items[index];
+    const int take = std::min(count, entry.count);
+    if (take <= 0) {
+        return false;
+    }
+    if (out != nullptr) {
+        *out = ecs::ItemInstance{entry.defId, take, entry.condition};
+    }
+    entry.count -= take;
+    if (entry.count <= 0) {
+        container.items.erase(container.items.begin() +
+                              static_cast<std::ptrdiff_t>(index));
+    }
+    return true;
+}
+
+bool MoveStack(ecs::Container& container, const ItemRegistry& registry, std::size_t from,
+               std::size_t to) {
+    if (from >= container.items.size() || from == to) {
+        return false;
+    }
+    if (to >= container.items.size()) {
+        if (from + 1 == container.items.size()) {
+            return false;
+        }
+        ecs::ItemInstance entry = std::move(container.items[from]);
+        container.items.erase(container.items.begin() +
+                              static_cast<std::ptrdiff_t>(from));
+        container.items.push_back(std::move(entry));
+        return true;
+    }
+
+    ecs::ItemInstance& source = container.items[from];
+    ecs::ItemInstance& target = container.items[to];
+    const ItemDef* def = registry.Find(source.defId);
+    if (def != nullptr && source.defId == target.defId && target.count < def->maxStack) {
+        const int space = def->maxStack - target.count;
+        const int take = std::min(space, source.count);
+        target.count += take;
+        source.count -= take;
+        if (source.count <= 0) {
+            container.items.erase(container.items.begin() +
+                                  static_cast<std::ptrdiff_t>(from));
+        }
+        return true;
+    }
+    std::swap(source, target);
+    return true;
 }
 
 int CountOf(const ecs::Container& container, std::string_view defId) {
@@ -195,6 +251,31 @@ UseResult UseFirstConsumable(ecs::Container& container, const ItemRegistry& regi
         return result;
     }
     return result;  // 无可使用物品
+}
+
+UseResult UseAt(ecs::Container& container, const ItemRegistry& registry,
+                std::size_t index) {
+    UseResult result;
+    if (index >= container.items.size()) {
+        return result;
+    }
+    ecs::ItemInstance& entry = container.items[index];
+    const ItemDef* def = registry.Find(entry.defId);
+    if (def == nullptr || !def->use.Any()) {
+        return result;
+    }
+    result.applied = true;
+    result.defId = def->id;
+    result.effect = def->use;
+    entry.count -= 1;
+    if (entry.count <= 0) {
+        container.items.erase(container.items.begin() +
+                              static_cast<std::ptrdiff_t>(index));
+        result.remaining = 0;
+    } else {
+        result.remaining = entry.count;
+    }
+    return result;
 }
 
 float ApplyUseEffect(const UseEffect& effect, float hpMax, float* hpCurrent, float* hunger,

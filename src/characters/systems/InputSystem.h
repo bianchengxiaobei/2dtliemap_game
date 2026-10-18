@@ -24,6 +24,10 @@ namespace zl::characters {
 // 该变换是线性的：先反解再在格空间归一，屏幕方向保持不变（只统一世界速度）。
 class InputSystem {
 public:
+    // M12-T1：命令模式——MoveInput（屏幕方向）→ MoveIntent（世界速度）。
+    void Update(ecs::EcsWorld& world) const;
+
+    // 直连模式/单测：原始键盘 → MoveIntent（M4-T4 行为保持不变）。
     void Update(core::Input& input, ecs::EcsWorld& world) const;
 
     // 屏幕方向 → 世界格方向（等距矫正；不归一）。纯函数（可单测）。

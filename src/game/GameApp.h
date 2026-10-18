@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 #include "ai/PathfindingService.h"
 #include "ai/VirtualHorde.h"
@@ -11,6 +12,7 @@
 #include "ai/systems/PathFollowSystem.h"
 #include "ai/systems/PerceptionSystem.h"
 #include "ai/systems/SpawnLodSystem.h"
+#include "audio/SoundManager.h"
 #include "characters/systems/AnimationSystem.h"
 #include "characters/systems/CombatSystem.h"
 #include "characters/systems/DeathSystem.h"
@@ -29,6 +31,7 @@
 #include "game/EventProbe.h"
 #include "game/GameContext.h"
 #include "items/ItemRegistry.h"
+#include "net/CommandPipeline.h"
 #include "physics/PhysicsSyncSystem.h"
 #include "physics/PhysicsWorld.h"
 #include "platform/Window.h"
@@ -37,6 +40,8 @@
 #include "render/Renderer.h"
 #include "render/SpriteBatch.h"
 #include "render/Texture2D.h"
+#include "save/ComponentRegistry.h"
+#include "save/SaveManager.h"
 #include "script/EventBridge.h"
 #include "script/ModWatcher.h"
 #include "script/ScriptApi.h"
@@ -44,6 +49,10 @@
 #include "ui/UiSystem.h"
 #include "world/ChunkManager.h"
 #include "world/World.h"
+
+namespace zl::save {
+class SaveService;
+}
 
 namespace zl::game {
 
@@ -66,6 +75,8 @@ private:
     void RenderFrame(double frameDt, double alpha);
     void ApplyInputBindings();
     void ReloadConfigAndBindings();
+    ui::MenuSettings BuildMenuSettings() const;
+    bool ApplyMenuSettings(const ui::MenuSettings& settings, std::string& error);
 
     core::Config m_config;
     core::EventBus m_events;
@@ -86,6 +97,8 @@ private:
     render::Camera m_camera;
     AssetProvider m_assets;
     std::unique_ptr<ui::UiSystem> m_ui;
+    // 音频（M11-T1）：miniaudio 设备 + 音量组；无设备时静音运行
+    std::unique_ptr<audio::SoundManager> m_audio;
 
     // 世界 + chunk 流式加载（M3）
     std::unique_ptr<world::World> m_world;
@@ -128,6 +141,14 @@ private:
 
     // 物品定义注册表（M6-T1）：启动时加载 assets/items.json（校验失败以空表继续）
     items::ItemRegistry m_itemRegistry;
+
+    // 存档管理（M10-T4/T5）：save.root 下的元数据、原子写盘与 zl-save 后台线程
+    std::unique_ptr<save::SaveManager> m_saveManager;
+    std::unique_ptr<save::SaveService> m_saveService;
+    save::ComponentRegistry m_saveComponents;
+
+    // 玩家命令层（M12）：direct/loopback 可切换；状态通过 GameContext::commands 提交
+    std::unique_ptr<net::CommandPipeline> m_commandPipeline;
 
     // 脚本系统（M7-T1）：后端注册表 + mod 生命周期门面；后端实例由 M7-T2（Lua）注册
     script::ScriptManager m_script;

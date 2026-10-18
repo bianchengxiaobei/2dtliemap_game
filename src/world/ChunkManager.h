@@ -36,16 +36,25 @@ public:
         std::uint64_t totalUnloaded = 0;
         std::uint64_t totalCancelled = 0;  // 解析完成时相机已离开 → 直接丢弃
         std::uint64_t totalFailed = 0;
+        // M12-T3：主线程挂接预算（物理静态体/寻路缓存回调可能很重）
+        double lastAttachMs = 0.0;
+        int maxAttachBatch = 0;
+        std::uint64_t attachBudgetHits = 0;
     };
 
     ChunkManager(World& world, MapLoader::Meta meta, core::TaskScheduler& tasks,
-                 int loadRadius = core::kChunkLoadRadius);
+                 int loadRadius = core::kChunkLoadRadius, int requestBudget = 4,
+                 int attachBudget = 8, double attachBudgetMs = 2.0);
 
     // 相机中心（世界格坐标，允许小数）变化时调用；相机未跨 chunk 时为空操作。
     void Update(float cameraGridX, float cameraGridY);
 
     // 主线程每帧调用：消费后台解析结果（挂接/取消/重试/放弃）
     void ProcessResults();
+
+    // 主线程遍历当前已 Loaded 的 chunk（存档快照用；回调内不得卸载 chunk）
+    void ForEachLoadedChunk(
+        const std::function<void(const Chunk&)>& callback);
 
     // 生命周期回调（主线程调用；nullptr = 不通知）：
     //   onLoaded：数据挂接完成（Loaded）后——物理静态体/寻路缓存等在此生成；
@@ -90,14 +99,15 @@ private:
     bool InRange(int chunkX, int chunkY) const;
 
     static constexpr int kMaxLoadAttempts = 3;
-    static constexpr int kRequestBudget = 4;  // 每次 Update 最多派发的 chunk 数
-    static constexpr int kAttachBudget = 8;   // 每次 ProcessResults 最多挂接的结果数
     static constexpr std::size_t kRecentLoadCap = 4096;
 
     World& m_world;
     MapLoader::Meta m_meta;  // 值持有：后台任务捕获副本使用
     core::TaskScheduler& m_tasks;
     int m_loadRadius;
+    int m_requestBudget = 4;       // 每次 Update 最多派发的 chunk 数
+    int m_attachBudget = 8;        // 每次 ProcessResults 最多挂接的结果数
+    double m_attachBudgetMs = 2.0; // 主线程挂接时间预算（首块总是执行）
 
     std::shared_ptr<JobQueue> m_queue = std::make_shared<JobQueue>();
 

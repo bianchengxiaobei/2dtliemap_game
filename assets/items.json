@@ -7,6 +7,13 @@
     { "id": "kitchen_knife", "name": "厨刀", "icon": "item.kitchen_knife", "weight": 0.6, "maxStack": 1, "type": "weapon" },
     { "id": "rag", "name": "破布", "icon": "item.rag", "weight": 0.1, "maxStack": 10, "type": "generic" },
     { "id": "jacket", "name": "夹克", "icon": "item.jacket", "weight": 1.2, "maxStack": 1, "type": "clothing" },
-    { "id": "tote_bag", "name": "手提袋", "icon": "item.tote_bag", "weight": 0.5, "maxStack": 1, "type": "container" }
+    { "id": "tote_bag", "name": "手提袋", "icon": "item.tote_bag", "weight": 0.5, "maxStack": 1, "type": "container" },
+    { "id": "water_bottle", "name": "瓶装水", "icon": "item.water_bottle", "weight": 0.5, "maxStack": 2, "type": "consumable", "use": { "thirst": 0.4 } },
+    { "id": "painkillers", "name": "止痛药", "icon": "item.painkillers", "weight": 0.1, "maxStack": 5, "type": "consumable", "use": { "heal": 10 } },
+    { "id": "energy_bar", "name": "能量棒", "icon": "item.energy_bar", "weight": 0.2, "maxStack": 4, "type": "consumable", "use": { "hunger": 0.2 } },
+    { "id": "hammer", "name": "锤子", "icon": "item.hammer", "weight": 2.0, "maxStack": 1, "type": "weapon" },
+    { "id": "screwdriver", "name": "螺丝刀", "icon": "item.screwdriver", "weight": 0.4, "maxStack": 1, "type": "weapon" },
+    { "id": "hiking_boots", "name": "登山靴", "icon": "item.hiking_boots", "weight": 1.0, "maxStack": 1, "type": "clothing" },
+    { "id": "backpack", "name": "登山背包", "icon": "item.backpack", "weight": 1.1, "maxStack": 1, "type": "container" }
   ]
 }

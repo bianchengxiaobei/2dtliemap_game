@@ -1,14 +1,20 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+#include <string>
 
 #include <bgfx/bgfx.h>
+
+#include "render/Screenshot.h"
 
 namespace zl::platform {
 class Window;
 }
 
 namespace zl::render {
+
+class ScreenshotCallback;
 
 // View 规划（docs/00 §5.1）
 enum class ViewId : bgfx::ViewId {
@@ -27,6 +33,9 @@ struct RendererDesc {
 // M2-T1：bgfx 初始化参数化、View/视口管理、每帧统计。
 class Renderer {
 public:
+    Renderer();
+    ~Renderer();
+
     bool Init(platform::Window& window, const RendererDesc& desc);
     void Shutdown();
 
@@ -47,11 +56,16 @@ public:
     int FramebufferHeight() const { return m_fbHeight; }
     const char* BackendName() const { return bgfx::getRendererName(bgfx::getRendererType()); }
 
+    bool RequestScreenshot(std::string filePath);
+    bool PollScreenshot(ScreenshotImage* out);
+
 private:
     int m_fbWidth = 0;
     int m_fbHeight = 0;
     uint32_t m_resetFlags = BGFX_RESET_NONE;
     bool m_initialized = false;
+    std::unique_ptr<ScreenshotCallback> m_screenshotCallback;
+    std::string m_screenshotPath;
 };
 
 }  // namespace zl::render

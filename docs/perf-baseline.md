@@ -97,13 +97,48 @@ materializePerSecond=480 拉满）+ 密度守恒核对：
 | 稳定态人口 | live≈424~454 + virtual≈46~76 = **500 恒定** | 补给 260 一次补齐；实体化累计 690 / 虚拟化累计 276（玩家移动来回转换） |
 | 病灶扫描 | SpawnLod 每 tick 扫描 500 实体 ≈ 0.009 ms（场景 A） | LOD 分档 full=141 / mid=292 随战况浮动 |
 
+## M12 验收基线（2026-10-18，命令层 + 性能冲刺）
+
+**场景 A：Release 500 人口 + 村庄大世界巡航 60s**（x64-release / RelWithDebInfo，1280×720，
+vsync on，`audio.device=off`；`autoCruise=true`，圆心 (64,64)、半径 35、20 格/s；
+`populationTarget=500 / maxLive=520 / materializePerSecond=480 / refillPerSecond=8`）
+
+| 指标 | direct | loopback | 预算/结论 |
+|---|---|---|---|
+| FPS（11 个 5s 采样） | 中位 **60** / 最低 55 | 中位 **60** / 最低 57 | 60fps 目标；差异 <10% ✔ |
+| 实例 / 四边形 / drawcall | 5039–5292 / 2900–3023 / 34–38 | 5044–5260 / 2861–3007 / 34–38 | <100 drawcall ✔ |
+| 单块解析 P50 / P95 / max | 0.44–0.46 / 0.70–1.43 / 1.79 ms | 0.46 / 0.75–0.93 / 2.01 ms | P95 <2ms ✔ |
+| chunk 累计加载 / 卸载 / 取消 / 失败 | 1102 / 1053 / 4 / 0 | 1102 / 1053 / 4 / 0 | 无泄漏 ✔ |
+| 工作量（动态物理体峰值） | 417 | 251 | 500 人口含离屏虚拟层 |
+| 工作集 | 173.6 → 179.0 MB | 173.6 → 177.8 MB | 基本持平 ✔ |
+| 启动耗时（初始化完成） | 461 ms | — | 记录基线 ✔ |
+
+- 500 人口核对（同配置 debug 采样）：`live=359 + virtual=141 = 500`（50s 时）；
+  direct 性能run 动态体峰值 417，剩余为虚拟层/离屏。
+- 命令层：loopback 60s 统计 `提交/执行=1/1`、`包发/收=1/1`、心跳快照 3611、tick 延迟 1；
+  另做 W + F7 实机：`命令 提交=2 执行=2`，F7 触发 `枪声（F7）` 且感知 `听` 从 1 升到 21。
+- **结论**：loopback 相对 direct 无可见帧率损失（采样中位相同，最低值受窗口调度影响）；
+  命令最多 1 tick 延迟（16.7ms），移动/攻击/开枪烟测无额外延迟感。
+
+**场景 B：地面批纹理排序（placeholder_pz，Release，村庄静态取景）**
+
+| 指标 | 优化前（M5 基线） | M12 | 说明 |
+|---|---|---|---|
+| drawcall | 244 | **71** | stage 0 地面块按纹理聚簇，避免多图集交错 flush |
+| FPS | 59–60 | 60 | 1280×720，实例约 5.1k |
+
+**场景 C：chunk 主线程挂接预算（Debug 巡航）**
+
+- `world.chunkAttachBudgetMs=2.0`、`chunkAttachBudget=8`；实测挂接帧 `lastAttachMs`
+  0.62ms、预算命中 3 次，单帧未出现数百 ms 的挂接尖峰；至少执行 1 块避免饥饿。
+
 ## 已知问题与优化候选
 
-1. **多图集交错 drawcall 高**（placeholder_pz 244）：画家序下 4 个来源（Tiles1x 地面 / Erosion 草丛 /
-   JumboTrees 树 / own 墙回退）交替 flush。候选：
+1. **多图集交错 drawcall 高**（placeholder_pz）：M12 已把 stage 0 地面批按纹理聚簇，
+   244→**71**（对象批仍受画家序约束，保持 38 左右）。进一步候选：
    - **运行期图集合并**（PZ 的 sprite pages 思路）：加载时把小图集重排进 1~2 张 2048² 页，纹理来源归一 → drawcall ≈ 2~3；
    - chunk 级"状态桶 + 相邻合并"（次选，收益有限）。
-   - 优先级：M4/M5 需要时做；当前 244 drawcall 对 60fps 无实际影响（Debug+混合资源下仍 59~60）。
+   - 当前 71 drawcall 对 60fps 无实际影响。
 2. **Debug 构建 FPS 谷值 38~42**：出现在 chunk 加载突发/bgfx 纹理上传时（Debug 无优化）。
    **Release 巡航实测中位 60 / P5 58 / min 57**，无此问题。
 3. Debug 工作集缓慢上涨（+8.6%/5min）：Release 同场景 60s 仅 +0.6MB（基本持平），
@@ -117,3 +152,4 @@ materializePerSecond=480 拉满）+ 密度守恒核对：
 | 2026-10-16 | M3-T7 | stress 100×100 巡航，Debug 5min / Release 1min | 7253 块加载 / P95 0.84ms（Release 0.37ms）/ 驻留 49 恒定 / Release FPS 60 稳定 |
 | 2026-10-16 | M4 验收 | 物理 500 静态体基准（Debug/Release）+ ECS 10000×3 压力 | Release 0.139ms/帧（<2ms ✔）/ Debug 1.066ms；ECS storage 复用无泄漏 |
 | 2026-10-16 | M5 验收 | 500 僵尸 + 200 虚拟全链模拟 tick + 实机 500 同屏压测 | Release **0.396ms/tick**（<4ms ✔，boids 0.308 主导）；实机 FPS 59、人口 500 恒定守恒 |
+| 2026-10-18 | M12 验收 | Release 500 人口 + 大世界巡航 60s（direct/loopback）、placeholder 地面批、chunk 挂接预算 | 中位 60fps（direct 最低 55 / loopback 57，差异 <10%）；placeholder drawcall 244→71；挂接预算命中、启动 461ms |

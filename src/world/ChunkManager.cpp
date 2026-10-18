@@ -20,9 +20,15 @@ constexpr const char* kLogModule = "world";
 }  // namespace
 
 ChunkManager::ChunkManager(World& world, MapLoader::Meta meta, core::TaskScheduler& tasks,
-                           int loadRadius)
-    : m_world(world), m_meta(std::move(meta)), m_tasks(tasks),
-      m_loadRadius(std::max(0, loadRadius)) {}
+                           int loadRadius, int requestBudget, int attachBudget,
+                           double attachBudgetMs)
+    : m_world(world),
+      m_meta(std::move(meta)),
+      m_tasks(tasks),
+      m_loadRadius(std::max(0, loadRadius)),
+      m_requestBudget(std::max(1, requestBudget)),
+      m_attachBudget(std::max(1, attachBudget)),
+      m_attachBudgetMs(std::max(0.0, attachBudgetMs)) {}
 
 std::uint64_t ChunkManager::PackKey(int chunkX, int chunkY) {
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(chunkX)) << 32) |
@@ -110,7 +116,7 @@ void ChunkManager::Update(float cameraGridX, float cameraGridY) {
     }
 
     // 4) 按帧预算创建/派发（相机静止时也继续消费积压）
-    DrainRequests(kRequestBudget);
+    DrainRequests(m_requestBudget);
 }
 
 void ChunkManager::DrainRequests(int budget) {
@@ -156,17 +162,49 @@ void ChunkManager::RequestLoad(int chunkX, int chunkY) {
 }
 
 void ChunkManager::ProcessResults() {
-    for (int handled = 0; handled < kAttachBudget; ++handled) {
+    const auto begin = std::chrono::steady_clock::now();
+    int handled = 0;
+    for (; handled < m_attachBudget; ++handled) {
+        if (handled > 0) {
+            const double elapsed = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now() - begin)
+                                       .count();
+            if (elapsed >= m_attachBudgetMs) {
+                ++m_stats.attachBudgetHits;
+                break;
+            }
+        }
         std::shared_ptr<LoadJob> job;
         {
             std::lock_guard lock(m_queue->mutex);
             if (m_queue->items.empty()) {
-                return;
+                break;
             }
             job = std::move(m_queue->items.front());
             m_queue->items.pop_front();
         }
         HandleFinished(job);
+    }
+    m_stats.lastAttachMs = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - begin)
+                               .count();
+    m_stats.maxAttachBatch = std::max(m_stats.maxAttachBatch, handled);
+}
+
+void ChunkManager::ForEachLoadedChunk(
+    const std::function<void(const Chunk&)>& callback) {
+    if (!callback) {
+        return;
+    }
+    std::vector<std::uint64_t> keys(m_active.begin(), m_active.end());
+    std::sort(keys.begin(), keys.end());
+    for (const std::uint64_t key : keys) {
+        const int px = static_cast<std::int32_t>(key >> 32);
+        const int py = static_cast<std::int32_t>(key & 0xffffffffu);
+        const Chunk* chunk = FindActiveChunk(px, py);
+        if (chunk != nullptr && chunk->State() == ChunkState::Loaded) {
+            callback(*chunk);
+        }
     }
 }
 
@@ -199,6 +237,8 @@ void ChunkManager::HandleFinished(const std::shared_ptr<LoadJob>& job) {
 
     if (InRange(job->chunkX, job->chunkY) && chunk != nullptr) {
         ApplyChunkData(job->data, *chunk);
+        // M10-T2：母地图基线必须在应用存档 diff 之前捕获（diff 之后由存档系统叠加）。
+        chunk->CaptureBaseline();
         chunk->SetState(ChunkState::Loaded);
         ++m_stats.loadedChunks;
         ++m_stats.totalLoaded;

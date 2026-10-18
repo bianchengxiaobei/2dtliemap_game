@@ -1,6 +1,8 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include "characters/components/CharacterComponents.h"
 #include "characters/systems/AnimationSystem.h"
@@ -121,6 +123,68 @@ TEST_CASE("InputSystem：写 MoveIntent（速度缩放 + 屏幕语义 + 松键�
     system.Update(input, world);
     CHECK(registry.get<MoveIntent>(player).x == 0.0f);
     CHECK(registry.get<MoveIntent>(player).y == 0.0f);
+}
+
+TEST_CASE("InputSystem：命令化 MoveInput 与直连键盘输出一致") {
+    EcsWorld world;
+    const ecs::Entity player = world.Create();
+    entt::registry& registry = world.Registry();
+    registry.emplace<PlayerTag>(player);
+    registry.emplace<LocalControl>(player, LocalControl{4.0f});
+    registry.emplace<ecs::MoveInput>(player, ecs::MoveInput{});
+    registry.emplace<MoveIntent>(player, MoveIntent{});
+
+    InputSystem system;
+    core::Input input;
+    input.Bind("MoveUp", 87);
+    input.Bind("MoveDown", 83);
+    input.Bind("MoveLeft", 65);
+    input.Bind("MoveRight", 68);
+    input.SetKeyState(87, true);  // W
+
+    system.Update(input, world);
+    const MoveIntent fromKeyboard = registry.get<MoveIntent>(player);
+    registry.get<ecs::MoveInput>(player) = ecs::MoveInput{0.0f, -1.0f};
+    system.Update(world);
+    const MoveIntent fromCommand = registry.get<MoveIntent>(player);
+
+    CHECK(fromCommand.x == doctest::Approx(fromKeyboard.x).epsilon(0.001));
+    CHECK(fromCommand.y == doctest::Approx(fromKeyboard.y).epsilon(0.001));
+
+    registry.get<ecs::MoveInput>(player) = ecs::MoveInput{};
+    system.Update(world);
+    CHECK(registry.get<MoveIntent>(player).x == 0.0f);
+    CHECK(registry.get<MoveIntent>(player).y == 0.0f);
+}
+
+TEST_CASE("M12 DrawItemLess：地面批按纹理聚簇，对象批保持画家序") {
+    using zl::render::DrawItem;
+    std::vector<DrawItem> items(5);
+    items[0].stage = 0;
+    items[0].texture = bgfx::TextureHandle{2};
+    items[0].diag = 50;
+    items[1].stage = 0;
+    items[1].texture = bgfx::TextureHandle{1};
+    items[1].diag = 1;
+    items[2].stage = 0;
+    items[2].texture = bgfx::TextureHandle{2};
+    items[2].diag = 2;
+    items[3].stage = 1;
+    items[3].texture = bgfx::TextureHandle{2};
+    items[3].diag = 1;
+    items[4].stage = 1;
+    items[4].texture = bgfx::TextureHandle{1};
+    items[4].diag = 2;
+
+    std::sort(items.begin(), items.end(), zl::render::DrawItemLess);
+    CHECK(items[0].stage == 0);
+    CHECK(items[0].texture.idx == 1);
+    CHECK(items[1].stage == 0);
+    CHECK(items[1].texture.idx == 2);
+    CHECK(items[2].texture.idx == 2);
+    CHECK(items[3].stage == 1);
+    CHECK(items[3].diag == 1);  // stage 1 仍按 diag，不因纹理重排破坏遮挡
+    CHECK(items[4].diag == 2);
 }
 
 TEST_CASE("MovementSystem：MoveIntent 覆盖 Velocity 并参与积分") {

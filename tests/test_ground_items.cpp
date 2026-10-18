@@ -1,4 +1,4 @@
-﻿#include <doctest/doctest.h>
+#include <doctest/doctest.h>
 
 #include <string>
 
@@ -191,4 +191,56 @@ TEST_CASE("M6-T3：丢弃模拟（RemoveItem + SpawnGroundItem 往返一致）")
     CHECK(back.picked == 2);
     CHECK(items::CountOf(bag, "rag") == 2);
     CHECK(items::TotalWeight(bag, registry) == doctest::Approx(3.2f));  // 3.0 + 0.2
+}
+
+TEST_CASE("M9-T5：附近地面物品快照与指定拾取") {
+    const items::ItemRegistry registry = MakeRegistry();
+    ecs::EcsWorld world;
+    const ecs::Entity bandage =
+        game::SpawnGroundItem(world, registry, Make("bandage", 3), 10.5f, 10.5f);
+    const ecs::Entity axe =
+        game::SpawnGroundItem(world, registry, Make("axe", 1), 11.5f, 10.5f);
+    const ecs::Entity far =
+        game::SpawnGroundItem(world, registry, Make("rag", 2), 50.5f, 50.5f);
+    const ecs::Entity upper =
+        game::SpawnGroundItem(world, registry, Make("rag", 1), 10.5f, 10.5f, 1);
+    REQUIRE(IsValid(bandage));
+    REQUIRE(IsValid(axe));
+    REQUIRE(IsValid(far));
+    REQUIRE(IsValid(upper));
+
+    const std::vector<game::GroundItemInfo> near =
+        game::GroundItemsInRadius(world, 10.5f, 10.5f, 0, 1.0f);
+    REQUIRE(near.size() == 2);
+    CHECK(near[0].entity == bandage);
+    CHECK(near[0].item.defId == "bandage");
+    CHECK(near[1].entity == axe);
+    CHECK(near[1].distanceSq == doctest::Approx(1.0f));
+
+    ecs::Container bag;
+    bag.capacityKg = 100.0f;
+    const game::PickupResult picked =
+        game::PickupGroundItem(world, registry, bag, axe);
+    CHECK(picked.found);
+    CHECK(picked.picked == 1);
+    CHECK(picked.groundRemaining == 0);
+    CHECK(items::CountOf(bag, "axe") == 1);
+    CHECK_FALSE(world.Alive(axe));
+    CHECK(world.Alive(bandage));
+
+    const game::PickupResult missing =
+        game::PickupGroundItem(world, registry, bag, axe);
+    CHECK_FALSE(missing.found);
+
+    ecs::Container small;
+    small.capacityKg = 0.2f;
+    const game::PickupResult partial =
+        game::PickupGroundItem(world, registry, small, bandage);
+    CHECK(partial.found);
+    CHECK(partial.picked == 2);
+    CHECK(partial.groundRemaining == 1);
+    CHECK(world.Alive(bandage));
+    const auto* remaining = world.Registry().try_get<ecs::ItemInstance>(bandage);
+    REQUIRE(remaining != nullptr);
+    CHECK(remaining->count == 1);
 }

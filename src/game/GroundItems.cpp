@@ -1,5 +1,7 @@
 #include "game/GroundItems.h"
 
+#include <algorithm>
+
 #include "core/Log.h"
 #include "ecs/components/CommonComponents.h"
 #include "items/InventoryOps.h"
@@ -79,27 +81,51 @@ ecs::Entity FindNearestGroundItem(ecs::EcsWorld& world, float px, float py, int 
     return NearestGroundItem(world, px, py, z, maxRadius, nullptr);
 }
 
-PickupResult PickupNearestItem(ecs::EcsWorld& world, const items::ItemRegistry& registry,
-                               ecs::Container& container, float px, float py, int z,
-                               float maxRadius) {
+std::vector<GroundItemInfo> GroundItemsInRadius(ecs::EcsWorld& world, float px, float py,
+                                                int z, float maxRadius) {
+    std::vector<GroundItemInfo> result;
+    const float maxDistSq = maxRadius * maxRadius;
+    world.Registry().view<ecs::Position, ecs::ItemInstance>().each(
+        [&](const ecs::Entity e, const ecs::Position& pos, const ecs::ItemInstance& item) {
+            if (!world.Alive(e) || pos.z != z) {
+                return;
+            }
+            const float dx = pos.x - px;
+            const float dy = pos.y - py;
+            const float distSq = dx * dx + dy * dy;
+            if (distSq > maxDistSq) {
+                return;
+            }
+            result.push_back(GroundItemInfo{e, item, distSq});
+        });
+    std::sort(result.begin(), result.end(),
+              [&world](const GroundItemInfo& a, const GroundItemInfo& b) {
+                  if (a.distanceSq != b.distanceSq) {
+                      return a.distanceSq < b.distanceSq;
+                  }
+                  return world.IdOf(a.entity).id < world.IdOf(b.entity).id;
+              });
+    return result;
+}
+
+PickupResult PickupGroundItem(ecs::EcsWorld& world, const items::ItemRegistry& registry,
+                              ecs::Container& container, ecs::Entity target) {
     PickupResult result;
-    const ecs::Entity target = NearestGroundItem(world, px, py, z, maxRadius, nullptr);
-    if (target == entt::null) {
+    if (!world.Alive(target)) {
+        return result;
+    }
+    auto* instance = world.Registry().try_get<ecs::ItemInstance>(target);
+    if (instance == nullptr) {
         return result;
     }
     result.found = true;
     result.entityId = world.IdOf(target).id;
-
-    auto* instance = world.Registry().try_get<ecs::ItemInstance>(target);
-    if (instance == nullptr) {
-        return result;  // 理论不出现（view 已过滤）
-    }
     result.defId = instance->defId;
     result.groundRemaining = instance->count;
 
     const int added = items::AddItem(container, registry, *instance);
     if (added <= 0) {
-        return result;  // 背包满/未知定义：地面不变
+        return result;
     }
     instance->count -= added;
     result.picked = added;
@@ -109,6 +135,16 @@ PickupResult PickupNearestItem(ecs::EcsWorld& world, const items::ItemRegistry& 
         result.groundRemaining = 0;
     }
     return result;
+}
+
+PickupResult PickupNearestItem(ecs::EcsWorld& world, const items::ItemRegistry& registry,
+                               ecs::Container& container, float px, float py, int z,
+                               float maxRadius) {
+    const ecs::Entity target = NearestGroundItem(world, px, py, z, maxRadius, nullptr);
+    if (target == entt::null) {
+        return PickupResult{};
+    }
+    return PickupGroundItem(world, registry, container, target);
 }
 
 }  // namespace zl::game

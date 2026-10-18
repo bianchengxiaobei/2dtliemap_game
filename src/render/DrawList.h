@@ -29,9 +29,13 @@ struct DrawItem {
 };
 
 // 全局画家序（唯一排序入口）：stage → z → diag → gx → layer → tieBreaker
+// M12-T3：stage 0 全是 z=0 地面块，互不遮挡；先按纹理聚簇，减少多图集下的状态切换。
 inline bool DrawItemLess(const DrawItem& a, const DrawItem& b) {
     if (a.stage != b.stage) {
         return a.stage < b.stage;
+    }
+    if (a.stage == 0 && a.texture.idx != b.texture.idx) {
+        return a.texture.idx < b.texture.idx;
     }
     if (a.z != b.z) {
         return a.z < b.z;

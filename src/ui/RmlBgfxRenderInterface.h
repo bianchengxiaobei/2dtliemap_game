@@ -10,12 +10,19 @@ namespace zl::ui {
 
 class RmlBgfxRenderInterface : public Rml::RenderInterface {
 public:
+    struct FontAtlasStats {
+        uint32_t pages = 0;
+        uint32_t maxDimension = 0;
+        uint64_t bytes = 0;
+    };
+
     RmlBgfxRenderInterface() = default;
     ~RmlBgfxRenderInterface() override;
 
     bool Init(bgfx::ViewId view);
     void Shutdown();
     void SetViewport(int width, int height);
+    FontAtlasStats GetFontAtlasStats() const { return m_fontAtlasStats; }
 
     Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> vertices,
                                                 Rml::Span<const int> indices) override;
@@ -42,9 +49,17 @@ private:
         std::vector<uint16_t> indices;
     };
 
+    struct TextureRecord {
+        bgfx::TextureHandle handle = BGFX_INVALID_HANDLE;
+        int width = 0;
+        int height = 0;
+        bool fontAtlas = false;
+    };
+
     Rml::TextureHandle MakeTexture(const void* data, uint32_t byteSize, int width, int height,
-                                   bool pointSampling);
+                                   bool pointSampling, bool fontAtlas);
     bgfx::TextureHandle TextureFromHandle(Rml::TextureHandle handle) const;
+    void RefreshFontAtlasStats();
     void ApplyScissor(bool fullViewport);
     void SubmitGeometry(const Rml::Vertex* vertices, size_t vertexCount,
                         const uint16_t* indices, size_t indexCount, Rml::Vector2f translation,
@@ -61,7 +76,8 @@ private:
     bgfx::VertexLayout m_layout;
 
     std::vector<GeometryData> m_geometries;
-    std::vector<bgfx::TextureHandle> m_textures;
+    std::vector<TextureRecord> m_textures;
+    FontAtlasStats m_fontAtlasStats;
 
     bgfx::ViewId m_view = 0;
     int m_width = 0;

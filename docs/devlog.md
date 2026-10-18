@@ -1448,3 +1448,359 @@ transient buffer + `bgfx::setStencil`，配合 scissor 实现滚动列表的圆�
    做状态机/离屏层时再解决。
 5. 调试 stencil 时确认 bgfx/D3D11 的 backbuffer 是 D24S8；mask 绘制需带
    `BGFX_STATE_DEPTH_TEST_ALWAYS` 与 `setStencil(front, back)`，且每帧 `BGFX_CLEAR_STENCIL`。
+
+---
+
+## 2026-10-17 M9-T3 字体与文本
+
+**字体映射**：`zl_ui` 字族注册 Noto Sans SC Regular 400 与 Bold 700；Bold 由 Windows 自带
+`NotoSansSC-VF.ttf` 用 fontTools instancer 固定 `wght=700` 生成（`assets/fonts/NotoSansSC-Bold.ttf`，
+OFL），并修正 name 表。主题字号收敛为 11/13/15/18/22 五级，避免每个字号各生成一套图集；
+`b`/`strong`/`.weight-bold` 统一映射 `font-weight: bold`。
+
+**文本能力**：Typography 面板演示五级字号与 400/700 字重、中英混排（`word-break: break-word`
++ 1.5 行高，正文自动换行）、单行省略号（`white-space: nowrap` + `overflow: hidden` +
+`text-overflow: ellipsis`）、富文本颜色与内联加粗。
+
+**图集预算**：`RmlBgfxRenderInterface` 记录每个字体图集页的尺寸/字节（`GenerateTexture` 路径），
+`UiSystem` 在首帧渲染后统计并写入 F11 面板：当前 **8 页 / 0.7 MB / 预算 12 页 / 48 MB**；
+超预算打 warning。CJK 全量字体保留覆盖，运行时字形按需光栅化；测试用 1500 个连续 CJK 字符
+压测，图集 ≤2 页 / ≤8MB，验证不会一次性展开全字库。
+
+**布局调整**：bgfx `dbgText`（M3 调试文本）固定在窗口左上且永远在 UI 之上，Typography 面板
+放到左下（left 16 / top 400 / width 840），避免被日志遮住；F11 面板右侧原有控件面板保持不动。
+
+**验证**：实机字号/字重、混排换行、省略号、富文本颜色/加粗；测试 **190 OFF / 196 ON** 全绿
+（新增 M9-T3 字体映射/混排/省略号/富文本与 CJK 图集预算两个用例）。截图：
+`ui_t3_final.png`、`ui_t3_crop.png`。
+
+**踩坑**：
+1. `font-weight: bold` 不会自动伪加粗，必须提供独立 Bold face；只加载 Regular 时 RmlUi 会
+   回退到同一字重，视觉上没有变化。
+2. 图集页数按 (family, style, weight, size) 组合增长；统一字号表能显著降低页数（10 页 → 8 页）。
+3. 本版 RmlUi 的 `ComputedValues::font_family()` 在链接时未导出；测试字族映射改用
+   `Element::GetFontFaceHandle()`，粗体通过 face handle 与 Regular 不同来断言。
+4. 用 fontTools 实例化 VF 后 `name` 表仍显示 Regular，需要手动改 name ID 1/2/4/6/16/17，
+   否则资源排查时容易误判。
+5. bgfx DbgText 是最终 overlay，无法被 RmlUi 覆盖；调试面板布局要避开左上角，或临时用
+   更大窗口验证。
+
+---
+
+## 2026-10-17 M9-T4 HUD
+
+**HUD**：新增常驻 `assets/ui/hud.rml` / `hud.rcss`：顶部第 N 天 + 游戏时间 + 倍速
+（暂停态红色 pill），左下生命/体力条（体力 = `1 - Needs.fatigue`），底部 5 格快捷栏
+（数字键 1~5 选择，显示中文物品名/数量，选中黄框），拾取提示浮字
+（`拾取了 XX ×N`，上浮 + 淡出）。`UiSystem::SetHudState` 缓存文本/条宽/槽位，只在变化时
+更新 DOM；notice 每帧更新 `bottom`/`opacity` 实现浮动。
+
+**输入互斥**：`Input` 增加 `SetGameplayBlocked`/`IsGameplayBlocked`，动作/按键/鼠标/滚轮查询
+在阻断时返回 false；`Input::NewFrame` 重置。`UiSystem::Update` 在 RmlUi 有焦点时阻断游戏输入；
+HUD 元素不可聚焦、调试面板隐藏时焦点为空，因此默认完全透传。F11 改为只切换调试面板
+（默认隐藏，HUD 常驻），隐藏时清除焦点避免残留阻断。
+
+**其他**：拾取提示改用中文并交给 HUD（移除 bgfx `dbgText` 的 notice 行，避免中文字体乱码）；
+新增快捷键 `Hotbar1..5` 默认绑定 1~5；`WorldDemoState::RefreshHud` 每帧构建 HUD 快照。
+
+**验证**：实机 HUD 时间走动、生命条随僵尸伤害变化（44/100）、体力 100、5 格快捷栏显示
+绷带/消防斧与选中态；`hud.rml` 文档结构与输入阻断测试通过。测试 **191 OFF / 197 ON**。
+截图：`ui_t4_final.png`。
+
+**踩坑**：
+1. RmlUi inline-block 的 `width` 是 content-box，5 个 64px 槽 + 边框 + 间距超过 344px 时
+   第 5 格会换行（只剩数字角标可见）；容器宽度放到 360px 解决。
+2. 调试面板默认可见会盖住 HUD（尤其左下体力条/底部快捷栏）；T4 改为 HUD 常驻、F11 才显示
+   调试面板，既保持调试能力又给 HUD 干净布局。
+3. `Input::NewFrame` 必须先重置阻断标记，再让 UiSystem 处理键盘并重新设置；否则输入框在
+   焦点期间会收不到键，游戏也会永久禁用。
+4. HUD 没有可聚焦控件，`Context::GetFocusElement()` 默认返回 null；不要用“HUD 可见”作为
+   阻断条件，否则无焦点时也会抢输入。
+
+---
+
+## 2026-10-17 M9-T5 背包界面
+
+**背包 UI**：新增 `assets/ui/inventory.rml` / `inventory.rcss` 与 `ui::InventoryPanel`：5×5
+背包网格、主手/躯干装备槽、附近地面三栏；打开时隐藏 HUD 与 bgfx 调试文本，遮罩铺满全屏，
+X/遮罩/I/ESC 关闭。HUD 右下角新增“背包 I”按钮，全部操作可只用鼠标完成。
+
+**交互**：RmlUi `drag: clone` 拖拽；同定义合并、不同定义交换、拖到装备槽装备、拖到地面格
+丢弃、地面物品拖回背包拾取；右键菜单按物品类型显示使用/装备/卸下/丢弃/拾取。`InventoryState`
+与 `InventoryAction` 把 UI 快照、动作与游戏逻辑解耦；`WorldDemoState::RefreshInventory`
+每帧构建快照，动作落地到 `MoveStack/TakeAt/UseAt/PickupGroundItem`，拾取/丢弃继续发
+`OnItemPickup`/`OnItemDrop`。附近地面使用 `inventory.lootRange`（默认 3m，F 键拾取半径仍为
+1.6m）。面板底部状态行显示“使用了 … / 装备了 … / 丢弃了 …”，避免 HUD 隐藏后没有反馈。
+
+**输入与模态**：背包打开时 `SetGameplayBlocked(true)`，所有游戏动作/鼠标/滚轮查询失效；
+关闭、玩家死亡/重进状态自动恢复 HUD 与输入。HUD 打开背包时隐藏，关闭时恢复，避免 HUD
+和面板争抢点击。
+
+**验证**：实机全鼠标流程：HUD 背包按钮 → 附近地面右键拾取 → 拖拽装备消防斧 → 右键使用
+绷带（+15 HP）→ 拖拽装备到地面丢弃 → X 关闭；打开背包 FPS 52–61；1280x720 截图 +
+1920x1080 RmlUi 布局断言。测试 **197 OFF / 203 ON**。截图：`ui_t5_final.png`。
+
+**踩坑**：
+1. RmlUi `Context` 析构会遍历 `EventDispatcher::DetachAllEvents` 并调用 listener 的
+   `OnDetach`；只清 `unique_ptr` 不先 `RemoveEventListener` 会解引用悬空指针（测试在
+   `Rml::RemoveContext` 处 SIGSEGV）。UI 的事件绑定需保存 element/event/listener 三元组。
+2. 自制全屏遮罩必须最后 `PullToFront` 且打开时隐藏 HUD；否则 HUD 仍盖在遮罩上，看起来
+   像“没变暗”。同时 bgfx `dbgText` 永远在 UI 之上，背包打开时必须跳过绘制，否则会遮住
+   面板标题/装备槽。
+3. 拖拽目标为空位时容器没有“空槽条目”，`MoveStack` 将 `to >= size` 统一视为移到末尾；
+   背包网格只负责显示前 25 堆。
+4. 地面物品按距离快照，UI 用 `StableId` 指回实体；拾取后实体延迟销毁（`Alive` 立即为假），
+   下一帧快照自然移除。
+5. 玩家在背包打开期间仍会被僵尸伤害；死亡会关闭背包并重新生成空背包玩家（实机测试时
+   看到背包突然关闭，需检查是否死亡而非 UI bug）。
+
+---
+
+## 2026-10-17 M9-T6 主菜单与暂停菜单
+
+**主菜单**：新增 `assets/ui/menu.rml` / `menu.rcss` 与 `ui::MenuPanel`，同一份文档承载
+主菜单、暂停菜单和设置页。主菜单含新游戏/继续/设置/退出；启动默认
+`game.startState=menu`，`MainMenuState` 将游戏时间暂停并显示菜单，新游戏通过 `AppState`
+切换到 `WorldDemoState`。没有存档时“继续”置灰（M10 接入存档后可真正续档）。
+
+**暂停与继续**：`WorldDemoState` 的 Esc 不再退出进程，而是暂停游戏并打开暂停菜单
+（继续/设置/返回主菜单/退出）。返回主菜单用 **保留世界状态的 UI 覆盖层**，不销毁当前
+WorldDemo 会话；“继续”恢复原世界与暂停前倍速（F1 已暂停时恢复为 1x）。打开菜单隐藏
+HUD、bgfx 调试文本和世界调试叠层，关闭后恢复；菜单打开时 `SetGameplayBlocked(true)`。
+
+**设置页**：主音量 0–100 + 10 项键位（移动/攻击/拾取/使用/装备/丢弃/暂停）点击改键，
+按“应用”后通过 `Config::Set + Save` 写回 `config/game.json` 并调用 `ApplyInputBindings`
+立即生效。`Config::Save` 用临时文件 + Windows `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`
+替换，失败不清空原文件。音量目前只保存配置，M11 音频系统接入后消费 `audio.masterVolume`。
+
+**关键修复（M9-T4/T5 遗留）**：RmlUi 在没有显式焦点时 `Context::GetFocusElement()` 返回
+**body**，不是 null；旧逻辑把 body 当焦点，导致 HUD/世界状态下所有键盘输入被永久阻断。
+`UiSystem::HasInputFocus()` 现在把 body/html 视为无焦点，并在关闭背包/菜单时 `Blur()`
+点击过的按钮 div。修复后 Esc、F1、WASD 等游戏输入恢复正常。
+
+**验证**：实机 主菜单 → 新游戏 → 世界 HUD → Esc 暂停 → 设置页改键/应用（配置写入
+`MoveUp=Q`，随后恢复）→ 返回主菜单（“继续”可用）→ 继续回到原世界（HP/时间保持）
+→ Esc → Esc 继续；1280×720 菜单/暂停/设置截图。测试 **199 OFF / 205 ON**（新增菜单与 Config
+Save 测试）。截图：`ui_t6_main.png`、`ui_t6_pause_final.png`、`ui_t6_settings.png`。
+调试启动世界可加 `--game.startState=world`。
+
+**踩坑**：
+1. `GetFocusElement()==body` 被误判为输入焦点；这是 T4 “UI 无焦点透传”失效的根因，
+   也解释了 T5 关闭背包后键盘/鼠标动作可能失效。
+2. RmlUi 点击 div 会把焦点留在 div 上；隐藏文档不会自动清焦点，必须显式 `Blur()`。
+3. bgfx `dbgText` 和世界 Debug 叠层在 RmlUI 之上/之下都要单独处理：菜单打开时分别跳过
+   `DrawDebugText` 与调试浮层，否则暂停面板上会透出路径标记。
+4. 设置写回的是完整 `m_data`（nlohmann JSON 键序会变成字母序）；如果只想改两项，建议
+   M10 起改独立用户设置文件，避免 `config/game.json` 产生大 diff。
+5. 暂停菜单保持世界状态属于有意的“覆盖层”设计，不是忘记切 AppState；切到
+   `MainMenuState` 会销毁 WorldDemo，M10 存档前会让“继续”失效。
+
+---
+
+## 2026-10-17 M10-T1 序列化框架
+
+**格式**：新增 `src/save/BinaryFormat.h`、`BinaryWriter`、`BinaryReader`。每段固定
+16 字节小端段头：`magic:u32 + version:u16 + flags:u16 + payloadSize:u64`，写入时先占位，
+`EndSegment()` 回填负载长度；`BinaryReader` 支持按段读取、版本/magic 校验、`SkipSegment()`
+跳过未知段，以及 `EndSegment()` 检查段尾是否有未消费字节；顶层循环用 `AtEnd()` 区分
+正常读完和段头截断。预置段 magic：`ZLSV`（存档头）、`ZLWD`（世界）、`ZLEN`（实体）、
+`ZLPL`（玩家）。
+
+**类型与限制**：基本整数/枚举（底层类型）/bool/float/double、UTF-8 字符串（u32 长度）、
+`std::vector`、`std::array`、`std::map`、`std::optional`、`std::pair` 可递归序列化；容器
+数量上限 100 万、字符串 16MB、单段负载 256MB，防止损坏长度导致超大分配。所有格式显式
+按字节拼装，禁止直接写结构体（padding/ABI）。读取错误统一写入 `Error()`（包含偏移），
+截断、非法 bool、超限、版本不匹配均测试为不越界、不抛异常。
+
+**验证**：新增 `tests/test_serialization.cpp`，覆盖基础类型/中文 UTF-8/嵌套容器/多段长度回填/
+未知段跳过/版本与 magic 拒绝/截断/恶意长度/非法 bool/段尾多余数据/API 状态错误。测试
+**204/204 passed**（OFF，断言 118,769；ON 210/210）；下一步 M10-T2 世界 diff 存档。
+
+---
+
+## 2026-10-17 M10-T2 世界 diff 存档
+
+**修改追踪**：`Chunk` 新增母地图基线（800 格状态哈希，含 roomId/持久层对象，Mark
+临时层排除）与 `dirty`。非 const `Square()` 访问即置 dirty；`ChunkManager` 在
+`ApplyChunkData` 之后、`Loaded` 之前调用 `CaptureBaseline()`。`IsSquareModified()`
+用当前状态与基线哈希比较，因此即使修改发生在别处/改回原值，也不会误存或漏存。
+
+**Diff**：新增 `save::ChunkDiff` / `ChunkDiffStore`。`CaptureChunkDiff` 只收集相对母地图
+发生变化的格；每格保存 roomId + 4 个持久层的完整对象（sprite/offset/blocksMovement），
+因此删墙、改地面、丢物品、改房间都能用同一 patch 表达。文件写入
+`<saveRoot>/world/chunk_<x>_<y>.bin`（段 `ZLCD` v1）；无改动不写文件，旧 diff 会被删除。
+`ApplyChunkDiff` 先校验坐标/格范围/重复格/Mark 层，再对目标格清空并恢复 patch。
+
+**关键顺序**：读档必须 `ApplyChunkData → CaptureBaseline → ApplyChunkDiff`。diff 中的格
+相对母地图仍然是“已修改”，所以下次保存会继续写回；若先应用 diff 再 capture，已有改动
+会在下一次保存时丢失。T4 在 `onChunkUnloading`（数据清空前）调用 `SaveChunk`；T5 再接管
+后台快照与原子写盘。
+
+**验证**：新增 `tests/test_chunk_diff.cpp`，覆盖只捕获变化格、改回原值/Mark 不产生 diff、
+编码往返、应用到母地图后再次 capture 仍有 diff、只写改动 chunk、未改动不落盘、负坐标、
+损坏/截断文件、无基线、错误坐标、重复格与 Mark 层拒绝；`test_chunkmanager` 增加挂接后
+基线断言。测试 **209/209 passed**（OFF，断言 118,859；ON 215/215），构建已恢复 OFF。
+
+**踩坑**：`Chunk::Square` 非 const 是“可能修改”的入口，地图 apply 期间也会标 dirty，
+必须在 apply 后统一 `CaptureBaseline()` 清除；只读路径（物理/寻路）都用 `const Chunk&`，
+不会误标。`ChunkDiffStore` 当前直接写文件（T5 才做临时文件+改名与后台写盘）。
+
+## 2026-10-18 M10-T3 实体与玩家持久化
+
+**组件注册表**：新增 `save::ComponentRegistry`，组件用 u32 类型 ID + u16 版本注册，
+codec 提供 has/write/read；内建 Position、Velocity、SpriteRef、Facing、Health、Needs、
+PlayerTag、ItemInstance、Container、Equipment、Corpse。写入时按类型 ID 排序，保证快照确定性。
+
+**实体快照**：新增 `save::EntityStore`。每个实体以 `StableId` 为键，快照段 `ZLEN` v1；
+每个组件是嵌套标准段（可跳过未知类型，已知类型要求版本精确匹配，旧版本不静默迁移）。
+`CapturePlayer` 要求全 world 恰好一个 `PlayerTag`；`Container` 保存容量、堆叠顺序与每件
+defId/count/condition，`Equipment` 保存两个 optional 槽。`EcsWorld::CreateWithStableId`
+用于读档重建并推进后续 ID 分配；`LoadEntities` 先建全部实体再应用，冲突/损坏时回滚本次创建。
+T5 接线仍须为玩家/僵尸补物理、输入、AI、寻路等运行时组件，通用加载不是完整角色工厂。
+
+**校验**：拒绝 StableId 为 0/最大值/重复、组件类型重复、组件版本不匹配、段头/长度不一致、
+容器/物品/Health/Needs/Position 非法数值、截断与超限；未知组件跳过。测试覆盖玩家背包+装备
+往返、Corpse 的 StableId 引用、全量快照排序、未知组件、重复 ID/组件、版本不兼容、非法物品、
+截断、加载冲突回滚，以及 `CreateWithStableId`。**217/217 passed**（OFF，断言 119,050；
+ON 223/223，断言 119,116），构建已恢复 OFF。
+
+**踩坑**：EnTT 空组件（`PlayerTag`）的 view `.each` 回调只传 entity，不能声明第二参数；
+模板 codec 也不能对空组件调用 `try_get`/`emplace(value)`，需 `if constexpr (is_empty_v<T>)`
+分支。`CapturePlayer` 的查询因此单独处理。
+
+## 2026-10-18 M10-T4 SaveManager + SQLite 元数据
+
+**文件布局**：`SaveManager` 以 `save.root`（默认 `saves`）为根，每个存档目录包含
+`meta.sqlite`、`save.bin`（段 `ZLSV` v1：gameVersion/mapId/createdAt）、`entities.bin`
+（`ZLEN`）、`thumbnail.png`、`world/chunk_x_y.bin`。saveId 用 UTC 时间戳生成并只允许
+`[A-Za-z0-9_-]`；所有 id 操作先校验路径，拒绝 `..`/分隔符。`Create` 可带玩家列表、
+实体快照、RGBA 缩略图，失败清理半成品；`Save` 更新实体/缩略图/meta；`List` 按 updatedAt
+倒序，`Delete` 删除整档；`ReadMetadata`/`ReadHeader`/`Load` 返回
+`LoadResult{Ok,NotFound,Incompatible,Corrupt}`；`SaveChunk`/`LoadChunk` 委托
+`ChunkDiffStore`。`SaveManager` 已挂到 `GameContext`，运行时存档 UI/请求接线留 T5。
+
+**SQLite**：`meta.sqlite` schema `user_version=1`；单行 `meta` 表（save_id/name/
+created_at/updated_at/save_version/game_version/map_id/thumbnail）和 `players` 表
+（stable_id/name/is_local），写入走事务整体替换。旧 schema/存档段版本明确报不兼容；
+损坏 DB 与 version=0 区分开，List 跳过并 warn。
+
+**缩略图**：`Renderer` 实现 `bgfx::CallbackI::screenShot`，`requestScreenShot` 走平台
+回读；`ConvertBgraToRgba` 处理 pitch/yflip；`stb_image_write` 编码 PNG，`SaveManager`
+接收 `ThumbnailImage` 并写 `thumbnail.png`。主线程用 `Renderer::PollScreenshot` 取回，
+回调队列有锁，不阻塞渲染线程。
+
+**验证**：新增 `test_save_manager.cpp`（PNG、创建/列表/加载/删除、更新、chunk diff、
+非法输入、损坏/版本、路径穿越）与 `test_screenshot.cpp`（BGRA 转换+ yflip/非法数据）；
+测试 **224/224 passed**（OFF，断言 119,220；ON 230/230，断言 119,286），构建已恢复 OFF。
+
+**踩坑**：`IsVersionError` 不能按“版本”二字判断（会把“读取元数据版本失败”误判为
+Incompatible），改为匹配“不兼容”；SQLite `user_version=0` 按损坏处理。`Renderer` 持有
+前向声明的截图回调 `unique_ptr` 时，构造/析构必须在 .cpp 定义，否则 GameApp 编译到
+incomplete type。`EncodePng` 失败时不清空调用方 buffer，便于保留上一次结果。
+
+## 2026-10-18 M10-T5 后台存档 + 原子提交 + 损坏恢复
+
+**原子提交**：`SaveManager` 先写 `<root>/.tmp-<id>-<nonce>/`（更新档先复制旧 generation 的
+world/chunk），全部 header/entities/thumbnail/meta/chunks 成功后，旧正式档整体 rename 到
+`<root>/.backup/<id>/`，临时目录 rename 为正式档；rename 失败恢复旧档。`.tmp-*`/`.backup`
+不是合法 saveId，`List` 忽略。`ChunkDiffStore` 单文件写改为 `WriteFileAtomic`（临时文件 +
+`MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)`）。
+
+**损坏回退**：`Load`/`LoadChunk` 主档 Corrupt/NotFound 时尝试 `.backup/<id>`，Incompatible
+不回退；成功返回 `LoadReport{usedBackup,warning}`，失败错误附“删除存档或使用备份”建议。
+`List` 主目录损坏时列出 backup 元数据；`LoadChunkFromBackup` 供整档回退会话读取一致的
+chunk diff。备份会话禁止回写旧主档，下一次保存新建 id，避免覆盖唯一可用备份。
+
+**后台线程**：新增 `save::SaveService`，独占 `zl-save` 线程；主线程采集 `SaveRequest`
+（EntitySnapshot/players/缩略图/ChunkDiff 副本）后投递，后台只调用 SaveManager，主线程每帧
+`PollResults` 经 `GameContext.onSaveFinished` 回到当前状态。`SaveManager` 增加互斥锁，
+所有列表/读写与后台写盘串行化；GameApp Shutdown 等 zl-save 收尾。
+
+**运行时接线**：F12 快速存档（快照 → bgfx 截图 2s 超时则无缩略图 → 后台写盘）；主菜单
+Continue 读最近存档；`WorldDemoState(loadId)` 读实体后补建玩家/僵尸的 Collider/RigidBody/
+AI/寻路/输入等运行时组件。chunk 加载回调在基线与物理/寻路构建之间应用 diff；chunk 卸载
+回调在数据清空前 SaveChunk。`save.autoSaveOnExit` 默认 true，退出时提交无缩略图存档。
+失败经 HUD notice 提示；OnSaveBegin/OnSaveEnd 事件已发。
+
+**验证**：新增 `test_save_service.cpp` 与 `test_save_manager.cpp` 的原子/备份/chunk 回退/
+SaveOptions 用例；OFF **229/229 passed，119,331 assertions**，ON **235/235，119,397**，
+构建已恢复 OFF。实机烟测：`--game.startState=world` 运行约 12s → F12（生成 thumbnail）→
+Alt+F4；重启主菜单 Continue 读取同一档，恢复 51 实体（1 玩家 + 40 僵尸）并继续模拟，
+退出 auto-save 更新主档且保留 backup。
+
+**踩坑**：MSVC `std::filesystem::is_directory(nonexistent, ec)` 会设置 `ec`，新档提交误判
+失败；先 `exists` 再查目录类型。`SubmitPendingSave` 不能在 move 后读 `m_pendingSave.id`。
+UI 自动化点击要用 `ClientToScreen` 后坐标（窗口每轮位置不同）；截图超时/回读失败必须允许
+无缩略图保存，不能卡住存档队列。
+
+## 2026-10-18 M11 音频系统（T1~T4）
+
+**设备与音量组**：新增 `audio/AudioEngine`（miniaudio 0.11.25，header-only），封装
+`audio.device=default|null|off`、加载/播放/停止与 `Master → Music/SFX/Ambient` 四组音量。
+`off`、设备初始化失败、测试 `null` 设备均安全 no-op；`GameApp` 在配置/存档服务之后初始化，
+`SoundManager` 订阅 `OnSound`/`OnItemPickup`，退出时先退订再销毁 miniaudio engine。
+音量组从 `audio.*Volume`（65/70/85/55）恢复，设置页应用时实时更新并 `Config::Save`。
+
+**2D/3D 与声景**：听者取相机中心（`FromScreen(Camera::Center())`），
+`ComputeSpatial` 做线性距离衰减 + 等距屏幕横向 pan；`SoundManager` 启动
+`music_calm`（Music）与昼夜 `ambient_day/night`（Ambient）循环，僵尸低吼按听者附近存活
+数量调节间隔（SFX），UI 点击/拾取为 2D。新增 `SoundEvent.clip`，脚步按地面 sprite 映射
+`footstep_grass/dirt/wood`，步幅 `audio.footstepStride=0.9`；新增 11 个程序合成占位 wav
+（见 `assets/audio/README.md`）。
+
+**声音传播与 AI 共用**：新增 `core/SoundPropagation`（0.5 格采样、阻挡格计数、
+`wallAttenuation` 有效半径/增益），`PerceptionSystem::HearsSound` 与音频
+`ComputeSpatial` 调用同一实现；两边都读 `perception.wallAttenuation`。枪声/脚步只发
+`OnSound`，音频订阅和感知订阅同时消费；低吼/环境/UI 不进入 AI 听觉。
+
+**验证**：新增 `test_audio.cpp`（传播公式、pan/衰减、null 设备播放/停止、音量组、
+OnSound/拾取/音乐/环境/低吼、`audio.device=off`）；UI 测试补四组音量应用与点击音效回调。
+OFF **235/235 passed，119,381 assertions**，ON **241/241，119,447**，构建已恢复 OFF。
+实机（默认设备）`--game.startState=world --game.startHour=8`：音乐/白天环境启动，W 行走
+脚步计数增长，F7 枪声后音频 `枪声=1`、感知 `听` 从 6 跳到 32/55；`--audio.device=off`
+静音运行且 FPS/模拟正常。
+
+**踩坑**：`SoundManager.h` 只前向声明 `EventBus` 无法用于 `SubscriptionId` 成员，必须包含
+`core/EventBus.h`；UI 设置面板从 1 行音量扩成 2×2 后，RmlUi 是 content-box（height 不含
+padding/border），630px 会被 720 高度测试拒绝，改回 590px 并压缩行高/间距；miniaudio
+无设备测试需 `noDevice + channels/sampleRate`，且每帧 `ma_engine_read_pcm_frames` 推进
+声音节点。
+
+## 2026-10-18 M12 打磨与联机命令层预留（T1~T4，可选范围）
+
+**命令层**：新增 `net/Command`（type/payload/tick/playerStableId，实体引用只用 StableId）、
+`CommandCodec`（小端定长包 `ZLC1` v1，单包 ≤64 条/4KB）、`LoopbackTransport`/`Client`/
+`Server` 与 `CommandPipeline`。`net.mode=direct` 立即执行；`loopback` 在渲染帧末 Flush
+编码发包，下一 tick 开头 Pump 解码执行并回 `ZLS1` 心跳快照（移动/攻击/拾取/使用/装备/
+丢弃/背包动作/开枪/快捷栏全部命令化；暂停/相机/存档/调试仍为本地元操作）。`MoveInput`
+（屏幕方向）由 InputSystem 转 MoveIntent，应用不再直接读键盘。
+
+**命令接线踩坑**：命令必须在 GameApp 的 Tick 开头、ECS 之前 Pump，否则 loopback 会多等
+一帧；Server 无命令时也要发心跳快照，否则统计把“最后一次命令”误判成当前延迟；UI 的
+背包 action 在 direct 下仍立即执行，loopback 下下一 tick 生效，UI 到下一帧才刷新是预期。
+
+**性能**：地面 stage 0 按纹理聚簇（不改变画家序）后，placeholder 场景 drawcall 244→71；
+`ChunkManager` 增加 `world.chunkAttachBudgetMs=2.0` + `chunkAttachBudget=8` 双预算（首块
+总执行，防饥饿）；启动耗时在 `GameApp::Run` 记录。Release 500 人口 + 大世界巡航 60s：
+direct/loopback FPS 中位均 60（direct 最低 55、loopback 57），loopback 差异 <10%，命令
+最多 1 tick 延迟；启动 461ms。
+
+**内容管线**：`tools/pack_tileset.py`（PNG 目录 → shelf 图集页 + pz-atlas-v1 JSON，可选
+`texturec` 生成发布 DDS）；`assets/items.json` 7→14 条，新增水/止痛药/能量棒/锤子/
+螺丝刀/登山靴/登山背包及 7 个自制图标，asset_manifest 全走数据文件。Tiled 导入器与
+配方系统尚未建模（可选/后续）。
+
+**验证**：`test_net.cpp`（协议全字段/非法包/快照往返/直连环回一致性/背压）、
+`test_player_control`（MoveInput 与键盘一致、地面批纹理排序）、`test_items` 加载 14 条。
+OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建已恢复 OFF。
+实机：`--net.mode=loopback` + W 移动 + F7 枪声 → 命令 3/3 执行、包 3/3、tick 延迟 1，
+枪声后感知听计数上升；`placeholder_pz` drawcall 71、FPS 60。
+## 2026-10-18 M0 换机验收预验（干净目录）
+
+**目的**：M12 后只剩 M0“换台机器按 README 三步能跑起来”；本机先做一次排除构建产物的干净目录复验。
+
+**结果**：把工作树复制到临时目录（排除 `build/.git/logs/saves/assets_placeholder_pz`），按 README 用 `VCPKG_ROOT=E:\Dev\vcpkg` 配置/构建/运行。vcpkg 命中二进制缓存，配置 100s；构建 203 个目标成功；`ZomboidLikeTests` **243/243、119,550 assertions**；启动窗口创建（hwnd 非 0），日志显示物品 14 条、音频设备、2 个示例 mod、UI 字体、进入主循环。
+
+**顺手修正**：README 的 `vcpkg version` 在未加 PATH 时会失败，改为 `& "$env:VCPKG_ROOT\vcpkg.exe" version` 并给出 `VCPKG_ROOT` 设置命令；新对话提示里的绝对项目路径改为 `<项目根目录>（本机 …）`；快速开始注明首次依赖安装时间。
+
+**剩余**：真正换一台 Windows 机器执行 README 三步；本机干净目录不能替代该验收，docs/01 仍未勾选。

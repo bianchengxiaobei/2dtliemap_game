@@ -2,18 +2,25 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
 
 #include "ai/components/AiComponents.h"
 #include "core/AppState.h"
+#include "core/GameTime.h"
 #include "ecs/EcsWorld.h"
 #include "game/AssetProvider.h"
 #include "game/GameContext.h"
 #include "game/RenderCollectSystem.h"
+#include "items/ItemComponents.h"
+#include "net/Command.h"
 #include "render/DrawList.h"
 #include "render/IsoMath.h"
+#include "save/SaveService.h"
+#include "ui/InventoryUi.h"
+#include "ui/MenuUi.h"
 #include "world/GridSquare.h"
 
 namespace zl::world {
@@ -30,7 +37,8 @@ namespace zl::game {
 // 本状态只读 ChunkManager 已挂接（Loaded）的 chunk；加载/卸载全在后台+预算内完成。
 class WorldDemoState final : public core::AppState {
 public:
-    explicit WorldDemoState(GameContext& context) : m_ctx(context) {}
+    explicit WorldDemoState(GameContext& context, std::string loadSaveId = {})
+        : m_ctx(context), m_loadSaveId(std::move(loadSaveId)) {}
 
     const char* Name() const override { return "WorldDemo"; }
 
@@ -41,24 +49,56 @@ public:
 
 private:
     void HandleFrameInput(double frameDt);
+    // M10-T5：会话初始化/读档与后台存档（快照只在主线程采集）
+    bool LoadFromSave();
+    void RestoreRuntimeComponents(const std::vector<ecs::Entity>& loaded);
+    void RequestQuickSave(bool withThumbnail);
+    bool CaptureSaveChunks(std::vector<save::ChunkDiff>* out, std::string* error);
+    void SubmitPendingSave();
+    void PollSaveScreenshot(double frameDt);
+    void HandleSaveFinished(bool ok, bool created, const std::string& id,
+                            const std::string& error);
+    void ConsumeSaveWarning();
     void CollectWorld();
+    // M11-T3：脚步（按地面材质）与听者更新；世界声音走 OnSound（音频 + AI 共用）
+    void UpdateAudio(double frameDt);
     void SpawnDemoEntities();
     void DespawnDemoEntities();
     // M6-T3：地面物品——村庄附近散落（首次帧、目标 chunk 就绪后）+ F 键拾取最近 + 退出清理
     void EnsureDemoItemsScattered();
     void PickupNearestItem();
     void DespawnGroundItems();
-    // M6-T5：装备/使用闭环（临时按键，无列表 UI——正式 UI 在 M9）
+    // M6-T5：装备/使用闭环（键盘快捷键；M9-T5 起背包 UI 走同一套容器/装备规则）
     void UseConsumableItem();       // E：使用背包中第一个带效果的物品（消耗 1 件）
     void ToggleEquipWeapon();       // R：主手武器 ↔ 背包第一件武器（换装/卸下）
     void DropFirstItem();           // G：丢弃背包第一堆（整堆落地面）
     void AppendEquippedWeapon();    // 手持渲染：收集后追加装备图标 DrawItem（排序前）
+    void RefreshInventory();
+    void HandleInventoryAction(const ui::InventoryAction& action);
+    // M12-T1：玩家操作统一走 Command（direct 立即执行 / loopback 环回执行）
+    net::Command MakePlayerCommand(net::CommandType type) const;
+    bool ExecutePlayerCommand(const net::Command& command, std::string& error);
+    bool SubmitPlayerCommand(const net::Command& command);
+    void SubmitMoveCommand(float screenX, float screenY);
+    void SubmitInventoryAction(const ui::InventoryAction& action);
+    // M9-T6：Esc 暂停菜单（保留当前世界状态；返回主菜单后“继续”可恢复）
+    void OpenPauseMenu();
+    void ResumeFromMenu();
+    void HandleMenuAction(ui::MenuActionType action);
+    void EquipBagItem(int index, ecs::EquipSlot slot);
+    void EquipLootItem(std::uint64_t stableId, ecs::EquipSlot slot);
+    void UnequipEquipment(int index);
+    void UseBagItem(int index);
+    void DropBagItem(int index);
+    void DropEquipmentItem(int index);
+    void PickupLootItem(std::uint64_t stableId);
+    void ReturnOrDropItem(const ecs::ItemInstance& item);
     // M5-T1：演示击杀——离参考点（玩家/相机中心）最近的存活游荡者 HP 归零 → DeathSystem 转尸体
     void KillNearestDemoEntity();
     // M5-T4：演示开枪——玩家位置发射大半径 SoundEvent（事件总线 OnSound）吸引僵尸
     void EmitGunshot();
     // M5-T6：玩家挥击（空格）——自动瞄准最近僵尸 → 写 AttackIntent → CombatSystem 伤害管线
-    void PlayerAttack();
+    void PlayerAttack(std::uint64_t targetStableId = 0);
     // M4-T4：玩家（PlayerTag）——chunk 加载完成后在村庄中心附近找可走格生成
     void EnsurePlayerSpawned();
     ecs::Entity SpawnCharacter(float px, float py);
@@ -68,6 +108,7 @@ private:
     // M4-T7：寻路反馈——玩家路径状态跃迁（到达/失败）→ HUD 提示 + 目标格标记
     void UpdatePathFeedback(double frameDt);
     void SetNotice(std::string text, uint32_t color, float seconds);
+    void RefreshHud();
     // M4-T5：相机跟随（follow=平滑跟随玩家+地图边界；自由=方向键/拖拽，无边界）
     void ApplyCameraMode();
     void UpdateCameraFollow(double frameDt);
@@ -99,6 +140,14 @@ private:
     ecs::Entity m_player = entt::null;
     // M5-T4：演示枪声基础可闻半径（格；config sounds.gunshotRadius）
     float m_gunshotRadius = 30.0f;
+    // M11-T3：脚步累计距离与步幅（按地面材质切换 footstep_*.wav）
+    glm::vec2 m_footstepAnchor{0.0f, 0.0f};
+    bool m_footstepAnchorValid = false;
+    float m_footstepDistance = 0.0f;
+    float m_footstepStride = 0.9f;
+    // M12-T1：上次提交的 Move 屏幕方向（去重，避免每帧重复发包）
+    glm::vec2 m_lastMoveCommand{0.0f, 0.0f};
+    bool m_moveCommandValid = false;
     // M5-T6：玩家挥击参数（config combat.player*；演示自动瞄准射程固定 3 格）
     float m_playerAttackDamage = 40.0f;
     float m_playerAttackRange = 1.7f;
@@ -111,11 +160,13 @@ private:
     float m_playerMaxHp = 100.0f;
     // M6-T3：地面物品拾取半径（config inventory.pickupRadius）与散落标记
     float m_pickupRadius = 1.6f;
+    float m_inventoryRange = 3.0f;
     bool m_demoItemsScattered = false;
     // M4-T7：点击移动反馈（notice 文本 + 目标格标记）
     std::string m_noticeText;
+    std::string m_noticeTone = "info";
     float m_noticeTimer = 0.0f;
-    uint32_t m_noticeColor = 0x0F;
+    float m_noticeDuration = 0.0f;
     int m_markerX = 0;
     int m_markerY = 0;
     float m_markerTimer = 0.0f;
@@ -150,6 +201,21 @@ private:
     int m_hoverY = 0;
     bool m_hoverHit = true;
     bool m_showGrid = false;  // 世界地图默认关网格（F9 开）
+    int m_hotbarSelected = 0;  // M9-T4：快捷栏选中槽（数字键 1~5）
+    // M9-T6：暂停/主菜单覆盖层；暂停前倍速用于恢复
+    bool m_menuPaused = false;
+    core::GameTime::Speed m_speedBeforeMenu = core::GameTime::Speed::X1;
+
+    // M10-T5：当前存档与后台保存状态
+    std::string m_loadSaveId;
+    std::string m_saveId;
+    bool m_loadedFromSave = false;
+    bool m_autoSaveOnExit = true;
+    bool m_savePending = false;         // 已交给 SaveService，等待结果
+    bool m_saveRequestPending = false;  // 快照已采集，等待缩略图/提交
+    bool m_screenshotPending = false;
+    double m_screenshotTimer = 0.0;
+    save::SaveRequest m_pendingSave;
 
     uint64_t m_ticksInState = 0;
 };

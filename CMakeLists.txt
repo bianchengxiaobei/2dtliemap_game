@@ -29,6 +29,8 @@ find_package(doctest CONFIG REQUIRED)
 find_package(Lua REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
 find_package(RmlUi CONFIG REQUIRED)
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
+find_path(MINIAUDIO_INCLUDE_DIR NAMES miniaudio.h REQUIRED)
 
 if (ZL_ENABLE_PYTHON)
     # Python 脚本后端依赖（M8-T1）：嵌入式 CPython + pybind11。
@@ -54,6 +56,8 @@ add_executable(ZomboidLike
     src/ai/systems/PathFollowSystem.cpp
     src/ai/systems/PerceptionSystem.cpp
     src/ai/systems/SpawnLodSystem.cpp
+    src/audio/AudioEngine.cpp
+    src/audio/SoundManager.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/CombatSystem.cpp
     src/characters/systems/DeathSystem.cpp
@@ -66,6 +70,7 @@ add_executable(ZomboidLike
     src/core/GameTime.cpp
     src/core/Input.cpp
     src/core/Log.cpp
+    src/core/SoundPropagation.cpp
     src/core/TaskScheduler.cpp
     src/ecs/EcsWorld.cpp
     src/ecs/SpatialIndex.cpp
@@ -76,12 +81,17 @@ add_executable(ZomboidLike
     src/game/GroundItems.cpp
     src/game/RenderCollectSystem.cpp
     src/game/ZombieFactory.cpp
+    src/game/states/MainMenuState.cpp
     src/game/states/RenderDemoState.cpp
     src/game/states/SandboxState.cpp
     src/game/states/WorldDemoState.cpp
     src/items/ItemDef.cpp
     src/items/ItemRegistry.cpp
     src/items/InventoryOps.cpp
+    src/net/Command.cpp
+    src/net/CommandCodec.cpp
+    src/net/CommandPipeline.cpp
+    src/net/Loopback.cpp
     src/platform/KeyNames.cpp
     src/platform/Window.cpp
     src/physics/PhysicsSyncSystem.cpp
@@ -90,8 +100,22 @@ add_executable(ZomboidLike
     src/render/Camera.cpp
     src/render/IsoMath.cpp
     src/render/Renderer.cpp
+    src/render/Screenshot.cpp
     src/render/SpriteBatch.cpp
     src/render/Texture2D.cpp
+    src/save/AtomicFile.cpp
+    src/save/BinaryReader.cpp
+    src/save/BinaryWriter.cpp
+    src/save/ChunkDiff.cpp
+    src/save/ChunkDiffStore.cpp
+    src/save/ComponentRegistry.cpp
+    src/save/EntityStore.cpp
+    src/save/SaveManager.cpp
+    src/save/SaveService.cpp
+    src/save/SqliteMeta.cpp
+    src/save/Thumbnail.cpp
+    src/ui/InventoryPanel.cpp
+    src/ui/MenuPanel.cpp
     src/ui/RmlBgfxRenderInterface.cpp
     src/ui/RmlSystemInterface.cpp
     src/ui/UiInput.cpp
@@ -113,7 +137,7 @@ add_executable(ZomboidLike
     src/world/World.cpp
 )
 
-target_include_directories(ZomboidLike PRIVATE src ${BULLET_INCLUDE_DIRS})
+target_include_directories(ZomboidLike PRIVATE src ${BULLET_INCLUDE_DIRS} ${MINIAUDIO_INCLUDE_DIR})
 
 target_compile_definitions(ZomboidLike PRIVATE
     SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
@@ -130,6 +154,7 @@ target_link_libraries(ZomboidLike PRIVATE
     ${LUA_LIBRARIES}
     ${BULLET_LIBRARIES}
     RmlUi::RmlUi
+    unofficial::sqlite3::sqlite3
 )
 
 if (WIN32)
@@ -177,7 +202,17 @@ add_executable(ZomboidLikeTests
     tests/test_python_runtime.cpp
     tests/test_python_api.cpp
     tests/test_ui.cpp
+    tests/test_config.cpp
+    tests/test_serialization.cpp
+    tests/test_chunk_diff.cpp
+    tests/test_entity_save.cpp
+    tests/test_save_manager.cpp
+    tests/test_save_service.cpp
+    tests/test_audio.cpp
+    tests/test_screenshot.cpp
     tests/test_world.cpp
+    tests/test_net.cpp
+    src/core/Config.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
     src/ai/PathfindingService.cpp
@@ -188,6 +223,8 @@ add_executable(ZomboidLikeTests
     src/ai/systems/PathFollowSystem.cpp
     src/ai/systems/PerceptionSystem.cpp
     src/ai/systems/SpawnLodSystem.cpp
+    src/audio/AudioEngine.cpp
+    src/audio/SoundManager.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/CombatSystem.cpp
     src/characters/systems/DeathSystem.cpp
@@ -198,6 +235,7 @@ add_executable(ZomboidLikeTests
     src/core/GameTime.cpp
     src/core/Input.cpp
     src/core/Log.cpp
+    src/core/SoundPropagation.cpp
     src/core/TaskScheduler.cpp
     src/ecs/EcsWorld.cpp
     src/ecs/SpatialIndex.cpp
@@ -207,10 +245,29 @@ add_executable(ZomboidLikeTests
     src/items/ItemDef.cpp
     src/items/ItemRegistry.cpp
     src/items/InventoryOps.cpp
+    src/net/Command.cpp
+    src/net/CommandCodec.cpp
+    src/net/CommandPipeline.cpp
+    src/net/Loopback.cpp
+    src/platform/KeyNames.cpp
     src/physics/PhysicsSyncSystem.cpp
     src/physics/PhysicsWorld.cpp
     src/render/Camera.cpp
     src/render/IsoMath.cpp
+    src/render/Screenshot.cpp
+    src/save/AtomicFile.cpp
+    src/save/BinaryReader.cpp
+    src/save/BinaryWriter.cpp
+    src/save/ChunkDiff.cpp
+    src/save/ChunkDiffStore.cpp
+    src/save/ComponentRegistry.cpp
+    src/save/EntityStore.cpp
+    src/save/SaveManager.cpp
+    src/save/SaveService.cpp
+    src/save/SqliteMeta.cpp
+    src/save/Thumbnail.cpp
+    src/ui/InventoryPanel.cpp
+    src/ui/MenuPanel.cpp
     src/ui/UiInput.cpp
     src/script/EventBridge.cpp
     src/script/LuaRuntime.cpp
@@ -229,7 +286,7 @@ add_executable(ZomboidLikeTests
     src/world/World.cpp
 )
 
-target_include_directories(ZomboidLikeTests PRIVATE src ${BULLET_INCLUDE_DIRS})
+target_include_directories(ZomboidLikeTests PRIVATE src ${BULLET_INCLUDE_DIRS} ${Stb_INCLUDE_DIR} ${MINIAUDIO_INCLUDE_DIR})
 
 # 测试需要访问仓库内资源（如 assets/maps/village_demo）
 target_compile_definitions(ZomboidLikeTests PRIVATE ZL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -244,6 +301,7 @@ target_link_libraries(ZomboidLikeTests PRIVATE
     ${LUA_LIBRARIES}
     ${BULLET_LIBRARIES}
     RmlUi::RmlUi
+    unofficial::sqlite3::sqlite3
     glfw
 )
 

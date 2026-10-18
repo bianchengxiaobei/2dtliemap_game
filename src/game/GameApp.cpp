@@ -4,18 +4,23 @@
 #include <chrono>
 #include <exception>
 #include <string>
+#include <unordered_set>
+#include <utility>
 
 #include <GLFW/glfw3.h>
 
+#include "characters/components/CharacterComponents.h"
 #include "core/Log.h"
 #include "ecs/components/PhysicsComponents.h"
 #include "game/WorldQueries.h"
 #include "game/ZombieFactory.h"
+#include "game/states/MainMenuState.h"
 #include "game/states/RenderDemoState.h"
 #include "game/states/SandboxState.h"
 #include "game/states/WorldDemoState.h"
 #include "platform/KeyNames.h"
 #include "render/IsoMath.h"
+#include "save/SaveService.h"
 #include "script/LuaRuntime.h"
 #include "script/ModLoader.h"
 #include "script/PythonRuntime.h"
@@ -38,11 +43,15 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"Use", "E"},            // M6-T5：使用消耗品（回血/饱食）
     {"Equip", "R"},          // M6-T5：装备/卸下主手武器
     {"Drop", "G"},           // M6-T5：丢弃背包第一堆
+    {"QuickSave", "F12"},    // M10-T5：快速存档
     {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
     {"MoveRight", "D"},
     // M4-T4：WASD 归玩家；方向键平移相机（自由相机模式，M4-T5）
     {"PanUp", "UP"},         {"PanDown", "DOWN"},   {"PanLeft", "LEFT"},
     {"PanRight", "RIGHT"},   {"ToggleFreeCam", "F4"},
+    // M9-T4：快捷栏 1~5
+    {"Hotbar1", "1"},        {"Hotbar2", "2"},      {"Hotbar3", "3"},
+    {"Hotbar4", "4"},        {"Hotbar5", "5"},
 };
 
 double NowSeconds() {
@@ -55,10 +64,15 @@ double NowSeconds() {
 
 int GameApp::Run(int argc, char** argv) {
     core::InitLogging();
+    const auto startupBegin = std::chrono::steady_clock::now();
     int result = 1;
     try {
         GameApp app;
         if (app.Init(argc, argv)) {
+            const double startupMs = std::chrono::duration<double, std::milli>(
+                                         std::chrono::steady_clock::now() - startupBegin)
+                                         .count();
+            ZL_INFO("core", "启动耗时：{:.0f} ms（初始化完成，进入主循环）", startupMs);
             app.MainLoop();
             result = 0;
         }
@@ -87,6 +101,54 @@ bool GameApp::Init(int argc, char** argv) {
         ZL_WARN("items", "物品注册表为空，物品相关功能不可用（文件: {}）", itemsFile);
     }
     m_ctx.items = &m_itemRegistry;
+
+    // 1.55 存档管理（M10-T4）：根目录来自 save.root；文件在首次创建时落盘
+    save::SaveManager::Options saveOptions;
+    saveOptions.root = m_config.Get<std::string>("save.root", "saves");
+    saveOptions.gameVersion =
+        m_config.Get<std::string>("save.gameVersion", save::kDefaultGameVersion);
+    m_saveManager =
+        std::make_unique<save::SaveManager>(std::move(saveOptions));
+    std::string saveComponentError;
+    if (!save::RegisterBuiltinComponents(m_saveComponents, &saveComponentError)) {
+        ZL_ERROR("save", "存档组件注册失败：{}", saveComponentError);
+    }
+    m_saveService = std::make_unique<save::SaveService>(*m_saveManager);
+
+    // 1.58 音频（M11-T1）：设备不可用/被拔掉时静音运行；音量组从 config 恢复。
+    {
+        audio::SoundManagerOptions audioOptions;
+        audio::AudioEngineOptions& engine = audioOptions.engine;
+        engine.root = m_config.Get<std::string>("audio.root", "assets/audio");
+        engine.device = m_config.Get<std::string>("audio.device", "default");
+        engine.maxVoices = m_config.Get<int>("audio.maxVoices", 64);
+        engine.masterVolume =
+            static_cast<float>(m_config.Get<int>("audio.masterVolume", 65)) / 100.0f;
+        engine.musicVolume =
+            static_cast<float>(m_config.Get<int>("audio.musicVolume", 70)) / 100.0f;
+        engine.sfxVolume =
+            static_cast<float>(m_config.Get<int>("audio.sfxVolume", 85)) / 100.0f;
+        engine.ambientVolume =
+            static_cast<float>(m_config.Get<int>("audio.ambientVolume", 55)) / 100.0f;
+        engine.referenceDistance = static_cast<float>(
+            m_config.Get<double>("audio.referenceDistance", 2.0));
+        engine.maxDistance =
+            static_cast<float>(m_config.Get<double>("audio.maxDistance", 48.0));
+        engine.wallAttenuation = static_cast<float>(
+            m_config.Get<double>("perception.wallAttenuation", 0.6));
+        audioOptions.growlRadius =
+            static_cast<float>(m_config.Get<double>("audio.growlRadius", 24.0));
+        audioOptions.growlMinInterval =
+            static_cast<float>(m_config.Get<double>("audio.growlMinInterval", 1.1));
+        audioOptions.growlMaxInterval =
+            static_cast<float>(m_config.Get<double>("audio.growlMaxInterval", 4.2));
+        audioOptions.growlVolume =
+            static_cast<float>(m_config.Get<double>("audio.growlVolume", 0.9));
+        audioOptions.ambienceVolume =
+            static_cast<float>(m_config.Get<double>("audio.ambienceVolume", 0.55));
+        m_audio = std::make_unique<audio::SoundManager>();
+        m_audio->Init(m_events, audioOptions);
+    }
 
     // 1.6 脚本系统（M7-T1/T2/T3）：注册 Lua 后端 + Host API 接入并初始化
     // （script.backend 决定 mod 默认后端；mod 扫描/加载在 M7-T5 接入）
@@ -160,6 +222,20 @@ bool GameApp::Init(int argc, char** argv) {
         ZL_WARN("core", "UI 初始化失败，以无 UI 模式继续");
         m_ui.reset();
     }
+    if (m_ui) {
+        m_ui->SetMenuSettings(BuildMenuSettings());
+        m_ui->SetMenuSettingsHandler(
+            [this](const ui::MenuSettings& settings, std::string& error) {
+                return ApplyMenuSettings(settings, error);
+            });
+        const auto clickSound = [this] {
+            if (m_audio != nullptr) {
+                m_audio->PlayUiClick();
+            }
+        };
+        m_ui->SetMenuSoundHandler(clickSound);
+        m_ui->SetInventorySoundHandler(clickSound);
+    }
 
     m_window.SetResizeCallback([this](int width, int height) {
         if (width > 0 && height > 0) {
@@ -188,6 +264,7 @@ bool GameApp::Init(int argc, char** argv) {
     startDate.year = m_config.Get<int>("game.startYear", 2000);
     startDate.month = m_config.Get<int>("game.startMonth", 7);
     startDate.day = m_config.Get<int>("game.startDay", 9);
+    startDate.hour = std::clamp(m_config.Get<int>("game.startHour", 0), 0, 23);
     m_gameTime.Configure(gameMinutesPerRealSecond, startDate);
     ZL_INFO("core", "游戏时间：现实 {:.0f} 分钟 = 游戏 1 天；开局时间 {}",
             dayLengthMinutes, core::FormatDateTime(startDate));
@@ -211,8 +288,11 @@ bool GameApp::Init(int argc, char** argv) {
     }
     const int loadRadius = m_config.Get<int>("world.loadRadius", core::kChunkLoadRadius);
     m_world = std::make_unique<world::World>();
-    m_chunkManager =
-        std::make_unique<world::ChunkManager>(*m_world, std::move(worldMeta), *m_tasks, loadRadius);
+    m_chunkManager = std::make_unique<world::ChunkManager>(
+        *m_world, std::move(worldMeta), *m_tasks, loadRadius,
+        std::max(1, m_config.Get<int>("world.chunkRequestBudget", 4)),
+        std::max(1, m_config.Get<int>("world.chunkAttachBudget", 8)),
+        std::max(0.0, m_config.Get<double>("world.chunkAttachBudgetMs", 2.0)));
     m_ctx.world = m_world.get();
     m_ctx.chunkManager = m_chunkManager.get();
 
@@ -227,12 +307,41 @@ bool GameApp::Init(int argc, char** argv) {
         pathOptions);
     m_chunkManager->SetChunkCallbacks(
         [this](world::Chunk& chunk, int cx, int cy) {
+            // M10-T5：存档 diff 必须在母地图基线之后、物理/寻路构建之前叠加
+            if (!m_ctx.activeSaveId.empty() && m_saveManager != nullptr) {
+                save::SaveManager::LoadReport report;
+                std::string chunkError;
+                const save::SaveManager::LoadResult loaded =
+                    m_ctx.activeSaveUseBackup
+                        ? m_saveManager->LoadChunkFromBackup(m_ctx.activeSaveId,
+                                                             chunk, &chunkError)
+                        : m_saveManager->LoadChunk(m_ctx.activeSaveId, chunk,
+                                                   &chunkError, &report);
+                if (report.usedBackup) {
+                    m_ctx.saveWarning = report.warning;
+                    ZL_WARN("save", "chunk ({},{}) {}", cx, cy, report.warning);
+                }
+                if (loaded != save::SaveManager::LoadResult::Ok &&
+                    loaded != save::SaveManager::LoadResult::NotFound) {
+                    m_ctx.saveWarning = "chunk (" + std::to_string(cx) + "," +
+                                        std::to_string(cy) + ") 加载失败：" + chunkError +
+                                        "；建议删除该存档或使用备份目录";
+                    ZL_ERROR("save", "chunk ({},{}) 加载失败：{}", cx, cy, chunkError);
+                }
+            }
             m_physics->BuildChunkStatics(cx, cy, chunk);
             m_pathfinding->OnChunkLoaded(chunk);
             m_events.EmitQueued(core::kOnChunkLoaded, core::ChunkEvent{cx, cy});  // M7-T4
         },
         [this](world::Chunk& chunk, int cx, int cy) {
-            (void)chunk;  // 数据仍可读，但静态体/位图按 chunk 键移除即可
+            // M10-T2/T5：卸载前把 diff 原子写入当前存档（世界数据仍可读）
+            if (!m_ctx.activeSaveId.empty() && !m_ctx.activeSaveUseBackup &&
+                m_saveManager != nullptr) {
+                std::string saveError;
+                if (!m_saveManager->SaveChunk(m_ctx.activeSaveId, chunk, &saveError)) {
+                    ZL_WARN("save", "chunk ({},{}) 卸载存档失败：{}", cx, cy, saveError);
+                }
+            }
             m_physics->RemoveChunkStatics(cx, cy);
             m_pathfinding->OnChunkUnloading(cx, cy);
             m_events.EmitQueued(core::kOnChunkUnloaded, core::ChunkEvent{cx, cy});  // M7-T4
@@ -244,6 +353,10 @@ bool GameApp::Init(int argc, char** argv) {
     const auto walkable = [this](int wx, int wy) {
         return !IsSquareBlocked(*m_world, wx, wy, 0);
     };
+    if (m_audio != nullptr) {
+        // M11-T4：音频隔墙衰减与 AI 听觉共用同一查询与 wallAttenuation 参数
+        m_audio->Engine().SetWalkable(walkable);
+    }
     // M5-T6：僵尸攻击参数（攻击脉冲 → AttackIntent → CombatSystem 伤害管线）
     ai::AiSystem::AttackParams aiAttack;
     aiAttack.damage = static_cast<float>(m_config.Get<double>("combat.zombieDamage", 8.0));
@@ -361,9 +474,60 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.sprites = &m_sprites;
     m_ctx.atlases = &m_atlases;
     m_ctx.assets = &m_assets;
+    m_ctx.ui = m_ui.get();
+    m_ctx.audio = m_audio.get();
     m_ctx.ecs = &m_ecs;
     m_ctx.spatialIndex = &m_spatialIndex;
+    m_ctx.saveManager = m_saveManager.get();
+    m_ctx.saveService = m_saveService.get();
+    m_ctx.saveComponents = &m_saveComponents;
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
+
+    // 6.5 玩家命令层（M12-T1/T2）：direct 直接执行；loopback 走 Client→Server 环回队列。
+    {
+        net::CommandPipeline::Options commandOptions;
+        const std::string mode = m_config.Get<std::string>("net.mode", "direct");
+        if (mode == "loopback") {
+            commandOptions.mode = net::TransportMode::Loopback;
+        } else if (mode != "direct") {
+            ZL_WARN("net", "未知 net.mode='{}'，回退 direct", mode);
+        }
+        commandOptions.maxCommandsPerPacket = static_cast<std::size_t>(
+            std::max(1, m_config.Get<int>("net.maxCommandsPerPacket", 32)));
+        commandOptions.maxPacketsPerPump = static_cast<std::size_t>(
+            std::max(1, m_config.Get<int>("net.maxPacketsPerPump", 64)));
+        commandOptions.maxQueuedPackets = static_cast<std::size_t>(
+            std::max(1, m_config.Get<int>("net.maxQueuedPackets", 256)));
+        m_commandPipeline = std::make_unique<net::CommandPipeline>(commandOptions);
+        m_commandPipeline->SetHandler(
+            [this](const net::Command& command, std::string& error) {
+                if (!m_ctx.executePlayerCommand) {
+                    error = "当前状态不接收玩家命令";
+                    return false;
+                }
+                return m_ctx.executePlayerCommand(command, error);
+            });
+        m_commandPipeline->SetSnapshotProvider([this] {
+            net::ServerSnapshot snapshot;
+            snapshot.serverTick = m_loop != nullptr ? m_loop->TotalTicks() : 0;
+            if (m_ctx.ecs != nullptr) {
+                m_ctx.ecs->Registry().view<ecs::PlayerTag, ecs::Position>().each(
+                    [&](const ecs::Entity entity, const ecs::Position& position) {
+                        if (snapshot.playerStableId == 0) {
+                            snapshot.playerStableId = m_ctx.ecs->IdOf(entity).id;
+                            snapshot.x = position.x;
+                            snapshot.y = position.y;
+                            snapshot.z = position.z;
+                        }
+                    });
+            }
+            return snapshot;
+        });
+        m_ctx.commands = m_commandPipeline.get();
+        ZL_INFO("net", "玩家命令层：模式={}（单包上限 {} 条，队列上限 {} 包）",
+                net::TransportModeName(commandOptions.mode),
+                commandOptions.maxCommandsPerPacket, commandOptions.maxQueuedPackets);
+    }
 
     // ECS 固定链集中注册（docs/00 §6.1）；顺序 = 执行顺序。
     // 目前：索引维护 → LOD → Input → Perception → Ai → PathFollow → Boids → Combat →
@@ -384,7 +548,7 @@ bool GameApp::Init(int argc, char** argv) {
     m_animationSystem = std::make_unique<characters::AnimationSystem>();
     m_pathFollowSystem = std::make_unique<ai::PathFollowSystem>(m_pathfinding.get());
     m_ecs.Systems().AddSystem("InputSystem", [this](ecs::EcsWorld& w, float) {
-        m_inputSystem->Update(m_input, w);
+        m_inputSystem->Update(w);
     });
     // 感知在 AI 之前（本 tick 写出的 targetId/lastKnown 同 tick 被 AI 消费）
     m_ecs.Systems().AddSystem("PerceptionSystem", [this](ecs::EcsWorld& w, float dt) {
@@ -449,14 +613,19 @@ bool GameApp::Init(int argc, char** argv) {
 
     m_probe.Attach(m_events);
 
-    // 7. 初始状态（Boot/MainMenu 在后续里程碑接入）
-    const std::string startState = m_config.Get<std::string>("game.startState", "world");
+    // 7. 初始状态（M9-T6：默认 Boot → MainMenu；调试可用 --game.startState=world）
+    const std::string startState = m_config.Get<std::string>("game.startState", "menu");
     if (startState == "sandbox") {
         m_states.SetState(std::make_unique<SandboxState>(m_ctx));
     } else if (startState == "render") {
         m_states.SetState(std::make_unique<RenderDemoState>(m_ctx));
-    } else {
+    } else if (startState == "world") {
         m_states.SetState(std::make_unique<WorldDemoState>(m_ctx));
+    } else if (startState == "menu") {
+        m_states.SetState(std::make_unique<MainMenuState>(m_ctx));
+    } else {
+        ZL_WARN("core", "未知 game.startState='{}'，回退到主菜单", startState);
+        m_states.SetState(std::make_unique<MainMenuState>(m_ctx));
     }
     m_states.ApplyPendingState();
     m_events.Emit(core::kOnGameStart);
@@ -481,6 +650,17 @@ void GameApp::Shutdown() {
     }
     m_script.ShutdownAll();  // 脚本先于世界/状态销毁（M7 起脚本可能引用世界状态）
     m_states.Clear();
+    m_commandPipeline.reset();
+    if (m_audio != nullptr) {
+        m_audio->Shutdown();
+        m_audio.reset();
+    }
+    // 状态 OnExit 可能提交退出自动存档；先等待 zl-save 收尾再销毁 SaveManager
+    if (m_saveService != nullptr) {
+        m_saveService->WaitIdle();
+        m_saveService.reset();
+    }
+    m_saveManager.reset();
     // 渲染资源必须在 bgfx::shutdown 之前释放
     if (m_ui) {
         m_ui->Shutdown();
@@ -529,9 +709,23 @@ void GameApp::MainLoop() {
         m_loop->SetTimeScale(m_gameTime.SpeedScale());
         m_loop->Frame(frameDt, [this](double tickDt) { Tick(tickDt); },
                       [this](double dt, double alpha) { RenderFrame(dt, alpha); });
+        // 帧末发送本帧累积的玩家命令（loopback）；下一 tick 开头由服务器消费。
+        if (m_commandPipeline != nullptr) {
+            m_commandPipeline->Flush();
+        }
 
         // 主线程消费后台结果（chunk 加载完成、存档快照等）
         m_tasks->ProcessResults();
+        if (m_saveService != nullptr) {
+            for (const save::SaveResult& result : m_saveService->PollResults()) {
+                if (m_ctx.onSaveFinished) {
+                    m_ctx.onSaveFinished(result.ok, result.created, result.id,
+                                         result.error);
+                } else if (!result.ok) {
+                    ZL_ERROR("save", "后台存档失败 '{}'：{}", result.id, result.error);
+                }
+            }
+        }
 
         // M7-T6：消费热重载通知（轮询线程只通知；重载与脚本执行都在主线程）
         if (m_modWatcher != nullptr) {
@@ -544,13 +738,20 @@ void GameApp::MainLoop() {
             }
         }
 
-        // 状态延迟切换生效
+        // 状态延迟切换生效；切换后丢弃旧状态的未消费命令/快照
+        core::AppState* stateBefore = m_states.Current();
         m_states.ApplyPendingState();
+        if (m_states.Current() != stateBefore && m_commandPipeline != nullptr) {
+            m_commandPipeline->Clear();
+        }
     }
     ZL_INFO("core", "主循环退出");
 }
 
 void GameApp::Tick(double tickDt) {
+    if (m_commandPipeline != nullptr) {
+        m_commandPipeline->Pump();
+    }
     m_gameTime.Tick();
     m_events.EmitQueued(core::kOnTick, static_cast<int64_t>(m_loop->TotalTicks()));
     // ECS 系统（注册顺序即执行顺序，SystemScheduler 集中注册）；Update 内含 tick 首尾两次 flush
@@ -568,10 +769,110 @@ void GameApp::RenderFrame(double frameDt, double alpha) {
     if (auto* state = m_states.Current()) {
         state->OnFrame(frameDt, alpha);
     }
+    if (m_audio != nullptr) {
+        // M11-T2：听者 = 玩家相机中心；暂停菜单打开时不播放僵尸低吼。
+        const glm::vec2 listener = render::FromScreen(m_camera.Center(), 0);
+        const bool gameplay = m_states.Current() != nullptr &&
+                              (m_ui == nullptr || !m_ui->IsMenuOpen()) &&
+                              m_gameTime.SpeedScale() > 0.0;
+        m_audio->Update(static_cast<float>(frameDt), m_ctx.ecs, listener, m_gameTime.IsNight(),
+                        gameplay);
+    }
     if (m_ui) {
         m_ui->Render();
     }
     m_renderer.EndFrame();
+}
+
+ui::MenuSettings GameApp::BuildMenuSettings() const {
+    ui::MenuSettings settings;
+    settings.volume = std::clamp(m_config.Get<int>("audio.masterVolume", 65), 0, 100);
+    settings.musicVolume = std::clamp(m_config.Get<int>("audio.musicVolume", 70), 0, 100);
+    settings.sfxVolume = std::clamp(m_config.Get<int>("audio.sfxVolume", 85), 0, 100);
+    settings.ambientVolume =
+        std::clamp(m_config.Get<int>("audio.ambientVolume", 55), 0, 100);
+    settings.bindings.reserve(sizeof(ui::kMenuBindingDefs) / sizeof(ui::kMenuBindingDefs[0]));
+    for (const ui::MenuKeyBindingDef& def : ui::kMenuBindingDefs) {
+        ui::MenuKeyBinding binding;
+        binding.action = def.action;
+        binding.label = def.label;
+        binding.key = m_config.Get<std::string>(std::string("input.bindings.") + def.action,
+                                                def.defaultKey);
+        settings.bindings.push_back(std::move(binding));
+    }
+    return settings;
+}
+
+bool GameApp::ApplyMenuSettings(const ui::MenuSettings& settings, std::string& error) {
+    if (settings.volume < 0 || settings.volume > 100 || settings.musicVolume < 0 ||
+        settings.musicVolume > 100 || settings.sfxVolume < 0 || settings.sfxVolume > 100 ||
+        settings.ambientVolume < 0 || settings.ambientVolume > 100) {
+        error = "音量必须在 0–100 之间";
+        return false;
+    }
+
+    std::unordered_set<std::string> usedKeys;
+    std::vector<std::pair<std::string, std::string>> resolved;
+    resolved.reserve(sizeof(ui::kMenuBindingDefs) / sizeof(ui::kMenuBindingDefs[0]));
+    for (const ui::MenuKeyBindingDef& def : ui::kMenuBindingDefs) {
+        const ui::MenuKeyBinding* binding = nullptr;
+        for (const ui::MenuKeyBinding& candidate : settings.bindings) {
+            if (candidate.action == def.action) {
+                binding = &candidate;
+                break;
+            }
+        }
+        if (binding == nullptr) {
+            error = std::string("设置缺少键位项：") + def.label;
+            return false;
+        }
+        const int code = platform::KeyCodeFromName(binding->key);
+        if (code < 0) {
+            error = std::string("键位无效：") + def.label + " = " + binding->key;
+            return false;
+        }
+        const std::string canonical = platform::KeyNameFromCode(code);
+        if (canonical.empty()) {
+            error = std::string("键位无效：") + def.label;
+            return false;
+        }
+        if (!usedKeys.insert(canonical).second) {
+            error = std::string("键位重复：") + canonical + "（" + def.label + "）";
+            return false;
+        }
+        resolved.emplace_back(def.action, canonical);
+    }
+
+    for (const auto& [action, key] : resolved) {
+        m_config.Set(std::string("input.bindings.") + action, key);
+    }
+    m_config.Set("audio.masterVolume", settings.volume);
+    m_config.Set("audio.musicVolume", settings.musicVolume);
+    m_config.Set("audio.sfxVolume", settings.sfxVolume);
+    m_config.Set("audio.ambientVolume", settings.ambientVolume);
+    ApplyInputBindings();
+    if (m_audio != nullptr) {
+        m_audio->Engine().SetGroupVolume(audio::AudioGroup::Master,
+                                         static_cast<float>(settings.volume) / 100.0f);
+        m_audio->Engine().SetGroupVolume(audio::AudioGroup::Music,
+                                         static_cast<float>(settings.musicVolume) / 100.0f);
+        m_audio->Engine().SetGroupVolume(audio::AudioGroup::SFX,
+                                         static_cast<float>(settings.sfxVolume) / 100.0f);
+        m_audio->Engine().SetGroupVolume(audio::AudioGroup::Ambient,
+                                         static_cast<float>(settings.ambientVolume) / 100.0f);
+    }
+
+    std::string saveError;
+    if (!m_config.Save(&saveError)) {
+        error = "设置已在本次运行生效，但保存失败：" + saveError;
+        return false;
+    }
+    ZL_INFO("ui",
+            "菜单设置已保存：音量组 {} / {} / {} / {}，键位配置写入 {}",
+            settings.volume, settings.musicVolume, settings.sfxVolume, settings.ambientVolume,
+            m_config.Path().string());
+    error.clear();
+    return true;
 }
 
 void GameApp::ApplyInputBindings() {
@@ -592,7 +893,21 @@ void GameApp::ApplyInputBindings() {
 void GameApp::ReloadConfigAndBindings() {
     if (m_config.Reload()) {
         ApplyInputBindings();
-        ZL_INFO("input", "键位已按新配置重建（窗口尺寸等其余项需重启生效）");
+        if (m_audio != nullptr) {
+            m_audio->Engine().SetGroupVolume(
+                audio::AudioGroup::Master,
+                static_cast<float>(m_config.Get<int>("audio.masterVolume", 65)) / 100.0f);
+            m_audio->Engine().SetGroupVolume(
+                audio::AudioGroup::Music,
+                static_cast<float>(m_config.Get<int>("audio.musicVolume", 70)) / 100.0f);
+            m_audio->Engine().SetGroupVolume(
+                audio::AudioGroup::SFX,
+                static_cast<float>(m_config.Get<int>("audio.sfxVolume", 85)) / 100.0f);
+            m_audio->Engine().SetGroupVolume(
+                audio::AudioGroup::Ambient,
+                static_cast<float>(m_config.Get<int>("audio.ambientVolume", 55)) / 100.0f);
+        }
+        ZL_INFO("input", "键位/音量已按新配置重建（窗口尺寸等其余项需重启生效）");
     }
 }
 

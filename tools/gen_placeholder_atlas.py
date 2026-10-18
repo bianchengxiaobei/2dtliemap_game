@@ -285,6 +285,39 @@ def make_item_icon(kind):
         d.polygon([(cx - 11, cy - 8), (cx + 11, cy - 8), (cx + 9, cy + 12), (cx - 9, cy + 12)],
                   fill=(160, 120, 78, 255), outline=dark)
         d.line([(cx - 9, cy - 8), (cx + 9, cy - 8)], fill=(120, 88, 56, 255), width=2)
+    elif kind == "water_bottle":
+        d.rectangle([cx - 6, cy - 6, cx + 6, cy + 12], fill=(90, 160, 210, 255), outline=dark)
+        d.rectangle([cx - 3, cy - 13, cx + 3, cy - 6], fill=(60, 120, 160, 255), outline=dark)
+        d.rectangle([cx - 4, cy - 15, cx + 4, cy - 12], fill=(230, 230, 224, 255), outline=dark)
+        d.line([(cx - 4, cy + 2), (cx + 4, cy + 2)], fill=(180, 220, 245, 255), width=1)
+    elif kind == "painkillers":
+        d.rectangle([cx - 8, cy - 10, cx + 8, cy + 10], fill=(236, 236, 228, 255), outline=dark)
+        d.rectangle([cx - 7, cy - 9, cx + 7, cy - 4], fill=(190, 62, 62, 255))
+        d.rectangle([cx - 2, cy - 1, cx + 2, cy + 8], fill=(190, 62, 62, 255))
+        d.rectangle([cx - 6, cy + 2, cx + 6, cy + 5], fill=(190, 62, 62, 255))
+    elif kind == "hammer":
+        d.line([(cx - 7, cy + 13), (cx + 4, cy - 8)], fill=(126, 92, 58, 255), width=4)
+        d.polygon([(cx - 1, cy - 14), (cx + 14, cy - 10), (cx + 12, cy - 3), (cx - 3, cy - 7)],
+                  fill=(164, 168, 176, 255), outline=dark)
+    elif kind == "screwdriver":
+        d.line([(cx - 11, cy + 8), (cx + 5, cy - 6)], fill=(204, 208, 214, 255), width=3)
+        d.polygon([(cx + 3, cy - 10), (cx + 9, cy - 14), (cx + 7, cy - 4)], fill=(196, 72, 58, 255),
+                  outline=dark)
+        d.rectangle([cx - 13, cy + 7, cx - 8, cy + 12], fill=(54, 92, 132, 255), outline=dark)
+    elif kind == "energy_bar":
+        d.rectangle([cx - 12, cy - 6, cx + 12, cy + 7], fill=(210, 168, 58, 255), outline=dark)
+        d.line([(cx - 9, cy - 3), (cx + 9, cy + 4)], fill=(120, 82, 34, 255), width=2)
+        d.rectangle([cx - 3, cy - 5, cx + 3, cy - 2], fill=(240, 232, 198, 255))
+    elif kind == "hiking_boots":
+        d.polygon([(cx - 9, cy - 10), (cx + 2, cy - 10), (cx + 2, cy + 2), (cx + 13, cy + 2),
+                   (cx + 13, cy + 11), (cx - 9, cy + 11)], fill=(92, 66, 44, 255), outline=dark)
+        d.line([(cx - 9, cy + 8), (cx + 13, cy + 8)], fill=(40, 38, 36, 255), width=3)
+        d.line([(cx - 1, cy - 8), (cx - 1, cy + 1)], fill=(60, 44, 32, 255), width=1)
+    elif kind == "backpack":
+        d.arc([cx - 8, cy - 18, cx + 8, cy - 2], 180, 360, fill=(64, 82, 58, 255), width=3)
+        d.rectangle([cx - 11, cy - 8, cx + 11, cy + 12], fill=(90, 112, 78, 255), outline=dark)
+        d.rectangle([cx - 7, cy + 1, cx + 7, cy + 9], fill=(70, 90, 62, 255), outline=dark)
+        d.line([(cx - 7, cy - 4), (cx + 7, cy - 4)], fill=(54, 70, 48, 255), width=2)
     return canvas
 
 
@@ -372,7 +405,8 @@ def main():
 
     # 物品图标占位（M6-T3：地面物品实体；逻辑名 item.<id> 见 asset_manifest）
     for kind in ("bandage", "canned_beans", "axe", "kitchen_knife", "rag", "jacket",
-                 "tote_bag"):
+                 "tote_bag", "water_bottle", "painkillers", "hammer", "screwdriver",
+                 "energy_bar", "hiking_boots", "backpack"):
         canvas = make_item_icon(kind)
         bbox = canvas.getbbox()
         specs.append((f"item_{kind}", canvas, (bbox[0], bbox[1],

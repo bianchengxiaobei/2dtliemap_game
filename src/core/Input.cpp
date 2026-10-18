@@ -22,6 +22,9 @@ int Input::KeyCodeFor(std::string_view action) const {
 }
 
 bool Input::IsActionPressed(std::string_view action) const {
+    if (m_gameplayBlocked) {
+        return false;
+    }
     const int code = KeyCodeFor(action);
     if (code < 0 || code >= kKeyCount) {
         return false;
@@ -30,6 +33,9 @@ bool Input::IsActionPressed(std::string_view action) const {
 }
 
 bool Input::IsActionDown(std::string_view action) const {
+    if (m_gameplayBlocked) {
+        return false;
+    }
     const int code = KeyCodeFor(action);
     if (code < 0 || code >= kKeyCount) {
         return false;
@@ -38,6 +44,9 @@ bool Input::IsActionDown(std::string_view action) const {
 }
 
 bool Input::IsActionReleased(std::string_view action) const {
+    if (m_gameplayBlocked) {
+        return false;
+    }
     const int code = KeyCodeFor(action);
     if (code < 0 || code >= kKeyCount) {
         return false;
@@ -68,12 +77,16 @@ void Input::AddScroll(float deltaX, float deltaY) {
 }
 
 void Input::NewFrame() {
+    m_gameplayBlocked = false;
     m_keyPrev = m_keyDown;
     m_mousePrev = m_mouseDown;
     m_scrollY = 0.0f;
 }
 
 bool Input::IsMouseButtonPressed(int button) const {
+    if (m_gameplayBlocked) {
+        return false;
+    }
     if (button < 0 || button >= kMouseButtonCount) {
         return false;
     }
@@ -81,6 +94,9 @@ bool Input::IsMouseButtonPressed(int button) const {
 }
 
 bool Input::IsMouseButtonDown(int button) const {
+    if (m_gameplayBlocked) {
+        return false;
+    }
     if (button < 0 || button >= kMouseButtonCount) {
         return false;
     }
@@ -88,6 +104,9 @@ bool Input::IsMouseButtonDown(int button) const {
 }
 
 bool Input::IsMouseButtonReleased(int button) const {
+    if (m_gameplayBlocked) {
+        return false;
+    }
     if (button < 0 || button >= kMouseButtonCount) {
         return false;
     }
@@ -95,6 +114,9 @@ bool Input::IsMouseButtonReleased(int button) const {
 }
 
 bool Input::IsKeyDown(int keyCode) const {
+    if (m_gameplayBlocked) {
+        return false;
+    }
     if (keyCode < 0 || keyCode >= kKeyCount) {
         return false;
     }
@@ -102,6 +124,9 @@ bool Input::IsKeyDown(int keyCode) const {
 }
 
 bool Input::IsKeyPressed(int keyCode) const {
+    if (m_gameplayBlocked) {
+        return false;
+    }
     if (keyCode < 0 || keyCode >= kKeyCount) {
         return false;
     }
@@ -109,6 +134,9 @@ bool Input::IsKeyPressed(int keyCode) const {
 }
 
 bool Input::IsKeyReleased(int keyCode) const {
+    if (m_gameplayBlocked) {
+        return false;
+    }
     if (keyCode < 0 || keyCode >= kKeyCount) {
         return false;
     }

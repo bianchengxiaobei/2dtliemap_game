@@ -2,6 +2,10 @@
 
 #include <fstream>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace zl::core {
 
 bool Config::LoadFile(const std::filesystem::path& path) {
@@ -44,6 +48,7 @@ bool Config::Reload() {
 void Config::Rebuild() {
     m_data = m_fileData;
     MergeJson(m_data, m_cmdOverrides);
+    MergeJson(m_data, m_runtimeOverrides);
 }
 
 void Config::MergeJson(nlohmann::json& dst, const nlohmann::json& src) {
@@ -101,8 +106,73 @@ void Config::SetNode(nlohmann::json& root, std::string_view path, const nlohmann
 }
 
 void Config::Set(std::string_view path, const nlohmann::json& value) {
-    SetNode(m_cmdOverrides, path, value);
+    SetNode(m_runtimeOverrides, path, value);
     Rebuild();
+}
+
+bool Config::Save(std::string* error) {
+    if (m_path.empty()) {
+        if (error != nullptr) {
+            *error = "配置文件路径为空";
+        }
+        return false;
+    }
+
+    nlohmann::json saved = m_fileData;
+    MergeJson(saved, m_runtimeOverrides);
+
+    std::filesystem::path tempPath = m_path;
+    tempPath += ".tmp";
+    std::error_code ec;
+    {
+        std::ofstream file(tempPath, std::ios::binary | std::ios::trunc);
+        if (!file.is_open()) {
+            if (error != nullptr) {
+                *error = "无法写入临时配置文件: " + tempPath.string();
+            }
+            return false;
+        }
+        file << saved.dump(2) << '\n';
+        file.flush();
+        if (!file) {
+            if (error != nullptr) {
+                *error = "写入临时配置文件失败: " + tempPath.string();
+            }
+            std::filesystem::remove(tempPath, ec);
+            return false;
+        }
+    }
+
+#if defined(_WIN32)
+    if (!MoveFileExW(tempPath.c_str(), m_path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        if (error != nullptr) {
+            *error = "替换配置文件失败（Win32 错误 " +
+                     std::to_string(static_cast<int>(GetLastError())) + "）";
+        }
+        std::error_code cleanup;
+        std::filesystem::remove(tempPath, cleanup);
+        return false;
+    }
+#else
+    std::filesystem::rename(tempPath, m_path, ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "替换配置文件失败: " + ec.message();
+        }
+        std::error_code cleanup;
+        std::filesystem::remove(tempPath, cleanup);
+        return false;
+    }
+#endif
+
+    m_fileData = saved;
+    m_runtimeOverrides = nlohmann::json::object();
+    Rebuild();
+    if (error != nullptr) {
+        error->clear();
+    }
+    ZL_INFO("config", "配置已保存: {}", m_path.string());
+    return true;
 }
 
 void Config::ApplyCommandLine(int argc, const char* const* argv) {

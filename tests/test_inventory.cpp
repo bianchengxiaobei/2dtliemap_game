@@ -263,3 +263,59 @@ TEST_CASE("M6-T2：槽位名称与总重量") {
     CHECK(std::string(items::EquipSlotToString(ecs::EquipSlot::PrimaryHand)) == "primary");
     CHECK(std::string(items::EquipSlotToString(ecs::EquipSlot::Body)) == "body");
 }
+
+TEST_CASE("M9-T5：拖拽合并、交换与取放") {
+    const items::ItemRegistry registry = MakeRegistry();
+    ecs::Container bag;
+    bag.capacityKg = 100.0f;
+    CHECK(items::AddItem(bag, registry, Make("bandage", 3)) == 3);
+    CHECK(items::AddItem(bag, registry, Make("axe", 1)) == 1);
+    CHECK(items::AddItem(bag, registry, Make("bandage", 2)) == 2);
+
+    CHECK(items::MoveStack(bag, registry, 0, 2));
+    REQUIRE(bag.items.size() == 2);
+    CHECK(bag.items[0].defId == "axe");
+    CHECK(bag.items[1].defId == "bandage");
+    CHECK(bag.items[1].count == 5);
+
+    ecs::Container swap;
+    swap.capacityKg = 100.0f;
+    CHECK(items::AddItem(swap, registry, Make("axe", 1)) == 1);
+    CHECK(items::AddItem(swap, registry, Make("knife", 1)) == 1);
+    CHECK(items::MoveStack(swap, registry, 0, 1));
+    CHECK(swap.items[0].defId == "knife");
+    CHECK(swap.items[1].defId == "axe");
+
+    CHECK(items::MoveStack(swap, registry, 0, 9));
+    REQUIRE(swap.items.size() == 2);
+    CHECK(swap.items[0].defId == "axe");
+    CHECK(swap.items[1].defId == "knife");
+    CHECK_FALSE(items::MoveStack(swap, registry, 0, 0));
+    CHECK_FALSE(items::MoveStack(swap, registry, 9, 0));
+}
+
+TEST_CASE("M9-T5：指定堆叠取出与使用") {
+    const items::ItemRegistry registry = MakeRegistry();
+    ecs::Container bag;
+    bag.capacityKg = 100.0f;
+    CHECK(items::AddItem(bag, registry, Make("bandage", 3)) == 3);
+    CHECK(items::AddItem(bag, registry, Make("rag", 2)) == 2);
+
+    ecs::ItemInstance taken;
+    CHECK(items::TakeAt(bag, 0, 2, &taken));
+    CHECK(taken.defId == "bandage");
+    CHECK(taken.count == 2);
+    REQUIRE(bag.items.size() == 2);
+    CHECK(bag.items[0].defId == "bandage");
+    CHECK(bag.items[0].count == 1);
+    CHECK_FALSE(items::TakeAt(bag, 9, 1, &taken));
+    CHECK_FALSE(items::TakeAt(bag, 0, 0, &taken));
+
+    const items::UseResult used = items::UseAt(bag, registry, 0);
+    CHECK(used.applied);
+    CHECK(used.defId == "bandage");
+    CHECK(used.remaining == 0);
+    CHECK(bag.items[0].defId == "rag");
+    CHECK_FALSE(items::UseAt(bag, registry, 0).applied);
+    CHECK_FALSE(items::UseAt(bag, registry, 9).applied);
+}

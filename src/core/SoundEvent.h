@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace zl::core {
@@ -14,9 +15,12 @@ inline constexpr std::string_view kOnSound = "OnSound";
 //   effectiveRadius = radius × wallAttenuationPerCell^穿墙格数
 // （M11-T4 起音频系统与 AI 听觉共用同一套衰减参数。）
 enum class SoundType : std::uint8_t {
-    Generic = 0,  // 泛用（脚步/环境）
-    Gunshot = 1,  // 枪声（大半径）
-    Impact = 2,   // 撞击（中半径）
+    Generic = 0,       // 泛用
+    Gunshot = 1,       // 枪声（大半径）
+    Impact = 2,        // 撞击（中半径）
+    Footstep = 3,      // 玩家脚步（M11-T3；clip 区分地面材质）
+    ZombieGrowl = 4,   // 僵尸低吼（M11-T3）
+    Ui = 5,            // UI 点击/拾取（M11-T3；2D 播放）
 };
 
 struct SoundEvent {
@@ -24,6 +28,9 @@ struct SoundEvent {
     float y = 0.0f;
     float radius = 0.0f;  // 基础可闻半径（格，无遮挡）；隔墙衰减由感知系统按听者计算
     SoundType type = SoundType::Generic;
+    // M11-T3：可选音频 clip 名（不含 .wav）。脚步为 footstep_grass/dirt/wood；
+    // 空则由音频系统按 type 选择默认音效。
+    std::string clip;
 };
 
 }  // namespace zl::core

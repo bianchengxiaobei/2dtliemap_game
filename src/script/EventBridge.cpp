@@ -26,6 +26,12 @@ std::string_view SoundTypeName(core::SoundType type) {
             return "Gunshot";
         case core::SoundType::Impact:
             return "Impact";
+        case core::SoundType::Footstep:
+            return "Footstep";
+        case core::SoundType::ZombieGrowl:
+            return "ZombieGrowl";
+        case core::SoundType::Ui:
+            return "Ui";
         case core::SoundType::Generic:
         default:
             return "Generic";
@@ -124,6 +130,7 @@ std::optional<core::ScriptEvent> EventBridge::Translate(const core::Event& event
         AddField(out, "z", static_cast<std::int64_t>(0));  // SoundEvent 无 z（声音按层不区分）
         AddField(out, "radius", static_cast<double>(sound->radius));
         AddField(out, "soundType", std::string(SoundTypeName(sound->type)));
+        AddField(out, "clip", sound->clip);
         return out;
     }
     if (event.key == core::kOnChunkLoaded || event.key == core::kOnChunkUnloaded) {

@@ -36,12 +36,22 @@ namespace zl::items {
 class ItemRegistry;
 }  // namespace zl::items
 
+namespace zl::save {
+class ComponentRegistry;
+class SaveManager;
+class SaveService;
+}  // namespace zl::save
+
 namespace zl::physics {
 class PhysicsWorld;
 }  // namespace zl::physics
 
 namespace zl::platform {
 class Window;
+}
+
+namespace zl::ui {
+class UiSystem;
 }
 
 namespace zl::render {
@@ -55,6 +65,15 @@ namespace zl::world {
 class ChunkManager;
 class World;
 }  // namespace zl::world
+
+namespace zl::audio {
+class SoundManager;
+}
+
+namespace zl::net {
+class CommandPipeline;
+struct Command;
+}  // namespace zl::net
 
 namespace zl::game {
 
@@ -76,6 +95,14 @@ struct GameContext {    core::Config* config = nullptr;
     render::SpriteBatch* sprites = nullptr;
     render::AtlasManager* atlases = nullptr;
     AssetProvider* assets = nullptr;
+    ui::UiSystem* ui = nullptr;
+
+    // 音频（M11）：设备不可用时内部 no-op；状态只发世界声音/2D 音效
+    audio::SoundManager* audio = nullptr;
+
+    // 玩家命令（M12）：世界状态只提交 Command；Direct/Loopback 由 pipeline 决定执行时机。
+    net::CommandPipeline* commands = nullptr;
+    std::function<bool(const net::Command&, std::string&)> executePlayerCommand;
 
     // 世界与流式加载（M3 起）
     world::World* world = nullptr;
@@ -110,6 +137,17 @@ struct GameContext {    core::Config* config = nullptr;
 
     // 物品定义（M6-T1 起）：只读查询（ItemDef 生命周期同进程）
     items::ItemRegistry* items = nullptr;
+
+    // 存档管理（M10-T4/T5 起）：元数据 + 后台写入；组件表只在主线程生成快照时使用
+    save::SaveManager* saveManager = nullptr;
+    save::SaveService* saveService = nullptr;
+    save::ComponentRegistry* saveComponents = nullptr;
+    std::string activeSaveId;   // 当前会话存档 id（chunk 加载时叠加 diff）
+    bool activeSaveUseBackup = false;  // 实体回退到 backup 时，chunk 也读 backup
+    std::string saveWarning;    // 后台/回退警告，由当前状态消费成 HUD 提示
+    std::function<void(bool ok, bool created, const std::string& id,
+                       const std::string& error)>
+        onSaveFinished;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

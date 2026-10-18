@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string_view>
 
 #include "items/ItemComponents.h"
@@ -19,6 +20,14 @@ int AddItem(ecs::Container& container, const ItemRegistry& registry,
 // 从容器移除最多 count 件 defId 物品（按容器条目顺序）。返回实际移除数量
 // （少于 count = 容器内不够）。
 int RemoveItem(ecs::Container& container, std::string_view defId, int count);
+
+// 从指定堆叠取出最多 count 件；out 写入被取出的实例（数量为实际取出数）。
+bool TakeAt(ecs::Container& container, std::size_t index, int count,
+            ecs::ItemInstance* out);
+
+// 拖拽/排序：同定义合并到未满堆叠；不同定义交换；目标为空位（index >= size）移到末尾。
+bool MoveStack(ecs::Container& container, const ItemRegistry& registry, std::size_t from,
+               std::size_t to);
 
 // 容器内 defId 的总数量（跨堆叠求和）
 int CountOf(const ecs::Container& container, std::string_view defId);
@@ -48,6 +57,9 @@ struct UseResult {
 
 // 使用容器中第一个带使用效果（ItemDef.use.Any()）的物品：消耗 1 件
 UseResult UseFirstConsumable(ecs::Container& container, const ItemRegistry& registry);
+
+// 使用指定堆叠中的 1 件（无效果/索引非法时不消耗）
+UseResult UseAt(ecs::Container& container, const ItemRegistry& registry, std::size_t index);
 
 // 把使用效果落地到数值（纯函数，可单测）：HP 加到不超过 hpMax（返回实际回血量）；
 // 需求三项钳到 [0,1]（指针可为 null = 该实体无需求组件）

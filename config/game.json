@@ -11,7 +11,25 @@
     "startYear": 2000,
     "startMonth": 7,
     "startDay": 9,
-    "startState": "world"
+    "startHour": 0,
+    "startState": "menu"
+  },
+  "audio": {
+    "root": "assets/audio",
+    "device": "default",
+    "maxVoices": 64,
+    "masterVolume": 65,
+    "musicVolume": 70,
+    "sfxVolume": 85,
+    "ambientVolume": 55,
+    "referenceDistance": 2.0,
+    "maxDistance": 48.0,
+    "footstepStride": 0.9,
+    "growlRadius": 24.0,
+    "growlMinInterval": 1.1,
+    "growlMaxInterval": 4.2,
+    "growlVolume": 0.9,
+    "ambienceVolume": 0.55
   },
   "assets": {
     "manifest": "assets/asset_manifest.json",
@@ -19,6 +37,11 @@
   },
   "items": {
     "file": "assets/items.json"
+  },
+  "save": {
+    "root": "saves",
+    "gameVersion": "0.3.0",
+    "autoSaveOnExit": true
   },
   "script": {
     "enabled": true,
@@ -29,7 +52,8 @@
   },
   "inventory": {
     "playerCapacityKg": 20.0,
-    "pickupRadius": 1.6
+    "pickupRadius": 1.6,
+    "lootRange": 3.0
   },
   "health": {
     "playerMaxHp": 100.0,
@@ -38,6 +62,9 @@
   "world": {
     "mapDir": "assets/maps/village_demo",
     "loadRadius": 3,
+    "chunkRequestBudget": 4,
+    "chunkAttachBudget": 8,
+    "chunkAttachBudgetMs": 2.0,
     "autoCruise": false,
     "cruiseSpeed": 30,
     "cruiseRadius": 40,
@@ -106,6 +133,12 @@
     "refillBandWidth": 20.0,
     "mergeRadius": 15.0
   },
+  "net": {
+    "mode": "direct",
+    "maxCommandsPerPacket": 32,
+    "maxPacketsPerPump": 64,
+    "maxQueuedPackets": 256
+  },
   "input": {
     "bindings": {
       "Quit": "ESCAPE",
@@ -131,6 +164,7 @@
       "Use": "E",
       "Equip": "R",
       "Drop": "G",
+      "QuickSave": "F12",
       "TogglePhysicsDebug": "F10"
     }
   },

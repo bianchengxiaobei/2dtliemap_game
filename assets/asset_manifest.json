@@ -141,6 +141,48 @@
         "frames": ["item_tote_bag"]
       }
     },
+    "item.water_bottle": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_water_bottle"]
+      }
+    },
+    "item.painkillers": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_painkillers"]
+      }
+    },
+    "item.hammer": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_hammer"]
+      }
+    },
+    "item.screwdriver": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_screwdriver"]
+      }
+    },
+    "item.energy_bar": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_energy_bar"]
+      }
+    },
+    "item.hiking_boots": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_hiking_boots"]
+      }
+    },
+    "item.backpack": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_backpack"]
+      }
+    },
     "ui.pixel": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",

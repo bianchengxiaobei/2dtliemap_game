@@ -5,6 +5,43 @@
     <link type="text/rcss" href="debug.rcss"/>
 </head>
 <body>
+    <div id="type-panel" class="panel">
+        <div class="title">文字 Typography</div>
+        <div class="muted">字体族 zl_ui · 字号 11–22 · 字重 400 / 700</div>
+        <div class="type-columns">
+            <div class="type-col">
+                <div class="section-title">字号 / 字重 Scale</div>
+                <div class="text-xs" id="type-xs">11px 辅助说明 · caption 0123</div>
+                <div class="text-sm" id="type-sm">13px 次要文本 · secondary</div>
+                <div class="text-base" id="type-base">15px 正文 · body 中英文混排</div>
+                <div class="text-lg" id="type-lg">18px 强调 · emphasis</div>
+                <div class="text-xl" id="type-xl">22px 标题 · heading</div>
+                <div class="weight-line">
+                    <span class="weight-regular" id="weight-regular">Regular 400</span>
+                    <span class="weight-bold" id="weight-bold">Bold 700 加粗</span>
+                    <b id="rich-bold">b 标签</b>
+                </div>
+            </div>
+            <div class="type-col">
+                <div class="section-title">中英混排换行 Wrapping</div>
+                <div class="wrap-demo" id="wrap-demo">幸存者用绷带处理了手臂，背起背包继续搜索。The quick brown fox jumps over the lazy dog. 背包 12.5 / 20 kg，食物 3 罐。</div>
+                <div class="section-title ellipsis-title">省略号 Ellipsis</div>
+                <div class="ellipsis" id="ellipsis-demo">这是一段很长的物品描述，会在面板宽度处自动显示省略号；long mixed text with English words and 中文。</div>
+            </div>
+            <div class="type-col">
+                <div class="section-title">富文本 Rich text</div>
+                <div class="rich-line">普通文本
+                    <span class="rich-accent" id="rich-accent">黄色高亮</span>
+                    <span class="rich-danger">红色危险</span>
+                    <b id="rich-bold-inline">内联加粗</b>
+                    <span class="rich-accent weight-bold">高亮加粗</span>
+                </div>
+                <div class="section-title atlas-title">字体图集预算</div>
+                <div id="atlas-stats" class="muted">等待首帧渲染…</div>
+                <div class="muted">按需光栅化 · 单页 ≤1024²</div>
+            </div>
+        </div>
+    </div>
     <div id="panel" class="panel">
         <div id="badge">RmlUi 6.3</div>
         <div id="title" class="title">ZomboidLike · UI 组件</div>

@@ -5,6 +5,7 @@
 
 #include "ai/components/AiComponents.h"
 #include "characters/components/CharacterComponents.h"
+#include "core/SoundPropagation.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
 
@@ -102,37 +103,9 @@ bool PerceptionSystem::HearsSound(const core::SoundEvent& sound, float lx, float
         return true;  // 无阻挡查询：不衰减（降级）
     }
     const float dist = std::sqrt(distSq);
-    if (dist <= 0.001f) {
-        return true;
-    }
-    // 沿"听者→声源"连线每 0.5 格采样（不含端点），数不同阻挡格（M5-T4 传播模型）。
-    // 衰减随已数墙数即时评估：有效半径跌破距离即可提前判定不可闻。
-    const int steps = std::max(2, static_cast<int>(std::ceil(dist / 0.5f)));
-    int walls = 0;
-    int lastWx = 0;
-    int lastWy = 0;
-    bool hasLast = false;
-    for (int i = 1; i < steps; ++i) {
-        const float t = static_cast<float>(i) / static_cast<float>(steps);
-        const int wx = static_cast<int>(std::floor(lx + dx * t));
-        const int wy = static_cast<int>(std::floor(ly + dy * t));
-        if (m_walkable(wx, wy)) {
-            continue;
-        }
-        if (hasLast && wx == lastWx && wy == lastWy) {
-            continue;  // 同一格被多次采样 → 只算一次
-        }
-        lastWx = wx;
-        lastWy = wy;
-        hasLast = true;
-        ++walls;
-        const float effective = sound.radius * std::pow(m_params.wallAttenuation,
-                                                       static_cast<float>(walls));
-        if (effective < dist) {
-            return false;  // 隔墙衰减后有效半径不足以传到这里
-        }
-    }
-    return true;
+    // M11-T4：阻挡格计数与隔墙衰减统一走 core::SoundPropagation（音频系统共用）。
+    const int walls = core::CountBlockingCells(lx, ly, sound.x, sound.y, m_walkable);
+    return core::IsSoundAudible(sound.radius, dist, walls, m_params.wallAttenuation);
 }
 
 void PerceptionSystem::Update(ecs::EcsWorld& world, float dt) {
