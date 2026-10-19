@@ -11,6 +11,7 @@ CMakeUserPresets.json
 
 # 运行产物
 logs/
+saves/
 imgui.ini
 *.log
 

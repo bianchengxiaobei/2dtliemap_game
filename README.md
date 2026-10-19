@@ -71,6 +71,16 @@ build\x64-debug\ZomboidLike.exe
 
 > 首次配置前确保已按上节设置 `VCPKG_ROOT`；`dev.ps1` 会自动加载 VS2022 x64 环境（`cl`/`INCLUDE`/`LIB`）。
 
+日常游玩/性能验证建议用优化构建（RelWithDebInfo，仍可附加调试器）：
+
+```powershell
+.\tools\dev.ps1 cmake --preset x64-release
+.\tools\dev.ps1 cmake --build --preset x64-release
+.\build\x64-release\ZomboidLike.exe
+```
+
+Debug（`x64-debug`）是 `/Od` 无优化构建，240+ 敌人时帧率会明显低于 Release；排查断点再用。
+
 ## 里程碑状态
 
 （每完成一个里程碑，更新此表并打 tag，规则见任务清单开头）

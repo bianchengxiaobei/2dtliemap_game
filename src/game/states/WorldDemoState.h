@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -127,6 +128,8 @@ private:
     GameContext& m_ctx;
 
     std::vector<render::DrawItem> m_items;
+    std::string_view m_cachedSprite;
+    const std::vector<AssetProvider::Entry>* m_cachedFrames = nullptr;
     RenderCollectSystem::ViewRect m_view;  // 本帧可见范围（世界格坐标）
     int m_collectedChunks = 0;  // 本帧进入收集的已加载 chunk 数
     int m_missingChunks = 0;    // 本帧可见但尚未加载的 chunk 数

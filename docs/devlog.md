@@ -1804,3 +1804,24 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 **顺手修正**：README 的 `vcpkg version` 在未加 PATH 时会失败，改为 `& "$env:VCPKG_ROOT\vcpkg.exe" version` 并给出 `VCPKG_ROOT` 设置命令；新对话提示里的绝对项目路径改为 `<项目根目录>（本机 …）`；快速开始注明首次依赖安装时间。
 
 **剩余**：真正换一台 Windows 机器执行 README 三步；本机干净目录不能替代该验收，docs/01 仍未勾选。
+
+## 2026-10-19 Debug 240 敌人帧率排查与修复
+
+**现象**：Debug 构建人口增长到 240 live 后 FPS 长期 30（原 60），Release 正常。
+
+**定位**：新增 `perf` 帧内分段日志与 SystemScheduler 系统耗时日志。240 敌人时
+`CollectWorld` 单帧 ~10ms，系统总耗时 ~12ms；Debug 日志 600+ 行/s 且 `flush_on(debug)`
+每行强制刷盘。Debug 帧耗时落在 17~25ms 时 vsync 直接减半到 30。
+
+**修复**：
+- `WorldDemoState::PushObject` 缓存相邻逻辑名的 `Frames` 指针；静态地面/对象 5k 次
+  `unordered_map<string>` 查找降为几十次，世界收集 10ms → 2.5ms。
+- `Chunk` 维护 `NonEmptyZMask`（载入/GetOrCreateSquare/ChunkDiff 写入时置位），
+  CollectWorld 跳过空 z 层。
+- 寻路成功/失败、逐 chunk 状态迁移日志从 debug 降为 trace；Debug 构建改为
+  `flush_on(info)`（info 统计每 3s 落盘），避免高频 debug 日志逐条 fsync。
+- 保留 `perf` 帧内耗时与系统耗时日志，后续可直接观察 CollectWorld/排序/系统预算。
+
+**结果**：Debug 240 live 从 25~31 提升到多数 45~64（偶发 vsync 临界帧 30）；Release 240 live
+稳定 60。OFF 测试 243/119554，Release 243/119555。Debug 仍不是性能构建，
+日常游玩建议 `x64-release`。

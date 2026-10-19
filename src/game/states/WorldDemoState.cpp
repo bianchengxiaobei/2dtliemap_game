@@ -1,10 +1,13 @@
 #include "game/states/WorldDemoState.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <iomanip>
 #include <random>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -2160,6 +2163,8 @@ void WorldDemoState::OnTick(double tickDt) {
 
 void WorldDemoState::OnFrame(double frameDt, double alpha) {
     (void)alpha;
+    using Clock = std::chrono::steady_clock;
+    const auto frameStart = Clock::now();
     PollSaveScreenshot(frameDt);
     ConsumeSaveWarning();
     HandleFrameInput(frameDt);
@@ -2180,17 +2185,22 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     EnsureDemoItemsScattered();
     // M11-T3：脚步/地面材质 → OnSound（音频 + AI 听觉）
     UpdateAudio(frameDt);
+    const auto afterStreaming = Clock::now();
 
     CollectWorld();
+    const auto afterWorldCollect = Clock::now();
     // M4-T2：ECS 实体 → 同列表的"高度精灵"通道；之后统一全局画家序排序
     if (m_ctx.ecs != nullptr && m_ctx.spatialIndex != nullptr) {
         RenderCollectSystem::Collect(*m_ctx.ecs, *m_ctx.spatialIndex, *m_ctx.assets, m_view,
                                      m_items);
     }
+    const auto afterEntityCollect = Clock::now();
     // M6-T5：手持武器（装备槽 → 玩家旁图标；画在同格角色之上）
     AppendEquippedWeapon();
     std::sort(m_items.begin(), m_items.end(), render::DrawItemLess);
+    const auto afterSort = Clock::now();
     DrawWorld();
+    const auto afterWorldDraw = Clock::now();
     if (m_ctx.ui != nullptr && m_ctx.ui->IsMenuOpen()) {
         // 菜单是全屏模态：Debug 视图在 UI 之后合成，必须跳过世界调试叠层（含路径目标标记）。
         bgfx::touch(static_cast<bgfx::ViewId>(render::ViewId::Debug));
@@ -2199,6 +2209,10 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
         DrawPhysicsDebug();
     }
     DrawDebugText();
+    const auto afterDebugDraw = Clock::now();
+    const auto elapsedMs = [](Clock::time_point begin, Clock::time_point end) {
+        return std::chrono::duration<double, std::milli>(end - begin).count();
+    };
 
     m_statsTimer += static_cast<float>(frameDt);
     if (m_statsTimer >= kStatsLogInterval) {
@@ -2245,6 +2259,33 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
                 static_cast<unsigned long long>(audioStats.gunshots),
                 static_cast<unsigned long long>(audioStats.growls),
                 static_cast<unsigned long long>(audioStats.ambienceStarts));
+        if (m_ctx.ecs != nullptr) {
+            std::ostringstream timings;
+            timings << std::fixed << std::setprecision(2);
+            bool first = true;
+            for (const auto& entry : m_ctx.ecs->Systems().Entries()) {
+                if (!entry.enabled) {
+                    continue;
+                }
+                if (!first) {
+                    timings << ' ';
+                }
+                first = false;
+                timings << entry.name << '=' << entry.avgMs;
+            }
+            ZL_INFO("perf", "系统耗时(ms): {}", timings.str());
+        }
+        ZL_INFO("perf",
+                "帧内耗时(ms): 流式={:.2f} 世界收集={:.2f} 实体收集={:.2f} 排序={:.2f} "
+                "世界绘制={:.2f} 调试={:.2f} OnFrame={:.2f} Frame={:.2f} 条目={}",
+                elapsedMs(frameStart, afterStreaming),
+                elapsedMs(afterStreaming, afterWorldCollect),
+                elapsedMs(afterWorldCollect, afterEntityCollect),
+                elapsedMs(afterEntityCollect, afterSort),
+                elapsedMs(afterSort, afterWorldDraw),
+                elapsedMs(afterWorldDraw, afterDebugDraw),
+                elapsedMs(frameStart, afterDebugDraw),
+                m_ctx.loop != nullptr ? m_ctx.loop->LastFrameMs() : 0.0, m_items.size());
         if (m_ctx.commands != nullptr) {
             const net::CommandPipeline::Stats commandStats = m_ctx.commands->GetStats();
             const std::uint64_t serverTick =
@@ -2527,7 +2568,11 @@ world::Chunk* WorldDemoState::FindChunk(int chunkX, int chunkY) const {
 
 void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int wy, int z,
                                 world::SquareLayer layer) {
-    const std::vector<AssetProvider::Entry>* frames = m_ctx.assets->Frames(object.sprite);
+    if (m_cachedSprite.empty() || object.sprite != m_cachedSprite) {
+        m_cachedSprite = object.sprite;
+        m_cachedFrames = m_ctx.assets->Frames(object.sprite);
+    }
+    const std::vector<AssetProvider::Entry>* frames = m_cachedFrames;
     if (frames == nullptr || frames->empty()) {
         return;  // 逻辑名缺失（应在 manifest 检查，运行时静默跳过）
     }
@@ -2561,6 +2606,8 @@ void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int w
 
 void WorldDemoState::CollectWorld() {
     m_items.clear();
+    m_cachedSprite = {};
+    m_cachedFrames = nullptr;
     m_collectedChunks = 0;
     m_missingChunks = 0;
 
@@ -2596,9 +2643,13 @@ void WorldDemoState::CollectWorld() {
                 continue;
             }
             ++m_collectedChunks;
+            const std::uint8_t zMask = chunk->NonEmptyZMask();
 
             // 逐 z 层收集（z=0 地面起步；z≥1 楼上，空层快速跳过）
             for (int z = 0; z < core::kMaxZ; ++z) {
+                if ((zMask & static_cast<std::uint8_t>(1u << z)) == 0) {
+                    continue;
+                }
                 for (int ly = 0; ly < core::kChunkSize; ++ly) {
                     const int wy = cy * core::kChunkSize + ly;
                     if (wy < gyMin || wy > gyMax) {

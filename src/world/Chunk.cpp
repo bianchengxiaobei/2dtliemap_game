@@ -134,6 +134,7 @@ void Chunk::ClearData() {
         square.Clear();
     }
     m_baseHashes.fill(0);
+    m_nonEmptyZMask = 0;
     m_hasBaseline = false;
     m_dirty = false;
 }

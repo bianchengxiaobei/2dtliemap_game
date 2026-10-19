@@ -51,9 +51,9 @@ void InitLogging() {
     s_logger->set_level(spdlog::level::info);
     s_logger->flush_on(spdlog::level::warn);
 #else
-    // Debug 构建每次 debug 级日志即落盘：开发期异常退出也能看到日志
+    // Debug 构建保留 trace 日志；info 统计每 3s 落盘，避免高频 debug 日志逐条 flush 拖慢帧率
     s_logger->set_level(spdlog::level::trace);
-    s_logger->flush_on(spdlog::level::debug);
+    s_logger->flush_on(spdlog::level::info);
 #endif
 
     ZL_INFO("core", "ZomboidLike v{} | 构建时间 {} {}", kVersion, __DATE__, __TIME__);

@@ -68,6 +68,13 @@ public:
 
     static constexpr int kSquareCount = core::kSquaresPerChunkAllZ;
 
+    std::uint8_t NonEmptyZMask() const { return m_nonEmptyZMask; }
+    void MarkZUsed(int z) {
+        if (z >= 0 && z < core::kMaxZ) {
+            m_nonEmptyZMask |= static_cast<std::uint8_t>(1u << z);
+        }
+    }
+
 private:
     void ClearData();
 
@@ -76,6 +83,7 @@ private:
     int m_chunkX = 0;
     int m_chunkY = 0;
     std::atomic<ChunkState> m_state{ChunkState::Unloaded};  // 跨线程观察（T4）
+    std::uint8_t m_nonEmptyZMask = 0;
     bool m_hasBaseline = false;
     bool m_dirty = false;
 };

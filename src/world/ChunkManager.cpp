@@ -78,7 +78,7 @@ void ChunkManager::Update(float cameraGridX, float cameraGridY) {
                 m_stats.loadedChunks = std::max(0, m_stats.loadedChunks - 1);
                 ++m_stats.totalUnloaded;
                 ++unloaded;
-                ZL_DEBUG(kLogModule, "chunk ({},{}) Loaded→Unloading→Unloaded", px, py);
+                ZL_TRACE(kLogModule, "chunk ({},{}) Loaded→Unloading→Unloaded", px, py);
             }
         }
         if (unloaded > 0) {
@@ -144,7 +144,7 @@ void ChunkManager::RequestLoad(int chunkX, int chunkY) {
     chunk.SetState(ChunkState::Loading);
     m_active.insert(PackKey(chunkX, chunkY));
     ++m_stats.loadingChunks;
-    ZL_DEBUG(kLogModule, "chunk ({},{}) Unloaded→Loading", chunkX, chunkY);
+    ZL_TRACE(kLogModule, "chunk ({},{}) Unloaded→Loading", chunkX, chunkY);
 
     auto job = std::make_shared<LoadJob>();
     job->chunkX = chunkX;
@@ -224,7 +224,7 @@ void ChunkManager::HandleFinished(const std::shared_ptr<LoadJob>& job) {
 
         const int attempts = ++m_failAttempts[key];
         if (InRange(job->chunkX, job->chunkY) && attempts < kMaxLoadAttempts) {
-            ZL_DEBUG(kLogModule, "chunk ({},{}) 重试 {}/{}", job->chunkX, job->chunkY, attempts,
+            ZL_TRACE(kLogModule, "chunk ({},{}) 重试 {}/{}", job->chunkX, job->chunkY, attempts,
                      kMaxLoadAttempts);
             RequestLoad(job->chunkX, job->chunkY);
         } else if (InRange(job->chunkX, job->chunkY)) {
@@ -246,7 +246,7 @@ void ChunkManager::HandleFinished(const std::shared_ptr<LoadJob>& job) {
         if (m_recentLoadMs.size() > kRecentLoadCap) {
             m_recentLoadMs.pop_front();
         }
-        ZL_DEBUG(kLogModule, "chunk ({},{}) Loading→Loaded（{:.2f} ms，{} 对象，{} 房间）",
+        ZL_TRACE(kLogModule, "chunk ({},{}) Loading→Loaded（{:.2f} ms，{} 对象，{} 房间）",
                  job->chunkX, job->chunkY, job->ms, job->data.objects.size(),
                  job->data.rooms.size());
         if (m_onChunkLoaded) {
@@ -260,7 +260,7 @@ void ChunkManager::HandleFinished(const std::shared_ptr<LoadJob>& job) {
         RemoveActiveChunk(job->chunkX, job->chunkY);
         m_active.erase(key);
         ++m_stats.totalCancelled;
-        ZL_DEBUG(kLogModule, "chunk ({},{}) 解析完成但相机已离开 → 取消（{:.2f} ms）", job->chunkX,
+        ZL_TRACE(kLogModule, "chunk ({},{}) 解析完成但相机已离开 → 取消（{:.2f} ms）", job->chunkX,
                  job->chunkY, job->ms);
     }
 }

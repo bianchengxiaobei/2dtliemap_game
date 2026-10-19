@@ -129,6 +129,7 @@ bool ApplyChunkDiff(const ChunkDiff& diff, world::Chunk& chunk, std::string* err
     }
 
     for (const ChunkSquareDiff& patch : diff.squares) {
+        chunk.MarkZUsed(patch.z);
         world::GridSquare& square = chunk.Square(patch.lx, patch.ly, patch.z);
         square.Clear();
         square.SetRoomId(patch.roomId);

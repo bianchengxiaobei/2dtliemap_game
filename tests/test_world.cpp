@@ -126,6 +126,11 @@ TEST_CASE("GridSquare：分层对象数组") {
 
 TEST_CASE("Chunk：坐标初始化与 [z][ly][lx] 格访问") {
     world::Chunk chunk(-3, 5);  // 覆盖世界格 x ∈ [-30,-21]，y ∈ [50,59]
+    CHECK(chunk.NonEmptyZMask() == 0);
+    chunk.MarkZUsed(2);
+    CHECK((chunk.NonEmptyZMask() & (1u << 2)) != 0);
+    chunk.Reset();
+    CHECK(chunk.NonEmptyZMask() == 0);
     CHECK(chunk.ChunkX() == -3);
     CHECK(chunk.ChunkY() == 5);
     CHECK(world::Chunk::WorldOriginX(-3) == -30);

@@ -47,7 +47,7 @@ void ApplyResult(ecs::EcsWorld& world, const ecs::Entity e, ecs::PathRequest& re
                 follow.speed = kAiDefaultSpeed;
             }
             request.state = ecs::PathStatus::Following;
-            ZL_DEBUG(kLogModule, "寻路完成：稳定 ID {} | 路点 {} | 展开 {} | 代价 {:.2f} | {:.2f}ms",
+            ZL_TRACE(kLogModule, "寻路完成：稳定 ID {} | 路点 {} | 展开 {} | 代价 {:.2f} | {:.2f}ms",
                      world.IdOf(e).id, follow.waypoints.size(), result.path.expanded,
                      result.path.cost, result.path.ms);
             break;
@@ -63,7 +63,7 @@ void ApplyResult(ecs::EcsWorld& world, const ecs::Entity e, ecs::PathRequest& re
                 intent->x = 0.0f;
                 intent->y = 0.0f;
             }
-            ZL_DEBUG(kLogModule, "寻路失败：稳定 ID {} 目标格 ({}, {}) outcome={}",
+            ZL_TRACE(kLogModule, "寻路失败：稳定 ID {} 目标格 ({}, {}) outcome={}",
                      world.IdOf(e).id, request.goalX, request.goalY,
                      static_cast<int>(result.path.outcome));
             break;
@@ -142,7 +142,7 @@ void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
                     request->state = ecs::PathStatus::None;
                     request->queryId = 0;
                 }
-                ZL_DEBUG(kLogModule, "手动移动取消寻路（稳定 ID {}）", world.IdOf(e).id);
+                ZL_TRACE(kLogModule, "手动移动取消寻路（稳定 ID {}）", world.IdOf(e).id);
                 return;
             }
             if (follow.status != ecs::PathStatus::Following) {
@@ -158,7 +158,7 @@ void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
                 if (stuck && request != nullptr && !request->newRequest &&
                     request->state != ecs::PathStatus::Pending) {
                     request->newRequest = true;
-                    ZL_DEBUG(kLogModule, "卡住重寻路：稳定 ID {} 目标格 ({}, {})",
+                    ZL_TRACE(kLogModule, "卡住重寻路：稳定 ID {} 目标格 ({}, {})",
                              world.IdOf(e).id, request->goalX, request->goalY);
                 }
                 follow.anchorX = position.x;
@@ -194,7 +194,7 @@ void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
             if (request != nullptr) {
                 request->state = ecs::PathStatus::Arrived;
             }
-            ZL_DEBUG(kLogModule, "寻路到达：稳定 ID {} 终点格 ({}, {})", world.IdOf(e).id,
+            ZL_TRACE(kLogModule, "寻路到达：稳定 ID {} 终点格 ({}, {})", world.IdOf(e).id,
                      request != nullptr ? request->goalX : 0,
                      request != nullptr ? request->goalY : 0);
         });

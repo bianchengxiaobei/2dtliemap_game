@@ -153,3 +153,15 @@ vsync on，`audio.device=off`；`autoCruise=true`，圆心 (64,64)、半径 35�
 | 2026-10-16 | M4 验收 | 物理 500 静态体基准（Debug/Release）+ ECS 10000×3 压力 | Release 0.139ms/帧（<2ms ✔）/ Debug 1.066ms；ECS storage 复用无泄漏 |
 | 2026-10-16 | M5 验收 | 500 僵尸 + 200 虚拟全链模拟 tick + 实机 500 同屏压测 | Release **0.396ms/tick**（<4ms ✔，boids 0.308 主导）；实机 FPS 59、人口 500 恒定守恒 |
 | 2026-10-18 | M12 验收 | Release 500 人口 + 大世界巡航 60s（direct/loopback）、placeholder 地面批、chunk 挂接预算 | 中位 60fps（direct 最低 55 / loopback 57，差异 <10%）；placeholder drawcall 244→71；挂接预算命中、启动 461ms |
+
+**场景 D：Debug 240 敌人帧率排查（2026-10-19）**
+
+| 项目 | 优化前 | 优化后 | 说明 |
+|---|---|---|---|
+| 世界对象收集（Debug） | ~10 ms | **~2.5 ms** | 每帧对 5k 静态对象逐个查 `AssetProvider::Frames(string)`；改为相邻逻辑名缓存 |
+| Debug 高频日志 | 600+ 行/s | **~10 行/s** | 寻路/逐 chunk 状态日志降到 trace；debug 构建不再每条 debug 日志强制 flush |
+| Debug 240 敌人 FPS | 25~31 | 多数 45~64（偶发 30） | 240 live；Debug 出现帧耗时 17~25ms 时 vsync 会落到 30 |
+| Release 240 敌人 FPS | 60 | **60** | RelWithDebInfo，实测 240 live 稳定 60（偶发 chunk 边界 44） |
+
+- 结论：Debug 的世界对象资产查找与日志刷盘是真实瓶颈，已修；但 `/Od` 构建下系统总耗时
+  仍高于 16.6ms，Debug 240 敌人不能保证全程 60。需要稳定 60 请运行 `x64-release`。
