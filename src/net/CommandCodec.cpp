@@ -144,7 +144,7 @@ bool DecodeCommand(Reader& reader, Command* command, std::string* error) {
         return false;
     }
     if (type < static_cast<std::uint16_t>(CommandType::Move) ||
-        type > static_cast<std::uint16_t>(CommandType::SelectHotbar)) {
+        type > static_cast<std::uint16_t>(CommandType::FireProjectile)) {
         SetError(error, "未知命令类型 " + std::to_string(type));
         return false;
     }

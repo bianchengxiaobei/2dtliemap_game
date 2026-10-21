@@ -14,6 +14,11 @@
     { "id": "hammer", "name": "锤子", "icon": "item.hammer", "weight": 2.0, "maxStack": 1, "type": "weapon" },
     { "id": "screwdriver", "name": "螺丝刀", "icon": "item.screwdriver", "weight": 0.4, "maxStack": 1, "type": "weapon" },
     { "id": "hiking_boots", "name": "登山靴", "icon": "item.hiking_boots", "weight": 1.0, "maxStack": 1, "type": "clothing" },
-    { "id": "backpack", "name": "登山背包", "icon": "item.backpack", "weight": 1.1, "maxStack": 1, "type": "container" }
+    { "id": "backpack", "name": "登山背包", "icon": "item.backpack", "weight": 1.1, "maxStack": 1, "type": "container" },
+    { "id": "makeshift_spear", "name": "简易长矛", "icon": "item.makeshift_spear", "weight": 1.1, "maxStack": 1, "type": "weapon" },
+    { "id": "padded_jacket", "name": "加固夹克", "icon": "item.padded_jacket", "weight": 1.4, "maxStack": 1, "type": "clothing" },
+    { "id": "cooked_beans", "name": "烤豆子", "icon": "item.cooked_beans", "weight": 0.6, "maxStack": 3, "type": "consumable", "use": { "hunger": 0.5 } },
+    { "id": "magazine_cooking", "name": "烹饪杂志", "icon": "item.magazine_cooking", "weight": 0.2, "maxStack": 1, "type": "generic", "unlocksRecipes": ["campfire_beans"] },
+    { "id": "repair_kit", "name": "维修包", "icon": "item.repair_kit", "weight": 0.3, "maxStack": 3, "type": "generic" }
   ]
 }

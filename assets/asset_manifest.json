@@ -76,6 +76,18 @@
         ]
       }
     },
+    "object.workbench": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["workbench_1"]
+      }
+    },
+    "object.campfire": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["campfire_1"]
+      }
+    },
     "character.placeholder": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
@@ -181,6 +193,53 @@
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
         "frames": ["item_backpack"]
+      }
+    },
+    "item.makeshift_spear": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_kitchen_knife"],
+        "comment": "配方产物占位图标：正式美术替换为独立帧"
+      }
+    },
+    "item.padded_jacket": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_jacket"],
+        "comment": "配方产物占位图标：正式美术替换为独立帧"
+      }
+    },
+    "item.cooked_beans": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_cooked_beans"]
+      }
+    },
+    "item.magazine_cooking": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_magazine_cooking"]
+      }
+    },
+    "item.repair_kit": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_rag"],
+        "comment": "维修包占位图标：正式美术替换为独立帧"
+      }
+    },
+    "projectile.bullet": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_screwdriver"],
+        "comment": "投射物占位：正式美术替换为独立帧"
+      }
+    },
+    "effect.impact": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": ["item_rag"],
+        "comment": "命中特效占位：正式美术替换为独立帧"
       }
     },
     "ui.pixel": {

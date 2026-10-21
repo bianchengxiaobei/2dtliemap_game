@@ -1,10 +1,14 @@
 #include "game/GroundItems.h"
 
 #include <algorithm>
+#include <cmath>
 
+#include "ai/Passability.h"
 #include "core/Log.h"
 #include "ecs/components/CommonComponents.h"
+#include "game/WorldQueries.h"
 #include "items/InventoryOps.h"
+#include "world/World.h"
 
 namespace zl::game {
 namespace {
@@ -63,6 +67,54 @@ ecs::Entity SpawnGroundItem(ecs::EcsWorld& world, const items::ItemRegistry& reg
     reg.emplace<ecs::SpriteRef>(
         e, ecs::SpriteRef{ecs::HashName(def->icon), kGroundItemLayer, 0xFFFFFFFFu});
     return e;
+}
+
+int SpawnDemoGroundItems(ecs::EcsWorld& world, const items::ItemRegistry& registry,
+                         world::World& map, float baseX, float baseY, int z) {
+    struct Spot {
+        int dx;
+        int dy;
+        const char* defId;
+        int count;
+    };
+    static constexpr Spot kSpots[] = {
+        {0, 0, "bandage", 2},
+        {1, 1, "axe", 1},
+        {-3, -7, "canned_beans", 1},
+        {4, -8, "kitchen_knife", 1},
+        {-6, -3, "rag", 3},
+        {7, -4, "tote_bag", 1},
+        {-7, 4, "jacket", 1},
+        {-5, 4, "hammer", 1},
+        {5, 6, "rag", 2},
+        {2, 1, "repair_kit", 2},
+        {4, 2, "magazine_cooking", 1},
+        {-2, 2, "water_bottle", 1},
+        {3, 2, "energy_bar", 2},
+    };
+    const int baseGridX = static_cast<int>(std::floor(baseX));
+    const int baseGridY = static_cast<int>(std::floor(baseY));
+    int spawned = 0;
+    for (const Spot& spot : kSpots) {
+        int wx = 0;
+        int wy = 0;
+        const bool found = ::zl::ai::FindNearestWalkable(
+            baseGridX + spot.dx, baseGridY + spot.dy, 6,
+            [&](int x, int y) { return !IsSquareBlocked(map, x, y, z); }, &wx,
+            &wy);
+        if (!found) {
+            ZL_WARN(kLogModule, "散落点 ({}, {}) 附近找不到可走格，跳过 {}",
+                    baseGridX + spot.dx, baseGridY + spot.dy, spot.defId);
+            continue;
+        }
+        const ecs::ItemInstance stack{spot.defId, spot.count, 1.0f};
+        if (SpawnGroundItem(world, registry, stack,
+                            static_cast<float>(wx) + 0.5f,
+                            static_cast<float>(wy) + 0.5f, z) != entt::null) {
+            ++spawned;
+        }
+    }
+    return spawned;
 }
 
 int CountGroundItems(ecs::EcsWorld& world) {

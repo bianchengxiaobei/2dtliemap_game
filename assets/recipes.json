@@ -1,0 +1,42 @@
+{
+  "format": "recipes-v3",
+  "recipes": [
+    {
+      "id": "field_bandage",
+      "name": "简易绷带",
+      "output": { "item": "bandage", "count": 1 },
+      "ingredients": [ { "item": "rag", "count": 2 } ],
+      "time": 0.8
+    },
+    {
+      "id": "makeshift_spear",
+      "name": "简易长矛",
+      "output": { "item": "makeshift_spear", "count": 1 },
+      "ingredients": [
+        { "item": "kitchen_knife", "count": 1 },
+        { "item": "rag", "count": 1 }
+      ],
+      "time": 1.2
+    },
+    {
+      "id": "padded_jacket",
+      "name": "加固夹克",
+      "output": { "item": "padded_jacket", "count": 1 },
+      "ingredients": [
+        { "item": "jacket", "count": 1 },
+        { "item": "rag", "count": 2 }
+      ],
+      "tools": [ { "item": "hammer", "count": 1, "wear": 0.1 } ],
+      "station": "workbench",
+      "time": 3.0
+    },
+    {
+      "id": "campfire_beans",
+      "name": "烤豆子",
+      "output": { "item": "cooked_beans", "count": 1 },
+      "ingredients": [ { "item": "canned_beans", "count": 1 } ],
+      "station": "campfire",
+      "time": 2.0
+    }
+  ]
+}

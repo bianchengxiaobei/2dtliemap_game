@@ -3,16 +3,21 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include <GLFW/glfw3.h>
 
 #include "characters/components/CharacterComponents.h"
 #include "core/Log.h"
 #include "ecs/components/PhysicsComponents.h"
+#include "game/EmbeddedServer.h"
+#include "game/NetworkClient.h"
 #include "game/WorldQueries.h"
+#include "net/PlayerIdentity.h"
 #include "game/ZombieFactory.h"
 #include "game/states/MainMenuState.h"
 #include "game/states/RenderDemoState.h"
@@ -25,6 +30,7 @@
 #include "script/ModLoader.h"
 #include "script/PythonRuntime.h"
 #include "script/PythonSupport.h"
+#include "ui/ScriptUiHost.h"
 #include "world/MapLoader.h"
 
 namespace zl::game {
@@ -38,6 +44,7 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"DemoTasks", "F3"},     {"ReloadBindings", "F5"}, {"ToggleCruise", "F8"},
     {"ToggleDebugOverlay", "F9"}, {"TogglePhysicsDebug", "F10"}, {"DemoKill", "F6"},
     {"DemoGunshot", "F7"},   // M5-T4：演示开枪（大半径 SoundEvent）
+    {"DemoProjectile", "V"}, // M13-T10：演示发射服务器权威投射物
     {"Attack", "SPACE"},     // M5-T6：玩家挥击（演示用自动瞄准，M6 接武器/朝向）
     {"Pickup", "F"},         // M6-T3：拾取最近地面物品
     {"Use", "E"},            // M6-T5：使用消耗品（回血/饱食）
@@ -102,6 +109,14 @@ bool GameApp::Init(int argc, char** argv) {
     }
     m_ctx.items = &m_itemRegistry;
 
+    // 1.52 配方注册表：与物品定义交叉校验；失败只禁用制作，不阻断启动。
+    const std::string recipesFile =
+        m_config.Get<std::string>("recipes.file", "assets/recipes.json");
+    if (!m_recipeRegistry.LoadFile(recipesFile, m_itemRegistry)) {
+        ZL_WARN("items", "配方注册表为空，制作功能不可用（文件: {}）", recipesFile);
+    }
+    m_ctx.recipes = &m_recipeRegistry;
+
     // 1.55 存档管理（M10-T4）：根目录来自 save.root；文件在首次创建时落盘
     save::SaveManager::Options saveOptions;
     saveOptions.root = m_config.Get<std::string>("save.root", "saves");
@@ -150,50 +165,6 @@ bool GameApp::Init(int argc, char** argv) {
         m_audio->Init(m_events, audioOptions);
     }
 
-    // 1.6 脚本系统（M7-T1/T2/T3）：注册 Lua 后端 + Host API 接入并初始化
-    // （script.backend 决定 mod 默认后端；mod 扫描/加载在 M7-T5 接入）
-    if (m_config.Get<bool>("script.enabled", true)) {
-        m_scriptApi.Attach(&m_ctx);
-        auto luaRuntime = std::make_unique<script::LuaRuntime>();
-        luaRuntime->SetApi(&m_scriptApi);
-        m_script.RegisterRuntime(std::move(luaRuntime));
-#ifdef ZL_ENABLE_PYTHON
-        auto pythonRuntime = std::make_unique<script::PythonRuntime>();
-        pythonRuntime->SetApi(&m_scriptApi);
-        m_script.RegisterRuntime(std::move(pythonRuntime));
-#endif
-        m_script.InitializeAll();
-        // M7-T4：事件桥接（EventBus → 脚本 Events.On）；manager 借此在重载后发 OnModReload
-        m_script.SetEventBus(&m_events);
-        m_eventBridge = std::make_unique<script::EventBridge>(m_events, m_script);
-        // M7-T5：扫描并加载 mods/（目录不存在则跳过；单个 mod 失败不阻断其它）
-        script::ModLoader loader(m_script, m_config.Get<std::string>("script.backend", "lua"));
-        const script::ModLoader::Result mods =
-            loader.ScanAndLoad(m_config.Get<std::string>("script.modsDir", "mods"));
-        // M7-T6：热重载监控（后台线程 mtime 轮询；变更在主循环消费 → ReloadMod）
-        if (m_config.Get<bool>("script.hotReload", true)) {
-            std::vector<script::ModWatcher::Entry> watched;
-            for (const std::string& id : mods.loadedIds) {
-                script::ModInfo info;
-                if (m_script.GetModInfo(id, info)) {
-                    watched.push_back(script::ModWatcher::Entry{id, info.rootPath});
-                }
-            }
-            if (!watched.empty()) {
-                const double interval =
-                    m_config.Get<double>("script.hotReloadSeconds", 1.0);
-                m_modWatcher = std::make_unique<script::ModWatcher>(std::move(watched), interval);
-                ZL_INFO("script", "热重载监控已启动：{} 个 mod（轮询 {:.1f}s）",
-                        m_modWatcher->WatchedCount(), interval);
-            }
-        }
-        ZL_DEBUG("script", "Python 后端：{}", script::PythonBackendVersion());
-        ZL_INFO("script", "脚本系统就绪（后端 {} 个，API v{}）", m_script.RuntimeCount(),
-                script::ScriptApi::kApiVersion);
-    } else {
-        ZL_INFO("script", "脚本系统已禁用（script.enabled=false）");
-    }
-
     // 2. 窗口
     platform::Window::Desc desc;
     desc.width = m_config.Get<int>("window.width", 1280);
@@ -223,6 +194,7 @@ bool GameApp::Init(int argc, char** argv) {
         m_ui.reset();
     }
     if (m_ui) {
+        m_ui->SetEventBus(&m_events);
         m_ui->SetMenuSettings(BuildMenuSettings());
         m_ui->SetMenuSettingsHandler(
             [this](const ui::MenuSettings& settings, std::string& error) {
@@ -271,195 +243,41 @@ bool GameApp::Init(int argc, char** argv) {
 
     ApplyInputBindings();
 
-    // 5. 世界 + chunk 流式加载（M3-T4/T5）
-    const std::string mapDir = m_config.Get<std::string>("world.mapDir", "assets/maps/village_demo");
-    world::MapLoader::Meta worldMeta;
-    std::string mapError;
-    if (!world::MapLoader::LoadMeta(mapDir, &worldMeta, &mapError)) {
-        // 降级：空世界（全默认地形），游戏可运行
-        ZL_ERROR("world", "地图元数据加载失败（降级为空世界）: {}", mapError);
-        worldMeta = world::MapLoader::Meta{};
-        worldMeta.rootDir = mapDir;
-        worldMeta.chunksX = 0;
-        worldMeta.chunksY = 0;
-    } else {
-        ZL_INFO("world", "地图已加载: {}（{}×{} chunks，默认地面 {}）", worldMeta.name,
-                worldMeta.chunksX, worldMeta.chunksY, worldMeta.defaultFloor);
+    // 5. M13-T3：无窗口模拟是唯一所有者（GameApp 与 ServerHost 共用）。
+    // 世界、chunk 流式加载、物理、寻路、AI 和固定系统链都在 WorldSimulation 内组装，
+    // 本类只把指针挂到 GameContext 供渲染/UI/状态读取。
+    {
+        WorldSimulation::Options simulationOptions;
+        simulationOptions.config = &m_config;
+        simulationOptions.events = &m_events;
+        simulationOptions.tasks = m_tasks.get();
+        simulationOptions.saveManager = m_saveManager.get();
+        simulationOptions.saveComponents = &m_saveComponents;
+        simulationOptions.activeSaveId = &m_ctx.activeSaveId;
+        simulationOptions.activeSaveUseBackup = &m_ctx.activeSaveUseBackup;
+        simulationOptions.saveWarning = &m_ctx.saveWarning;
+        simulationOptions.focus = glm::vec2(70.0f, 18.0f);
+        m_simulation = std::make_unique<WorldSimulation>(simulationOptions);
+        std::string simulationError;
+        if (!m_simulation->Init(&simulationError)) {
+            ZL_ERROR("sim", "无窗口模拟初始化失败：{}", simulationError);
+            return false;
+        }
+        m_ctx.simulation = m_simulation.get();
+        m_ctx.world = &m_simulation->World();
+        m_ctx.chunkManager = &m_simulation->Chunks();
+        m_ctx.physics = &m_simulation->Physics();
+        m_ctx.pathfinding = m_simulation->Pathfinding();
+        m_ctx.ecs = &m_simulation->Ecs();
+        m_ctx.spatialIndex = &m_simulation->Spatial();
+        m_ctx.aiSystem = m_simulation->Ai();
+        m_ctx.perception = m_simulation->Perception();
+        m_ctx.lod = m_simulation->Lod();
+        m_ctx.boids = m_simulation->Boids();
+        m_ctx.virtualHordes = m_simulation->VirtualHordes();
+        m_ctx.spawnLod = m_simulation->SpawnLod();
+        m_ctx.combat = m_simulation->Combat();
     }
-    const int loadRadius = m_config.Get<int>("world.loadRadius", core::kChunkLoadRadius);
-    m_world = std::make_unique<world::World>();
-    m_chunkManager = std::make_unique<world::ChunkManager>(
-        *m_world, std::move(worldMeta), *m_tasks, loadRadius,
-        std::max(1, m_config.Get<int>("world.chunkRequestBudget", 4)),
-        std::max(1, m_config.Get<int>("world.chunkAttachBudget", 8)),
-        std::max(0.0, m_config.Get<double>("world.chunkAttachBudgetMs", 2.0)));
-    m_ctx.world = m_world.get();
-    m_ctx.chunkManager = m_chunkManager.get();
-
-    // 5.5 物理（M4-T3）+ 寻路（M4-T6）：chunk 生命周期回调（静态碰撞体 / 通行位图）
-    m_physics = std::make_unique<physics::PhysicsWorld>();
-    const world::MapLoader::Meta& mapMeta = m_chunkManager->Map();
-    ai::AStarOptions pathOptions;
-    pathOptions.maxExpansions = m_config.Get<int>("pathfinding.maxExpansions", 200000);
-    m_pathfinding = std::make_unique<ai::PathfindingService>(
-        m_tasks.get(), ai::MapChunkBounds{mapMeta.chunkX0, mapMeta.chunkY0, mapMeta.chunksX,
-                                          mapMeta.chunksY},
-        pathOptions);
-    m_chunkManager->SetChunkCallbacks(
-        [this](world::Chunk& chunk, int cx, int cy) {
-            // M10-T5：存档 diff 必须在母地图基线之后、物理/寻路构建之前叠加
-            if (!m_ctx.activeSaveId.empty() && m_saveManager != nullptr) {
-                save::SaveManager::LoadReport report;
-                std::string chunkError;
-                const save::SaveManager::LoadResult loaded =
-                    m_ctx.activeSaveUseBackup
-                        ? m_saveManager->LoadChunkFromBackup(m_ctx.activeSaveId,
-                                                             chunk, &chunkError)
-                        : m_saveManager->LoadChunk(m_ctx.activeSaveId, chunk,
-                                                   &chunkError, &report);
-                if (report.usedBackup) {
-                    m_ctx.saveWarning = report.warning;
-                    ZL_WARN("save", "chunk ({},{}) {}", cx, cy, report.warning);
-                }
-                if (loaded != save::SaveManager::LoadResult::Ok &&
-                    loaded != save::SaveManager::LoadResult::NotFound) {
-                    m_ctx.saveWarning = "chunk (" + std::to_string(cx) + "," +
-                                        std::to_string(cy) + ") 加载失败：" + chunkError +
-                                        "；建议删除该存档或使用备份目录";
-                    ZL_ERROR("save", "chunk ({},{}) 加载失败：{}", cx, cy, chunkError);
-                }
-            }
-            m_physics->BuildChunkStatics(cx, cy, chunk);
-            m_pathfinding->OnChunkLoaded(chunk);
-            m_events.EmitQueued(core::kOnChunkLoaded, core::ChunkEvent{cx, cy});  // M7-T4
-        },
-        [this](world::Chunk& chunk, int cx, int cy) {
-            // M10-T2/T5：卸载前把 diff 原子写入当前存档（世界数据仍可读）
-            if (!m_ctx.activeSaveId.empty() && !m_ctx.activeSaveUseBackup &&
-                m_saveManager != nullptr) {
-                std::string saveError;
-                if (!m_saveManager->SaveChunk(m_ctx.activeSaveId, chunk, &saveError)) {
-                    ZL_WARN("save", "chunk ({},{}) 卸载存档失败：{}", cx, cy, saveError);
-                }
-            }
-            m_physics->RemoveChunkStatics(cx, cy);
-            m_pathfinding->OnChunkUnloading(cx, cy);
-            m_events.EmitQueued(core::kOnChunkUnloaded, core::ChunkEvent{cx, cy});  // M7-T4
-        });
-    m_ctx.physics = m_physics.get();
-    m_ctx.pathfinding = m_pathfinding.get();
-
-    // 5.6 AI（M5-T2）+ 感知（M5-T3）：可走查询共用（"未加载 = 不可走/遮挡"）
-    const auto walkable = [this](int wx, int wy) {
-        return !IsSquareBlocked(*m_world, wx, wy, 0);
-    };
-    if (m_audio != nullptr) {
-        // M11-T4：音频隔墙衰减与 AI 听觉共用同一查询与 wallAttenuation 参数
-        m_audio->Engine().SetWalkable(walkable);
-    }
-    // M5-T6：僵尸攻击参数（攻击脉冲 → AttackIntent → CombatSystem 伤害管线）
-    ai::AiSystem::AttackParams aiAttack;
-    aiAttack.damage = static_cast<float>(m_config.Get<double>("combat.zombieDamage", 8.0));
-    aiAttack.knockback =
-        static_cast<float>(m_config.Get<double>("combat.zombieKnockback", 2.0));
-    aiAttack.staggerSeconds =
-        static_cast<float>(m_config.Get<double>("combat.zombieStaggerSeconds", 0.3));
-    aiAttack.range = static_cast<float>(m_config.Get<double>("combat.zombieRange", 1.3));
-    aiAttack.arcDegrees =
-        static_cast<float>(m_config.Get<double>("combat.zombieArcDegrees", 120.0));
-    m_aiSystem = std::make_unique<ai::AiSystem>(walkable, aiAttack);
-    ai::PerceptionParams perceptionParams;
-    perceptionParams.sightRadius =
-        static_cast<float>(m_config.Get<double>("perception.sightRadius", 12.0));
-    perceptionParams.closeRadius =
-        static_cast<float>(m_config.Get<double>("perception.closeRadius", 2.5));
-    perceptionParams.fovDegrees =
-        static_cast<float>(m_config.Get<double>("perception.fovDegrees", 110.0));
-    perceptionParams.alertDecaySeconds =
-        static_cast<float>(m_config.Get<double>("perception.alertDecaySeconds", 8.0));
-    perceptionParams.wallAttenuation =
-        static_cast<float>(m_config.Get<double>("perception.wallAttenuation", 0.6));
-    m_perceptionSystem =
-        std::make_unique<ai::PerceptionSystem>(walkable, perceptionParams);
-    m_ctx.aiSystem = m_aiSystem.get();
-    m_ctx.perception = m_perceptionSystem.get();
-    // M5-T4：声音事件接线 —— 发射方（开枪等）只发事件，不感知感知系统
-    m_soundSubscription = m_events.Subscribe(
-        core::kOnSound, [this](const core::Event& event) {
-            if (m_perceptionSystem == nullptr) {
-                return;
-            }
-            if (const auto* sound = std::get_if<core::SoundEvent>(&event.payload)) {
-                m_perceptionSystem->PushSound(*sound);
-            }
-        });
-
-    // 5.7 LOD 档位（M5-T5）+ 群体行为 + 虚拟化
-    ai::LodSystem::Params lodParams;
-    lodParams.fullRadius = static_cast<float>(m_config.Get<double>("lod.fullRadius", 25.0));
-    lodParams.midRadius = static_cast<float>(m_config.Get<double>("lod.midRadius", 60.0));
-    m_lodSystem = std::make_unique<ai::LodSystem>(lodParams);
-    ai::BoidsSystem::Params boidsParams;
-    boidsParams.neighborRadius =
-        static_cast<float>(m_config.Get<double>("boids.neighborRadius", 2.5));
-    boidsParams.separationRadius =
-        static_cast<float>(m_config.Get<double>("boids.separationRadius", 0.8));
-    boidsParams.separationWeight =
-        static_cast<float>(m_config.Get<double>("boids.separationWeight", 1.6));
-    boidsParams.cohesionWeight =
-        static_cast<float>(m_config.Get<double>("boids.cohesionWeight", 0.5));
-    boidsParams.alignmentWeight =
-        static_cast<float>(m_config.Get<double>("boids.alignmentWeight", 0.4));
-    m_boidsSystem = std::make_unique<ai::BoidsSystem>(boidsParams);
-    m_ctx.lod = m_lodSystem.get();
-    m_ctx.boids = m_boidsSystem.get();
-    m_ctx.virtualHordes = &m_virtualHordes;
-
-    // 5.8 战斗（M5-T6）：伤害管线（伤害事件 → Health/HitReaction 统一入口）+ 倒地窗口时长
-    m_combatSystem = std::make_unique<characters::CombatSystem>();
-    m_ctx.combat = m_combatSystem.get();
-    const float deathFallSeconds =
-        static_cast<float>(m_config.Get<double>("combat.deathFallSeconds", 0.5));
-
-    // 5.9 刷怪与虚拟化（M5-T7）：区域密度目标 + 离屏实体化/虚拟化（人口守恒）
-    ai::SpawnLodSystem::Params spawnParams;
-    spawnParams.populationTarget = m_config.Get<int>("spawner.populationTarget", 240);
-    spawnParams.maxLive = m_config.Get<int>("spawner.maxLive", 320);
-    spawnParams.materializeRadius =
-        static_cast<float>(m_config.Get<double>("spawner.materializeRadius", 32.0));
-    spawnParams.materializePerSecond =
-        static_cast<float>(m_config.Get<double>("spawner.materializePerSecond", 16.0));
-    spawnParams.minSpawnDistance =
-        static_cast<float>(m_config.Get<double>("spawner.minSpawnDistance", 30.0));
-    spawnParams.virtualizeRadius =
-        static_cast<float>(m_config.Get<double>("spawner.virtualizeRadius", 48.0));
-    spawnParams.virtualizePerSecond =
-        static_cast<float>(m_config.Get<double>("spawner.virtualizePerSecond", 12.0));
-    spawnParams.refillPerSecond =
-        static_cast<float>(m_config.Get<double>("spawner.refillPerSecond", 2.0));
-    spawnParams.refillRadius =
-        static_cast<float>(m_config.Get<double>("spawner.refillRadius", 40.0));
-    spawnParams.refillBandWidth =
-        static_cast<float>(m_config.Get<double>("spawner.refillBandWidth", 20.0));
-    spawnParams.mergeRadius =
-        static_cast<float>(m_config.Get<double>("spawner.mergeRadius", 15.0));
-    m_spawnLodSystem = std::make_unique<ai::SpawnLodSystem>(
-        walkable,
-        [this](ecs::EcsWorld& w, float px, float py) {
-            return SpawnZombie(w, m_physics.get(), px, py, &m_events);
-        },
-        [this](ecs::EcsWorld& w, ecs::Entity e) {
-            if (m_physics == nullptr) {
-                return;
-            }
-            if (const auto* rigid = w.Registry().try_get<ecs::RigidBody>(e);
-                rigid != nullptr && rigid->body != nullptr) {
-                m_physics->DestroyBody(rigid->body);  // 实体销毁前回收物理体
-            }
-        },
-        m_virtualHordes, spawnParams);
-    m_ctx.spawnLod = m_spawnLodSystem.get();
-
     // 6. 上下文 + 事件探针
     m_ctx.config = &m_config;
     m_ctx.events = &m_events;
@@ -475,142 +293,177 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.atlases = &m_atlases;
     m_ctx.assets = &m_assets;
     m_ctx.ui = m_ui.get();
+    m_ctx.toggleInventory = [this]() -> bool {
+        if (m_ui == nullptr) {
+            return false;
+        }
+        m_ui->ToggleInventory();
+        return m_ui->IsInventoryOpen();
+    };
+    m_ctx.isInventoryOpen = [this]() -> bool {
+        return m_ui != nullptr && m_ui->IsInventoryOpen();
+    };
+    m_ctx.isMenuOpen = [this]() -> bool {
+        return m_ui != nullptr && m_ui->IsMenuOpen();
+    };
+    m_ctx.getMenuState = [this](ui::MenuState& state) -> bool {
+        return m_ui != nullptr && m_ui->GetMenuState(state);
+    };
+    m_ctx.applyMenuSettings = [this](const ui::MenuSettings& settings,
+                                     std::string& error) -> bool {
+        return m_ui != nullptr && m_ui->ApplyScriptMenuSettings(settings, error);
+    };
+    m_ctx.menuAction = [this](ui::MenuActionType action) {
+        if (m_ui != nullptr) {
+            m_ui->InvokeMenuAction(action);
+        }
+    };
+    m_ctx.getInventoryState = [this](ui::InventoryState& state) -> bool {
+        return m_ui != nullptr && m_ui->GetInventoryState(state);
+    };
+    m_ctx.inventoryAction = [this](const ui::InventoryAction& action) -> bool {
+        return m_ui != nullptr && m_ui->InvokeInventoryAction(action);
+    };
+    m_ctx.playUiClick = [this] {
+        if (m_ui != nullptr) {
+            m_ui->PlayUiClick();
+        }
+    };
+    m_ctx.playInventoryClick = [this] {
+        if (m_ui != nullptr) {
+            m_ui->PlayInventoryClick();
+        }
+    };
     m_ctx.audio = m_audio.get();
-    m_ctx.ecs = &m_ecs;
-    m_ctx.spatialIndex = &m_spatialIndex;
     m_ctx.saveManager = m_saveManager.get();
     m_ctx.saveService = m_saveService.get();
     m_ctx.saveComponents = &m_saveComponents;
+    m_ctx.listSaves = [this](std::vector<save::SaveMetadata>& out,
+                             std::string& error) -> bool {
+        out.clear();
+        return m_saveManager != nullptr && m_saveManager->List(&out, &error);
+    };
+    m_ctx.loadSave = [this](const std::string& id, std::string& error) -> bool {
+        if (m_saveManager == nullptr || id.empty()) {
+            error = "存档不存在";
+            return false;
+        }
+        if (!m_saveManager->Exists(id)) {
+            error = "存档不存在：" + id;
+            return false;
+        }
+        if (m_saveService != nullptr && m_saveService->Busy()) {
+            error = "存档写入中，请稍后再试";
+            return false;
+        }
+        if (m_states.CurrentName() != std::string("MainMenu")) {
+            error = "请在主菜单读取存档";
+            return false;
+        }
+        m_states.SetState(std::make_unique<WorldDemoState>(m_ctx, id));
+        return true;
+    };
+    m_ctx.deleteSave = [this](const std::string& id, std::string& error) -> bool {
+        if (m_saveManager == nullptr || id.empty()) {
+            error = "存档不存在";
+            return false;
+        }
+        if (m_saveService != nullptr && m_saveService->Busy()) {
+            error = "存档写入中，请稍后再试";
+            return false;
+        }
+        if (m_states.CurrentName() != std::string("MainMenu")) {
+            error = "请在主菜单删除存档";
+            return false;
+        }
+        return m_saveManager->Delete(id, &error);
+    };
     m_ctx.reloadConfigAndBindings = [this] { ReloadConfigAndBindings(); };
 
-    // 6.5 玩家命令层（M12-T1/T2）：direct 直接执行；loopback 走 Client→Server 环回队列。
-    {
-        net::CommandPipeline::Options commandOptions;
-        const std::string mode = m_config.Get<std::string>("net.mode", "direct");
-        if (mode == "loopback") {
-            commandOptions.mode = net::TransportMode::Loopback;
-        } else if (mode != "direct") {
-            ZL_WARN("net", "未知 net.mode='{}'，回退 direct", mode);
+    // 6.1 脚本系统：UI Host 已就绪，脚本可以绑定 UI API。
+    if (m_config.Get<bool>("script.enabled", true)) {
+        m_scriptApi.Attach(&m_ctx);
+        ui::ScriptUiHost* uiHost = m_ui != nullptr ? m_ui->ScriptHost() : nullptr;
+        auto luaRuntime = std::make_unique<script::LuaRuntime>();
+        luaRuntime->SetApi(&m_scriptApi);
+        luaRuntime->SetUiHost(uiHost);
+        m_script.RegisterRuntime(std::move(luaRuntime));
+#ifdef ZL_ENABLE_PYTHON
+        auto pythonRuntime = std::make_unique<script::PythonRuntime>();
+        pythonRuntime->SetApi(&m_scriptApi);
+        pythonRuntime->SetUiHost(uiHost);
+        m_script.RegisterRuntime(std::move(pythonRuntime));
+#endif
+        m_script.InitializeAll();
+        // M7-T4：事件桥接（EventBus → 脚本 Events.On）；manager 借此在重载后发 OnModReload
+        m_script.SetEventBus(&m_events);
+        if (uiHost != nullptr) {
+            uiHost->SetEventBus(&m_events);
         }
-        commandOptions.maxCommandsPerPacket = static_cast<std::size_t>(
-            std::max(1, m_config.Get<int>("net.maxCommandsPerPacket", 32)));
-        commandOptions.maxPacketsPerPump = static_cast<std::size_t>(
-            std::max(1, m_config.Get<int>("net.maxPacketsPerPump", 64)));
-        commandOptions.maxQueuedPackets = static_cast<std::size_t>(
-            std::max(1, m_config.Get<int>("net.maxQueuedPackets", 256)));
-        m_commandPipeline = std::make_unique<net::CommandPipeline>(commandOptions);
-        m_commandPipeline->SetHandler(
-            [this](const net::Command& command, std::string& error) {
-                if (!m_ctx.executePlayerCommand) {
-                    error = "当前状态不接收玩家命令";
-                    return false;
-                }
-                return m_ctx.executePlayerCommand(command, error);
-            });
-        m_commandPipeline->SetSnapshotProvider([this] {
-            net::ServerSnapshot snapshot;
-            snapshot.serverTick = m_loop != nullptr ? m_loop->TotalTicks() : 0;
-            if (m_ctx.ecs != nullptr) {
-                m_ctx.ecs->Registry().view<ecs::PlayerTag, ecs::Position>().each(
-                    [&](const ecs::Entity entity, const ecs::Position& position) {
-                        if (snapshot.playerStableId == 0) {
-                            snapshot.playerStableId = m_ctx.ecs->IdOf(entity).id;
-                            snapshot.x = position.x;
-                            snapshot.y = position.y;
-                            snapshot.z = position.z;
-                        }
-                    });
+        m_script.SetModDisabledHandler([this](const std::string& modId) {
+            if (m_ui != nullptr && m_ui->ScriptHost() != nullptr) {
+                m_ui->ScriptHost()->ReleaseOwner(modId);
             }
-            return snapshot;
         });
-        m_ctx.commands = m_commandPipeline.get();
-        ZL_INFO("net", "玩家命令层：模式={}（单包上限 {} 条，队列上限 {} 包）",
-                net::TransportModeName(commandOptions.mode),
-                commandOptions.maxCommandsPerPacket, commandOptions.maxQueuedPackets);
+        m_eventBridge = std::make_unique<script::EventBridge>(m_events, m_script);
+        // M7-T5：扫描并加载 mods/（目录不存在则跳过；单个 mod 失败不阻断其它）
+        script::ModLoader loader(m_script, m_config.Get<std::string>("script.backend", "lua"));
+        const script::ModLoader::Result mods =
+            loader.ScanAndLoad(m_config.Get<std::string>("script.modsDir", "mods"));
+        // M7-T6：热重载监控（后台线程 mtime 轮询；变更在主循环消费 → ReloadMod）
+        if (m_config.Get<bool>("script.hotReload", true)) {
+            std::vector<script::ModWatcher::Entry> watched;
+            for (const std::string& id : mods.loadedIds) {
+                script::ModInfo info;
+                if (m_script.GetModInfo(id, info)) {
+                    watched.push_back(script::ModWatcher::Entry{id, info.rootPath});
+                }
+            }
+            if (!watched.empty()) {
+                const double interval =
+                    m_config.Get<double>("script.hotReloadSeconds", 1.0);
+                m_modWatcher = std::make_unique<script::ModWatcher>(std::move(watched), interval);
+                ZL_INFO("script", "热重载监控已启动：{} 个 mod（轮询 {:.1f}s）",
+                        m_modWatcher->WatchedCount(), interval);
+            }
+        }
+        ZL_DEBUG("script", "Python 后端：{}", script::PythonBackendVersion());
+        ZL_INFO("script", "脚本系统就绪（后端 {} 个，API v{}）", m_script.RuntimeCount(),
+                script::ScriptApi::kApiVersion);
+    } else {
+        ZL_INFO("script", "脚本系统已禁用（script.enabled=false）");
     }
 
-    // ECS 固定链集中注册（docs/00 §6.1）；顺序 = 执行顺序。
-    // 目前：索引维护 → LOD → Input → Perception → Ai → PathFollow → Boids → Combat →
-    //   VirtualHorde → Movement → PhysicsSync → Death → Animation；
-    // 后续任务按链序插入（目标链：… → Movement → PhysicsSync → Combat/Death → SpawnLod →
-    //   RenderCollect）。
-    m_ecs.Systems().AddSystem("SpatialIndexSystem",
-                              [this](ecs::EcsWorld& w, float) { m_spatialIndex.Update(w); });
-    // LOD 档位（M5-T5）：紧跟索引之后、感知之前——本 tick 的门控标志供后续系统读取
-    m_ecs.Systems().AddSystem("LodSystem", [this](ecs::EcsWorld& w, float) {
-        const glm::vec2 camGrid = render::FromScreen(m_camera.Center(), 0);
-        m_lodSystem->SetFocus(camGrid.x, camGrid.y);
-        m_lodSystem->Update(w);
-    });
-    m_inputSystem = std::make_unique<characters::InputSystem>();
-    m_movementSystem = std::make_unique<characters::MovementSystem>();
-    m_physicsSyncSystem = std::make_unique<physics::PhysicsSyncSystem>(m_physics.get());
-    m_animationSystem = std::make_unique<characters::AnimationSystem>();
-    m_pathFollowSystem = std::make_unique<ai::PathFollowSystem>(m_pathfinding.get());
-    m_ecs.Systems().AddSystem("InputSystem", [this](ecs::EcsWorld& w, float) {
-        m_inputSystem->Update(w);
-    });
-    // 感知在 AI 之前（本 tick 写出的 targetId/lastKnown 同 tick 被 AI 消费）
-    m_ecs.Systems().AddSystem("PerceptionSystem", [this](ecs::EcsWorld& w, float dt) {
-        m_perceptionSystem->Update(w, dt);
-    });
-    // AI 在 PathFollow 之前（本 tick 写的 goal 同 tick 被提交为后台查询）
-    m_ecs.Systems().AddSystem("AiSystem", [this](ecs::EcsWorld& w, float dt) {
-        m_aiSystem->Update(w, dt);
-    });
-    // 寻路在 Input 之后（能读到本 tick 输入做"手动优先"判定）、Movement 之前（写意图）
-    m_ecs.Systems().AddSystem("PathFollowSystem", [this](ecs::EcsWorld& w, float dt) {
-        m_pathFollowSystem->Update(w, dt);
-    });
-    // 群体行为（M5-T5）：改写 PathFollow 写的意图（分离/聚合/对齐），先于 Movement 生效
-    m_ecs.Systems().AddSystem("BoidsSystem",
-                              [this](ecs::EcsWorld& w, float) { m_boidsSystem->Update(w); });
-    // 战斗（M5-T6）：扇形攻击判定 + 伤害管线 —— 在群体行为之后（击退覆盖 flocking）、
-    // Movement 之前（硬直实体的击退速度同 tick 生效）
-    m_ecs.Systems().AddSystem("CombatSystem", [this](ecs::EcsWorld& w, float dt) {
-        m_combatSystem->Update(w, dt);
-    });
-    // 虚拟群落（M5-T5）：统计层推进（朝玩家漂移）；T7 SpawnLodSystem 负责实体化
-    m_ecs.Systems().AddSystem("VirtualHordeSystem", [this](ecs::EcsWorld& w, float dt) {
-        float px = 0.0f;
-        float py = 0.0f;
-        bool hasPlayer = false;
-        w.Registry().view<ecs::PlayerTag, ecs::Position>().each(
-            [&](const ecs::Entity, const ecs::Position& p) {
-                if (!hasPlayer) {
-                    px = p.x;
-                    py = p.y;
-                    hasPlayer = true;
-                }
-            });
-        if (hasPlayer) {
-            m_virtualHordes.Update(dt, px, py, /*stopDistance=*/12.0f);
+    // 6.5 玩家命令层（M12/T5）：client=真实 KCP；direct/loopback=本地命令通路。
+    EnsureCommandPipeline();
+    const std::string netMode = m_config.Get<std::string>("net.mode", "direct");
+    if (netMode == "client") {
+        MultiplayerRequest request;
+        request.host = m_config.Get<std::string>("net.host", "127.0.0.1");
+        const int port = m_config.Get<int>("net.port", 7777);
+        request.port = static_cast<std::uint16_t>(std::clamp(port, 1, 65535));
+        request.playerName = m_config.Get<std::string>("net.playerName", "Player");
+        std::string connectError;
+        if (!StartClientOnly(request, &connectError, true)) {
+            ZL_WARN("net", "首次连接失败，将自动重试：{}", connectError);
         }
-    });
-    m_ecs.Systems().AddSystem("MovementSystem", [this](ecs::EcsWorld& w, float dt) {
-        m_movementSystem->Update(w, dt);
-    });
-    m_ecs.Systems().AddSystem("PhysicsSyncSystem", [this](ecs::EcsWorld& w, float dt) {
-        m_physicsSyncSystem->Update(w, dt);
-    });
-    // 死亡流程（M5-T1/T6）：位置已由 PhysicsSync 回写；先倒地窗口（Dying）再转尸体；
-    // 尸体创建与实体销毁在 tick 末 Flush 生效
-    m_deathSystem = std::make_unique<characters::DeathSystem>(m_physics.get(), deathFallSeconds,
-                                                              &m_events);
-    m_ecs.Systems().AddSystem("DeathSystem",
-                              [this](ecs::EcsWorld& w, float dt) { m_deathSystem->Update(w, dt); });
-    // 刷怪与虚拟化（M5-T7）：在死亡结算之后（倒地窗口的实体不参与虚拟化）、动画之前；
-    // 实体化生成的新实体本 tick 不参与移动（Movement 已过），下一 tick 起全链生效
-    m_ecs.Systems().AddSystem("SpawnLodSystem", [this](ecs::EcsWorld& w, float dt) {
-        const glm::vec2 camGrid = render::FromScreen(m_camera.Center(), 0);
-        m_spawnLodSystem->SetFocus(camGrid.x, camGrid.y);
-        m_spawnLodSystem->Update(w, dt);
-    });
-    // 动画读"物理实际速度"（撞墙≈0 → 自动进站立帧），因此排在 PhysicsSync 之后
-    m_ecs.Systems().AddSystem("AnimationSystem", [this](ecs::EcsWorld& w, float dt) {
-        m_animationSystem->Update(w, dt);
-    });
+        m_ctx.commands = nullptr;
+        ZL_INFO("net", "玩家命令层：模式=client（服务器 {}:{}，身份 {}）", request.host,
+                request.port, m_networkClient != nullptr
+                                   ? m_networkClient->PlayerIdentity()
+                                   : std::string());
+    } else {
+        m_ctx.commands = m_commandPipeline.get();
+    }
+    m_ctx.startHosting =
+        [this](const MultiplayerRequest& request, MultiplayerStartResult& result,
+               std::string& error) { return StartHosting(request, result, error); };
+    m_ctx.startJoining =
+        [this](const MultiplayerRequest& request, MultiplayerStartResult& result,
+               std::string& error) { return StartJoining(request, result, error); };
+    m_ctx.leaveMultiplayer = [this] { StopMultiplayer(); };
 
+    // 系统固定链由 WorldSimulation::Init 统一注册（顺序见 docs/00 §6.1）。
     m_probe.Attach(m_events);
 
     // 7. 初始状态（M9-T6：默认 Boot → MainMenu；调试可用 --game.startState=world）
@@ -628,6 +481,9 @@ bool GameApp::Init(int argc, char** argv) {
         m_states.SetState(std::make_unique<MainMenuState>(m_ctx));
     }
     m_states.ApplyPendingState();
+    if (m_ui != nullptr) {
+        m_events.Emit(core::kOnUiReady);
+    }
     m_events.Emit(core::kOnGameStart);
 
     m_lastFrameTime = NowSeconds();
@@ -644,13 +500,11 @@ void GameApp::Shutdown() {
     m_probe.Detach(m_events);
     m_eventBridge.reset();  // 先退订桥接（不再向脚本派发）
     m_modWatcher.reset();   // 停止轮询线程（先于脚本运行时关闭）
-    if (m_soundSubscription != core::EventBus::kInvalidSubscription) {
-        m_events.Unsubscribe(m_soundSubscription);  // 先于感知系统销毁
-        m_soundSubscription = core::EventBus::kInvalidSubscription;
-    }
     m_script.ShutdownAll();  // 脚本先于世界/状态销毁（M7 起脚本可能引用世界状态）
     m_states.Clear();
+    StopMultiplayer();
     m_commandPipeline.reset();
+    m_ctx.networkClient = nullptr;
     if (m_audio != nullptr) {
         m_audio->Shutdown();
         m_audio.reset();
@@ -660,6 +514,8 @@ void GameApp::Shutdown() {
         m_saveService->WaitIdle();
         m_saveService.reset();
     }
+    // 模拟先于 SaveManager 销毁；WorldSimulation 内部会退订事件并释放物理/chunk。
+    m_simulation.reset();
     m_saveManager.reset();
     // 渲染资源必须在 bgfx::shutdown 之前释放
     if (m_ui) {
@@ -672,22 +528,6 @@ void GameApp::Shutdown() {
     m_renderer.Shutdown();
     m_window.Destroy();
     m_loop.reset();
-    m_physicsSyncSystem.reset();
-    m_animationSystem.reset();
-    m_deathSystem.reset();
-    m_combatSystem.reset();
-    m_spawnLodSystem.reset();
-    m_inputSystem.reset();
-    m_movementSystem.reset();
-    m_pathFollowSystem.reset();  // 先于服务
-    m_boidsSystem.reset();
-    m_lodSystem.reset();
-    m_aiSystem.reset();
-    m_perceptionSystem.reset();
-    m_pathfinding.reset();       // 在途后台查询经共享 Core 安全收敛
-    m_physics.reset();  // 物理体先于 chunk 生命周期回调销毁
-    m_chunkManager.reset();
-    m_world.reset();
     m_tasks.reset();  // 最后回收线程池
 }
 
@@ -730,10 +570,17 @@ void GameApp::MainLoop() {
         // M7-T6：消费热重载通知（轮询线程只通知；重载与脚本执行都在主线程）
         if (m_modWatcher != nullptr) {
             for (const std::string& modId : m_modWatcher->PollChanges()) {
+                if (m_ui != nullptr && m_ui->ScriptHost() != nullptr) {
+                    m_ui->ScriptHost()->UnloadOwner(modId);
+                }
                 std::string error;
                 if (!m_script.ReloadMod(modId, error)) {
                     ZL_WARN("core", "mod 热重载失败：[{}]：{}（已禁用；修复文件再保存可恢复）",
                             modId, error);
+                } else {
+                    // OnModReload 是排队事件；主菜单/暂停时 timeScale=0 不会有 tick，
+                    // 这里立即泵一次，让脚本能重建刚被卸载的 UI。
+                    m_events.FlushQueued();
                 }
             }
         }
@@ -752,14 +599,26 @@ void GameApp::Tick(double tickDt) {
     if (m_commandPipeline != nullptr) {
         m_commandPipeline->Pump();
     }
+    if (m_networkClient != nullptr) {
+        m_networkClient->Poll();
+    }
     m_gameTime.Tick();
     m_events.EmitQueued(core::kOnTick, static_cast<int64_t>(m_loop->TotalTicks()));
-    // ECS 系统（注册顺序即执行顺序，SystemScheduler 集中注册）；Update 内含 tick 首尾两次 flush
-    m_ecs.Update(static_cast<float>(tickDt));
+    if (m_simulation != nullptr) {
+        // 单机焦点=相机中心；服务器焦点=玩家。LOD/刷怪只读该值，不依赖渲染。
+        const glm::vec2 focus = render::FromScreen(m_camera.Center(), 0);
+        m_simulation->SetFocus(focus.x, focus.y);
+        // 网络客户端只流式加载地图和渲染副本；AI/物理/战斗全部由服务器权威推进。
+        if (!m_networkMode) {
+            m_simulation->Tick(static_cast<float>(tickDt));
+        }
+    }
     if (auto* state = m_states.Current()) {
         state->OnTick(tickDt);
     }
-    m_ecs.Flush();  // 状态逻辑里入队的创建/销毁也在本 tick 末统一 flush
+    if (m_simulation != nullptr) {
+        m_simulation->Flush();  // 状态逻辑里入队的创建/销毁也在本 tick 末统一 flush
+    }
     m_events.FlushQueued();
 }
 
@@ -875,6 +734,186 @@ bool GameApp::ApplyMenuSettings(const ui::MenuSettings& settings, std::string& e
     return true;
 }
 
+void GameApp::EnsureCommandPipeline() {
+    if (m_commandPipeline != nullptr) {
+        return;
+    }
+    const std::string netMode = m_config.Get<std::string>("net.mode", "direct");
+    net::CommandPipeline::Options commandOptions;
+    if (netMode == "loopback") {
+        commandOptions.mode = net::TransportMode::Loopback;
+    } else if (netMode != "direct" && netMode != "client") {
+        ZL_WARN("net", "未知 net.mode='{}'，回退 direct", netMode);
+    }
+    commandOptions.maxCommandsPerPacket = static_cast<std::size_t>(
+        std::max(1, m_config.Get<int>("net.maxCommandsPerPacket", 32)));
+    commandOptions.maxPacketsPerPump = static_cast<std::size_t>(
+        std::max(1, m_config.Get<int>("net.maxPacketsPerPump", 64)));
+    commandOptions.maxQueuedPackets = static_cast<std::size_t>(
+        std::max(1, m_config.Get<int>("net.maxQueuedPackets", 256)));
+    m_commandPipeline = std::make_unique<net::CommandPipeline>(commandOptions);
+    m_commandPipeline->SetHandler(
+        [this](const net::Command& command, std::string& error) {
+            if (!m_ctx.executePlayerCommand) {
+                error = "当前状态不接收玩家命令";
+                return false;
+            }
+            return m_ctx.executePlayerCommand(command, error);
+        });
+    m_commandPipeline->SetSnapshotProvider([this] {
+        net::ServerSnapshot snapshot;
+        snapshot.serverTick = m_loop != nullptr ? m_loop->TotalTicks() : 0;
+        if (m_ctx.ecs != nullptr) {
+            m_ctx.ecs->Registry().view<ecs::PlayerTag, ecs::Position>().each(
+                [&](const ecs::Entity entity, const ecs::Position& position) {
+                    if (snapshot.playerStableId == 0) {
+                        snapshot.playerStableId = m_ctx.ecs->IdOf(entity).id;
+                        snapshot.x = position.x;
+                        snapshot.y = position.y;
+                        snapshot.z = position.z;
+                    }
+                });
+        }
+        return snapshot;
+    });
+    ZL_INFO("net", "本地玩家命令层：模式={}（单包上限 {} 条，队列上限 {} 包）",
+            net::TransportModeName(commandOptions.mode),
+            commandOptions.maxCommandsPerPacket, commandOptions.maxQueuedPackets);
+}
+
+bool GameApp::StartClientOnly(const MultiplayerRequest& request, std::string* error,
+                              bool keepOnFailure) {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (request.playerName.empty() || request.playerName.size() > 48) {
+        return fail("玩家名称需为 1~48 字节");
+    }
+    if (request.host.empty()) {
+        return fail("服务器地址为空");
+    }
+    if (request.port == 0) {
+        return fail("服务器端口非法");
+    }
+
+    NetworkClient::Options options;
+    options.host = request.host;
+    options.port = request.port;
+    options.contentHash = static_cast<std::uint64_t>(
+        m_config.Get<std::int64_t>("net.contentHash", 0));
+    options.playerIdentity = m_config.Get<std::string>("net.playerIdentity", "");
+    if (!net::IsValidPlayerIdentity(options.playerIdentity)) {
+        const std::string identityFile =
+            m_config.Get<std::string>("net.identityFile", "saves/client_identity.txt");
+        std::string identityError;
+        options.playerIdentity =
+            net::LoadOrCreatePlayerIdentity(identityFile, &identityError);
+        if (!identityError.empty()) {
+            ZL_WARN("net", "{}（本次使用临时身份）", identityError);
+        }
+    }
+    options.playerName = request.playerName;
+    options.autoReconnect = m_config.Get<bool>("net.autoReconnect", true);
+    options.reconnectDelayMs = static_cast<std::uint32_t>(
+        std::max(0, m_config.Get<int>("net.reconnectDelayMs", 1000)));
+    options.handshakeTimeoutMs = static_cast<std::uint32_t>(
+        std::max(0, m_config.Get<int>("net.handshakeTimeoutMs", 5000)));
+    options.heartbeatIntervalMs = static_cast<std::uint32_t>(
+        std::max(0, m_config.Get<int>("net.heartbeatIntervalMs", 5000)));
+    options.heartbeatTimeoutMs = static_cast<std::uint32_t>(
+        std::max(0, m_config.Get<int>("net.heartbeatTimeoutMs", 15000)));
+    options.localPredictionSpeed =
+        static_cast<float>(m_config.Get<double>("net.predictionSpeed", 4.0));
+
+    auto client = std::make_unique<NetworkClient>(options);
+    std::string connectError;
+    const bool connected = client->Connect(&connectError);
+    if (!connected && !keepOnFailure) {
+        return fail(connectError.empty() ? "连接服务器失败" : connectError);
+    }
+    if (!connected) {
+        ZL_WARN("net", "首次连接失败，将自动重试：{}", connectError);
+    }
+    m_networkClient = std::move(client);
+    m_networkMode = true;
+    m_ctx.networkClient = m_networkClient.get();
+    m_ctx.commands = nullptr;
+    ZL_INFO("net", "联机客户端就绪：服务器 {}:{}（身份 {}，名称 {}）", options.host,
+            options.port, options.playerIdentity, options.playerName);
+    return true;
+}
+
+bool GameApp::StartJoining(const MultiplayerRequest& request,
+                           MultiplayerStartResult& result, std::string& error) {
+    StopMultiplayer();
+    if (!StartClientOnly(request, &error, false)) {
+        return false;
+    }
+    result.serverPort = request.port;
+    return true;
+}
+
+bool GameApp::StartHosting(const MultiplayerRequest& request,
+                           MultiplayerStartResult& result, std::string& error) {
+    StopMultiplayer();
+    if (request.playerName.empty() || request.playerName.size() > 48) {
+        error = "玩家名称需为 1~48 字节";
+        return false;
+    }
+    EmbeddedServer::Options options;
+    options.configPath = m_config.Path().string();
+    options.bindHost = "0.0.0.0";
+    options.port = request.port;
+    options.contentHash = static_cast<std::uint64_t>(
+        m_config.Get<std::int64_t>("net.contentHash", 0));
+    options.spawnDemoPopulation = true;
+    options.playerProfilesFile =
+        m_config.Get<std::string>("net.playerProfilesFile",
+                                  "saves/multiplayer_players.bin");
+    options.tickRate = static_cast<float>(
+        m_config.Get<double>("server.tickRate", 60.0));
+    m_embeddedServer = std::make_unique<EmbeddedServer>();
+    std::string hostError;
+    if (!m_embeddedServer->Start(options, &hostError)) {
+        m_embeddedServer.reset();
+        error = hostError.empty() ? "启动主机失败" : hostError;
+        return false;
+    }
+    result.serverPort = m_embeddedServer->Port();
+    MultiplayerRequest local = request;
+    local.host = "127.0.0.1";
+    local.port = result.serverPort;
+    if (!StartClientOnly(local, &error, false)) {
+        m_embeddedServer->Stop();
+        m_embeddedServer.reset();
+        return false;
+    }
+    m_hosting = true;
+    ZL_INFO("net", "已开始主机模式：UDP 端口 {}，本机客户端已连接", result.serverPort);
+    return true;
+}
+
+void GameApp::StopMultiplayer() {
+    if (m_networkClient != nullptr) {
+        m_networkClient->Close();
+        m_networkClient.reset();
+    }
+    m_ctx.networkClient = nullptr;
+    m_networkMode = false;
+    m_hosting = false;
+    if (m_embeddedServer != nullptr) {
+        m_embeddedServer->Stop();
+        m_embeddedServer.reset();
+    }
+    if (m_commandPipeline != nullptr) {
+        m_ctx.commands = m_commandPipeline.get();
+    } else {
+        m_ctx.commands = nullptr;
+    }
+}
 void GameApp::ApplyInputBindings() {
     m_input.ClearBindings();
     for (const auto& [action, defaultKey] : kDefaultBindings) {

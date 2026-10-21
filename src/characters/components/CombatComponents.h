@@ -54,4 +54,18 @@ struct HitReaction {
     float flashLeft = 0.0f;
 };
 
+struct Projectile {
+    std::uint64_t ownerStableId = 0;
+    float lifetime = 3.0f;
+    float radius = 0.2f;
+    float damage = 25.0f;
+    float knockback = 1.0f;
+    float staggerSeconds = 0.15f;
+    bool hitPlayers = false;
+};
+
+struct TransientEffect {
+    float remaining = 0.35f;
+};
+
 }  // namespace zl::ecs

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -51,6 +52,10 @@ public:
     // M7-T4：接入事件总线后，热重载成功会发出 OnModReload（modId）。
     void SetEventBus(core::EventBus* events);
 
+    // 可选：mod 因脚本错误被禁用时通知宿主（用于卸载该 mod 的 UI 文档）。
+    using ModDisabledHandler = std::function<void(const std::string&)>;
+    void SetModDisabledHandler(ModDisabledHandler handler);
+
     // ---- 错误隔离 ----
     bool IsModDisabled(std::string_view modId) const;
     std::size_t DisabledModCount() const;
@@ -78,6 +83,7 @@ private:
     std::vector<ModRecord> m_mods;  // 按 (loadOrder, loadSeq) 排序
     int m_nextLoadSeq = 0;
     core::EventBus* m_events = nullptr;  // 可为 nullptr（无总线：不发 OnModReload）
+    ModDisabledHandler m_onModDisabled;
 };
 
 }  // namespace zl::script

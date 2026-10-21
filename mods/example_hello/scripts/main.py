@@ -17,7 +17,7 @@ def on_tick(e):
         gaveStarter = True
         Log.Info('player ready, giving starter items...')
         bandages = Player.AddItem('bandage', 2)
-        axes = Player.AddItem('axe', 1)
+        axes = Player.AddItem('axe', 100)
         Log.Info('starter items: bandage x%d, axe x%d' % (bandages, axes))
 
     if e['tick'] % 600 == 0:  # 每 600 tick（约 10 秒）报一次

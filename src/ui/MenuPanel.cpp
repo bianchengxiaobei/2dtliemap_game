@@ -100,6 +100,11 @@ bool MenuPanel::Init(Rml::Context& context, const std::string& path) {
             m_actionHandler(MenuActionType::Continue);
         }
     });
+    AddClickListener("menu-multiplayer", [this] {
+        if (m_actionHandler) {
+            m_actionHandler(MenuActionType::Multiplayer);
+        }
+    });
     AddClickListener("menu-settings", [this] { OpenSettings(); });
     AddClickListener("menu-quit", [this] {
         if (m_actionHandler) {

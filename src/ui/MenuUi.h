@@ -9,6 +9,7 @@ namespace zl::ui {
 // M9-T6：主菜单/暂停菜单动作（设置页内部的“返回/应用”不经过游戏状态）。
 enum class MenuActionType {
     NewGame,
+    Multiplayer,
     Continue,
     Resume,
     ReturnToMainMenu,
@@ -27,6 +28,14 @@ struct MenuSettings {
     int sfxVolume = 85;      // SFX
     int ambientVolume = 55;  // Ambient
     std::vector<MenuKeyBinding> bindings;
+};
+
+// 脚本菜单控制器读取的只读状态。原生 MenuPanel 与脚本控制共用这份数据模型。
+struct MenuState {
+    bool open = false;
+    bool pauseMode = false;
+    bool canContinue = false;
+    MenuSettings settings;
 };
 
 // 设置页的固定键位行（UI 行顺序）；GameApp 用同一张表读取/写回 config。

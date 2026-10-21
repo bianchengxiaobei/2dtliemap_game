@@ -1,0 +1,76 @@
+<rml>
+<head>
+    <title>ZomboidLike Multiplayer</title>
+    <link type="text/rcss" href="theme.rcss"/>
+    <link type="text/rcss" href="menu.rcss"/>
+    <link type="text/rcss" href="multiplayer.rcss"/>
+</head>
+<body>
+    <div id="mp-overlay">
+        <div id="mp-window">
+            <div class="mp-kicker">MULTIPLAYER</div>
+            <div class="mp-title">联机游戏</div>
+            <div class="mp-subtitle">局域网直连或在本机开房；加入后可在游戏内用 Enter 聊天。</div>
+            <div class="mp-accent"></div>
+
+            <div class="mp-columns">
+                <div class="mp-card">
+                    <div class="mp-section-title">加入服务器</div>
+                    <div class="mp-row">
+                        <span class="mp-label">玩家名称</span>
+                        <input id="mp-name" type="text" maxlength="48" value="Player"/>
+                    </div>
+                    <div class="mp-row">
+                        <span class="mp-label">服务器地址</span>
+                        <input id="mp-host" type="text" value="127.0.0.1"/>
+                    </div>
+                    <div class="mp-row">
+                        <span class="mp-label">端口</span>
+                        <input id="mp-port" type="text" value="7777"/>
+                    </div>
+                    <div class="mp-actions">
+                        <div id="mp-add-server" class="menu-btn">收藏地址</div>
+                        <div id="mp-join" class="menu-btn primary">加入游戏</div>
+                    </div>
+                </div>
+
+                <div class="mp-card mp-list-card">
+                    <div class="mp-list-head">
+                        <span class="mp-section-title">服务器列表</span>
+                        <span id="mp-refresh" class="mp-refresh">刷新</span>
+                    </div>
+                    <div id="mp-server-empty" class="mp-empty">暂无收藏服务器</div>
+                    <div id="mp-server-list">
+                        <div id="mp-server-0" class="mp-server-row"><span id="mp-server-name-0" class="mp-server-name"></span><span id="mp-server-addr-0" class="mp-server-addr"></span></div>
+                        <div id="mp-server-1" class="mp-server-row"><span id="mp-server-name-1" class="mp-server-name"></span><span id="mp-server-addr-1" class="mp-server-addr"></span></div>
+                        <div id="mp-server-2" class="mp-server-row"><span id="mp-server-name-2" class="mp-server-name"></span><span id="mp-server-addr-2" class="mp-server-addr"></span></div>
+                        <div id="mp-server-3" class="mp-server-row"><span id="mp-server-name-3" class="mp-server-name"></span><span id="mp-server-addr-3" class="mp-server-addr"></span></div>
+                        <div id="mp-server-4" class="mp-server-row"><span id="mp-server-name-4" class="mp-server-name"></span><span id="mp-server-addr-4" class="mp-server-addr"></span></div>
+                        <div id="mp-server-5" class="mp-server-row"><span id="mp-server-name-5" class="mp-server-name"></span><span id="mp-server-addr-5" class="mp-server-addr"></span></div>
+                        <div id="mp-server-6" class="mp-server-row"><span id="mp-server-name-6" class="mp-server-name"></span><span id="mp-server-addr-6" class="mp-server-addr"></span></div>
+                        <div id="mp-server-7" class="mp-server-row"><span id="mp-server-name-7" class="mp-server-name"></span><span id="mp-server-addr-7" class="mp-server-addr"></span></div>
+                    </div>
+                    <div class="mp-list-hint">点击列表条目可填入地址</div>
+                </div>
+            </div>
+
+            <div class="mp-host-card">
+                <div>
+                    <div class="mp-section-title">主持游戏</div>
+                    <div class="mp-subtitle">本机会启动权威服务器，监听所有网卡；端口 0 表示自动分配。</div>
+                </div>
+                <div class="mp-host-controls">
+                    <span class="mp-label">端口</span>
+                    <input id="mp-host-port" type="text" value="7777"/>
+                    <div id="mp-host-start" class="menu-btn primary">开始主机</div>
+                </div>
+            </div>
+
+            <div id="mp-status" class="mp-status status-info">选择加入服务器，或直接开始主机</div>
+            <div class="mp-footer">
+                <div id="mp-back" class="menu-btn">返回主菜单</div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

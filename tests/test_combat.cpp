@@ -436,3 +436,36 @@ TEST_CASE("CombatSystem：倒地/死亡攻击者的挥击被忽略（冒烟抓�
     CHECK(combat.GetStats().swings == 1u);
     CHECK(combat.GetStats().hits == 1u);
 }
+
+TEST_CASE("M13-T10 ActorAction：攻击/受击/死亡表现状态") {
+    ecs::EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const ecs::Entity attacker = world.Create();
+    registry.emplace<Position>(attacker, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(attacker, Health{100.0f, 100.0f});
+    registry.emplace<ecs::ActionState>(attacker, ecs::ActionState{});
+    ecs::AttackIntent intent;
+    intent.dirX = 1.0f;
+    intent.range = 2.0f;
+    intent.damage = 30.0f;
+    intent.pending = true;
+    registry.emplace<ecs::AttackIntent>(attacker, intent);
+
+    const ecs::Entity target = world.Create();
+    registry.emplace<Position>(target, Position{1.0f, 0.0f, 0});
+    registry.emplace<Health>(target, Health{100.0f, 100.0f});
+    registry.emplace<ecs::ActionState>(target, ecs::ActionState{});
+
+    CombatSystem combat;
+    combat.Update(world, kDt);
+    CHECK(registry.get<ecs::ActionState>(attacker).action ==
+          ecs::ActorAction::Attacking);
+    CHECK(registry.get<ecs::ActionState>(target).action == ecs::ActorAction::Hit);
+    CHECK(registry.get<Health>(target).current == doctest::Approx(70.0f));
+
+    ecs::DamageEvent lethal;
+    lethal.sourceId = world.IdOf(attacker).id;
+    lethal.amount = 100.0f;
+    REQUIRE(combat.ApplyDamage(world, target, lethal));
+    CHECK(registry.get<ecs::ActionState>(target).action == ecs::ActorAction::Dead);
+}

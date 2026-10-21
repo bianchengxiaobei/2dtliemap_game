@@ -13,7 +13,7 @@ def on_game_start():
     global kills, pickups
     kills = 0
     pickups = 0
-    Log.Info('reactive mod ready: kill 5 zombies to earn a bandage')
+    Log.Info('reactive mod ready: kill 5 zombies to earn a bandage rgregreg')
     Game.SetTimer(5, lambda: Log.Info(
         'tip: press F6 for a demo-kill, F7 to fire a gunshot'))  # 5 游戏秒后提示一次
 

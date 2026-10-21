@@ -356,6 +356,22 @@
    "layer": "wall",
    "sprite": "wall.brick",
    "solid": true
+  },
+  {
+   "x": 0,
+   "y": 5,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.workbench",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 5,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.campfire",
+   "solid": true
   }
  ],
  "rooms": [

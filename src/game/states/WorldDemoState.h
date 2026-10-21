@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -15,6 +17,7 @@
 #include "game/AssetProvider.h"
 #include "game/GameContext.h"
 #include "game/RenderCollectSystem.h"
+#include "items/Crafting.h"
 #include "items/ItemComponents.h"
 #include "net/Command.h"
 #include "render/DrawList.h"
@@ -26,6 +29,10 @@
 
 namespace zl::world {
 class Chunk;
+}
+
+namespace zl::items {
+struct ItemDef;
 }
 
 namespace zl::game {
@@ -50,6 +57,12 @@ public:
 
 private:
     void HandleFrameInput(double frameDt);
+    // M13-T5：把 EntityReplicationClient 副本同步成渲染用 ECS 实体（不参与本地模拟）。
+    void SyncNetworkReplicas(float alpha);
+    // M13-T7：把服务器下发到本会话的背包/装备/配方/制作状态镜像到本地玩家实体。
+    void ApplyNetworkPlayerState();
+    void RefreshSocialState();
+    void SendChat(const std::string& text, std::string& error);
     // M10-T5：会话初始化/读档与后台存档（快照只在主线程采集）
     bool LoadFromSave();
     void RestoreRuntimeComponents(const std::vector<ecs::Entity>& loaded);
@@ -73,9 +86,16 @@ private:
     void UseConsumableItem();       // E：使用背包中第一个带效果的物品（消耗 1 件）
     void ToggleEquipWeapon();       // R：主手武器 ↔ 背包第一件武器（换装/卸下）
     void DropFirstItem();           // G：丢弃背包第一堆（整堆落地面）
-    void AppendEquippedWeapon();    // 手持渲染：收集后追加装备图标 DrawItem（排序前）
+    void AppendActorPresentation();  // 装备/动作表现：收集后追加 DrawItem（排序前）
     void RefreshInventory();
     void HandleInventoryAction(const ui::InventoryAction& action);
+    void UpdateCrafting(float tickDt);
+    bool StartCraftBatch(const items::RecipeDef& recipe, int requested,
+                         std::string& error, int& actual);
+    bool StartNextQueuedCraft(std::string_view prefix);
+    std::string QueuedCraftLabel(std::string_view recipeId) const;
+    void SyncCraftingJobToEcs();
+    void RestoreCraftingJobFromEcs();
     // M12-T1：玩家操作统一走 Command（direct 立即执行 / loopback 环回执行）
     net::Command MakePlayerCommand(net::CommandType type) const;
     bool ExecutePlayerCommand(const net::Command& command, std::string& error);
@@ -90,6 +110,12 @@ private:
     void EquipLootItem(std::uint64_t stableId, ecs::EquipSlot slot);
     void UnequipEquipment(int index);
     void UseBagItem(int index);
+    bool UseBlueprintItem(int index, const items::ItemDef& def);
+    void RepairBagItem(int index);
+    // recipes-v3：工作台/制作站范围（空 station = 任意地点）
+    std::string StationLabel(std::string_view station) const;
+    bool StationNearby(std::string_view station, float x, float y, int z) const;
+    bool RecipeKnown(std::string_view recipeId) const;
     void DropBagItem(int index);
     void DropEquipmentItem(int index);
     void PickupLootItem(std::uint64_t stableId);
@@ -102,7 +128,6 @@ private:
     void PlayerAttack(std::uint64_t targetStableId = 0);
     // M4-T4：玩家（PlayerTag）——chunk 加载完成后在村庄中心附近找可走格生成
     void EnsurePlayerSpawned();
-    ecs::Entity SpawnCharacter(float px, float py);
     bool IsSolidSquare(int wx, int wy) const;
     // M4-T7：点击移动——屏幕拾取 → 目标格校验（越界/未加载/就近可走格）→ 写 PathRequest
     void HandleClickToMove(const render::GridPick& pick);
@@ -134,13 +159,17 @@ private:
     int m_collectedChunks = 0;  // 本帧进入收集的已加载 chunk 数
     int m_missingChunks = 0;    // 本帧可见但尚未加载的 chunk 数
 
-    // M4-T6 演示：游荡者出生区域（M5-T2 起行为由 AiSystem 状态机驱动）
-    float m_demoBoxX0 = 0.0f;
-    float m_demoBoxY0 = 0.0f;
-    float m_demoBoxX1 = 0.0f;
-    float m_demoBoxY1 = 0.0f;
-    // M4-T4：本地玩家（WASD 控制）
+    // M4-T4：本地玩家（WASD 控制；实体由 WorldSimulation 生成）
     ecs::Entity m_player = entt::null;
+    // M13-T5：网络客户端的视觉副本缓存（服务器 StableId → 本地 ECS 实体）。
+    bool m_networkMode = false;
+    std::unordered_map<std::uint64_t, ecs::Entity> m_networkEntities;
+    std::uint32_t m_lastNetworkStatusSequence = 0;
+    // M13-T8：死亡/复活期间本地视觉玩家可能暂时不存在，仍需用服务器状态驱动 HUD。
+    bool m_networkPlayerAlive = true;
+    float m_networkHealth = 100.0f;
+    float m_networkHealthMax = 100.0f;
+    float m_networkRespawnSeconds = 0.0f;
     // M5-T4：演示枪声基础可闻半径（格；config sounds.gunshotRadius）
     float m_gunshotRadius = 30.0f;
     // M11-T3：脚步累计距离与步幅（按地面材质切换 footstep_*.wav）
@@ -156,14 +185,17 @@ private:
     float m_playerAttackRange = 1.7f;
     float m_playerAttackKnockback = 3.0f;
     float m_playerAttackStagger = 0.35f;
-    // M6-T2：玩家背包容量（config inventory.playerCapacityKg；生成时写入 Container 组件）
+    // M6-T2：玩家背包容量（读档补建 Container 时使用；生成参数由 WorldSimulation 读取）
     float m_playerCapacityKg = 20.0f;
-    // M6-T5：玩家起始 HP（config health.playerStartHp / playerMaxHp；演示回血时可调低起始）
-    float m_playerStartHp = 100.0f;
-    float m_playerMaxHp = 100.0f;
     // M6-T3：地面物品拾取半径（config inventory.pickupRadius）与散落标记
     float m_pickupRadius = 1.6f;
     float m_inventoryRange = 3.0f;
+    std::string m_repairKitDefId = "repair_kit";
+    int m_repairKitCount = 1;
+    float m_repairAmount = 0.5f;
+    float m_stationRange = 2.5f;
+    std::unordered_map<std::string, std::string> m_stationLabels;
+    std::unordered_set<std::string> m_blueprintRecipes;
     bool m_demoItemsScattered = false;
     // M4-T7：点击移动反馈（notice 文本 + 目标格标记）
     std::string m_noticeText;
@@ -205,6 +237,10 @@ private:
     bool m_hoverHit = true;
     bool m_showGrid = false;  // 世界地图默认关网格（F9 开）
     int m_hotbarSelected = 0;  // M9-T4：快捷栏选中槽（数字键 1~5）
+    items::CraftingProcess m_crafting;
+    int m_craftBatchTotal = 0;
+    int m_craftBatchCompleted = 0;
+    std::vector<ecs::CraftQueueItem> m_craftQueue;
     // M9-T6：暂停/主菜单覆盖层；暂停前倍速用于恢复
     bool m_menuPaused = false;
     core::GameTime::Speed m_speedBeforeMenu = core::GameTime::Speed::X1;

@@ -30,7 +30,9 @@
 #include "game/AssetProvider.h"
 #include "game/EventProbe.h"
 #include "game/GameContext.h"
+#include "game/WorldSimulation.h"
 #include "items/ItemRegistry.h"
+#include "items/RecipeRegistry.h"
 #include "net/CommandPipeline.h"
 #include "physics/PhysicsSyncSystem.h"
 #include "physics/PhysicsWorld.h"
@@ -56,6 +58,9 @@ class SaveService;
 
 namespace zl::game {
 
+class EmbeddedServer;
+class NetworkClient;
+
 // 顶层组装（M1-T7 / M2 扩展）：服务初始化 → 渲染栈 → 状态机 → 固定 tick 主循环。
 class GameApp {
 public:
@@ -77,6 +82,14 @@ private:
     void ReloadConfigAndBindings();
     ui::MenuSettings BuildMenuSettings() const;
     bool ApplyMenuSettings(const ui::MenuSettings& settings, std::string& error);
+    void EnsureCommandPipeline();
+    bool StartClientOnly(const MultiplayerRequest& request, std::string* error,
+                         bool keepOnFailure = false);
+    bool StartHosting(const MultiplayerRequest& request, MultiplayerStartResult& result,
+                      std::string& error);
+    bool StartJoining(const MultiplayerRequest& request, MultiplayerStartResult& result,
+                      std::string& error);
+    void StopMultiplayer();
 
     core::Config m_config;
     core::EventBus m_events;
@@ -100,47 +113,14 @@ private:
     // 音频（M11-T1）：miniaudio 设备 + 音量组；无设备时静音运行
     std::unique_ptr<audio::SoundManager> m_audio;
 
-    // 世界 + chunk 流式加载（M3）
-    std::unique_ptr<world::World> m_world;
-    std::unique_ptr<world::ChunkManager> m_chunkManager;
-
-    // 物理（M4-T3）：静态体随 chunk 生命周期生成/移除；系统实例与注册集中管理
-    std::unique_ptr<physics::PhysicsWorld> m_physics;
-    // 角色系统（M4-T3/T4）
-    std::unique_ptr<characters::InputSystem> m_inputSystem;
-    std::unique_ptr<characters::MovementSystem> m_movementSystem;
-    std::unique_ptr<physics::PhysicsSyncSystem> m_physicsSyncSystem;
-    std::unique_ptr<characters::AnimationSystem> m_animationSystem;
-    // 死亡流程（M5-T1/T6）：倒地窗口 → 尸体（PhysicsSync 之后、Animation 之前）
-    std::unique_ptr<characters::DeathSystem> m_deathSystem;
-    // 战斗（M5-T6）：伤害管线 + 受击反应（Boids 之后、Movement 之前）
-    std::unique_ptr<characters::CombatSystem> m_combatSystem;
-
-    // 寻路（M4-T6）：passability 位图随 chunk 生命周期维护；PathFollowSystem 在固定链中
-    std::unique_ptr<ai::PathfindingService> m_pathfinding;
-    std::unique_ptr<ai::PathFollowSystem> m_pathFollowSystem;
-    // AI（M5-T2）：僵尸状态机（Input 之后、PathFollow 之前）
-    std::unique_ptr<ai::AiSystem> m_aiSystem;
-    // 感知（M5-T3）：视觉/听觉 → AiSystem 之前（本 tick 即被消费）
-    std::unique_ptr<ai::PerceptionSystem> m_perceptionSystem;
-    // M5-T4：OnSound（事件总线）→ PerceptionSystem::PushSound 的订阅
-    core::EventBus::SubscriptionId m_soundSubscription = core::EventBus::kInvalidSubscription;
-
-    // LOD（M5-T5）：档位门控（链首，供感知/AI/寻路/群体行为判定）
-    std::unique_ptr<ai::LodSystem> m_lodSystem;
-    // 群体行为（M5-T5）：Boids 式 flocking（PathFollow 之后、Movement 之前）
-    std::unique_ptr<ai::BoidsSystem> m_boidsSystem;
-    // 虚拟化（M5-T5）：离屏僵尸的统计表示（不入 registry；T7 SpawnLodSystem 消费）
-    ai::VirtualHordeStore m_virtualHordes;
-    // 刷怪与虚拟化（M5-T7）：密度目标 + 实体化/虚拟化（Death 之后、Animation 之前）
-    std::unique_ptr<ai::SpawnLodSystem> m_spawnLodSystem;
-
-    // ECS 世界（M4 起）：系统注册集中在 Init（SystemScheduler 单一注册点）
-    ecs::EcsWorld m_ecs;
-    ecs::SpatialIndex m_spatialIndex;
+    // M13-T3：无窗口模拟（世界/ECS/物理/寻路/AI/固定链）的单一所有者。
+    // 渲染、UI、输入和存档只读取这里的指针；ServerHost 复用同一实现。
+    std::unique_ptr<WorldSimulation> m_simulation;
 
     // 物品定义注册表（M6-T1）：启动时加载 assets/items.json（校验失败以空表继续）
     items::ItemRegistry m_itemRegistry;
+    // 配方注册表：依赖物品定义做交叉校验（校验失败以空表继续）
+    items::RecipeRegistry m_recipeRegistry;
 
     // 存档管理（M10-T4/T5）：save.root 下的元数据、原子写盘与 zl-save 后台线程
     std::unique_ptr<save::SaveManager> m_saveManager;
@@ -149,6 +129,11 @@ private:
 
     // 玩家命令层（M12）：direct/loopback 可切换；状态通过 GameContext::commands 提交
     std::unique_ptr<net::CommandPipeline> m_commandPipeline;
+    // M13-T5：真实 KCP 客户端（net.mode=client）；状态通过 GameContext::networkClient 访问。
+    std::unique_ptr<NetworkClient> m_networkClient;
+    std::unique_ptr<EmbeddedServer> m_embeddedServer;
+    bool m_networkMode = false;
+    bool m_hosting = false;
 
     // 脚本系统（M7-T1）：后端注册表 + mod 生命周期门面；后端实例由 M7-T2（Lua）注册
     script::ScriptManager m_script;

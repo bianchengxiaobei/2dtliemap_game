@@ -22,6 +22,7 @@ ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, fl
         e, ecs::SpriteRef{ecs::HashName("character.placeholder"), 0, 0xFFFFFFFFu});
     registry.emplace<ecs::Facing>(e, ecs::Facing{});
     registry.emplace<ecs::AnimState>(e, ecs::AnimState{});
+    registry.emplace<ecs::ActionState>(e, ecs::ActionState{});
     registry.emplace<ecs::Health>(e, ecs::Health{});  // M5-T1：死亡流程（HP<=0 → 尸体）
     registry.emplace<ecs::Needs>(e, ecs::Needs{});
 

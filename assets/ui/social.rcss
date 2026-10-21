@@ -1,0 +1,142 @@
+#social-root {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.social-card {
+    position: absolute;
+    padding: 10px 12px;
+    background-color: #10161dd8;
+    border-width: 1px;
+    border-color: #34495c;
+    border-radius: 10px;
+    pointer-events: auto;
+}
+
+#social-players {
+    right: 18px;
+    top: 84px;
+    width: 190px;
+}
+
+.social-title {
+    height: 24px;
+    line-height: 24px;
+    font-size: 13px;
+    color: #ffd479;
+    font-weight: bold;
+    border-bottom-width: 1px;
+    border-bottom-color: #263440;
+}
+
+.social-count {
+    float: right;
+    color: #8fa4b8;
+    font-weight: normal;
+}
+
+.social-player {
+    height: 22px;
+    line-height: 22px;
+    font-size: 12px;
+    color: #d7e2ec;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.social-player.local {
+    color: #ffd479;
+}
+
+.social-me {
+    margin-left: 5px;
+    font-size: 10px;
+    color: #7fe08a;
+}
+
+#social-chat {
+    left: 18px;
+    bottom: 20px;
+    width: 390px;
+}
+
+#social-chat-log {
+    margin-top: 4px;
+}
+
+.social-chat-line {
+    min-height: 20px;
+    line-height: 20px;
+    font-size: 12px;
+    color: #e6edf3;
+    word-break: break-word;
+}
+
+.social-sender {
+    color: #5798c8;
+}
+
+#social-chat-input-row {
+    display: none;
+    margin-top: 8px;
+    height: 34px;
+}
+
+#social-chat-input {
+    display: inline-block;
+    width: 300px;
+    height: 30px;
+    vertical-align: top;
+}
+
+.social-send {
+    display: inline-block;
+    width: 62px;
+    height: 30px;
+    line-height: 30px;
+    margin-left: 6px;
+    background-color: #2f6f9f;
+    border-width: 1px;
+    border-color: #5798c8;
+    border-radius: 6px;
+    color: #ffffff;
+    font-size: 12px;
+    text-align: center;
+    vertical-align: top;
+    cursor: pointer;
+}
+
+.social-send:hover {
+    background-color: #3c86bb;
+}
+
+.social-hint {
+    margin-top: 5px;
+    font-size: 10px;
+    color: #6f8498;
+}
+
+.social-status {
+    position: absolute;
+    left: 50%;
+    bottom: 150px;
+    width: 360px;
+    margin-left: -180px;
+    font-size: 12px;
+    line-height: 20px;
+    color: #ffd479;
+    text-align: center;
+}
+
+.social-status.status-ok {
+    color: #7fe08a;
+}
+
+.social-status.status-fail {
+    color: #ff8a7a;
+}

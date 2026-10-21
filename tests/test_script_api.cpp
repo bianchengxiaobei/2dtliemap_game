@@ -14,6 +14,7 @@
 #include "items/InventoryOps.h"
 #include "items/ItemComponents.h"
 #include "items/ItemRegistry.h"
+#include "save/SaveTypes.h"
 #include "script/ScriptApi.h"
 #include "world/Chunk.h"
 #include "world/GridSquare.h"
@@ -171,4 +172,146 @@ TEST_CASE("M7-T3：Game 信息（tick/时间/玩家 ID）与 Items 查询") {
     CHECK(f.api.ItemName("bandage") == "绷带");
     CHECK(f.api.ItemName("axe") == "斧");
     CHECK(f.api.ItemName("nope").empty());
+}
+
+TEST_CASE("M9-T7：Inventory API 读取状态、提交动作与点击音效") {
+    Fixture f;
+    ui::InventoryState source;
+    source.open = true;
+    source.playerValid = true;
+    source.weight = 3.2f;
+    source.capacity = 20.0f;
+    source.bagStacks = 1;
+    source.lootStacks = 2;
+    source.status = "已拾取";
+    source.statusTone = "ok";
+    source.bag[0] = ui::InventorySlot{true, "绷带", 2, true, false, 0};
+    source.equipment[0] = ui::InventorySlot{true, "斧", 1, false, true, 0};
+    source.loot[0] = ui::InventorySlot{true, "破布", 3, false, false, 77};
+    f.ctx.getInventoryState = [&source](ui::InventoryState& out) {
+        out = source;
+        return true;
+    };
+    ui::InventoryAction received;
+    bool hasAction = false;
+    f.ctx.inventoryAction = [&received, &hasAction](const ui::InventoryAction& action) {
+        received = action;
+        hasAction = true;
+        return true;
+    };
+    int clicks = 0;
+    f.ctx.playInventoryClick = [&clicks] { ++clicks; };
+
+    ui::InventoryState state;
+    REQUIRE(f.api.GetInventoryState(state));
+    CHECK(state.open);
+    CHECK(state.playerValid);
+    CHECK(state.weight == doctest::Approx(3.2f));
+    CHECK(state.capacity == doctest::Approx(20.0f));
+    CHECK(state.bagStacks == 1);
+    CHECK(state.lootStacks == 2);
+    CHECK(state.status == "已拾取");
+    CHECK(state.bag.size() == static_cast<std::size_t>(ui::kInventoryBagSlots));
+    CHECK(state.bag[0].label == "绷带");
+    CHECK(state.bag[0].usable);
+    CHECK(state.equipment[0].equippable);
+    CHECK(state.loot[0].entityId == 77);
+
+    ui::InventoryAction action;
+    action.type = ui::InventoryActionType::Transfer;
+    action.from = ui::InventoryArea::Backpack;
+    action.fromIndex = 0;
+    action.to = ui::InventoryArea::Equipment;
+    action.toIndex = 0;
+    CHECK(f.api.InventoryAction(action));
+    CHECK(hasAction);
+    CHECK(received.type == action.type);
+    CHECK(received.from == action.from);
+    CHECK(received.fromIndex == 0);
+    CHECK(received.to == action.to);
+    CHECK(received.toIndex == 0);
+
+    f.api.PlayInventoryClick();
+    CHECK(clicks == 1);
+
+    f.ctx.inventoryAction = nullptr;
+    CHECK_FALSE(f.api.InventoryAction(action));
+}
+
+TEST_CASE("脚本存档 UI：Save API 列表、读档、删除与快速保存") {
+    Fixture f;
+    save::SaveMetadata first;
+    first.id = "save-one";
+    first.name = "第一次存档";
+    first.updatedAt = 1;
+    first.mapId = "village_demo";
+    first.gameVersion = "0.3.0";
+    save::SaveMetadata second;
+    second.id = "save-two";
+    second.updatedAt = 2;
+    std::vector<save::SaveMetadata> source{first, second};
+
+    f.ctx.listSaves = [&source](std::vector<save::SaveMetadata>& out,
+                                std::string& error) {
+        out = source;
+        error.clear();
+        return true;
+    };
+    std::string loadedId;
+    f.ctx.loadSave = [&loadedId](const std::string& id, std::string& error) {
+        if (id != "save-one") {
+            error = "不存在";
+            return false;
+        }
+        loadedId = id;
+        return true;
+    };
+    int quickSaves = 0;
+    f.ctx.quickSave = [&quickSaves] {
+        ++quickSaves;
+        return true;
+    };
+    std::vector<std::string> deleted;
+    f.ctx.deleteSave = [&deleted](const std::string& id, std::string& error) {
+        if (id != "save-one") {
+            error = "不存在";
+            return false;
+        }
+        deleted.push_back(id);
+        return true;
+    };
+
+    std::vector<script::ScriptSaveInfo> saves;
+    std::string error;
+    REQUIRE(f.api.ListSaves(saves, error));
+    REQUIRE(saves.size() == 2);
+    CHECK(saves[0].id == "save-one");
+    CHECK(saves[0].name == "第一次存档");
+    CHECK(saves[0].mapId == "village_demo");
+    CHECK_FALSE(saves[0].updatedText.empty());
+    CHECK(saves[1].name == "save-two");  // 空名称回退到 id
+
+    CHECK(f.api.LoadSave("save-one", error));
+    CHECK(loadedId == "save-one");
+    CHECK_FALSE(f.api.LoadSave("missing", error));
+    CHECK(error == "不存在");
+    CHECK_FALSE(f.api.LoadSave("", error));
+    CHECK(f.api.QuickSave());
+    CHECK(quickSaves == 1);
+
+    CHECK(f.api.DeleteSave("save-one", error));
+    CHECK(deleted.size() == 1);
+    CHECK(deleted[0] == "save-one");
+    CHECK_FALSE(f.api.DeleteSave("missing", error));
+    CHECK(error == "不存在");
+    CHECK_FALSE(f.api.DeleteSave("", error));
+    CHECK(error == "存档 id 为空");
+
+    f.ctx.listSaves = nullptr;
+    CHECK_FALSE(f.api.ListSaves(saves, error));
+    f.ctx.quickSave = nullptr;
+    CHECK_FALSE(f.api.QuickSave());
+    f.ctx.deleteSave = nullptr;
+    CHECK_FALSE(f.api.DeleteSave("save-one", error));
+    CHECK(error == "删除存档不可用");
 }

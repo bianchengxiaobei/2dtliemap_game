@@ -25,7 +25,7 @@ save::ComponentRegistry MakeRegistry() {
     std::string error;
     REQUIRE(save::RegisterBuiltinComponents(registry, &error));
     CHECK(error.empty());
-    CHECK(registry.Size() == 11u);
+    CHECK(registry.Size() == 13u);
     return registry;
 }
 
@@ -40,6 +40,19 @@ void AddPlayerComponents(ecs::EcsWorld& world, ecs::Entity entity) {
     registry.emplace<ecs::Health>(entity, ecs::Health{82.5f, 100.0f});
     registry.emplace<ecs::Needs>(entity, ecs::Needs{0.1f, 0.2f, 0.3f});
     registry.emplace<ecs::PlayerTag>(entity);
+    registry.emplace<ecs::KnownRecipes>(
+        entity, ecs::KnownRecipes{{"campfire_beans", "field_bandage"}});
+    ecs::CraftingJob job;
+    job.active = true;
+    job.recipeId = "campfire_beans";
+    job.elapsed = 0.4f;
+    job.duration = 1.0f;
+    job.toolEfficiency = 0.75f;
+    job.batchTotal = 3;
+    job.batchCompleted = 1;
+    job.queue = {ecs::CraftQueueItem{"field_bandage", 2},
+                 ecs::CraftQueueItem{"campfire_beans", 1}};
+    registry.emplace<ecs::CraftingJob>(entity, std::move(job));
 
     ecs::Container bag;
     bag.capacityKg = 15.0f;
@@ -110,8 +123,14 @@ TEST_CASE("M10-T3 玩家与物品栏按 StableId 往返") {
     REQUIRE(save::CapturePlayer(source, components, &saved, &error));
     CHECK(error.empty());
     CHECK(saved.stableId == source.IdOf(player).id);
-    CHECK(saved.components.size() == 9u);
+    CHECK(saved.components.size() == 11u);
     CHECK(FindComponent(saved, save::kSaveComponentItem) == nullptr);
+    const save::SavedComponent* knownComponent =
+        FindComponent(saved, save::kSaveComponentKnownRecipes);
+    REQUIRE(knownComponent != nullptr);
+    const save::SavedComponent* craftingComponent =
+        FindComponent(saved, save::kSaveComponentCraftingJob);
+    REQUIRE(craftingComponent != nullptr);
     const save::SavedComponent* containerComponent =
         FindComponent(saved, save::kSaveComponentContainer);
     REQUIRE(containerComponent != nullptr);
@@ -165,6 +184,26 @@ TEST_CASE("M10-T3 玩家与物品栏按 StableId 往返") {
     const auto* facing = registry.try_get<ecs::Facing>(loaded);
     REQUIRE(facing != nullptr);
     CHECK(facing->dir == ecs::Direction::Right);
+    const auto* known = registry.try_get<ecs::KnownRecipes>(loaded);
+    REQUIRE(known != nullptr);
+    REQUIRE(known->recipeIds.size() == 2u);
+    CHECK(known->recipeIds[0] == "campfire_beans");
+    CHECK(known->recipeIds[1] == "field_bandage");
+
+    const auto* job = registry.try_get<ecs::CraftingJob>(loaded);
+    REQUIRE(job != nullptr);
+    CHECK(job->active);
+    CHECK(job->recipeId == "campfire_beans");
+    CHECK(job->elapsed == doctest::Approx(0.4f));
+    CHECK(job->duration == doctest::Approx(1.0f));
+    CHECK(job->toolEfficiency == doctest::Approx(0.75f));
+    CHECK(job->batchTotal == 3);
+    CHECK(job->batchCompleted == 1);
+    REQUIRE(job->queue.size() == 2u);
+    CHECK(job->queue[0].recipeId == "field_bandage");
+    CHECK(job->queue[0].count == 2);
+    CHECK(job->queue[1].recipeId == "campfire_beans");
+    CHECK(job->queue[1].count == 1);
 
     const auto* bag = registry.try_get<ecs::Container>(loaded);
     REQUIRE(bag != nullptr);
@@ -188,6 +227,34 @@ TEST_CASE("M10-T3 玩家与物品栏按 StableId 往返") {
     CHECK(primary->defId == "axe");
     CHECK(primary->condition == doctest::Approx(0.8f));
     CHECK(body->defId == "jacket");
+}
+
+TEST_CASE("M10-T3 CraftingJob 拒绝非法批次与队列") {
+    const save::ComponentRegistry components = MakeRegistry();
+    std::string error;
+
+    ecs::EcsWorld invalidProgressWorld;
+    const ecs::Entity invalidProgress = invalidProgressWorld.Create();
+    AddPlayerComponents(invalidProgressWorld, invalidProgress);
+    auto& progressJob = invalidProgressWorld.Registry()
+                            .get<ecs::CraftingJob>(invalidProgress);
+    progressJob.batchCompleted = progressJob.batchTotal;
+    save::SavedEntity rejected;
+    CHECK_FALSE(
+        save::CapturePlayer(invalidProgressWorld, components, &rejected, &error));
+    CHECK_FALSE(error.empty());
+
+    ecs::EcsWorld invalidQueueWorld;
+    const ecs::Entity invalidQueue = invalidQueueWorld.Create();
+    AddPlayerComponents(invalidQueueWorld, invalidQueue);
+    auto& queueJob =
+        invalidQueueWorld.Registry().get<ecs::CraftingJob>(invalidQueue);
+    queueJob.queue.assign(static_cast<std::size_t>(ecs::kMaxCraftQueueEntries) + 1,
+                          ecs::CraftQueueItem{"field_bandage", 1});
+    error.clear();
+    CHECK_FALSE(
+        save::CapturePlayer(invalidQueueWorld, components, &rejected, &error));
+    CHECK_FALSE(error.empty());
 }
 
 TEST_CASE("M10-T3 全量快照保留 StableId、排序与 Corpse 引用") {
@@ -227,7 +294,7 @@ TEST_CASE("M10-T3 全量快照保留 StableId、排序与 Corpse 引用") {
     CHECK(FindEntity(snapshot, playerId) != nullptr);
     const save::SavedEntity* savedPlayer = FindEntity(snapshot, playerId);
     REQUIRE(savedPlayer != nullptr);
-    CHECK(savedPlayer->components.size() == 9u);
+    CHECK(savedPlayer->components.size() == 11u);
     CHECK(FindComponent(*savedPlayer, save::kSaveComponentContainer) != nullptr);
 
     save::EntitySnapshot filtered;

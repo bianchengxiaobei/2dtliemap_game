@@ -205,6 +205,10 @@ void ScriptManager::SetEventBus(core::EventBus* events) {
     m_events = events;
 }
 
+void ScriptManager::SetModDisabledHandler(ModDisabledHandler handler) {
+    m_onModDisabled = std::move(handler);
+}
+
 bool ScriptManager::IsModDisabled(std::string_view modId) const {
     const ModRecord* record = FindMod(modId);
     return record != nullptr && record->disabled;
@@ -246,6 +250,9 @@ void ScriptManager::DisableMod(ModRecord& record, std::string reason) {
     record.disableReason = std::move(reason);
     ZL_ERROR(kModule, "mod 已禁用：[{}]（原因：{}；热重载成功后恢复）", record.info.id,
              record.disableReason);
+    if (m_onModDisabled) {
+        m_onModDisabled(record.info.id);
+    }
 }
 
 }  // namespace zl::script

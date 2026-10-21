@@ -1,5 +1,6 @@
 #include "script/ScriptApi.h"
 
+#include <ctime>
 #include <utility>
 
 #include <entt/entt.hpp>
@@ -17,11 +18,35 @@
 #include "game/ZombieFactory.h"
 #include "items/InventoryOps.h"
 #include "physics/PhysicsWorld.h"
+#include "ui/HudState.h"
+#include "ui/UiInput.h"
 
 namespace zl::script {
 namespace {
 
 constexpr const char* kModule = "script-api";
+
+std::string FormatSaveTime(std::int64_t epochSeconds) {
+    if (epochSeconds <= 0) {
+        return {};
+    }
+    const std::time_t value = static_cast<std::time_t>(epochSeconds);
+    std::tm local{};
+#if defined(_WIN32)
+    if (localtime_s(&local, &value) != 0) {
+        return {};
+    }
+#else
+    if (localtime_r(&value, &local) == nullptr) {
+        return {};
+    }
+#endif
+    char text[32] = {};
+    if (std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &local) == 0) {
+        return {};
+    }
+    return text;
+}
 
 }  // namespace
 
@@ -52,6 +77,159 @@ double ScriptApi::GetTotalGameMinutes() const {
         return 0.0;
     }
     return m_ctx->gameTime->TotalGameMinutes();
+}
+
+bool ScriptApi::GetHudState(ui::HudState& out) const {
+    if (m_ctx == nullptr) {
+        out = {};
+        return false;
+    }
+    out = m_ctx->hudState;
+    return out.active;
+}
+
+bool ScriptApi::ToggleInventory() const {
+    return m_ctx != nullptr && m_ctx->toggleInventory && m_ctx->toggleInventory();
+}
+
+bool ScriptApi::IsInventoryOpen() const {
+    return m_ctx != nullptr && m_ctx->isInventoryOpen && m_ctx->isInventoryOpen();
+}
+
+bool ScriptApi::IsMenuOpen() const {
+    return m_ctx != nullptr && m_ctx->isMenuOpen && m_ctx->isMenuOpen();
+}
+
+bool ScriptApi::GetMenuState(ui::MenuState& out) const {
+    if (m_ctx == nullptr || !m_ctx->getMenuState) {
+        out = {};
+        return false;
+    }
+    return m_ctx->getMenuState(out);
+}
+
+bool ScriptApi::ApplyMenuSettings(const ui::MenuSettings& settings,
+                                  std::string& error) const {
+    if (m_ctx == nullptr || !m_ctx->applyMenuSettings) {
+        error = "设置保存不可用";
+        return false;
+    }
+    return m_ctx->applyMenuSettings(settings, error);
+}
+
+bool ScriptApi::MenuAction(const std::string& action) const {
+    if (m_ctx == nullptr || !m_ctx->menuAction) {
+        return false;
+    }
+    ui::MenuActionType type;
+    if (action == "new_game") {
+        type = ui::MenuActionType::NewGame;
+    } else if (action == "multiplayer") {
+        type = ui::MenuActionType::Multiplayer;
+    } else if (action == "continue") {
+        type = ui::MenuActionType::Continue;
+    } else if (action == "resume") {
+        type = ui::MenuActionType::Resume;
+    } else if (action == "return_to_main") {
+        type = ui::MenuActionType::ReturnToMainMenu;
+    } else if (action == "quit") {
+        type = ui::MenuActionType::Quit;
+    } else {
+        return false;
+    }
+    m_ctx->menuAction(type);
+    return true;
+}
+
+std::string ScriptApi::MenuKeyName(int rmlKey) const {
+    return ui::KeyNameFromRmlKey(static_cast<Rml::Input::KeyIdentifier>(rmlKey));
+}
+
+void ScriptApi::PlayUiClick() const {
+    if (m_ctx != nullptr && m_ctx->playUiClick) {
+        m_ctx->playUiClick();
+    }
+}
+
+bool ScriptApi::GetInventoryState(ui::InventoryState& out) const {
+    if (m_ctx == nullptr || !m_ctx->getInventoryState) {
+        out = {};
+        return false;
+    }
+    return m_ctx->getInventoryState(out);
+}
+
+bool ScriptApi::InventoryAction(const ui::InventoryAction& action) const {
+    return m_ctx != nullptr && m_ctx->inventoryAction && m_ctx->inventoryAction(action);
+}
+
+void ScriptApi::PlayInventoryClick() const {
+    if (m_ctx != nullptr && m_ctx->playInventoryClick) {
+        m_ctx->playInventoryClick();
+    }
+}
+
+bool ScriptApi::ListSaves(std::vector<ScriptSaveInfo>& out, std::string& error) const {
+    out.clear();
+    if (m_ctx == nullptr || !m_ctx->listSaves) {
+        error = "存档列表不可用";
+        return false;
+    }
+    std::vector<save::SaveMetadata> saves;
+    if (!m_ctx->listSaves(saves, error)) {
+        return false;
+    }
+    out.reserve(saves.size());
+    for (const save::SaveMetadata& entry : saves) {
+        ScriptSaveInfo info;
+        info.id = entry.id;
+        info.name = entry.name.empty() ? entry.id : entry.name;
+        info.updatedText = FormatSaveTime(entry.updatedAt);
+        info.mapId = entry.mapId;
+        info.gameVersion = entry.gameVersion;
+        out.push_back(std::move(info));
+    }
+    return true;
+}
+
+bool ScriptApi::LoadSave(const std::string& id, std::string& error) const {
+    if (id.empty()) {
+        error = "存档 id 为空";
+        return false;
+    }
+    if (m_ctx == nullptr || !m_ctx->loadSave) {
+        error = "读档不可用";
+        return false;
+    }
+    if (!m_ctx->loadSave(id, error)) {
+        if (error.empty()) {
+            error = "读取存档失败";
+        }
+        return false;
+    }
+    return true;
+}
+
+bool ScriptApi::DeleteSave(const std::string& id, std::string& error) const {
+    if (id.empty()) {
+        error = "存档 id 为空";
+        return false;
+    }
+    if (m_ctx == nullptr || !m_ctx->deleteSave) {
+        error = "删除存档不可用";
+        return false;
+    }
+    if (!m_ctx->deleteSave(id, error)) {
+        if (error.empty()) {
+            error = "删除存档失败";
+        }
+        return false;
+    }
+    return true;
+}
+
+bool ScriptApi::QuickSave() const {
+    return m_ctx != nullptr && m_ctx->quickSave && m_ctx->quickSave();
 }
 
 bool ScriptApi::GetPlayerPosition(ScriptVec3& out) const {

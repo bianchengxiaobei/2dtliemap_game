@@ -3,6 +3,7 @@
 #include <GLFW/glfw3.h>
 
 #include "core/Input.h"
+#include "platform/KeyNames.h"
 
 namespace zl::ui {
 
@@ -123,6 +124,25 @@ int ModifiersFromInput(const core::Input& input) {
         modifiers |= Rml::Input::KM_ALT;
     }
     return modifiers;
+}
+
+std::string KeyNameFromRmlKey(Rml::Input::KeyIdentifier key) {
+    if (key == Rml::Input::KI_UNKNOWN) {
+        return {};
+    }
+    for (int glfwKey = GLFW_KEY_SPACE; glfwKey <= GLFW_KEY_LAST; ++glfwKey) {
+        if (ToRmlKey(glfwKey) != key) {
+            continue;
+        }
+        if (glfwKey == GLFW_KEY_LEFT_SHIFT || glfwKey == GLFW_KEY_RIGHT_SHIFT ||
+            glfwKey == GLFW_KEY_LEFT_CONTROL || glfwKey == GLFW_KEY_RIGHT_CONTROL ||
+            glfwKey == GLFW_KEY_LEFT_ALT || glfwKey == GLFW_KEY_RIGHT_ALT ||
+            glfwKey == GLFW_KEY_LEFT_SUPER || glfwKey == GLFW_KEY_RIGHT_SUPER) {
+            return {};
+        }
+        return platform::KeyNameFromCode(glfwKey);
+    }
+    return {};
 }
 
 }  // namespace zl::ui

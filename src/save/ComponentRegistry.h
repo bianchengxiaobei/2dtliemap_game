@@ -42,6 +42,10 @@ inline constexpr std::uint32_t kSaveComponentEquipment =
     MakeMagic('E', 'Q', 'P', 'M');
 inline constexpr std::uint32_t kSaveComponentCorpse =
     MakeMagic('C', 'O', 'R', 'P');
+inline constexpr std::uint32_t kSaveComponentKnownRecipes =
+    MakeMagic('K', 'N', 'R', 'C');
+inline constexpr std::uint32_t kSaveComponentCraftingJob =
+    MakeMagic('C', 'R', 'F', 'T');
 
 struct ComponentCodec {
     std::uint32_t type = 0;

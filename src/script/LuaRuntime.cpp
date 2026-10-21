@@ -14,6 +14,9 @@
 #include "core/EventBus.h"
 #include "core/Log.h"
 #include "script/ScriptApi.h"
+#include "script/ScriptUiApi.h"
+#include "ui/HudState.h"
+#include "ui/ScriptUiHost.h"
 
 namespace zl::script {
 namespace {
@@ -139,6 +142,7 @@ struct LuaRuntime::Impl {
     std::unordered_map<std::string, ModEntry> mods;
     std::vector<std::string> loadedIds;
     const ScriptApi* api = nullptr;
+    ui::ScriptUiHost* uiHost = nullptr;
     bool initialized = false;
     // 指令预算（hook 触发，见 kMaxInstructionsPerCall；启动后仅由主线程访问）
     bool budgetActive = false;
@@ -167,9 +171,12 @@ struct LuaRuntime::Impl {
     // Host API 表（M7-T3/T4）：Game/Log/Player/World/Items/Zombies/Events；
     // 每 mod 独立绑定（Log 前缀、事件表与定时器均按 mod 隔离）。
     // api 为 nullptr 时绑定安全默认值的空壳。
-    void BindApiTables(sol::environment& env, const std::string& modId, sol::table handlers,
+    void BindApiTables(sol::environment& env, const ModInfo& mod, sol::table handlers,
                        const std::shared_ptr<std::vector<Timer>>& timers) {
         const ScriptApi* scriptApi = api;
+        const std::string& modId = mod.id;
+
+        auto uiApi = std::make_shared<ScriptUiApi>(uiHost, mod.id, mod.rootPath);
 
         sol::table game = NewTable(lua->lua_state());
         game["GetTick"] = [scriptApi]() -> std::int64_t {
@@ -190,6 +197,15 @@ struct LuaRuntime::Impl {
                 out["totalMinutes"] = scriptApi->GetTotalGameMinutes();
             }
             return out;
+        };
+        game["ToggleInventory"] = [scriptApi]() -> bool {
+            return scriptApi != nullptr && scriptApi->ToggleInventory();
+        };
+        game["IsInventoryOpen"] = [scriptApi]() -> bool {
+            return scriptApi != nullptr && scriptApi->IsInventoryOpen();
+        };
+        game["IsMenuOpen"] = [scriptApi]() -> bool {
+            return scriptApi != nullptr && scriptApi->IsMenuOpen();
         };
         // M7-T4：一次性定时器（seconds 为游戏秒；回调在后续 OnTick 泵出）
         game["SetTimer"] = [scriptApi, timers](double seconds, sol::function fn) {
@@ -278,6 +294,410 @@ struct LuaRuntime::Impl {
             return scriptApi != nullptr ? scriptApi->ItemName(defId) : std::string();
         };
         env["Items"] = itemsApi;
+
+        sol::table hud = NewTable(lua->lua_state(), 16);
+        hud["GetState"] = [scriptApi](sol::this_state ts) -> sol::table {
+            sol::table out = NewTable(ts.L, 16);
+            ui::HudState state;
+            if (scriptApi != nullptr) {
+                (void)scriptApi->GetHudState(state);
+            }
+            out["active"] = state.active;
+            out["day"] = state.day;
+            out["time"] = state.time;
+            out["speed"] = state.speed;
+            out["playerValid"] = state.playerValid;
+            out["health"] = state.health;
+            out["healthMax"] = state.healthMax;
+            out["stamina"] = state.stamina;
+            out["staminaMax"] = state.staminaMax;
+            out["selectedSlot"] = state.selectedSlot;
+            out["notice"] = state.notice;
+            out["noticeTone"] = state.noticeTone;
+            out["noticeRemaining"] = state.noticeRemaining;
+            out["noticeDuration"] = state.noticeDuration;
+            sol::table slots = NewTable(ts.L, 5);
+            for (std::size_t i = 0; i < state.slots.size(); ++i) {
+                sol::table slot = NewTable(ts.L, 2);
+                slot["label"] = state.slots[i].label;
+                slot["count"] = state.slots[i].count;
+                slots[i + 1] = slot;
+            }
+            out["slots"] = slots;
+            return out;
+        };
+        env["Hud"] = hud;
+
+        sol::table menu = NewTable(lua->lua_state(), 8);
+        menu["GetState"] = [scriptApi](sol::this_state ts) -> sol::table {
+            ui::MenuState state;
+            if (scriptApi != nullptr) {
+                (void)scriptApi->GetMenuState(state);
+            }
+            sol::table out = NewTable(ts.L, 10);
+            out["open"] = state.open;
+            out["pauseMode"] = state.pauseMode;
+            out["canContinue"] = state.canContinue;
+            out["volume"] = state.settings.volume;
+            out["musicVolume"] = state.settings.musicVolume;
+            out["sfxVolume"] = state.settings.sfxVolume;
+            out["ambientVolume"] = state.settings.ambientVolume;
+            sol::table bindings = NewTable(ts.L, 10);
+            for (std::size_t i = 0; i < state.settings.bindings.size(); ++i) {
+                const ui::MenuKeyBinding& binding = state.settings.bindings[i];
+                sol::table item = NewTable(ts.L, 3);
+                item["action"] = binding.action;
+                item["label"] = binding.label;
+                item["key"] = binding.key;
+                bindings[i + 1] = item;
+            }
+            out["bindings"] = bindings;
+            return out;
+        };
+        menu["Action"] = [scriptApi](const std::string& action) -> bool {
+            return scriptApi != nullptr && scriptApi->MenuAction(action);
+        };
+        menu["ApplySettings"] = [scriptApi](sol::this_state ts,
+                                            sol::table settings) -> sol::table {
+            sol::table result = NewTable(ts.L, 2);
+            ui::MenuSettings parsed;
+            parsed.volume = settings["volume"].get_or(parsed.volume);
+            parsed.musicVolume = settings["musicVolume"].get_or(parsed.musicVolume);
+            parsed.sfxVolume = settings["sfxVolume"].get_or(parsed.sfxVolume);
+            parsed.ambientVolume = settings["ambientVolume"].get_or(parsed.ambientVolume);
+            sol::object rawBindings = settings["bindings"];
+            if (!rawBindings.is<sol::table>()) {
+                result["ok"] = false;
+                result["error"] = "bindings 必须是数组";
+                return result;
+            }
+            sol::table bindings = rawBindings.as<sol::table>();
+            for (std::size_t i = 1; i <= bindings.size(); ++i) {
+                sol::object raw = bindings[i];
+                if (!raw.is<sol::table>()) {
+                    result["ok"] = false;
+                    result["error"] = "bindings 项必须是表";
+                    return result;
+                }
+                sol::table item = raw.as<sol::table>();
+                ui::MenuKeyBinding binding;
+                binding.action = item["action"].get_or(std::string());
+                binding.label = item["label"].get_or(std::string());
+                binding.key = item["key"].get_or(std::string());
+                parsed.bindings.push_back(std::move(binding));
+            }
+            std::string error;
+            const bool ok = scriptApi != nullptr &&
+                            scriptApi->ApplyMenuSettings(parsed, error);
+            result["ok"] = ok;
+            result["error"] = ok ? std::string() : (error.empty() ? "保存设置失败" : error);
+            return result;
+        };
+        menu["KeyName"] = [scriptApi](int key) -> std::string {
+            return scriptApi != nullptr ? scriptApi->MenuKeyName(key) : std::string();
+        };
+        menu["PlayClick"] = [scriptApi] {
+            if (scriptApi != nullptr) {
+                scriptApi->PlayUiClick();
+            }
+        };
+        env["Menu"] = menu;
+
+        sol::table save = NewTable(lua->lua_state(), 6);
+        save["List"] = [scriptApi](sol::this_state ts) -> sol::table {
+            std::vector<ScriptSaveInfo> saves;
+            std::string error;
+            const bool ok = scriptApi != nullptr && scriptApi->ListSaves(saves, error);
+            sol::table out = NewTable(ts.L, 3);
+            out["ok"] = ok;
+            out["error"] = ok ? std::string() : (error.empty() ? "读取存档列表失败" : error);
+            sol::table list = NewTable(ts.L, static_cast<int>(saves.size()));
+            for (std::size_t i = 0; i < saves.size(); ++i) {
+                const ScriptSaveInfo& entry = saves[i];
+                sol::table item = NewTable(ts.L, 5);
+                item["id"] = entry.id;
+                item["name"] = entry.name;
+                item["updatedText"] = entry.updatedText;
+                item["mapId"] = entry.mapId;
+                item["gameVersion"] = entry.gameVersion;
+                list[i + 1] = item;
+            }
+            out["saves"] = list;
+            return out;
+        };
+        save["Load"] = [scriptApi](sol::this_state ts, const std::string& id) -> sol::table {
+            std::string error;
+            const bool ok = scriptApi != nullptr && scriptApi->LoadSave(id, error);
+            sol::table out = NewTable(ts.L, 2);
+            out["ok"] = ok;
+            out["error"] = ok ? std::string() : (error.empty() ? "读取存档失败" : error);
+            return out;
+        };
+        save["Delete"] = [scriptApi](sol::this_state ts, const std::string& id) -> sol::table {
+            std::string error;
+            const bool ok = scriptApi != nullptr && scriptApi->DeleteSave(id, error);
+            sol::table out = NewTable(ts.L, 2);
+            out["ok"] = ok;
+            out["error"] = ok ? std::string() : (error.empty() ? "删除存档失败" : error);
+            return out;
+        };
+        save["QuickSave"] = [scriptApi]() -> bool {
+            return scriptApi != nullptr && scriptApi->QuickSave();
+        };
+        env["Save"] = save;
+
+        sol::table inventory = NewTable(lua->lua_state(), 8);
+        inventory["GetState"] = [scriptApi](sol::this_state ts) -> sol::table {
+            ui::InventoryState state;
+            if (scriptApi != nullptr) {
+                (void)scriptApi->GetInventoryState(state);
+            }
+            sol::table out = NewTable(ts.L, 12);
+            out["open"] = state.open;
+            out["playerValid"] = state.playerValid;
+            out["weight"] = state.weight;
+            out["capacity"] = state.capacity;
+            out["bagStacks"] = state.bagStacks;
+            out["lootStacks"] = state.lootStacks;
+            out["status"] = state.status;
+            out["statusTone"] = state.statusTone;
+            sol::table recipes =
+                NewTable(ts.L, static_cast<int>(state.recipes.size()));
+            for (std::size_t i = 0; i < state.recipes.size(); ++i) {
+                const ui::InventoryRecipe& entry = state.recipes[i];
+                sol::table recipe = NewTable(ts.L, 12);
+                recipe["id"] = entry.id;
+                recipe["name"] = entry.name;
+                recipe["outputDefId"] = entry.outputDefId;
+                recipe["outputLabel"] = entry.outputLabel;
+                recipe["outputCount"] = entry.outputCount;
+                recipe["known"] = entry.known;
+                recipe["canCraft"] = entry.canCraft;
+                recipe["estimatedSeconds"] = entry.estimatedSeconds;
+                recipe["station"] = entry.station;
+                recipe["stationLabel"] = entry.stationLabel;
+                recipe["stationNearby"] = entry.stationNearby;
+                sol::table ingredients =
+                    NewTable(ts.L, static_cast<int>(entry.ingredients.size()));
+                for (std::size_t j = 0; j < entry.ingredients.size(); ++j) {
+                    const ui::InventoryRecipeIngredient& ingredient =
+                        entry.ingredients[j];
+                    sol::table item = NewTable(ts.L, 3);
+                    item["label"] = ingredient.label;
+                    item["required"] = ingredient.required;
+                    item["have"] = ingredient.have;
+                    ingredients[j + 1] = item;
+                }
+                recipe["ingredients"] = ingredients;
+                sol::table tools =
+                    NewTable(ts.L, static_cast<int>(entry.tools.size()));
+                for (std::size_t j = 0; j < entry.tools.size(); ++j) {
+                    const ui::InventoryRecipeIngredient& tool = entry.tools[j];
+                    sol::table item = NewTable(ts.L, 3);
+                    item["label"] = tool.label;
+                    item["required"] = tool.required;
+                    item["have"] = tool.have;
+                    tools[j + 1] = item;
+                }
+                recipe["tools"] = tools;
+                recipes[i + 1] = recipe;
+            }
+            out["recipes"] = recipes;
+            sol::table crafting = NewTable(ts.L, 8);
+            crafting["active"] = state.crafting.active;
+            crafting["recipeId"] = state.crafting.recipeId;
+            crafting["outputLabel"] = state.crafting.outputLabel;
+            crafting["outputCount"] = state.crafting.outputCount;
+            crafting["elapsed"] = state.crafting.elapsed;
+            crafting["duration"] = state.crafting.duration;
+            crafting["progress"] = state.crafting.progress;
+            crafting["toolEfficiency"] = state.crafting.toolEfficiency;
+            crafting["batchCount"] = state.crafting.batchCount;
+            crafting["completedCount"] = state.crafting.completedCount;
+            sol::table queue =
+                NewTable(ts.L, static_cast<int>(state.crafting.queue.size()));
+            for (std::size_t i = 0; i < state.crafting.queue.size(); ++i) {
+                const ui::InventoryQueuedCraft& entry = state.crafting.queue[i];
+                sol::table item = NewTable(ts.L, 4);
+                item["recipeId"] = entry.recipeId;
+                item["outputLabel"] = entry.outputLabel;
+                item["outputCount"] = entry.outputCount;
+                item["count"] = entry.count;
+                queue[i + 1] = item;
+            }
+            crafting["queue"] = queue;
+            out["crafting"] = crafting;
+            auto appendSlots = [&](sol::table& target, const auto& source) {
+                for (std::size_t i = 0; i < source.size(); ++i) {
+                    const ui::InventorySlot& entry = source[i];
+                    sol::table slot = NewTable(ts.L, 9);
+                    slot["filled"] = entry.filled;
+                    slot["label"] = entry.label;
+                    slot["count"] = entry.count;
+                    slot["usable"] = entry.usable;
+                    slot["equippable"] = entry.equippable;
+                    slot["entityId"] = entry.entityId;
+                    slot["condition"] = entry.condition;
+                    slot["damaged"] = entry.damaged;
+                    slot["repairAvailable"] = entry.repairAvailable;
+                    target[i + 1] = slot;
+                }
+            };
+            sol::table bag = NewTable(ts.L, static_cast<int>(state.bag.size()));
+            sol::table equipment =
+                NewTable(ts.L, static_cast<int>(state.equipment.size()));
+            sol::table loot = NewTable(ts.L, static_cast<int>(state.loot.size()));
+            appendSlots(bag, state.bag);
+            appendSlots(equipment, state.equipment);
+            appendSlots(loot, state.loot);
+            out["bag"] = bag;
+            out["equipment"] = equipment;
+            out["loot"] = loot;
+            return out;
+        };
+        inventory["Action"] = [scriptApi](sol::table action) -> bool {
+            if (scriptApi == nullptr) {
+                return false;
+            }
+            auto parseArea = [](const std::string& value,
+                                ui::InventoryArea& out) -> bool {
+                if (value == "bag" || value == "backpack") {
+                    out = ui::InventoryArea::Backpack;
+                } else if (value == "equipment") {
+                    out = ui::InventoryArea::Equipment;
+                } else if (value == "loot") {
+                    out = ui::InventoryArea::Loot;
+                } else {
+                    return false;
+                }
+                return true;
+            };
+            ui::InventoryAction parsed;
+            const std::string type = action["type"].get_or(std::string());
+            if (type == "transfer") {
+                parsed.type = ui::InventoryActionType::Transfer;
+            } else if (type == "use") {
+                parsed.type = ui::InventoryActionType::Use;
+            } else if (type == "equip") {
+                parsed.type = ui::InventoryActionType::Equip;
+            } else if (type == "unequip") {
+                parsed.type = ui::InventoryActionType::Unequip;
+            } else if (type == "drop") {
+                parsed.type = ui::InventoryActionType::Drop;
+            } else if (type == "pickup") {
+                parsed.type = ui::InventoryActionType::Pickup;
+            } else if (type == "craft") {
+                parsed.type = ui::InventoryActionType::Craft;
+            } else if (type == "cancel_craft") {
+                parsed.type = ui::InventoryActionType::CancelCraft;
+            } else if (type == "repair") {
+                parsed.type = ui::InventoryActionType::Repair;
+            } else if (type == "queue_up") {
+                parsed.type = ui::InventoryActionType::QueueMoveUp;
+            } else if (type == "queue_down") {
+                parsed.type = ui::InventoryActionType::QueueMoveDown;
+            } else if (type == "queue_remove") {
+                parsed.type = ui::InventoryActionType::QueueRemove;
+            } else if (type == "queue_count") {
+                parsed.type = ui::InventoryActionType::QueueSetCount;
+            } else {
+                return false;
+            }
+            if (!parseArea(action["from"].get_or(std::string("bag")), parsed.from) ||
+                !parseArea(action["to"].get_or(std::string("bag")), parsed.to)) {
+                return false;
+            }
+            parsed.fromIndex = action["fromIndex"].get_or(-1);
+            parsed.toIndex = action["toIndex"].get_or(-1);
+            parsed.fromEntityId = action["fromEntityId"].get_or<std::uint64_t>(0);
+            parsed.count = std::clamp(action["count"].get_or(1), 1, 99);
+            return scriptApi->InventoryAction(parsed);
+        };
+        inventory["Close"] = [scriptApi]() -> bool {
+            if (scriptApi == nullptr || !scriptApi->IsInventoryOpen()) {
+                return false;
+            }
+            return !scriptApi->ToggleInventory();
+        };
+        inventory["PlayClick"] = [scriptApi] {
+            if (scriptApi != nullptr) {
+                scriptApi->PlayInventoryClick();
+            }
+        };
+        env["Inventory"] = inventory;
+
+        sol::table ui = NewTable(lua->lua_state(), 16);
+        ui["LoadDocument"] = [uiApi](const std::string& documentId, const std::string& path,
+                                     sol::optional<bool> show, sol::optional<bool> modal,
+                                     sol::optional<std::string> group) {
+            return uiApi->LoadDocument(documentId, path, show.value_or(true),
+                                       modal.value_or(false), group.value_or(""));
+        };
+        ui["OpenDocument"] = [uiApi](const std::string& documentId, const std::string& path,
+                                     sol::optional<bool> modal,
+                                     sol::optional<std::string> group) {
+            return uiApi->OpenDocument(documentId, path, modal.value_or(true),
+                                       group.value_or(""));
+        };
+        ui["CloseDocument"] = [uiApi](const std::string& documentId,
+                                      sol::optional<bool> unload) {
+            return uiApi->CloseDocument(documentId, unload.value_or(false));
+        };
+        ui["UnloadDocument"] = [uiApi](const std::string& documentId) {
+            return uiApi->UnloadDocument(documentId);
+        };
+        ui["UnloadGroup"] = [uiApi](const std::string& group) {
+            uiApi->UnloadGroup(group);
+        };
+        ui["Show"] = [uiApi](const std::string& documentId, sol::optional<bool> visible) {
+            return uiApi->Show(documentId, visible.value_or(true));
+        };
+        ui["IsLoaded"] = [uiApi](const std::string& documentId) {
+            return uiApi->IsLoaded(documentId);
+        };
+        ui["IsVisible"] = [uiApi](const std::string& documentId) {
+            return uiApi->IsVisible(documentId);
+        };
+        ui["SetModal"] = [uiApi](const std::string& documentId, bool modal) {
+            return uiApi->SetModal(documentId, modal);
+        };
+        ui["IsInputCaptured"] = [uiApi]() { return uiApi->IsInputCaptured(); };
+        ui["SetText"] = [uiApi](const std::string& documentId, const std::string& elementId,
+                                const std::string& text) {
+            return uiApi->SetText(documentId, elementId, text);
+        };
+        ui["SetAttribute"] = [uiApi](const std::string& documentId,
+                                     const std::string& elementId, const std::string& name,
+                                     const std::string& value) {
+            return uiApi->SetAttribute(documentId, elementId, name, value);
+        };
+        ui["RemoveAttribute"] = [uiApi](const std::string& documentId,
+                                        const std::string& elementId,
+                                        const std::string& name) {
+            return uiApi->RemoveAttribute(documentId, elementId, name);
+        };
+        ui["SetClass"] = [uiApi](const std::string& documentId, const std::string& elementId,
+                                 const std::string& className, sol::optional<bool> enabled) {
+            return uiApi->SetClass(documentId, elementId, className, enabled.value_or(true));
+        };
+        ui["SetProperty"] = [uiApi](const std::string& documentId,
+                                    const std::string& elementId,
+                                    const std::string& property,
+                                    const std::string& value) {
+            return uiApi->SetProperty(documentId, elementId, property, value);
+        };
+        ui["GetValue"] = [uiApi](const std::string& documentId,
+                                 const std::string& elementId) {
+            return uiApi->GetValue(documentId, elementId);
+        };
+        ui["SetValue"] = [uiApi](const std::string& documentId, const std::string& elementId,
+                                 const std::string& value) {
+            return uiApi->SetValue(documentId, elementId, value);
+        };
+        ui["Focus"] = [uiApi](const std::string& documentId, const std::string& elementId) {
+            return uiApi->Focus(documentId, elementId);
+        };
+        env["UI"] = ui;
 
         // M7-T4：事件订阅（Events.On/Off）。注册表按 mod 隔离（每 mod 独立 handlers 表）；
         // 派发时先拷贝出本轮函数列表：回调中 On/Off 不破坏当前遍历。
@@ -382,7 +802,7 @@ struct LuaRuntime::Impl {
         return true;
     }
 
-    sol::environment MakeModEnvironment(const std::string& modId, sol::table handlers,
+    sol::environment MakeModEnvironment(const ModInfo& mod, sol::table handlers,
                                         const std::shared_ptr<std::vector<Timer>>& timers) {
         lua_State* L = lua->lua_state();
         sol::environment env(*lua, sol::create, sandboxGlobals);
@@ -390,12 +810,12 @@ struct LuaRuntime::Impl {
         env.push();                                       // [env]
         lua_pushvalue(L, -1);
         lua_setfield(L, -2, "_G");                        // env._G = env
-        lua_pushstring(L, modId.c_str());
+        lua_pushstring(L, mod.id.c_str());
         lua_pushcclosure(L, LuaPrintBridge, 1);
         lua_setfield(L, -2, "print");                     // env.print = 重定向桥
         lua_pop(L, 1);
 
-        BindApiTables(env, modId, handlers, timers);      // Host API 表（M7-T3/T4）
+        BindApiTables(env, mod, handlers, timers);       // Host API 表（M7-T3/T4）
         return env;
     }
 
@@ -426,7 +846,7 @@ struct LuaRuntime::Impl {
         // 旧环境连带的订阅/定时器随其一起释放 → 重载 = 清订阅后重执行）
         const sol::table handlers = NewTable(lua->lua_state(), 8);
         auto timers = std::make_shared<std::vector<Timer>>();
-        sol::environment env = MakeModEnvironment(mod.id, handlers, timers);
+        sol::environment env = MakeModEnvironment(mod, handlers, timers);
         if (!RunChunk(*source, "@" + path, env, errorOut)) {
             return false;
         }
@@ -451,6 +871,10 @@ const char* LuaRuntime::Name() const {
 
 void LuaRuntime::SetApi(const ScriptApi* api) {
     m_impl->api = api;
+}
+
+void LuaRuntime::SetUiHost(ui::ScriptUiHost* host) {
+    m_impl->uiHost = host;
 }
 
 bool LuaRuntime::Initialize(std::string& errorOut) {

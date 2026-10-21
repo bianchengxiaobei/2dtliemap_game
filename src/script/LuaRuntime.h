@@ -7,6 +7,10 @@
 #include "core/ScriptEvent.h"
 #include "script/IScriptRuntime.h"
 
+namespace zl::ui {
+class ScriptUiHost;
+}
+
 namespace zl::script {
 
 class ScriptApi;
@@ -28,6 +32,7 @@ public:
 
     // Host API 接入（须在 LoadMod 前调用；nullptr = 未接入，API 调用返回安全默认值）
     void SetApi(const ScriptApi* api);
+    void SetUiHost(ui::ScriptUiHost* host);
 
     const char* Name() const override;
     bool Initialize(std::string& errorOut) override;

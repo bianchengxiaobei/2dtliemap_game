@@ -24,7 +24,7 @@ EcsWorld::Entity EcsWorld::CreateWithStableId(std::uint64_t stableId) {
     const Entity e = m_registry.create();
     m_registry.emplace<StableId>(e, StableId{stableId});
     m_byStableId.emplace(stableId, e);
-    if (stableId >= m_nextStableId) {
+    if (stableId < kExternalStableIdStart && stableId >= m_nextStableId) {
         m_nextStableId = stableId + 1;
     }
     ++m_aliveCount;

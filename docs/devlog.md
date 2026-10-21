@@ -1825,3 +1825,213 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 **结果**：Debug 240 live 从 25~31 提升到多数 45~64（偶发 vsync 临界帧 30）；Release 240 live
 稳定 60。OFF 测试 243/119554，Release 243/119555。Debug 仍不是性能构建，
 日常游玩建议 `x64-release`。
+
+## 2026-10-20 工作台制作范围
+
+**实现**：
+- `recipes-v3` 新增可选 `station`：世界对象逻辑名 `object.<station>` 标记站点（内置 `workbench` → `object.workbench`）；`RecipeRegistry` 兼容 v2/v1，v2 出现 station 会明确拒绝；station 做长度/字符集校验。
+- `game::HasStationNearby` 按格中心距离扫描已加载 chunk 的 furniture/item 层；`crafting.stationRange` 默认 2.5 格（0~10 可调）。
+- 制作开始与计时完成都检查工作台；离开范围后完成失败且不扣材料。背包快照 `recipes` 新增 `station/stationLabel/stationNearby`，`canCraft` 同时要求材料、工具、空间与工作台；Lua/Python `Inventory.GetState()` 同构。
+- `core_ui` 配方行显示“缺工作台”状态与“需要附近工作台”说明；village_demo 出生点旁放置工作台（`object.workbench` 占位帧，新增自制图集帧）。
+- `docs/mapformat.md` 记录站点用 sprite 逻辑名约定的方式，`docs/01/02/modding` 同步。
+
+**验证**：Debug OFF **267/267（120028 assertions）**、Debug Python **276/276（120116）**、Release Python **276/276（120117）** 全绿。Debug Python 首跑路径敏感 A* 5.7ms 超 5ms，复跑 3.7ms 通过（既有负载敏感项）。实机 Lua/Python 用临时 mod 发放 `jacket×1 + rag×2 + hammer×1`：远处配方 `station=workbench near=false can=false`，C++ 拒绝“需要附近工作台”；传送回出生点工作台旁后 `near=true can=true`，开始 3.00s 制作并成功，背包为 `锤子x1,加固夹克x1`；Lua/Python 同构。截图确认“缺工作台”状态、制作中进度与工作台/加固夹克；临时 mod、junction、pycache 已清理。未提交。
+
+## 2026-10-20 多制作站与篝火
+
+**实现**：
+- `crafting.stationLabels` 配置制作站显示名（`workbench`/`campfire`），`WorldDemoState::StationLabel` 统一解析并在缺省时回退 station id；`core_ui` 的缺站状态/提示从硬编码“缺工作台”泛化为“缺<stationLabel>”。
+- village_demo `chunk_7_2` 增加 `object.campfire`（局部 `(4,5)`，世界 `(74,25)`，solid）；自制图集新增 `campfire_1` 帧。
+- 新增 `cooked_beans`（烤豆子，饥饿 0.5）与 `campfire_beans`（罐头豆子→烤豆子，station=campfire，2.0s）；物品 17→18、配方 3→4。
+- 更新 `docs/01/02/modding/mapformat`；背包 UI 仍展示前 4 条。
+
+**验证**：Debug OFF **267/267（120048 assertions）**、Debug Python **276/276（120136）**、Release Python **276/276（120137）** 全绿；Debug Python 本轮 A* 3.5ms。实机 Lua/Python 在出生点：`campfire_beans:篝火 near=false can=false`，C++ 拒绝“需要附近篝火”；传送到 `(73.5,25.5)` 后 `near=true can=true`，2.00s 制作成功，背包出现 `烤豆子x1`；同一截图可见 4 条配方，玩家在篝火旁时“加固夹克”显示“缺工作台”，篝火配方显示材料状态。临时 mod、pycache 已清理，Debug 恢复 OFF、Release 保持 Python ON；未提交。
+
+## 2026-10-20 配方蓝图解锁
+
+**实现**：
+- `items-v1` 新增可选 `unlocksRecipes` 数组（1~32 个配方 id）；`magazine_cooking`（烹饪杂志，maxStack=1）解锁 `campfire_beans`，出生点附近增加散落点；`RecipeRegistry` 交叉校验未知配方引用。
+- 被任意物品引用的配方默认未学会；`WorldDemoState` 构建锁定集，玩家 `KnownRecipes` ECS 组件记录已学会 id（排序去重），`UseBlueprintItem` 消耗 1 件并学习，已全学会不消耗。`KnownRecipes` 注册为存档组件，旧存档缺失时回补空组件；开始/完成制作都校验已知状态。
+- `Inventory.GetState().recipes[]` 新增 `known`，`core_ui`（Lua/Python）显示“未学会”和“阅读对应配方杂志解锁”，未学会时禁用制作；物品 `unlocksRecipes` 使右键“使用”可用。物品 18→19、图集 44→45 帧，更新 `docs/01/02/modding`。
+
+**验证**：Debug OFF **269/269（120079 assertions）**、Debug Python **278/278（120167）**、Release Python **278/278（120168）** 全绿；Debug A* 4.9ms（<5ms）。`test_entity_save` 覆盖 `KnownRecipes` 两个 id 的存档往返。实机用 `mods_tmp`（仅 core_ui + 测试 mod）验证 Lua/Python：初始 `campfire_beans` 为 `known=false can=false`，背包有烹饪杂志；`Inventory.Action(use)` 后变为 `known=true can=true` 且杂志数量 0；在篝火旁 2.00s 制作成功，最终背包有 `烤豆子x1`。截图确认锁定行“未学会/阅读对应配方杂志解锁”，以及学会并制作后的 4 条配方/烤豆子。临时 mod、junction、pycache 已清理，Debug 恢复 OFF、Release 保持 Python ON；未提交。
+
+## 2026-10-20 批量制作
+
+**实现**：
+- `Inventory.Action({type="craft", count=N})` 支持 1~99 件批量请求；命令 `payload.flags` 高 8 位携带件数（0 兼容旧命令），Lua/Python 均解析并钳制。
+- 新增 `items::MaxCraftCount`：在容器副本上连续模拟制作，按材料、工具磨损/损坏和输出空间截断实际批次；请求超过上限时自动缩减，不修改真实背包。
+- `WorldDemoState` 以同配方逐件队列推进：每件计时完成才原子扣料，随后重算工具效率/耗时并开始下一件；中途缺料、工具、制作站或空间时停止剩余批次并保留已完成产物。取消只丢弃当前计时件。
+- 快照新增 `crafting.batchCount/completedCount`；`core_ui`（Lua/Python）在制作标题旁增加数量 `- N +`，进度显示“制作中: xxx ×N（当前/总数）”，支持取消剩余批次。更新 `docs/01/02/modding`。
+
+**验证**：Debug OFF **270/270（120096 assertions）**、Debug Python **279/279（120185）**、Release Python **279/279（120186）** 全绿；`MaxCraftCount` 测试覆盖 5 破布→2 份绷带、工具即将损坏仍只允许 1 次且不修改原容器。实机 Lua/Python 用 `mods_tmp`（core_ui + batch_test）在篝火旁验证：界面数量调到 5 后点击制作，C++ 日志为“请求 5 件，实际 3 件”，批次 `batch=3`；每 2.00s 完成一件，`done` 依次 1→2→3，最终背包 3 个烤豆子、3 个罐头全部消耗、`active=false`；截图确认数量控件、`1/3` 进度、取消按钮与完成提示。临时 mod、junction、pycache 已清理，Debug 恢复 OFF、Release 保持 Python ON；未提交。
+
+## 2026-10-20 跨配方制作队列
+
+**实现**：
+- `Inventory.Action({type="craft"})` 空闲时立即开始；已有任务时追加到 FIFO 制作队列（最多 8 项，可跨配方）。排队只校验已学会与制作站范围，材料/工具/空间在队首真正开始时重新校验，请求件数按当时上限截断。
+- `WorldDemoState` 抽出 `StartCraftBatch` / `StartNextQueuedCraft`；当前批次完成后自动开始队首并播报；任一批次中断或 `cancel_craft` 清空剩余队列，已完成产物保留。
+- `InventoryCrafting.queue` 暴露后续队列 `{recipeId, outputLabel, outputCount, count}`；`core_ui`（Lua/Python）制作中显示“加入”按钮、队列预览与“取消全部”。队列仅存在运行期，不写入存档。更新 `docs/01/02/modding`。
+
+**验证**：Debug OFF **270/270（120096 assertions）**、Debug Python **279/279（120185）**、Release Python **279/279（120186）** 全绿；Lua/Python 快照测试覆盖 `crafting.queue` 字段。实机用 `mods_tmp`（core_ui + queue_test）在篝火旁先制作 2 份绷带，再排队 1 份烤豆子：日志 `QUEUE queued ... active=true batch=2 queue=1`，随后 `QUEUE state ... batch=1 queue=0`，最终 `QUEUE final active=false bandage=2 cooked=1`；截图确认“加入”按钮、`队列: 烤豆子×1`、`2/2` 进度、`取消全部` 与完成后的背包。临时 mod、pycache 已清理，Debug 恢复 OFF、Release 保持 Python ON；未提交。
+
+## 2026-10-20 制作队列编辑
+
+**实现**：
+- `InventoryActionType` 新增 `QueueMoveUp / QueueMoveDown / QueueRemove`，Lua/Python `Inventory.Action` 支持 `queue_up / queue_down / queue_remove`；`fromIndex` 指向 `crafting.queue` 的 0-based 下标，命令管线同步校验类型边界。
+- 调序只交换相邻队列项；移除只删除指定后续项；越界、队首上移、队尾下移均拒绝并提示。编辑不取消当前制作、不扣除/返还材料；本轮调序/移除不修改队列项请求件数。
+- `core_ui`（Lua/Python）把原队列摘要行升级为选中编辑行：`队列 N/M: 配方×请求数`，`<` / `>` 切换选中项，`↑` / `↓` 调序，`×` 移除；空队列显示“队列: 空”，首尾按钮按边界禁用。选中项为 UI 本地状态，队列缩短后自动钳制。
+- 更新 `docs/01/02/modding`；`docs/modding` 补充三个队列动作与选中预览语义。
+
+**验证**：Debug OFF **270/270（120100 assertions）**、Debug Python **279/279（120193）**、Release Python **279/279（120194）** 全绿；Lua/Python 脚本测试覆盖三个新动作的解析与 `fromIndex`。实机 Lua/Python 用 `mods_tmp`（core_ui + queue_edit_test）在篝火旁验证：初始队列 `绷带,烤豆子`，`queue_down` 后为 `烤豆子,绷带`，`queue_remove` 后剩 `绷带`，再入队并 `queue_up` 后为 `烤豆子,绷带`；最终 `bandage=1 cooked=2 queue=0 active=false`，制作顺序与编辑结果一致。截图确认队列编辑行、选中位置、调序/移除按钮；临时 mod、pycache 已清理，Debug OFF、Release Python ON；未提交。
+
+## 2026-10-20 队列请求数量调整
+
+**实现**：
+- `InventoryActionType` 新增 `QueueSetCount`，Lua/Python `Inventory.Action` 支持 `queue_count`；`fromIndex` 为队列下标，`count` 为新的请求件数（1~99）。动作只修改后续队列项数量，不影响当前制作、材料、工具或队列顺序；真正开始该项时仍按材料/工具/制作站/输出空间重新校验并截断。
+- `core_ui`（Lua/Python）队列编辑行增加 `−` / `+` 按钮，按选中项请求件数调整，1 和 99 边界禁用；行摘要继续显示 `队列 N/M: 配方×请求数`。提示补充“−/+ 改数量”。
+- 更新 `docs/01/02/modding`；`docs/modding` 补充 `queue_count` 语义与数量调整不影响当前任务/材料。
+
+**验证**：Debug OFF **270/270（120102 assertions）**、Debug Python **279/279（120197）**、Release Python **279/279（120198）** 全绿；Lua/Python 脚本测试覆盖 `queue_count` 的 `fromIndex/count` 解析。实机 Lua/Python 用 `mods_tmp`（core_ui + queue_count_test）在篝火旁启动 2 份绷带、排队 1 份烤豆子后将请求改为 2：C++ 日志 `调整制作队列第 1 项数量：烤豆子 ×1 请求 1 -> 2 件`，随后 `开始队列下一项：烤豆子 ×1（请求 2 件，实际 2 件）`；最终 `bandage=2 cooked=2 beans=1 queue=0 active=false`。截图确认队列行 `队列 1/1: 烤豆子×2` 与 `−/+` 按钮；临时 mod、pycache 已清理，Debug OFF、Release Python ON；未提交。
+
+## 2026-10-20 制作队列持久化
+
+**实现**：
+- 新增玩家 `CraftingJob` ECS 组件与存档组件 `CRFT` v1：活跃批次 `recipeId/elapsed/duration/toolEfficiency/batchTotal/batchCompleted` 及后续 FIFO 队列 `{recipeId,count}`；上限 8 项、请求数 1~99，写入/读取均校验状态一致性与浮点范围。
+- `RequestQuickSave` 采集实体前调用 `SyncCraftingJobToEcs`；`RestoreCraftingJobFromEcs` 在实体内存恢复后重设计时/批次/队列，并重新校验配方存在与已学会，失效时取消任务并清空队列；制作站/材料留到继续计时完成或队首开始时校验（读档瞬间 chunk 可能尚未加载）；未知配方队列项跳过并记录存档警告。旧存档缺少组件时补建空任务。
+- 更新 `docs/01/02/modding`；解除此前“队列仅运行期、读档丢弃”的限制。
+
+**验证**：Debug OFF **271/271（120123 assertions）**、Debug Python **280/280（120218）**、Release Python **280/280（120219）** 全绿；`test_entity_save` 覆盖 `CraftingJob` 活跃进度/批次/队列往返，以及非法批次与超长队列拒绝。实机 Lua 用临时 `persist-mods-*` 与隔离 `save.root`：先制作 2 份绷带并排队 2 份后 `Save.QuickSave` 快存（`CraftingJob` 写入 `entities.bin`）；重启从主菜单 `Save.Load`，日志 `读档恢复制作：绷带 ×1（配方 field_bandage，进度 0.2/0.8, 已完成 0/2, 队列 1 项）`，恢复后完成当前批次并自动开始队首，最终 `bandage=4 active=false queue=0`。截图确认恢复后“制作中: 绷带 (2/2)”与完成后 4 份绷带；临时 mod、存档、pycache 已清理，Debug OFF、Release Python ON；未提交。
+
+## 2026-10-20 配方列表分页
+
+**实现**：
+- `core_ui` 背包制作区固定 4 行改为分页：工具栏显示 `N 条 P/Q 页` 与 `‹`/`›`，页码越界时自动钳制；`craft-btn-N` 按当前页映射到 `recipes[(page-1)*4+N]`，避免第 5 条及之后的配方不可见或点错。
+- Lua/Python `main` 同构实现 `craftPage` 状态、页码计算、上一页/下一页点击与按钮禁用；RML 增加 `craft-page-prev/count/indicator/next`，RCSS 增加分页按钮皮肤；提示补充“配方多时用 ‹ › 翻页”。
+- 更新 `docs/01/02/modding`，勾选已完成且由 M9 覆盖的 `M6-T4`。
+
+**验证**：临时 `recipes5.json`（5 条配方）+ `page-mods`（core_ui + page_auto）分别以 Lua/Python 后端启动世界，自动打开背包并加 4 份破布；点击 `›` 后截图显示 `5 条 2/2 页`，第 2 页仅显示第 5 条配方；再点击该页“制作”，C++ 日志为 `开始制作：绷带 ×1（配方 field_bandage_alt...）`，确认分页索引映射正确；Lua/Python 均通过，随后 `制作成功：绷带 ×1（配方 field_bandage_alt，批次 1/1）`。临时 mod、存档、日志、截图已清理；未提交。
+
+**补充验收**：同一套临时环境用篝火配方 `campfire_test_bandage`（`time=6.0`）在 `(73.5,25.5)` 启动制作并快存，快照记录进度 0.033/6；重启读档日志 `读档恢复制作：绷带 ×1（配方 campfire_test_bandage，进度 0.033333335/6, 已完成 0/1, 队列 0 项）`，恢复后 `STATION restored active=true ... elapsed=0.07`，6 秒后 `制作成功`、`STATION final active=false queue=0 bandage=1`，确认制作站校验延迟到 chunk 加载后不会误取消。
+
+## 2026-10-21 联机基础 M13-T1：KCP 传输与帧协议
+
+**实现**：
+- vcpkg 接入 kcp 2.1.1（MIT），新增 src/net/Kcp.{h,cpp}：Windows 非阻塞 UDP socket、KCP 客户端/服务器、多客户端会话（conv 键）、服务器端口 0 自动分配、会话超时和最大连接数、收发统计；KCP 参数为低延迟模式（nodelay=1, interval=10ms, resend=2, nc=1）。
+- 新增 src/net/FrameCodec.{h,cpp}：8 字节长度前缀帧（magic ZLF1 + u32 payload size），处理 KCP 流式粘包/拆包，单帧上限 64KB；非法 magic/超长帧清空解码器并报错。
+- 新增 	ests/test_kcp.cpp：localhost 收发、服务器回包、8KB 大帧分片、双客户端隔离、非法帧丢弃后恢复、会话超时、未连接/解析失败错误路径；CMake 为应用与测试链接 kcp::kcp + ws2_32。
+- M13 任务清单已建立；T1 尚未接入游戏主循环，CommandPipeline 继续使用 loopback。
+
+**验证**：Debug **277/277（120202 assertions）**、Release **277/277（120203 assertions）** 全绿；--test-case="M13*" 6/6 通过。未提交。
+
+## 2026-10-21 联机基础 M13-T2：会话协议与握手
+
+**实现**：
+- 新增 src/net/SessionProtocol.{h,cpp}：ZLM1 会话消息（Hello/Welcome/Reject/Disconnect/Data/Ping/Pong）；协议版本、magic、类型、长度、文本长度和 server sessionId 校验；Hello 带 client nonce + 内容 hash，Welcome 回 SessionId/serverTick/content hash/heartbeat。
+- 新增 src/net/KcpSession.{h,cpp}：KcpSessionClient 状态机（Disconnected/Connecting/Connected/Rejected）、KcpSessionServer SessionId 分配与会话表；内容 hash 不一致、协议版本不匹配、服务器满、握手/会话超时都返回明确原因；Ping/Pong 心跳保活，握手完成前不产生 Connected 事件。
+- 会话帧统一经 FrameCodec 再交给 KCP 传输；新增 KcpServer::Disconnect。所有错误路径不崩溃，客户端可读取 LastError/LastReason。
+- 新增 	ests/test_kcp_session.cpp：协议往返/版本/magic/长度校验、握手、双向 Data、内容 hash 拒绝、服务器满、协议版本拒绝、心跳保活、客户端断开、客户端/服务器握手超时；更新 M13 清单。
+
+**验证**：Debug **286/286（120306 assertions）**、Release **286/286（120307 assertions）** 全绿；主程序 Debug 链接通过。尚未接入游戏主循环；未提交。
+
+## 2026-10-21 联机基础 M13-T3：Headless ServerHost
+
+**实现**：
+- 新增 game::WorldSimulation：把世界加载、chunk 流式加载、物理、寻路、AI/感知/LOD/Boids/刷怪、战斗/死亡、ECS 固定链从 GameApp 抽出；只依赖 Config/EventBus/TaskScheduler/SaveManager，不依赖窗口/渲染/UI/输入/音频。
+- GameApp 改为持有唯一 WorldSimulation 并把指针挂到 GameContext；WorldDemoState 的玩家生成/演示人口改走同一模拟，避免单机与服务器两套实体构成。
+- 新增 server::ServerHost：无窗口组装物品/配方/存档、加载地图、固定 tick 驱动模拟，支持 --server 独立进程与 --server.ticks=N 冒烟/CI 退出；Ctrl+C 请求停止。支持可选读档。
+- 新增 tests/test_server_host.cpp：无窗口初始化、系统链数量、chunk 加载、玩家生成、MoveInput→Velocity 推进；无效配置失败不崩溃。
+
+**验证**：Debug **288/288（120322 assertions）**、Release **288/288（120323 assertions）** 全绿；ZomboidLike --server --server.ticks=180 无窗口运行并正常退出。单机命令/复制尚未接入，未提交。
+
+## 2026-10-21 联机基础 M13-T4：实体复制层
+
+**实现**：
+- 新增 src/net/Replication.{h,cpp}：`ZLR1` v1 快照协议（32B 头 + 实体/组件记录），支持 Full/Delta、StableId/archetype/owner、组件级负载、移除列表；`ReplicationRegistry` 按 type/version/maxBytes 注册组件，编解码严格限制单包 60KB、4096 实体、32 组件/实体，并拒绝未知/重复组件、重复 StableId、非法 baseTick 与尾部垃圾。
+- 新增 src/game/EntityReplication.{h,cpp}：登记 Position/Velocity/Health/SpriteRef/Facing/AnimState；producer 只读 ECS，按 AOI 半径/最大实体数抓取玩家和有 Health 的角色，维护每客户端全量基线，增量只发变化组件、新实体、AOI 离开/销毁移除，meta（owner/archetype）变化时发完整实体。
+- 客户端副本按 StableId 应用 Full/Delta，校验 baseTick 并标记 NeedsFullSnapshot；远程位置支持 previous/current 插值；本地玩家支持输入积分轻量预测，服务器快照按误差阈值吸附或平滑校正。新增 `ecs::NetworkOwner`，玩家生成时 owner=自身 StableId。
+- 新增 tests/test_replication.cpp：组件注册/全量往返、增量组件 diff、AOI 离开/返回、实体销毁移除、错误基线、损坏组件、重复/未知组件、插值与本地预测；ServerHost 测试补充玩家 NetworkOwner 校验。
+
+**验证**：Debug **293/293（120459 assertions）**、Release **293/293（120460 assertions）** 全绿；`--test-case="M13 Replication*"` 5/5、135 assertions 通过。复制层尚未接入 ServerHost/GameApp 主循环（T5）；未提交。
+## 2026-10-21 联机基础 M13-T5：双客户端垂直切片
+
+**实现**：
+- 新增 src/net/PlayerAssignment.{h,cpp}：`ZLA1` 玩家分配消息（sessionId/playerStableId/serverTick），保持 T2 Welcome 线格式不变；服务器在首个全量快照前通过 Data 通道发送。
+- 新增 src/game/NetworkClient.{h,cpp}：封装 KcpSessionClient + ZLC1 命令编码 + ZLR1 快照应用；支持内容 hash、玩家分配、命令序列、自动重连、本地预测；断开/解码/应用失败会清空副本并重连。
+- ServerHost 接入 KcpSessionServer：每 SessionId 生成权威玩家（`WorldSimulation::SpawnNetworkPlayer`）与独立 EntityReplicationProducer；连接后先分配玩家再全量，后续每 tick 增量；发送失败重置基线并在下一 tick 重发全量；断线销毁玩家，剩余客户端收到 removal。
+- ServerHost 执行移动/点击移动/攻击命令：校验会话 playerStableId 与包序列，Move 写 MoveInput，MoveTo 写 PathRequest，Attack 选择最近/指定僵尸写 AttackIntent，由 CombatSystem 扣血；不支持的 UI/背包命令明确拒绝。
+- `net.mode=client` 时 GameApp 跳过本地 WorldSimulation::Tick，WorldDemoState 把复制 Actor 同步为渲染用 ECS 实体、更新 SpatialIndex、相机跟随、本地输入预测与服务端校正；F6/快速存档在客户端禁用。服务器默认 `--server` 监听 UDP，`--server.network=false` 关闭。
+- 新增 tests/test_network_integration.cpp：localhost 双客户端加入、互相可见、A 移动 B 看到位置变化、攻击僵尸 B 收到 Health 变化、B 离开后服务器清理且 A 收到 removal、新客户端重连获得新 StableId 并看到 A。
+
+**验证**：Debug **294/294（120488 assertions）**、Release **294/294（120489 assertions）** 全绿；`--test-case="M13-T5*"` 1/1、29 assertions 通过（连续 3 次无抖动）。额外运行 `ZomboidLike --server --server.ticks=180` 网络服务器正常退出；图形客户端连接服务器后成功分配 StableId、相机跟随玩家且无错误日志。未提交。
+
+## 2026-10-21 联机基础 M13-T6：命令安全与容错
+
+**实现**：
+- ServerHost 增加会话级命令策略：每 tick 最多 `net.maxCommandsPerTick`（默认 8）条命令；Attack 使用服务器 tick 冷却（`net.attackCooldownSeconds`，默认 0.35s）；`MoveTo` 目标距玩家超过 `net.maxMoveToDistance`（默认 64 格）拒绝；Attack 自动瞄准/指定目标距离超过 `net.maxAttackDistance`（默认 3 格）拒绝；快捷栏索引限定 0..4；所有命令继续校验会话 `playerStableId`。
+- 命令入口对未登记会话、超 4KB 命令包、magic/长度/类型/序列非法包只拒绝并累计统计，不断开仍可工作的会话；未生成权威玩家时命令不执行。
+- 新增 `ServerHost::NetworkStats`：数据包、畸形/超大/过期包、命令收/受/拒、限频/冷却/越权/距离/未实现、分配/快照成功与失败；`LogStatus` 每 5s 输出服务器网络汇总（含 KCP 数据报）。
+- `NetworkClient` 暴露握手/心跳/重连参数（`net.handshakeTimeoutMs/heartbeatIntervalMs/heartbeatTimeoutMs`），服务器重启后自动清空副本、重连并等待新分配。
+- 新增 tests/test_server_security.cpp：越权 StableId、超距 MoveTo、单包 12 条命令触发限频、连续两次 Attack 触发冷却、畸形包/超大包后会话仍存活；test_network_integration 增加延迟 150ms 命令与服务器同端口重启后的自动重连；test_kcp 增加客户端→服务器每 3 个 UDP 数据报丢 1 个的本地丢包代理，大帧经 KCP 重传完整送达。
+
+**验证**：Debug **297/297（120548 assertions）**、Release **297/297（120549 assertions）** 全绿；`--test-case="M13-T6*"` 2/2、52 assertions 连续 3 次通过。未提交。
+
+## 2026-10-21 M0 换机验收预验（M13-T6 快照）
+
+**目的**：M13-T6 完成后再次验证 README「快速开始」三步，排除本机 build/logs/saves 等产物后的源码快照可独立配置、构建、运行。
+
+**结果**：干净目录（排除 `build/.git/logs/saves/assets_placeholder_pz`）配置 115.9s（vcpkg 命中缓存）→ 构建 241/241 → `ZomboidLikeTests` **297/297（120548 assertions）**；启动 `ZomboidLike.exe` 6s，窗口句柄非 0、主菜单/UI/4 个 mod/音频/主循环日志正常。
+
+**剩余**：真正的「换另一台 Windows 机器」验收仍需外部机器；本机干净目录不能替代 docs/01 的 M0 最后一项。
+## 2026-10-21 M13-T7 服务器权威背包/世界交互
+
+**目标**：把拾取、使用、装备、丢弃、维修、制作与枪声从“客户端本地执行”改成“服务器执行命令、客户端只发命令并展示 owner-only 状态”。
+
+**落地**：新增 `game::PlayerInventoryService`（拾取距离/容器/装备/维修/制作批次与 FIFO 队列，制作状态存 `CraftingJob`）；`ServerHost` 接管 8 类背包/世界命令、每 tick 推进制作、枪声事件与网络统计；`ZLP1` 只向玩家所属会话下发背包/装备/已学配方/制作/提示，客户端镜像到本地视觉玩家；`ZLR1` 新增地面物品 `ItemInstance` 组件与 item archetype，丢落/拾取对所有客户端可见；服务器出生点复用单机演示散落物。
+
+**验证**：`ZLP1`/`ZLR1` 严格编解码与截断测试、背包动作/制作单元测试、localhost 拾取→使用→丢弃→装备→制作→状态同步集成测试；Debug **304/304（120681 assertions）**、Release **304/304（120682 assertions）** 全绿。仍未提交；M0 跨机验收仍待另一台 Windows 机器。
+
+**风险/后续**：T8 已补玩家断线与服务器重启持久化，但离线玩家不留在世界中、也没有掉包规则；装备外观仅复制装备槽状态，远程客户端还没有完整装备挂点（T10 已补图标/动作占位表现）；网络模式枪声目前只在服务器影响 AI，客户端本地音效反馈可后续补齐。
+
+## 2026-10-21 M13-T8 联机玩家持久化
+
+**目标**：让玩家身份、StableId、位置、背包、装备、配方、生命/死亡/复活跨断线与服务器重启保留；修正重连重新分配 StableId 的问题。
+
+**落地**：
+- `SessionProtocol` v2：Hello 增加 `playerIdentity`/`playerName`；`KcpSessionServer` Connected 事件透传身份，`ServerHost` 同身份新连接接管旧会话（旧连接由服务器断开）。
+- 新增 `net/PlayerIdentity`：客户端生成 128-bit 身份并落盘 `saves/client_identity.txt`；`NetworkClient` 重连复用同一身份。
+- 新增 `server/PlayerProfileStore`：按 identity 分配 `2^63` 以上 StableId，二进制原子写 `saves/multiplayer_players.bin`；保存完整 `save::SavedEntity` 快照、owner 状态与复活倒计时。
+- `WorldSimulation` 支持指定 StableId 生成、按快照恢复、出生点复活；`EcsWorld` 高位 StableId 不推进普通实体分配游标。
+- `ServerHost` 在断线/死亡/复活/定时/退出时保存；重连恢复同一实体；死亡后 `ZLP1.alive=false`，默认 5s 满血复活并保留背包；档案损坏时服务器启动失败，避免静默丢进度。
+- `ZLP1` v2 增加 `health/healthMax/alive/respawnSeconds`；客户端 HUD 在视觉玩家暂时不存在时仍显示生命与“等待复活”。
+- 测试：`PlayerProfileStore` 往返/损坏文件、身份文件复用、localhost 同身份重连、服务器重启恢复、同身份新连接接管未超时旧会话、死亡状态断线重连与复活。
+
+**验证**：Debug **310/310（120789 assertions）**、Release **310/310（120790 assertions）** 全绿；`--test-case="M13-T8*"` 6/6、101 assertions 连续 3 次通过。未提交；M0 跨机验收仍待另一台 Windows 机器。
+## 2026-10-21 M13-T9 联机入口与聊天/玩家列表
+
+**目标**：把只能命令行启动的联机流程搬到主菜单，并提供服务器列表、内嵌主机和局内聊天/在线玩家列表。
+
+**落地**：
+- 主菜单增加“联机游戏”（原生 `menu.rml` 与 core_ui Lua/Python 同步），`ui::MultiplayerPanel` 提供玩家名称、地址/端口、`开始主机`、`加入游戏`、收藏服务器与刷新；菜单返回/ESC 关闭。
+- `game::ServerListStore` 原子读写 `saves/servers.json`，最多 8 条，校验 host/port/name；主机/加入成功后自动更新列表。
+- `game::EmbeddedServer` 后台线程驱动 `ServerHost`（监听 `0.0.0.0`、端口 0 自动分配、独立模拟和玩家档案），本机 `NetworkClient` 回环接入；`GameApp` 统一动态 start host/join/stop，返回主菜单会关闭客户端并停主机，保留本地命令管线供单机使用。
+- 新增 `net/SocialProtocol`：`ZLH1` 聊天（UTF-8、≤200 字节、拒绝控制字符）与 `ZLS2` 社交状态（玩家列表 + 最近 16 条聊天）；服务器按 `net.chatCooldownSeconds` 限频并广播，客户端 `NetworkClient::SendChat` / `HasSocialState` 接入。
+- `ui::SocialPanel`（`assets/ui/social.rml`）：右上在线玩家、左下聊天记录，Enter 打开输入、Enter 发送、Esc 取消；聊天输入焦点阻断游戏键位，暂停/背包/联机菜单时抑制显示。
+- 新增测试：`test_social_protocol`、`test_server_list`、`test_server_social`、`test_embedded_server`、`test_ui` 联机入口/聊天面板、`test_script_ui` multiplayer 动作映射。
+
+**验证**：Debug **319/319（120948 assertions）**、Release **319/319（120949 assertions）** 全绿；`--test-case="M13-T9*"` 9/9、154 assertions 连续 12 次通过。窗口实机冒烟：主菜单进入联机菜单，开始主机后 UDP 7777 监听、本机客户端进入 WorldDemo 并持续收到社交状态；加入无服务器地址时进入自动重连提示。未提交；M0 跨机验收仍待另一台 Windows 机器。
+
+## 2026-10-21 M13-T10 远程表现与投射物复制
+
+**目标**：把远程玩家从"会移动的占位小人"扩展到可见装备、动作与命中表现，并让投射物成为服务器权威、可复制的世界结果。
+
+**落地**：
+- `ZLR1` 复制表新增 `Equipment`（两槽 defId/count/condition）与 `ActionState`（Idle/Moving/Attacking/Crafting/Hit/Dead）；新增 Effect/Projectile archetype。`EntityReplication` 捕获投射物/瞬时特效并按普通实体增量同步。
+- 新增 `ActionPresentationSystem`：固定链在 AnimationSystem 之后，按 Velocity/CraftingJob/Health 推导移动、制作、死亡；`CombatSystem` 在挥击/受击/致死时写 Attacking/Hit/Dead 短时状态。
+- `WorldDemoState::AppendActorPresentation` 为所有复制玩家绘制主手武器/衣物图标；攻击按 Facing 画方向挥砍条，制作画三点火花；Effect/Projectile 直接由 `RenderCollectSystem` 渲染。占位资源新增 `projectile.bullet`/`effect.impact` 逻辑名，复用现有图集帧。
+- 新增 `FireProjectile` 命令与演示键 `V`：服务器从玩家位置生成带 Velocity 的投射物，固定 tick 推进后检测已加载地图阻挡和角色半径，命中经 `CombatSystem::ApplyDamage` 结算并生成 `TransientEffect`；支持会话冷却、可选目标/朝向方向、生命周期和墙体/角色结果。配置 `net.projectileDamage/projectileSpeed/projectileLifetimeSeconds/projectileCooldownSeconds/maxProjectileDistance`。
+- 客户端重连/全量快照会重建装备/动作/投射物/特效副本；投射物和特效使用服务器 StableId，离开 AOI 或到期后按 ZLR1 removal 清理。
+
+**验证**：新增 `M13-T10 Replication`（装备/动作/Effect/Projectile 往返）与 `M13-T10 ActorAction`（攻击/受击/死亡动作）单元测试；M13-T5 双客户端增加装备与攻击动作复制检查，M13-T7 联机背包增加投射物命中、命中特效和投射物实体复制检查。Debug **321/321（121001 assertions）**、Release **321/321（121002 assertions）** 全绿。未提交；M0 跨机验收仍待另一台 Windows 机器。
+
+**范围/后续**：远程表现仍是占位挂点/图标和几何挥砍，不含正式角色动画帧；投射物为无弹药/无弹道的通用直线投射物，PvP 命中默认关闭；装备外观只复制两槽，不含背包/手持动画同步。

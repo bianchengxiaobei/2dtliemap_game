@@ -1,0 +1,248 @@
+body {
+    font-family: zl_ui;
+    font-size: 13px;
+    color: #e6edf3;
+    width: 100%;
+    height: 100%;
+}
+
+.hud-box {
+    position: absolute;
+    background-color: #10161de8;
+    border-width: 1px;
+    border-color: #34495c;
+    border-radius: 10px;
+}
+
+#hud-clock {
+    top: 12px;
+    left: 50%;
+    margin-left: -90px;
+    width: 180px;
+    padding: 6px 10px;
+    text-align: center;
+}
+
+.hud-day {
+    font-size: 11px;
+    color: #9fb3c8;
+}
+
+.hud-clock-row {
+    height: 30px;
+    line-height: 30px;
+}
+
+.hud-time {
+    display: inline-block;
+    font-size: 22px;
+    color: #ffffff;
+    vertical-align: top;
+}
+
+.hud-speed {
+    display: inline-block;
+    margin-left: 8px;
+    margin-top: 5px;
+    padding: 1px 7px;
+    background-color: #243444;
+    border-width: 1px;
+    border-color: #3d566d;
+    border-radius: 8px;
+    font-size: 11px;
+    line-height: 18px;
+    color: #ffd479;
+    vertical-align: top;
+}
+
+.hud-speed.paused {
+    background-color: #4a2b2b;
+    border-color: #8a4a4a;
+    color: #ff9a8a;
+}
+
+#hud-vitals {
+    left: 16px;
+    bottom: 16px;
+    width: 260px;
+    padding: 8px 10px;
+}
+
+.vital-row {
+    height: 21px;
+    line-height: 21px;
+}
+
+.vital-label {
+    display: inline-block;
+    width: 34px;
+    font-size: 13px;
+    color: #9fb3c8;
+    vertical-align: top;
+}
+
+.vital-track {
+    display: inline-block;
+    width: 150px;
+    height: 10px;
+    margin-top: 5px;
+    background-color: #0b1117;
+    border-width: 1px;
+    border-color: #2c3e4f;
+    border-radius: 5px;
+    vertical-align: top;
+}
+
+.vital-fill {
+    height: 10px;
+    border-radius: 5px;
+}
+
+.hp {
+    width: 100%;
+    background-color: #d9534f;
+}
+
+.stamina {
+    width: 100%;
+    background-color: #d4b24a;
+}
+
+.vital-fill.low {
+    background-color: #ff4040;
+}
+
+.vital-value {
+    display: inline-block;
+    width: 40px;
+    text-align: right;
+    font-size: 13px;
+    color: #d7e2ec;
+    vertical-align: top;
+}
+
+#hotbar {
+    position: absolute;
+    left: 50%;
+    bottom: 16px;
+    margin-left: -180px;
+    width: 360px;
+    height: 64px;
+}
+
+.slot {
+    display: inline-block;
+    position: relative;
+    width: 64px;
+    height: 64px;
+    margin-right: 6px;
+    background-color: #10161de8;
+    border-width: 1px;
+    border-color: #34495c;
+    border-radius: 8px;
+    vertical-align: top;
+}
+
+.slot:last-child {
+    margin-right: 0px;
+}
+
+.slot.selected {
+    background-color: #243444;
+    border-color: #ffd479;
+}
+
+.slot-key {
+    position: absolute;
+    left: 6px;
+    top: 2px;
+    font-size: 11px;
+    color: #9fb3c8;
+}
+
+.slot-name {
+    position: absolute;
+    left: 3px;
+    right: 3px;
+    top: 20px;
+    height: 32px;
+    font-size: 11px;
+    line-height: 16px;
+    text-align: center;
+    color: #d7e2ec;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+}
+
+.slot-count {
+    position: absolute;
+    right: 5px;
+    bottom: 2px;
+    font-size: 11px;
+    color: #ffd479;
+}
+
+#hud-bag {
+    position: absolute;
+    right: 16px;
+    bottom: 16px;
+    width: 100px;
+    height: 38px;
+    line-height: 38px;
+    padding: 0 10px;
+    background-color: #10161de8;
+    border-width: 1px;
+    border-color: #34495c;
+    border-radius: 9px;
+    cursor: pointer;
+}
+
+#hud-bag:hover {
+    background-color: #243444;
+    border-color: #ffd479;
+}
+
+.hud-bag-label {
+    font-size: 13px;
+    color: #d7e2ec;
+}
+
+.hud-bag-key {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 0 5px;
+    background-color: #243444;
+    border-width: 1px;
+    border-color: #3d566d;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 17px;
+    color: #9fb3c8;
+    vertical-align: middle;
+}
+
+#notice {
+    position: absolute;
+    left: 50%;
+    bottom: 96px;
+    margin-left: -180px;
+    width: 360px;
+    display: none;
+    text-align: center;
+    font-size: 15px;
+    font-weight: bold;
+    color: #ffd479;
+}
+
+.notice-info {
+    color: #ffd479;
+}
+
+.notice-ok {
+    color: #7fe08a;
+}
+
+.notice-fail {
+    color: #ff8a7a;
+}

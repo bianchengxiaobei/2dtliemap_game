@@ -37,17 +37,25 @@
 #include "characters/components/CombatComponents.h"
 #include "characters/systems/AnimationSystem.h"
 #include "characters/systems/CombatSystem.h"
+#include "characters/systems/InputSystem.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/SpatialIndex.h"
 #include "ecs/components/CommonComponents.h"
 #include "ecs/components/PhysicsComponents.h"
 #include "game/EventProbe.h"
 #include "game/CameraFollow.h"
+#include "game/EntityReplication.h"
+#include "game/NetworkClient.h"
 #include "game/WorldQueries.h"
+#include "game/WorldSimulation.h"
+#include "game/states/MainMenuState.h"
 #include "game/ZombieFactory.h"
 #include "game/GroundItems.h"
+#include "items/Crafting.h"
+#include "items/Repair.h"
 #include "items/InventoryOps.h"
 #include "items/ItemComponents.h"
+#include "items/RecipeRegistry.h"
 #include "net/Command.h"
 #include "net/CommandPipeline.h"
 #include "physics/PhysicsWorld.h"
@@ -106,8 +114,11 @@ uint64_t WorkingSetBytes() {
 
 void WorldDemoState::OnEnter() {
     core::Config& config = *m_ctx.config;
-    ZL_INFO("render", "进入 WorldDemo（M3 世界模型 + 流式加载演示）");
-    m_autoSaveOnExit = config.Get<bool>("save.autoSaveOnExit", true);
+    m_networkMode = m_ctx.networkClient != nullptr;
+    ZL_INFO("render", "进入 WorldDemo（{}）",
+            m_networkMode ? "M13 网络客户端" : "M3 单机世界");
+    m_autoSaveOnExit =
+        !m_networkMode && config.Get<bool>("save.autoSaveOnExit", true);
     m_ctx.activeSaveId.clear();
     m_ctx.activeSaveUseBackup = false;
     m_ctx.saveWarning.clear();
@@ -153,11 +164,43 @@ void WorldDemoState::OnEnter() {
     m_pickupRadius = static_cast<float>(config.Get<double>("inventory.pickupRadius", 1.6));
     m_inventoryRange =
         static_cast<float>(config.Get<double>("inventory.lootRange", 3.0));
+    m_repairKitDefId =
+        config.Get<std::string>("inventory.repairKit", "repair_kit");
+    m_repairKitCount = std::max(1, config.Get<int>("inventory.repairKitCount", 1));
+    m_repairAmount = std::clamp(
+        static_cast<float>(config.Get<double>("inventory.repairAmount", 0.5)),
+        0.01f, 1.0f);
+    m_stationRange = std::clamp(
+        static_cast<float>(config.Get<double>("crafting.stationRange", 2.5)),
+        0.0f, 10.0f);
+    m_stationLabels.clear();
+    m_stationLabels.emplace("workbench", "工作台");
+    m_stationLabels.emplace("campfire", "篝火");
+    const auto& root = config.Raw();
+    const auto crafting = root.find("crafting");
+    if (crafting != root.end() && crafting->is_object()) {
+        const auto labels = crafting->find("stationLabels");
+        if (labels != crafting->end() && labels->is_object()) {
+            for (const auto& [id, label] : labels->items()) {
+                if (id.empty() || !label.is_string() || label.get<std::string>().empty()) {
+                    ZL_WARN("crafting", "忽略非法制作站标签：{}", id);
+                    continue;
+                }
+                m_stationLabels[id] = label.get<std::string>();
+            }
+        }
+    }
+    m_blueprintRecipes.clear();
+    if (m_ctx.items != nullptr && m_ctx.recipes != nullptr) {
+        for (const items::ItemDef& def : m_ctx.items->All()) {
+            for (const std::string& recipeId : def.unlocksRecipes) {
+                if (m_ctx.recipes->Find(recipeId) != nullptr) {
+                    m_blueprintRecipes.insert(recipeId);
+                }
+            }
+        }
+    }
     m_demoItemsScattered = false;
-    // M6-T5：玩家起始 HP（默认满血；演示/压测可用 --health.playerStartHp 调低）
-    m_playerMaxHp = static_cast<float>(config.Get<double>("health.playerMaxHp", 100.0));
-    m_playerStartHp = static_cast<float>(config.Get<double>("health.playerStartHp",
-                                                            static_cast<double>(m_playerMaxHp)));
     if (m_cruiseEnabled) {
         camera.SetCenter(render::ToScreen(m_cruiseCenterX + m_cruiseRadius, m_cruiseCenterY));
         ZL_INFO("perf", "自动巡航开启：圆心=({:.0f},{:.0f}) 半径={:.0f} 速度={:.0f}格/s 时长={:.1f}min",
@@ -170,6 +213,15 @@ void WorldDemoState::OnEnter() {
                const std::string& error) {
             HandleSaveFinished(ok, created, id, error);
         };
+    m_ctx.quickSave = [this]() -> bool {
+        if (m_networkMode || m_ctx.saveManager == nullptr ||
+            m_ctx.saveService == nullptr || m_ctx.saveComponents == nullptr ||
+            m_ctx.ecs == nullptr || m_savePending || m_saveRequestPending) {
+            return false;
+        }
+        RequestQuickSave(true);
+        return true;
+    };
     m_lastMoveCommand = glm::vec2(0.0f, 0.0f);
     m_moveCommandValid = false;
     m_ctx.executePlayerCommand =
@@ -177,12 +229,13 @@ void WorldDemoState::OnEnter() {
             return ExecutePlayerCommand(command, error);
         };
 
-    m_loadedFromSave = !m_loadSaveId.empty() && LoadFromSave();
-    if (!m_loadedFromSave) {
+    m_loadedFromSave = !m_networkMode && !m_loadSaveId.empty() && LoadFromSave();
+    if (!m_loadedFromSave && !m_networkMode) {
         // M4-T2/T3：ECS 演示实体（村庄附近漂移；物理体由 Bullet 驱动）
         SpawnDemoEntities();
     }
-    // M4-T4：玩家实体由 OnFrame 延迟生成（等目标 chunk 加载完成）
+    // 单机：玩家实体由 OnFrame 延迟生成（等目标 chunk 加载完成）。
+    // 网络：等待服务器分配 StableId + 首个全量快照，再生成纯渲染副本。
 
     if (m_ctx.ui != nullptr) {
         m_ctx.ui->HideMenu();
@@ -190,10 +243,21 @@ void WorldDemoState::OnEnter() {
             [this](const ui::InventoryAction& action) { SubmitInventoryAction(action); });
         m_ctx.ui->SetMenuActionHandler(
             [this](ui::MenuActionType action) { HandleMenuAction(action); });
+        if (m_networkMode) {
+            m_ctx.ui->SetSocialChatHandler(
+                [this](const std::string& text, std::string& error) {
+                    SendChat(text, error);
+                    return error.empty();
+                });
+            RefreshSocialState();
+        } else {
+            m_ctx.ui->SetSocialChatHandler({});
+            m_ctx.ui->SetSocialState({});
+        }
     }
     ConsumeSaveWarning();
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 攻击 | F 拾取 | E 使用 | R 装备 | G 丢弃 | I 背包（或右下角按钮） | F6 演示击杀 | F7 开枪（声音引怪） | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | F12 快速存档 | ESC 暂停菜单");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 攻击 | F 拾取 | E 使用 | R 装备 | G 丢弃 | I 背包（或右下角按钮） | Enter 聊天 | F6 演示击杀 | F7 开枪（声音引怪） | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | F12 快速存档 | ESC 暂停菜单");
 }
 
 bool WorldDemoState::LoadFromSave() {
@@ -202,6 +266,10 @@ bool WorldDemoState::LoadFromSave() {
         m_ctx.saveWarning = "读取存档失败：存档服务未初始化";
         return false;
     }
+    m_crafting.Cancel();
+    m_craftBatchTotal = 0;
+    m_craftBatchCompleted = 0;
+    m_craftQueue.clear();
 
     save::SaveMetadata metadata;
     save::EntitySnapshot snapshot;
@@ -257,6 +325,7 @@ bool WorldDemoState::LoadFromSave() {
     }
 
     RestoreRuntimeComponents(loaded);
+    RestoreCraftingJobFromEcs();
     m_saveId = report.usedBackup ? std::string() : m_loadSaveId;
     m_ctx.activeSaveId = m_loadSaveId;
     m_ctx.activeSaveUseBackup = report.usedBackup;
@@ -344,6 +413,12 @@ void WorldDemoState::RestoreRuntimeComponents(
             if (!registry.all_of<ecs::Equipment>(entity)) {
                 registry.emplace<ecs::Equipment>(entity);
             }
+            if (!registry.all_of<ecs::KnownRecipes>(entity)) {
+                registry.emplace<ecs::KnownRecipes>(entity);
+            }
+            if (!registry.all_of<ecs::CraftingJob>(entity)) {
+                registry.emplace<ecs::CraftingJob>(entity);
+            }
             if (m_player == entt::null) {
                 m_player = entity;
             }
@@ -392,6 +467,10 @@ bool WorldDemoState::CaptureSaveChunks(std::vector<save::ChunkDiff>* out,
 }
 
 void WorldDemoState::RequestQuickSave(bool withThumbnail) {
+    if (m_networkMode) {
+        SetNotice("multiplayer: server owns the world", kNoticeInfoColor, 2.0f);
+        return;
+    }
     if (m_savePending || m_saveRequestPending) {
         SetNotice("存档正在进行中", kNoticeInfoColor, 1.5f);
         return;
@@ -402,6 +481,7 @@ void WorldDemoState::RequestQuickSave(bool withThumbnail) {
         return;
     }
 
+    SyncCraftingJobToEcs();
     save::EntitySnapshot entities;
     std::string error;
     if (!save::CaptureEntities(*m_ctx.ecs, *m_ctx.saveComponents, &entities, {},
@@ -585,39 +665,268 @@ void WorldDemoState::UpdateCameraFollow(double frameDt) {
                                       static_cast<float>(frameDt)));
 }
 
-ecs::Entity WorldDemoState::SpawnCharacter(float px, float py) {
-    ecs::EcsWorld& world = *m_ctx.ecs;
-    entt::registry& registry = world.Registry();
-    const ecs::Entity e = world.Create();
-    registry.emplace<ecs::Position>(e, ecs::Position{px, py, 0});
-    registry.emplace<ecs::Velocity>(e, ecs::Velocity{});
-    registry.emplace<ecs::Collider>(e, ecs::Collider{});
-    registry.emplace<ecs::SpriteRef>(
-        e, ecs::SpriteRef{ecs::HashName("character.placeholder"), 0, 0xFFFFFFFFu});
-    registry.emplace<ecs::Facing>(e, ecs::Facing{});
-    registry.emplace<ecs::AnimState>(e, ecs::AnimState{});
-    ecs::Health startHealth;
-    startHealth.max = m_playerMaxHp > 0.0f ? m_playerMaxHp : 100.0f;
-    startHealth.current = std::min(m_playerStartHp, startHealth.max);
-    registry.emplace<ecs::Health>(e, startHealth);  // M5-T1 死亡流程 / M6-T5 起始 HP
-    registry.emplace<ecs::Needs>(e, ecs::Needs{});
-
-    // M4-T3：物理胶囊（位置/速度由 Bullet 接管）；M4-T4 动画读物理回写速度
-    if (m_ctx.physics != nullptr) {
-        const ecs::Collider def;
-        ecs::RigidBody rigid;
-        rigid.body = m_ctx.physics->CreateCharacterBody(def.radius, def.height, px, py, 0);
-        registry.emplace<ecs::RigidBody>(e, rigid);
-    }
-    return e;
-}
-
 bool WorldDemoState::IsSolidSquare(int wx, int wy) const {
     return IsSquareBlocked(*m_ctx.world, wx, wy, 0);
 }
 
+void WorldDemoState::SyncNetworkReplicas(float alpha) {
+    if (!m_networkMode || m_ctx.networkClient == nullptr || m_ctx.ecs == nullptr) {
+        return;
+    }
+    const auto& actors = m_ctx.networkClient->Replication().Actors();
+    entt::registry& registry = m_ctx.ecs->Registry();
+    std::unordered_set<std::uint64_t> seen;
+    seen.reserve(actors.size());
+
+    for (const auto& [stableId, actor] : actors) {
+        if (stableId == 0 || !actor.hasPosition) {
+            continue;
+        }
+        seen.insert(stableId);
+        ecs::Entity entity = entt::null;
+        const auto mapped = m_networkEntities.find(stableId);
+        if (mapped != m_networkEntities.end() && m_ctx.ecs->Alive(mapped->second)) {
+            entity = mapped->second;
+        } else {
+            if (mapped != m_networkEntities.end()) {
+                m_networkEntities.erase(mapped);
+            }
+            entity = m_ctx.ecs->CreateWithStableId(stableId);
+            if (entity == entt::null) {
+                // 仅当本地已有同 ID 实体（非网络状态残留）时复用；否则跳过该副本。
+                entity = m_ctx.ecs->FindById(stableId);
+                if (entity == entt::null) {
+                    ZL_WARN("net", "无法创建网络副本实体 stableId={}（ID 冲突）", stableId);
+                    continue;
+                }
+            }
+            m_networkEntities.emplace(stableId, entity);
+        }
+
+        ecs::Position position = actor.position;
+        (void)m_ctx.networkClient->Replication().SamplePosition(stableId, alpha, &position);
+        if (auto* current = registry.try_get<ecs::Position>(entity); current != nullptr) {
+            *current = position;
+        } else {
+            registry.emplace<ecs::Position>(entity, position);
+        }
+        if (auto* velocity = registry.try_get<ecs::Velocity>(entity); velocity != nullptr) {
+            *velocity = actor.velocity;
+        } else {
+            registry.emplace<ecs::Velocity>(entity, actor.velocity);
+        }
+        if (actor.hasHealth) {
+            if (auto* health = registry.try_get<ecs::Health>(entity); health != nullptr) {
+                *health = actor.health;
+            } else {
+                registry.emplace<ecs::Health>(entity, actor.health);
+            }
+        }
+        if (actor.hasSprite) {
+            if (auto* sprite = registry.try_get<ecs::SpriteRef>(entity); sprite != nullptr) {
+                *sprite = actor.sprite;
+            } else {
+                registry.emplace<ecs::SpriteRef>(entity, actor.sprite);
+            }
+        }
+        if (actor.hasFacing) {
+            if (auto* facing = registry.try_get<ecs::Facing>(entity); facing != nullptr) {
+                *facing = actor.facing;
+            } else {
+                registry.emplace<ecs::Facing>(entity, actor.facing);
+            }
+        }
+        if (actor.hasAnim) {
+            if (auto* anim = registry.try_get<ecs::AnimState>(entity); anim != nullptr) {
+                *anim = actor.anim;
+            } else {
+                registry.emplace<ecs::AnimState>(entity, actor.anim);
+            }
+        }
+        if (actor.hasItem) {
+            if (auto* item = registry.try_get<ecs::ItemInstance>(entity);
+                item != nullptr) {
+                *item = actor.item;
+            } else {
+                registry.emplace<ecs::ItemInstance>(entity, actor.item);
+            }
+        }
+        if (actor.hasEquipment) {
+            registry.emplace_or_replace<ecs::Equipment>(entity, actor.equipment);
+        }
+        if (actor.hasAction) {
+            registry.emplace_or_replace<ecs::ActionState>(entity, actor.action);
+        }
+    }
+
+    for (auto it = m_networkEntities.begin(); it != m_networkEntities.end();) {
+        if (seen.find(it->first) == seen.end()) {
+            if (m_ctx.ecs->Alive(it->second)) {
+                m_ctx.ecs->Destroy(it->second);
+            }
+            it = m_networkEntities.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    m_ctx.ecs->Flush();
+    if (m_ctx.spatialIndex != nullptr) {
+        m_ctx.spatialIndex->Update(*m_ctx.ecs);
+    }
+
+    const std::uint64_t localId = m_ctx.networkClient->PlayerStableId();
+    const ecs::Entity nextPlayer =
+        localId != 0 ? m_ctx.ecs->FindById(localId) : entt::null;
+    if (nextPlayer != m_player) {
+        m_player = nextPlayer;
+        m_followSnapped = false;
+        m_footstepAnchorValid = false;
+        m_lastPlayerPathState = ecs::PathStatus::None;
+        m_markerPathActive = false;
+        m_lastMoveCommand = glm::vec2(0.0f, 0.0f);
+        m_moveCommandValid = false;
+        m_lastNetworkStatusSequence = 0;
+    }
+    ApplyNetworkPlayerState();
+}
+
+void WorldDemoState::ApplyNetworkPlayerState() {
+    if (!m_networkMode || m_ctx.networkClient == nullptr || m_ctx.ecs == nullptr ||
+        !m_ctx.networkClient->HasPlayerState()) {
+        return;
+    }
+    const net::PlayerState& state = m_ctx.networkClient->PlayerState();
+    if (state.playerStableId != m_ctx.networkClient->PlayerStableId()) {
+        return;
+    }
+    m_networkPlayerAlive = state.alive;
+    m_networkHealth = state.health;
+    m_networkHealthMax = state.healthMax;
+    m_networkRespawnSeconds = state.respawnSeconds;
+
+    if (state.statusSequence != m_lastNetworkStatusSequence) {
+        m_lastNetworkStatusSequence = state.statusSequence;
+        if (!state.status.empty()) {
+            const std::uint32_t color =
+                state.statusTone == 1 ? kNoticeOkColor
+                : state.statusTone == 2 ? kNoticeFailColor
+                                        : kNoticeInfoColor;
+            SetNotice(state.status, color, 2.2f);
+        }
+    }
+    if (m_player == entt::null) {
+        return;
+    }
+
+    entt::registry& registry = m_ctx.ecs->Registry();
+    if (auto* health = registry.try_get<ecs::Health>(m_player); health != nullptr) {
+        health->current = state.health;
+        health->max = state.healthMax;
+    } else {
+        registry.emplace<ecs::Health>(
+            m_player, ecs::Health{state.health, state.healthMax});
+    }
+    ecs::Container container;
+    container.capacityKg = state.capacityKg;
+    container.items.reserve(state.bag.size());
+    for (const net::PlayerStateItem& item : state.bag) {
+        container.items.push_back(
+            ecs::ItemInstance{item.defId, item.count, item.condition});
+    }
+    registry.emplace_or_replace<ecs::Container>(m_player, std::move(container));
+
+    ecs::Equipment equipment;
+    for (std::size_t i = 0; i < state.equipment.size() &&
+                            i < equipment.slots.size();
+         ++i) {
+        if (!state.equipment[i].present) {
+            continue;
+        }
+        const net::PlayerStateItem& item = state.equipment[i].item;
+        equipment.slots[i] =
+            ecs::ItemInstance{item.defId, item.count, item.condition};
+    }
+    registry.emplace_or_replace<ecs::Equipment>(m_player, std::move(equipment));
+
+    ecs::KnownRecipes known;
+    known.recipeIds = state.knownRecipes;
+    registry.emplace_or_replace<ecs::KnownRecipes>(m_player, std::move(known));
+
+    ecs::CraftingJob job;
+    job.active = state.craftingActive;
+    job.recipeId = state.craftingRecipeId;
+    job.elapsed = state.craftingElapsed;
+    job.duration = state.craftingDuration;
+    job.toolEfficiency = state.craftingToolEfficiency;
+    job.batchTotal = state.batchTotal;
+    job.batchCompleted = state.batchCompleted;
+    job.queue.reserve(state.craftQueue.size());
+    for (const net::PlayerStateCraftQueue& entry : state.craftQueue) {
+        job.queue.push_back(ecs::CraftQueueItem{entry.recipeId, entry.count});
+    }
+    registry.emplace_or_replace<ecs::CraftingJob>(m_player, std::move(job));
+}
+
+void WorldDemoState::RefreshSocialState() {
+    if (m_ctx.ui == nullptr || !m_networkMode || m_ctx.networkClient == nullptr) {
+        return;
+    }
+    ui::SocialUiState state;
+    state.visible = m_ctx.networkClient->IsConnected();
+    if (state.visible && m_ctx.networkClient->HasSocialState()) {
+        const net::SocialState& social = m_ctx.networkClient->SocialState();
+        const std::uint64_t localId = m_ctx.networkClient->PlayerStableId();
+        state.players.reserve(social.players.size());
+        for (const net::SocialPlayer& player : social.players) {
+            state.players.push_back(
+                ui::SocialPlayerUi{player.stableId, player.name,
+                                   player.stableId == localId});
+        }
+        state.chat.reserve(social.chat.size());
+        for (const net::SocialChatLine& line : social.chat) {
+            state.chat.push_back(ui::SocialChatUi{line.sender, line.text});
+        }
+        if (state.players.empty()) {
+            state.status = "等待其他玩家加入";
+            state.statusTone = "info";
+        }
+    } else if (state.visible) {
+        state.status = "正在同步玩家列表...";
+        state.statusTone = "info";
+    }
+    m_ctx.ui->SetSocialState(state);
+}
+
+void WorldDemoState::SendChat(const std::string& text, std::string& error) {
+    if (!m_networkMode || m_ctx.networkClient == nullptr) {
+        error = "当前不在联机会话中";
+        return;
+    }
+    if (!m_ctx.networkClient->SendChat(text, &error)) {
+        return;
+    }
+    error.clear();
+}
 void WorldDemoState::EnsurePlayerSpawned() {
-    if (m_ctx.ecs == nullptr) {
+    if (m_ctx.ecs == nullptr || m_ctx.simulation == nullptr) {
+        return;
+    }
+    if (m_networkMode) {
+        const std::uint64_t networkId =
+            m_ctx.networkClient != nullptr ? m_ctx.networkClient->PlayerStableId() : 0;
+        const ecs::Entity next =
+            networkId != 0 ? m_ctx.ecs->FindById(networkId) : entt::null;
+        if (next != m_player) {
+            m_player = next;
+            if (m_player != entt::null) {
+                m_followSnapped = false;
+                m_footstepAnchorValid = false;
+                m_lastPlayerPathState = ecs::PathStatus::None;
+                m_markerPathActive = false;
+                m_lastMoveCommand = glm::vec2(0.0f, 0.0f);
+                m_moveCommandValid = false;
+            }
+        }
         return;
     }
     // M5-T1：玩家死亡（实体已回收）→ 清引用重新生成（尸体留在原地）
@@ -636,47 +945,18 @@ void WorldDemoState::EnsurePlayerSpawned() {
     if (m_player != entt::null) {
         return;
     }
-    // 目标点 = 村庄南侧开阔地（M6-T5：原 (70,18) 落在房屋覆盖层下，出生即被楼面半透明
-    // 遮挡且紧贴尸群；南侧空地可见性好、开局有缓冲）。必须先等目标 chunk 加载完成：
-    // 否则"未加载=阻挡"会让螺旋扫到远处已加载的外围（M4-T4 冒烟踩坑）
-    constexpr int kTargetX = 70;
-    constexpr int kTargetY = 24;
-    const world::ChunkCoord targetChunk = world::ChunkOf(kTargetX, kTargetY);
-    const world::Chunk* target = FindChunk(targetChunk.cx, targetChunk.cy);
-    if (target == nullptr || target->State() != world::ChunkState::Loaded) {
-        return;  // 下帧再试
+    // 目标点 = 村庄南侧开阔地；WorldSimulation 会等目标 chunk 加载完成后再找可走格。
+    m_player = m_ctx.simulation->EnsureLocalPlayer(70.0f, 24.0f, 24);
+    if (m_player == entt::null) {
+        return;
     }
-    // 螺旋外扩找可走格（M4-T7：改用 ai::FindNearestWalkable 统一环序）
-    int spawnX = 0;
-    int spawnY = 0;
-    const bool found = ai::FindNearestWalkable(
-        kTargetX, kTargetY, 24, [this](int wx, int wy) { return !IsSolidSquare(wx, wy); },
-        &spawnX, &spawnY);
-    if (!found) {
-        return;  // 全扫不到（理论不出现）：下帧再试
-    }
-    m_player = SpawnCharacter(static_cast<float>(spawnX) + 0.5f,
-                              static_cast<float>(spawnY) + 0.5f);
-    entt::registry& registry = m_ctx.ecs->Registry();
-    registry.emplace<ecs::PlayerTag>(m_player);
-    registry.emplace<ecs::LocalControl>(m_player, ecs::LocalControl{});
-    registry.emplace<ecs::MoveInput>(m_player, ecs::MoveInput{});
-    registry.emplace<ecs::MoveIntent>(m_player, ecs::MoveIntent{});
-    registry.emplace<ecs::PathRequest>(m_player, ecs::PathRequest{});  // M4-T7：点击移动
-    registry.emplace<ecs::PathFollow>(m_player, ecs::PathFollow{});
-    registry.emplace<ecs::AttackIntent>(m_player, ecs::AttackIntent{});  // M5-T6：空格挥击
-    // M6-T2：玩家背包 + 装备槽（容量来自 config；拾取/装备系统在后续任务接入）
-    registry.emplace<ecs::Container>(m_player, ecs::Container{{}, m_playerCapacityKg});
-    registry.emplace<ecs::Equipment>(m_player, ecs::Equipment{});
     m_footstepAnchorValid = false;
     m_footstepDistance = 0.0f;
+    m_lastPlayerPathState = ecs::PathStatus::None;
+    m_markerPathActive = false;
     m_lastMoveCommand = glm::vec2(0.0f, 0.0f);
     m_moveCommandValid = false;
-    const int radius = std::max(std::abs(spawnX - kTargetX), std::abs(spawnY - kTargetY));
-    ZL_INFO("game", "玩家实体生成：格 ({}, {})（目标 ({}, {})，搜索半径 {}）", spawnX, spawnY,
-            kTargetX, kTargetY, radius);
 }
-
 void WorldDemoState::SetNotice(std::string text, uint32_t color, float seconds) {
     m_noticeText = std::move(text);
     m_noticeTone = color == kNoticeOkColor ? "ok"
@@ -691,6 +971,10 @@ void WorldDemoState::RefreshHud() {
         return;
     }
     ui::HudState hud;
+    const bool networkState =
+        m_networkMode && m_ctx.networkClient != nullptr &&
+        m_ctx.networkClient->HasPlayerState();
+    hud.active = (m_ctx.ecs != nullptr && m_player != entt::null) || networkState;
     const auto& now = m_ctx.gameTime->Now();
     const int day =
         1 + static_cast<int>(m_ctx.gameTime->TotalGameMinutes() / (24.0 * 60.0));
@@ -733,12 +1017,27 @@ void WorldDemoState::RefreshHud() {
         }
     }
 
+    if (networkState && m_player == entt::null) {
+        hud.playerValid = true;
+        hud.health = m_networkHealth;
+        hud.healthMax = m_networkHealthMax;
+        hud.stamina = 100.0f;
+        hud.staminaMax = 100.0f;
+    }
+    if (networkState && !m_networkPlayerAlive && m_noticeTimer <= 0.0f) {
+        hud.notice = "等待复活";
+        hud.noticeTone = "fail";
+        hud.noticeRemaining = std::max(0.1f, m_networkRespawnSeconds);
+        hud.noticeDuration = std::max(0.1f, m_networkRespawnSeconds);
+    }
+
     if (m_noticeTimer > 0.0f && !m_noticeText.empty()) {
         hud.notice = m_noticeText;
         hud.noticeTone = m_noticeTone;
         hud.noticeRemaining = m_noticeTimer;
         hud.noticeDuration = std::max(m_noticeDuration, 0.1f);
     }
+    m_ctx.hudState = hud;
     m_ctx.ui->SetHudState(hud);
 }
 
@@ -765,6 +1064,10 @@ void WorldDemoState::RefreshInventory() {
     state.weight = items::TotalWeight(*container, *m_ctx.items);
     state.bagStacks = static_cast<int>(container->items.size());
 
+    const int repairKits =
+        m_repairKitDefId.empty() || m_repairKitCount <= 0
+            ? 0
+            : items::CountOf(*container, m_repairKitDefId);
     const int bagCount = std::min<int>(static_cast<int>(container->items.size()),
                                        ui::kInventoryBagSlots);
     for (int i = 0; i < bagCount; ++i) {
@@ -774,10 +1077,16 @@ void WorldDemoState::RefreshInventory() {
         slot.filled = true;
         slot.label = def != nullptr ? def->name : entry.defId;
         slot.count = entry.count;
-        slot.usable = def != nullptr && def->use.Any();
+        slot.usable = def != nullptr &&
+                      (def->use.Any() || !def->unlocksRecipes.empty());
         slot.equippable = def != nullptr &&
                           (def->type == items::ItemType::Weapon ||
                            def->type == items::ItemType::Clothing);
+        slot.condition = entry.condition;
+        slot.damaged = def != nullptr && def->type == items::ItemType::Weapon &&
+                       def->maxStack == 1 && entry.condition > 0.0f &&
+                       entry.condition < 1.0f;
+        slot.repairAvailable = slot.damaged && repairKits >= m_repairKitCount;
     }
 
     if (equipment != nullptr) {
@@ -792,6 +1101,115 @@ void WorldDemoState::RefreshInventory() {
             slot.filled = true;
             slot.label = def != nullptr ? def->name : entry->defId;
             slot.count = entry->count;
+            slot.condition = entry->condition;
+        }
+    }
+
+    if (m_ctx.recipes != nullptr) {
+        state.recipes.reserve(m_ctx.recipes->Size());
+        for (const items::RecipeDef& def : m_ctx.recipes->All()) {
+            ui::InventoryRecipe recipe;
+            recipe.id = def.id;
+            recipe.name = def.name;
+            recipe.outputDefId = def.outputDefId;
+            recipe.outputCount = def.outputCount;
+            const items::ItemDef* output = m_ctx.items->Find(def.outputDefId);
+            recipe.outputLabel = output != nullptr ? output->name : def.outputDefId;
+            std::string reason;
+            const bool inventoryOk =
+                items::CanCraft(*container, *m_ctx.items, def, &reason);
+            recipe.station = def.station;
+            recipe.stationLabel = StationLabel(def.station);
+            recipe.stationNearby =
+                def.station.empty() ||
+                (position != nullptr &&
+                 StationNearby(def.station, position->x, position->y, position->z));
+            recipe.known = RecipeKnown(def.id);
+            recipe.canCraft = recipe.known && inventoryOk && recipe.stationNearby;
+            recipe.ingredients.reserve(def.ingredients.size());
+            for (const items::RecipeIngredient& ingredient : def.ingredients) {
+                const items::ItemDef* ingredientDef =
+                    m_ctx.items->Find(ingredient.defId);
+                recipe.ingredients.push_back(ui::InventoryRecipeIngredient{
+                    ingredientDef != nullptr ? ingredientDef->name : ingredient.defId,
+                    ingredient.count, items::CountOf(*container, ingredient.defId)});
+            }
+            recipe.tools.reserve(def.tools.size());
+            for (const items::RecipeIngredient& tool : def.tools) {
+                const items::ItemDef* toolDef = m_ctx.items->Find(tool.defId);
+                recipe.tools.push_back(ui::InventoryRecipeIngredient{
+                    toolDef != nullptr ? toolDef->name : tool.defId, tool.count,
+                    items::CountUsableTools(*container, tool.defId)});
+            }
+            const float efficiency = items::ToolEfficiency(*container, def);
+            recipe.estimatedSeconds = items::EffectiveCraftSeconds(def, efficiency);
+            state.recipes.push_back(std::move(recipe));
+        }
+    }
+
+    const ecs::CraftingJob* networkJob =
+        m_networkMode ? registry.try_get<ecs::CraftingJob>(m_player) : nullptr;
+    if (networkJob != nullptr && networkJob->active && m_ctx.recipes != nullptr) {
+        const items::RecipeDef* def =
+            m_ctx.recipes->Find(networkJob->recipeId);
+        if (def != nullptr) {
+            const items::ItemDef* output = m_ctx.items->Find(def->outputDefId);
+            state.crafting.active = true;
+            state.crafting.recipeId = def->id;
+            state.crafting.outputLabel =
+                output != nullptr ? output->name : def->outputDefId;
+            state.crafting.outputCount = def->outputCount;
+            state.crafting.elapsed = networkJob->elapsed;
+            state.crafting.duration = networkJob->duration;
+            state.crafting.progress =
+                networkJob->duration > 0.0f
+                    ? std::clamp(networkJob->elapsed / networkJob->duration,
+                                 0.0f, 1.0f)
+                    : 0.0f;
+            state.crafting.toolEfficiency = networkJob->toolEfficiency;
+            state.crafting.batchCount = std::max(networkJob->batchTotal, 1);
+            state.crafting.completedCount =
+                std::clamp(networkJob->batchCompleted, 0,
+                           state.crafting.batchCount);
+        }
+    } else if (!m_networkMode && m_crafting.active && m_ctx.recipes != nullptr) {
+        const items::RecipeDef* def = m_ctx.recipes->Find(m_crafting.recipeId);
+        if (def != nullptr) {
+            const items::ItemDef* output = m_ctx.items->Find(def->outputDefId);
+            state.crafting.active = true;
+            state.crafting.recipeId = def->id;
+            state.crafting.outputLabel =
+                output != nullptr ? output->name : def->outputDefId;
+            state.crafting.outputCount = def->outputCount;
+            state.crafting.elapsed = m_crafting.elapsed;
+            state.crafting.duration = m_crafting.duration;
+            state.crafting.progress = m_crafting.Progress();
+            state.crafting.toolEfficiency = m_crafting.toolEfficiency;
+            state.crafting.batchCount = std::max(m_craftBatchTotal, 1);
+            state.crafting.completedCount =
+                std::clamp(m_craftBatchCompleted, 0, state.crafting.batchCount);
+        }
+    }
+    if (m_ctx.recipes != nullptr) {
+        const auto appendQueue = [&](const auto& queue) {
+            state.crafting.queue.reserve(queue.size());
+            for (const ecs::CraftQueueItem& queued : queue) {
+                const items::RecipeDef* def =
+                    m_ctx.recipes->Find(queued.recipeId);
+                if (def == nullptr) {
+                    continue;
+                }
+                const items::ItemDef* output =
+                    m_ctx.items->Find(def->outputDefId);
+                state.crafting.queue.push_back(ui::InventoryQueuedCraft{
+                    def->id, output != nullptr ? output->name : def->outputDefId,
+                    def->outputCount, queued.count});
+            }
+        };
+        if (networkJob != nullptr) {
+            appendQueue(networkJob->queue);
+        } else if (!m_networkMode) {
+            appendQueue(m_craftQueue);
         }
     }
 
@@ -810,6 +1228,7 @@ void WorldDemoState::RefreshInventory() {
             slot.label = def != nullptr ? def->name : info.item.defId;
             slot.count = info.item.count;
             slot.entityId = m_ctx.ecs->IdOf(info.entity).id;
+            slot.condition = info.item.condition;
         }
     }
 
@@ -955,9 +1374,18 @@ void WorldDemoState::UseBagItem(int index) {
     }
     entt::registry& registry = m_ctx.ecs->Registry();
     auto* container = registry.try_get<ecs::Container>(m_player);
-    auto* health = registry.try_get<ecs::Health>(m_player);
-    if (container == nullptr || health == nullptr ||
+    if (container == nullptr ||
         static_cast<std::size_t>(index) >= container->items.size()) {
+        return;
+    }
+    const items::ItemDef* def =
+        m_ctx.items->Find(container->items[static_cast<std::size_t>(index)].defId);
+    if (def != nullptr && !def->unlocksRecipes.empty()) {
+        UseBlueprintItem(index, *def);
+        return;
+    }
+    auto* health = registry.try_get<ecs::Health>(m_player);
+    if (health == nullptr) {
         return;
     }
     const items::UseResult use =
@@ -966,7 +1394,6 @@ void WorldDemoState::UseBagItem(int index) {
         SetNotice("该物品不能使用", kNoticeFailColor, 1.5f);
         return;
     }
-    const items::ItemDef* def = m_ctx.items->Find(use.defId);
     auto* needs = registry.try_get<ecs::Needs>(m_player);
     const float healed = items::ApplyUseEffect(
         use.effect, health->max, &health->current,
@@ -983,6 +1410,126 @@ void WorldDemoState::UseBagItem(int index) {
     }
     ZL_INFO("items", "使用（背包槽 {}）：{}（回血 {:.0f}，剩余 {}）", index, name, healed,
             use.remaining);
+}
+
+bool WorldDemoState::UseBlueprintItem(int index, const items::ItemDef& def) {
+    if (m_ctx.ecs == nullptr || m_ctx.recipes == nullptr || m_player == entt::null ||
+        index < 0) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* container = registry.try_get<ecs::Container>(m_player);
+    if (container == nullptr ||
+        static_cast<std::size_t>(index) >= container->items.size()) {
+        return false;
+    }
+    auto* known = registry.try_get<ecs::KnownRecipes>(m_player);
+    if (known == nullptr) {
+        known = &registry.emplace<ecs::KnownRecipes>(m_player);
+    }
+
+    std::vector<std::string> learned;
+    for (const std::string& recipeId : def.unlocksRecipes) {
+        if (m_ctx.recipes->Find(recipeId) == nullptr || RecipeKnown(recipeId)) {
+            continue;
+        }
+        learned.push_back(recipeId);
+    }
+    if (learned.empty()) {
+        SetNotice("该配方已学会，无需再次使用", kNoticeInfoColor, 1.8f);
+        return true;
+    }
+
+    ecs::ItemInstance removed;
+    if (!items::TakeAt(*container, static_cast<std::size_t>(index), 1, &removed)) {
+        return false;
+    }
+    std::string labels;
+    for (const std::string& recipeId : learned) {
+        known->recipeIds.push_back(recipeId);
+        const items::RecipeDef* recipe = m_ctx.recipes->Find(recipeId);
+        if (!labels.empty()) {
+            labels += "、";
+        }
+        labels += recipe != nullptr ? recipe->name : recipeId;
+    }
+    std::sort(known->recipeIds.begin(), known->recipeIds.end());
+    known->recipeIds.erase(std::unique(known->recipeIds.begin(), known->recipeIds.end()),
+                           known->recipeIds.end());
+    SetNotice("学会了配方：" + labels, kNoticeOkColor, 2.8f);
+    ZL_INFO("items", "使用蓝图/杂志 '{}'，学会配方：{}", def.name, labels);
+    RefreshInventory();
+    return true;
+}
+
+void WorldDemoState::RepairBagItem(int index) {
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_player == entt::null ||
+        index < 0) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* container = registry.try_get<ecs::Container>(m_player);
+    if (container == nullptr) {
+        return;
+    }
+    const items::RepairResult result =
+        items::Repair(*container, *m_ctx.items, static_cast<std::size_t>(index),
+                      m_repairKitDefId, m_repairKitCount, m_repairAmount);
+    if (!result.ok) {
+        SetNotice(result.error, kNoticeFailColor, 2.0f);
+        ZL_WARN("items", "维修失败（背包槽 {}）：{}", index, result.error);
+        return;
+    }
+    const items::ItemDef* def = m_ctx.items->Find(result.defId);
+    const items::ItemDef* material = m_ctx.items->Find(result.materialDefId);
+    const std::string name = def != nullptr ? def->name : result.defId;
+    const std::string materialName =
+        material != nullptr ? material->name : result.materialDefId;
+    const int beforePct =
+        static_cast<int>(std::lround(result.before * 100.0f));
+    const int afterPct =
+        static_cast<int>(std::lround(result.after * 100.0f));
+    SetNotice("维修成功：" + name + " " + std::to_string(beforePct) + "% → " +
+                  std::to_string(afterPct) + "%（消耗 " + materialName + " ×" +
+                  std::to_string(result.materialCount) + "）",
+              kNoticeOkColor, 2.5f);
+    ZL_INFO("items", "维修成功（背包槽 {}）：{} {}% → {}%，消耗 {} ×{}", index,
+            name, beforePct, afterPct, materialName, result.materialCount);
+}
+
+std::string WorldDemoState::StationLabel(std::string_view station) const {
+    if (station.empty()) {
+        return {};
+    }
+    const auto found = m_stationLabels.find(std::string(station));
+    return found != m_stationLabels.end() ? found->second : std::string(station);
+}
+
+bool WorldDemoState::StationNearby(std::string_view station, float x, float y,
+                                   int z) const {
+    if (station.empty()) {
+        return true;
+    }
+    if (m_ctx.world == nullptr || m_stationRange <= 0.0f) {
+        return false;
+    }
+    return game::HasStationNearby(*m_ctx.world, x, y, z, station, m_stationRange);
+}
+
+bool WorldDemoState::RecipeKnown(std::string_view recipeId) const {
+    if (!m_blueprintRecipes.contains(std::string(recipeId))) {
+        return true;
+    }
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return false;
+    }
+    const auto* known =
+        m_ctx.ecs->Registry().try_get<ecs::KnownRecipes>(m_player);
+    if (known == nullptr) {
+        return false;
+    }
+    return std::find(known->recipeIds.begin(), known->recipeIds.end(), recipeId) !=
+           known->recipeIds.end();
 }
 
 void WorldDemoState::DropBagItem(int index) {
@@ -1101,11 +1648,25 @@ net::Command WorldDemoState::MakePlayerCommand(net::CommandType type) const {
 }
 
 bool WorldDemoState::SubmitPlayerCommand(const net::Command& command) {
-    if (m_ctx.commands == nullptr || m_ctx.ecs == nullptr || m_player == entt::null ||
-        !m_ctx.ecs->Alive(m_player) || command.playerStableId == 0) {
+    if (m_ctx.ecs == nullptr || m_player == entt::null || !m_ctx.ecs->Alive(m_player) ||
+        command.playerStableId == 0) {
         return false;
     }
     std::string error;
+    if (m_networkMode) {
+        if (m_ctx.networkClient == nullptr ||
+            !m_ctx.networkClient->SendCommand(command, &error)) {
+            if (!error.empty()) {
+                ZL_DEBUG("net", "玩家命令 {} 未发送：{}", net::CommandTypeName(command.type),
+                         error);
+            }
+            return false;
+        }
+        return true;
+    }
+    if (m_ctx.commands == nullptr) {
+        return false;
+    }
     if (!m_ctx.commands->Submit(command, &error)) {
         if (!error.empty()) {
             ZL_WARN("net", "玩家命令 {} 未提交：{}", net::CommandTypeName(command.type), error);
@@ -1140,7 +1701,9 @@ void WorldDemoState::SubmitInventoryAction(const ui::InventoryAction& action) {
         return;
     }
     net::Command command = MakePlayerCommand(net::CommandType::InventoryAction);
-    command.payload.flags = static_cast<std::uint16_t>(action.type);
+    const auto count = static_cast<std::uint16_t>(std::clamp(action.count, 1, 99));
+    command.payload.flags =
+        static_cast<std::uint16_t>(action.type) | static_cast<std::uint16_t>(count << 8);
     command.payload.area = static_cast<std::uint8_t>(action.from);
     command.payload.targetArea = static_cast<std::uint8_t>(action.to);
     command.payload.index = action.fromIndex;
@@ -1232,12 +1795,13 @@ bool WorldDemoState::ExecutePlayerCommand(const net::Command& command, std::stri
         case net::CommandType::InventoryAction: {
             const auto actionType =
                 static_cast<ui::InventoryActionType>(command.payload.flags & 0xFFu);
-            if ((command.payload.flags & 0xFF00u) != 0 ||
+            const int count = static_cast<int>(command.payload.flags >> 8);
+            if (count > 99 ||
                 command.payload.area > static_cast<std::uint8_t>(ui::InventoryArea::Loot) ||
                 command.payload.targetArea >
                     static_cast<std::uint8_t>(ui::InventoryArea::Loot) ||
                 static_cast<std::uint8_t>(actionType) >
-                    static_cast<std::uint8_t>(ui::InventoryActionType::Pickup)) {
+                    static_cast<std::uint8_t>(ui::InventoryActionType::QueueSetCount)) {
                 error = "背包命令字段非法";
                 return false;
             }
@@ -1248,6 +1812,7 @@ bool WorldDemoState::ExecutePlayerCommand(const net::Command& command, std::stri
             action.fromIndex = command.payload.index;
             action.toIndex = command.payload.targetIndex;
             action.fromEntityId = command.payload.entityId;
+            action.count = count > 0 ? count : 1;
             HandleInventoryAction(action);
             return true;
         }
@@ -1267,6 +1832,224 @@ bool WorldDemoState::ExecutePlayerCommand(const net::Command& command, std::stri
     return false;
 }
 
+bool WorldDemoState::StartCraftBatch(const items::RecipeDef& recipe, int requested,
+                                     std::string& error, int& actual) {
+    actual = 0;
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_player == entt::null ||
+        !m_ctx.ecs->Alive(m_player)) {
+        error = "玩家或注册表不可用";
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* container = registry.try_get<ecs::Container>(m_player);
+    const auto* position = registry.try_get<ecs::Position>(m_player);
+    if (!RecipeKnown(recipe.id)) {
+        error = "尚未学会该配方：阅读配方杂志";
+        return false;
+    }
+    if (!recipe.station.empty() &&
+        (position == nullptr ||
+         !StationNearby(recipe.station, position->x, position->y, position->z))) {
+        error = "已离开" + StationLabel(recipe.station);
+        return false;
+    }
+    if (container == nullptr) {
+        error = "背包不可用";
+        return false;
+    }
+    std::string reason;
+    if (!items::CanCraft(*container, *m_ctx.items, recipe, &reason)) {
+        error = reason.empty() ? "材料或背包空间不足" : reason;
+        return false;
+    }
+    const int possible =
+        items::MaxCraftCount(*container, *m_ctx.items, recipe,
+                             std::clamp(requested, 1, 99));
+    if (possible <= 0) {
+        error = "材料或背包空间不足";
+        return false;
+    }
+    const float efficiency = items::ToolEfficiency(*container, recipe);
+    const float seconds = items::EffectiveCraftSeconds(recipe, efficiency);
+    m_craftBatchTotal = possible;
+    m_craftBatchCompleted = 0;
+    m_crafting.Start(recipe.id, seconds, efficiency);
+    actual = possible;
+    return true;
+}
+
+std::string WorldDemoState::QueuedCraftLabel(std::string_view recipeId) const {
+    if (m_ctx.recipes == nullptr) {
+        return std::string(recipeId);
+    }
+    const items::RecipeDef* recipe = m_ctx.recipes->Find(recipeId);
+    if (recipe == nullptr) {
+        return std::string(recipeId);
+    }
+    const items::ItemDef* output =
+        m_ctx.items != nullptr ? m_ctx.items->Find(recipe->outputDefId) : nullptr;
+    const std::string label =
+        output != nullptr ? output->name : recipe->outputDefId;
+    return label + " ×" + std::to_string(recipe->outputCount);
+}
+
+bool WorldDemoState::StartNextQueuedCraft(std::string_view prefix) {
+    if (m_craftQueue.empty()) {
+        return false;
+    }
+    ecs::CraftQueueItem entry = std::move(m_craftQueue.front());
+    m_craftQueue.erase(m_craftQueue.begin());
+    const auto fail = [&](const std::string& reason) {
+        const int remaining = static_cast<int>(m_craftQueue.size());
+        m_craftQueue.clear();
+        std::string notice(prefix);
+        notice += "队列中断：" + reason;
+        if (remaining > 0) {
+            notice += "（剩余 " + std::to_string(remaining) + " 项已清空）";
+        }
+        SetNotice(notice, kNoticeFailColor, 3.0f);
+        ZL_INFO("items", "制作队列中断：{}（剩余 {} 项已清空）", reason, remaining);
+        return false;
+    };
+    if (m_ctx.recipes == nullptr) {
+        return fail("配方未加载");
+    }
+    const items::RecipeDef* recipe =
+        m_ctx.recipes->Find(entry.recipeId);
+    if (recipe == nullptr) {
+        return fail("配方不存在");
+    }
+    std::string error;
+    int actual = 0;
+    if (!StartCraftBatch(*recipe, entry.count, error, actual)) {
+        return fail(error);
+    }
+    const items::ItemDef* output = m_ctx.items->Find(recipe->outputDefId);
+    const std::string label =
+        output != nullptr ? output->name : recipe->outputDefId;
+    std::string notice(prefix);
+    notice += "开始队列下一项：" + label + " ×" +
+              std::to_string(recipe->outputCount) + "（" +
+              std::to_string(actual) + " 件";
+    if (actual < entry.count) {
+        notice += "；请求 " + std::to_string(entry.count) +
+                  " 件，已按材料/空间截断";
+    }
+    notice += "）";
+    SetNotice(notice, kNoticeInfoColor, 2.5f);
+    ZL_INFO("items",
+            "开始队列下一项：{} ×{}（配方 {}，请求 {} 件，实际 {} 件，剩余 {} 项）",
+            label, recipe->outputCount, recipe->id, entry.count, actual,
+            static_cast<int>(m_craftQueue.size()));
+    return true;
+}
+
+void WorldDemoState::SyncCraftingJobToEcs() {
+    if (m_ctx.ecs == nullptr || m_player == entt::null ||
+        !m_ctx.ecs->Alive(m_player)) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* job = registry.try_get<ecs::CraftingJob>(m_player);
+    if (job == nullptr) {
+        job = &registry.emplace<ecs::CraftingJob>(m_player);
+    }
+    job->active = m_crafting.active;
+    job->recipeId = m_crafting.active ? m_crafting.recipeId : std::string();
+    job->elapsed = m_crafting.active ? m_crafting.elapsed : 0.0f;
+    job->duration = m_crafting.active ? m_crafting.duration : 0.0f;
+    job->toolEfficiency = m_crafting.active ? m_crafting.toolEfficiency : 1.0f;
+    job->batchTotal = m_crafting.active ? m_craftBatchTotal : 0;
+    job->batchCompleted = m_crafting.active ? m_craftBatchCompleted : 0;
+    job->queue = m_craftQueue;
+}
+
+void WorldDemoState::RestoreCraftingJobFromEcs() {
+    m_crafting.Cancel();
+    m_craftBatchTotal = 0;
+    m_craftBatchCompleted = 0;
+    m_craftQueue.clear();
+    if (m_ctx.ecs == nullptr || m_player == entt::null ||
+        !m_ctx.ecs->Alive(m_player)) {
+        return;
+    }
+    const auto* job =
+        m_ctx.ecs->Registry().try_get<ecs::CraftingJob>(m_player);
+    if (job == nullptr || (!job->active && job->queue.empty())) {
+        return;
+    }
+    const auto appendWarning = [this](std::string warning) {
+        if (m_ctx.saveWarning.empty()) {
+            m_ctx.saveWarning = std::move(warning);
+        } else {
+            m_ctx.saveWarning += "；" + warning;
+        }
+    };
+    const auto cancelRestore = [&](const std::string& reason) {
+        m_craftQueue.clear();
+        appendWarning("存档制作任务未恢复：" + reason);
+        ZL_WARN("items", "读档制作任务未恢复：{}", reason);
+    };
+    if (!job->active) {
+        cancelRestore("存档队列缺少活跃批次");
+        return;
+    }
+    if (m_ctx.recipes == nullptr) {
+        cancelRestore("配方未加载");
+        return;
+    }
+    const items::RecipeDef* recipe = m_ctx.recipes->Find(job->recipeId);
+    if (recipe == nullptr) {
+        cancelRestore("配方不存在：" + job->recipeId);
+        return;
+    }
+    if (!RecipeKnown(recipe->id)) {
+        cancelRestore("尚未学会配方：" + recipe->id);
+        return;
+    }
+    if (job->batchTotal < 1 || job->batchTotal > ecs::kMaxCraftBatchCount ||
+        job->batchCompleted < 0 || job->batchCompleted >= job->batchTotal ||
+        !(job->duration > 0.0f) || job->elapsed < 0.0f ||
+        job->elapsed > job->duration + 1e-4f || !(job->toolEfficiency > 0.0f) ||
+        job->toolEfficiency > 1.0f) {
+        cancelRestore("批次进度非法");
+        return;
+    }
+
+    int dropped = 0;
+    for (const ecs::CraftQueueItem& entry : job->queue) {
+        if (entry.count < 1 || entry.count > ecs::kMaxCraftBatchCount ||
+            m_ctx.recipes->Find(entry.recipeId) == nullptr) {
+            ++dropped;
+            continue;
+        }
+        m_craftQueue.push_back(entry);
+    }
+    if (dropped > 0) {
+        appendWarning("存档队列有 " + std::to_string(dropped) +
+                      " 项配方不存在，已跳过");
+    }
+
+    m_crafting.active = true;
+    m_crafting.recipeId = job->recipeId;
+    m_crafting.elapsed = job->elapsed;
+    m_crafting.duration = job->duration;
+    m_crafting.toolEfficiency = job->toolEfficiency;
+    m_craftBatchTotal = job->batchTotal;
+    m_craftBatchCompleted = job->batchCompleted;
+    const std::string label = QueuedCraftLabel(recipe->id);
+    SetNotice("已恢复制作：" + label + "（" +
+                  std::to_string(m_craftBatchCompleted) + "/" +
+                  std::to_string(m_craftBatchTotal) + "，队列 " +
+                  std::to_string(m_craftQueue.size()) + " 项）",
+              kNoticeInfoColor, 2.5f);
+    ZL_INFO("items",
+            "读档恢复制作：{}（配方 {}，进度 {}/{}, 已完成 {}/{}, 队列 {} 项）",
+            label, recipe->id, m_crafting.elapsed, m_crafting.duration,
+            m_craftBatchCompleted, m_craftBatchTotal,
+            static_cast<int>(m_craftQueue.size()));
+}
+
 void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
     if (m_ctx.ui == nullptr || m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
         m_player == entt::null) {
@@ -1275,6 +2058,7 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
     entt::registry& registry = m_ctx.ecs->Registry();
     auto* container = registry.try_get<ecs::Container>(m_player);
     auto* equipment = registry.try_get<ecs::Equipment>(m_player);
+    const auto* position = registry.try_get<ecs::Position>(m_player);
     if (container == nullptr || equipment == nullptr) {
         return;
     }
@@ -1347,16 +2131,362 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
                 DropEquipmentItem(action.fromIndex);
             }
             break;
+        case ui::InventoryActionType::Repair:
+            if (action.from != ui::InventoryArea::Backpack) {
+                SetNotice("只能维修背包中的工具", kNoticeFailColor, 1.8f);
+                break;
+            }
+            RepairBagItem(action.fromIndex);
+            break;
         case ui::InventoryActionType::Pickup:
             PickupLootItem(action.fromEntityId);
             break;
+        case ui::InventoryActionType::Craft: {
+            if (m_ctx.recipes == nullptr) {
+                SetNotice("制作不可用：配方未加载", kNoticeFailColor, 2.5f);
+                break;
+            }
+            const items::RecipeDef* recipe =
+                action.fromIndex >= 0
+                    ? m_ctx.recipes->At(static_cast<std::size_t>(action.fromIndex))
+                    : nullptr;
+            if (recipe == nullptr) {
+                SetNotice("配方不存在", kNoticeFailColor, 2.0f);
+                break;
+            }
+            if (!RecipeKnown(recipe->id)) {
+                SetNotice("尚未学会该配方：阅读配方杂志", kNoticeFailColor, 2.5f);
+                ZL_INFO("items", "制作被拒绝（配方 {}）：尚未学会", recipe->id);
+                break;
+            }
+            if (!recipe->station.empty() &&
+                (position == nullptr ||
+                 !StationNearby(recipe->station, position->x, position->y,
+                                position->z))) {
+                SetNotice("需要附近" + StationLabel(recipe->station),
+                          kNoticeFailColor, 2.5f);
+                ZL_INFO("items", "制作被拒绝（配方 {}）：需要附近{}", recipe->id,
+                        StationLabel(recipe->station));
+                break;
+            }
+            const int requested = std::clamp(action.count, 1, 99);
+            const items::ItemDef* output = m_ctx.items->Find(recipe->outputDefId);
+            const std::string label =
+                output != nullptr ? output->name : recipe->outputDefId;
+            if (m_crafting.active || !m_craftQueue.empty()) {
+                if (static_cast<int>(m_craftQueue.size()) >= ecs::kMaxCraftQueueEntries) {
+                    SetNotice("制作队列已满（最多 " +
+                                  std::to_string(ecs::kMaxCraftQueueEntries) + " 项）",
+                              kNoticeFailColor, 2.5f);
+                    break;
+                }
+                m_craftQueue.push_back(ecs::CraftQueueItem{recipe->id, requested});
+                SetNotice("已加入制作队列（第 " +
+                              std::to_string(m_craftQueue.size()) + " 项）：" +
+                              label + " ×" +
+                              std::to_string(recipe->outputCount) + "（请求 " +
+                              std::to_string(requested) + " 件）",
+                          kNoticeInfoColor, 2.5f);
+                ZL_INFO("items",
+                        "加入制作队列：{} ×{}（配方 {}，请求 {} 件，队列 {} 项）",
+                        label, recipe->outputCount, recipe->id, requested,
+                        static_cast<int>(m_craftQueue.size()));
+                if (!m_crafting.active) {
+                    StartNextQueuedCraft({});
+                }
+                break;
+            }
+            std::string error;
+            int actual = 0;
+            if (!StartCraftBatch(*recipe, requested, error, actual)) {
+                SetNotice(error, kNoticeFailColor, 2.5f);
+                ZL_INFO("items", "制作被拒绝（配方 {}）：{}", recipe->id, error);
+                break;
+            }
+            if (requested > 1) {
+                std::string notice =
+                    (actual > 1 ? "开始批量制作：" : "开始制作：") + label + " ×" +
+                    std::to_string(recipe->outputCount) + "（共 " +
+                    std::to_string(actual) + " 件";
+                if (actual < requested) {
+                    notice += "；请求 " + std::to_string(requested) +
+                              " 件，已按材料/空间截断";
+                }
+                notice += "）";
+                SetNotice(notice, kNoticeInfoColor, 2.5f);
+            } else {
+                SetNotice("开始制作：" + label + " ×" +
+                              std::to_string(recipe->outputCount),
+                          kNoticeInfoColor, 1.5f);
+            }
+            ZL_INFO("items",
+                    "开始制作：{} ×{}（配方 {}，请求 {} 件，实际 {} 件，耗时 {:.2f}s，"
+                    "工具效率 {:.0f}%）",
+                    label, recipe->outputCount, recipe->id, requested, actual,
+                    m_crafting.duration, m_crafting.toolEfficiency * 100.0f);
+            break;
+        }
+        case ui::InventoryActionType::CancelCraft: {
+            if (!m_crafting.active && m_craftQueue.empty()) {
+                SetNotice("没有正在制作的项目", kNoticeFailColor, 1.5f);
+                break;
+            }
+            const std::string recipeId = m_crafting.recipeId;
+            const int completed = m_craftBatchCompleted;
+            const int total = m_craftBatchTotal;
+            const int queued = static_cast<int>(m_craftQueue.size());
+            m_crafting.Cancel();
+            m_craftBatchTotal = 0;
+            m_craftBatchCompleted = 0;
+            m_craftQueue.clear();
+            if (queued > 0) {
+                if (completed > 0) {
+                    SetNotice("已取消制作队列（当前已完成 " +
+                                  std::to_string(completed) + "/" +
+                                  std::to_string(total) + "，队列 " +
+                                  std::to_string(queued) + " 项已清空）",
+                              kNoticeInfoColor, 2.8f);
+                } else {
+                    SetNotice("已取消制作队列（队列 " + std::to_string(queued) +
+                                  " 项已清空，材料未消耗）",
+                              kNoticeInfoColor, 2.5f);
+                }
+            } else if (completed > 0) {
+                SetNotice("已取消批量制作（已完成 " + std::to_string(completed) +
+                              "/" + std::to_string(total) + "，当前材料未消耗）",
+                          kNoticeInfoColor, 2.5f);
+            } else {
+                SetNotice("已取消制作（材料未消耗）", kNoticeInfoColor, 2.0f);
+            }
+            ZL_INFO("items",
+                    "取消制作（配方 {}，已完成 {}/{}，清空队列 {} 项）", recipeId,
+                    completed, total, queued);
+            break;
+        }
+        case ui::InventoryActionType::QueueMoveUp:
+        case ui::InventoryActionType::QueueMoveDown: {
+            if (action.fromIndex < 0 ||
+                static_cast<std::size_t>(action.fromIndex) >= m_craftQueue.size()) {
+                SetNotice("队列项不存在", kNoticeFailColor, 1.5f);
+                break;
+            }
+            const bool moveUp = action.type == ui::InventoryActionType::QueueMoveUp;
+            const int delta = moveUp ? -1 : 1;
+            const int target = action.fromIndex + delta;
+            if (target < 0) {
+                SetNotice("队列项已在队首", kNoticeFailColor, 1.5f);
+                break;
+            }
+            if (target >= static_cast<int>(m_craftQueue.size())) {
+                SetNotice("队列项已在队尾", kNoticeFailColor, 1.5f);
+                break;
+            }
+            const std::string label =
+                QueuedCraftLabel(m_craftQueue[static_cast<std::size_t>(action.fromIndex)]
+                                     .recipeId);
+            std::swap(m_craftQueue[static_cast<std::size_t>(action.fromIndex)],
+                      m_craftQueue[static_cast<std::size_t>(target)]);
+            const std::string direction = moveUp ? "上移" : "下移";
+            SetNotice("已" + direction + "队列第 " +
+                          std::to_string(action.fromIndex + 1) + " 项：" + label +
+                          "（现为第 " + std::to_string(target + 1) + " 项）",
+                      kNoticeInfoColor, 2.0f);
+            ZL_INFO("items", "制作队列{}：{} 第 {} 项 -> 第 {} 项（队列 {} 项）",
+                    direction, label, action.fromIndex + 1, target + 1,
+                    static_cast<int>(m_craftQueue.size()));
+            break;
+        }
+        case ui::InventoryActionType::QueueRemove: {
+            if (action.fromIndex < 0 ||
+                static_cast<std::size_t>(action.fromIndex) >= m_craftQueue.size()) {
+                SetNotice("队列项不存在", kNoticeFailColor, 1.5f);
+                break;
+            }
+            const ecs::CraftQueueItem removed =
+                m_craftQueue[static_cast<std::size_t>(action.fromIndex)];
+            const std::string label = QueuedCraftLabel(removed.recipeId);
+            m_craftQueue.erase(m_craftQueue.begin() + action.fromIndex);
+            SetNotice("已移除队列第 " + std::to_string(action.fromIndex + 1) +
+                          " 项：" + label + "（请求 " +
+                          std::to_string(removed.count) + " 件）",
+                      kNoticeInfoColor, 2.0f);
+            ZL_INFO("items", "移除制作队列第 {} 项：{}（请求 {} 件，剩余 {} 项）",
+                    action.fromIndex + 1, label, removed.count,
+                    static_cast<int>(m_craftQueue.size()));
+            break;
+        }
+        case ui::InventoryActionType::QueueSetCount: {
+            if (action.fromIndex < 0 ||
+                static_cast<std::size_t>(action.fromIndex) >= m_craftQueue.size()) {
+                SetNotice("队列项不存在", kNoticeFailColor, 1.5f);
+                break;
+            }
+            ecs::CraftQueueItem& entry =
+                m_craftQueue[static_cast<std::size_t>(action.fromIndex)];
+            const int count = std::clamp(action.count, 1, 99);
+            if (entry.count == count) {
+                break;
+            }
+            const int previous = entry.count;
+            entry.count = count;
+            const std::string label = QueuedCraftLabel(entry.recipeId);
+            SetNotice("队列第 " + std::to_string(action.fromIndex + 1) +
+                          " 项数量：" + std::to_string(previous) + " → " +
+                          std::to_string(count) + " 件（" + label + "）",
+                      kNoticeInfoColor, 2.0f);
+            ZL_INFO("items",
+                    "调整制作队列第 {} 项数量：{} 请求 {} -> {} 件（队列 {} 项）",
+                    action.fromIndex + 1, label, previous, count,
+                    static_cast<int>(m_craftQueue.size()));
+            break;
+        }
     }
     RefreshInventory();
+}
+
+void WorldDemoState::UpdateCrafting(float tickDt) {
+    if (!m_crafting.active || !m_crafting.Advance(tickDt)) {
+        return;
+    }
+    const std::string recipeId = m_crafting.recipeId;
+    m_crafting.Cancel();
+    const auto finishFailure = [this](const std::string& reason) {
+        const int completed = m_craftBatchCompleted;
+        const int total = m_craftBatchTotal;
+        const int queued = static_cast<int>(m_craftQueue.size());
+        m_craftBatchTotal = 0;
+        m_craftBatchCompleted = 0;
+        m_craftQueue.clear();
+        const std::string queueSuffix =
+            queued > 0 ? "；队列 " + std::to_string(queued) + " 项已清空"
+                       : std::string();
+        if (completed > 0) {
+            SetNotice("批量制作中断：已完成 " + std::to_string(completed) + "/" +
+                          std::to_string(total) + "（" + reason + "）" +
+                          queueSuffix,
+                      kNoticeFailColor, 3.0f);
+            ZL_INFO("items",
+                    "批量制作中断（已完成 {}/{}，清空队列 {} 项）：{}", completed,
+                    total, queued, reason);
+        } else {
+            SetNotice("制作失败：" + reason + queueSuffix, kNoticeFailColor, 2.5f);
+            ZL_INFO("items", "制作失败（清空队列 {} 项）：{}", queued, reason);
+        }
+    };
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_ctx.recipes == nullptr ||
+        m_player == entt::null || !m_ctx.ecs->Alive(m_player)) {
+        const int queued = static_cast<int>(m_craftQueue.size());
+        m_craftBatchTotal = 0;
+        m_craftBatchCompleted = 0;
+        m_craftQueue.clear();
+        ZL_WARN("items", "制作中断：玩家或注册表不可用（配方 {}，清空队列 {} 项）",
+                recipeId, queued);
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* container = registry.try_get<ecs::Container>(m_player);
+    const auto* position = registry.try_get<ecs::Position>(m_player);
+    const items::RecipeDef* recipe = m_ctx.recipes->Find(recipeId);
+    if (container == nullptr || recipe == nullptr) {
+        finishFailure("配方或背包不可用");
+        return;
+    }
+    if (!RecipeKnown(recipe->id)) {
+        finishFailure("尚未学会配方");
+        return;
+    }
+    if (!recipe->station.empty() &&
+        (position == nullptr ||
+         !StationNearby(recipe->station, position->x, position->y, position->z))) {
+        finishFailure("已离开" + StationLabel(recipe->station));
+        return;
+    }
+    const items::CraftResult result = items::Craft(*container, *m_ctx.items, *recipe);
+    if (!result.ok) {
+        finishFailure(result.error);
+        return;
+    }
+
+    const int total = std::max(m_craftBatchTotal, 1);
+    const int completed = ++m_craftBatchCompleted;
+    const items::ItemDef* output = m_ctx.items->Find(result.outputDefId);
+    const std::string label = output != nullptr ? output->name : result.outputDefId;
+    std::string brokenTools;
+    for (const std::string& defId : result.brokenToolDefIds) {
+        const items::ItemDef* def = m_ctx.items->Find(defId);
+        if (!brokenTools.empty()) {
+            brokenTools += "、";
+        }
+        brokenTools += def != nullptr ? def->name : defId;
+    }
+    const std::string brokenSuffix =
+        brokenTools.empty() ? std::string() : "；" + brokenTools + "已损坏";
+    if (completed < total) {
+        std::string reason;
+        if (!RecipeKnown(recipe->id)) {
+            reason = "尚未学会配方";
+        } else if (!recipe->station.empty() &&
+                   (position == nullptr ||
+                    !StationNearby(recipe->station, position->x, position->y,
+                                   position->z))) {
+            reason = "已离开" + StationLabel(recipe->station);
+        } else if (!items::CanCraft(*container, *m_ctx.items, *recipe, &reason)) {
+            // reason 已由 CanCraft 填充
+        }
+        if (!reason.empty()) {
+            finishFailure(reason);
+            return;
+        }
+        const float efficiency = items::ToolEfficiency(*container, *recipe);
+        const float seconds = items::EffectiveCraftSeconds(*recipe, efficiency);
+        m_crafting.Start(recipe->id, seconds, efficiency);
+        SetNotice("制作中：" + label + "（" + std::to_string(completed + 1) + "/" +
+                      std::to_string(total) + "）" + brokenSuffix,
+                  kNoticeInfoColor, 1.5f);
+        ZL_INFO("items", "批量制作继续：{}（已完成 {}/{}，耗时 {:.2f}s，效率 {:.0f}%）",
+                label, completed, total, seconds, efficiency * 100.0f);
+        return;
+    }
+
+    m_craftBatchTotal = 0;
+    m_craftBatchCompleted = 0;
+    const std::string completion =
+        total > 1
+            ? "批量制作完成：" + label + " ×" +
+                  std::to_string(result.outputCount * total) + "（共 " +
+                  std::to_string(total) + " 件）" + brokenSuffix
+            : "制作成功：" + label + " ×" +
+                  std::to_string(result.outputCount) + brokenSuffix;
+    if (brokenTools.empty()) {
+        ZL_INFO("items", "制作成功：{} ×{}（配方 {}，批次 {}/{}）", label,
+                result.outputCount, recipe->id, completed, total);
+    } else {
+        ZL_INFO("items", "制作成功：{} ×{}（配方 {}，批次 {}/{}）；工具损坏：{}",
+                label, result.outputCount, recipe->id, completed, total, brokenTools);
+    }
+    if (!m_craftQueue.empty()) {
+        StartNextQueuedCraft(completion + "；");
+        return;
+    }
+    SetNotice(completion, kNoticeOkColor, total > 1 ? 3.0f : 2.5f);
 }
 
 void WorldDemoState::HandleClickToMove(const render::GridPick& pick) {
     if (m_ctx.ecs == nullptr || m_player == entt::null || !pick.hit) {
         return;  // 玩家未生成 / 拾取无效
+    }
+    if (m_networkMode) {
+        net::Command command = MakePlayerCommand(net::CommandType::MoveTo);
+        command.payload.x = static_cast<float>(pick.x);
+        command.payload.y = static_cast<float>(pick.y);
+        if (SubmitPlayerCommand(command)) {
+            m_markerX = pick.x;
+            m_markerY = pick.y;
+            m_markerTimer = 3.0f;
+            m_markerColor = kMarkerActiveColor;
+            SetNotice("pathfinding on server...", kNoticeInfoColor, 1.2f);
+        }
+        return;
     }
     entt::registry& registry = m_ctx.ecs->Registry();
     auto* request = registry.try_get<ecs::PathRequest>(m_player);
@@ -1480,53 +2610,15 @@ void WorldDemoState::UpdatePathFeedback(double frameDt) {
 }
 
 void WorldDemoState::SpawnDemoEntities() {
-    if (m_ctx.ecs == nullptr) {
-        return;  // 无 ECS 上下文（理论不出现）：纯世界渲染降级
-    }
-    ecs::EcsWorld& world = *m_ctx.ecs;
-    std::mt19937 rng(20261016u);
-    std::uniform_real_distribution<float> u01(0.0f, 1.0f);
-
-    // 游荡区域对准默认相机视野（村北，world (70,18) 附近）
-    m_demoBoxX0 = 44.0f;
-    m_demoBoxY0 = 4.0f;
-    m_demoBoxX1 = 96.0f;
-    m_demoBoxY1 = 32.0f;
-
-    constexpr int kCount = 40;
-    for (int i = 0; i < kCount; ++i) {
-        const float px = m_demoBoxX0 + u01(rng) * (m_demoBoxX1 - m_demoBoxX0);
-        const float py = m_demoBoxY0 + u01(rng) * (m_demoBoxY1 - m_demoBoxY0);
-        SpawnZombie(world, m_ctx.physics, px, py, m_ctx.events);  // M5-T7 工厂；M7-T4 发 OnZombieSpawn
-    }
-    ZL_INFO("ecs", "生成 {} 个 AI 游荡者（AiSystem + PerceptionSystem；区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]）",
-            kCount, m_demoBoxX0, m_demoBoxX1, m_demoBoxY0, m_demoBoxY1);
-
-    // M5-T5/T7：虚拟僵尸群落种子（统计层，不入 registry）—— 演示的 200 只"离屏僵尸"；
-    // SpawnLodSystem 会把 populationTarget 内、焦点半径外的实体折回这里（AddOrMerge），
-    // 焦点接近时再实体化 —— live + virtual 与 populationTarget 对齐（人口守恒）
-    if (m_ctx.virtualHordes != nullptr) {
-        m_ctx.virtualHordes->Clear();
-        constexpr int kHordes = 5;
-        constexpr int kPerHorde = 40;  // 合计 200
-        for (int i = 0; i < kHordes; ++i) {
-            const float angle = static_cast<float>(i) * (6.2831853f / kHordes);
-            const float radius = 55.0f + static_cast<float>(i) * 5.0f;
-            m_ctx.virtualHordes->AddHorde(70.0f + std::cos(angle) * radius,
-                                          18.0f + std::sin(angle) * radius, kPerHorde,
-                                          /*spread=*/8.0f);
-        }
-        const auto stats = m_ctx.virtualHordes->GetStats(70.0f, 18.0f);
-        ZL_INFO("ai", "虚拟群落种子：{} 群 / {} 只（统计层，不入 registry；最近 {:.0f} 格）",
-                stats.hordes, stats.zombies, stats.nearestDist);
+    if (m_ctx.simulation != nullptr) {
+        m_ctx.simulation->SpawnDemoPopulation();
     }
 }
-
 // M5-T2 临时"感知"桩已删除：M5-T3 起由 ai::PerceptionSystem（视锥 + 视线 + 听觉）接管。
 
 void WorldDemoState::KillNearestDemoEntity() {
-    if (m_ctx.ecs == nullptr) {
-        return;
+    if (m_networkMode || m_ctx.ecs == nullptr) {
+        return;  // 网络客户端不能直接修改权威世界
     }
     entt::registry& registry = m_ctx.ecs->Registry();
 
@@ -1715,7 +2807,8 @@ void WorldDemoState::DespawnDemoEntities() {
 }
 
 void WorldDemoState::EnsureDemoItemsScattered() {
-    if (m_demoItemsScattered || m_ctx.ecs == nullptr || m_ctx.items == nullptr) {
+    if (m_networkMode || m_demoItemsScattered || m_ctx.ecs == nullptr ||
+        m_ctx.items == nullptr) {
         return;
     }
     // 与玩家生成相同的门控：目标 chunk 就绪后再散落（走位图/格子数据可靠）
@@ -1724,40 +2817,11 @@ void WorldDemoState::EnsureDemoItemsScattered() {
     if (target == nullptr || target->State() != world::ChunkState::Loaded) {
         return;  // 下帧再试
     }
-    // 出生点（70,24）周边固定散落点；每项经可走格吸附，失败则跳过并告警
-    struct Spot {
-        int dx;
-        int dy;
-        const char* defId;
-        int count;
-    };
-    static constexpr Spot kSpots[] = {
-        {0, 0, "bandage", 2},       // 出生点正下：F 拾取 → E 使用（回血测试）
-        {1, 1, "axe", 1},           // 出生点旁 1.4 格：F 拾取 → R 装备（手持渲染）
-        {-3, -7, "canned_beans", 1}, {4, -8, "kitchen_knife", 1},
-        {-6, -3, "rag", 3},         {7, -4, "tote_bag", 1},
-        {-7, 4, "jacket", 1},       {5, 6, "rag", 2},
-        {-2, 2, "water_bottle", 1}, {3, 2, "energy_bar", 2},
-    };
-    int spawned = 0;
-    for (const Spot& spot : kSpots) {
-        int wx = 0;
-        int wy = 0;
-        const bool found = ai::FindNearestWalkable(
-            70 + spot.dx, 24 + spot.dy, 6,
-            [this](int x, int y) { return !IsSolidSquare(x, y); }, &wx, &wy);
-        if (!found) {
-            ZL_WARN("items", "散落点 ({}, {}) 附近找不到可走格，跳过 {}",
-                    70 + spot.dx, 24 + spot.dy, spot.defId);
-            continue;
-        }
-        const ecs::ItemInstance stack{spot.defId, spot.count, 1.0f};
-        if (game::SpawnGroundItem(*m_ctx.ecs, *m_ctx.items, stack,
-                                  static_cast<float>(wx) + 0.5f,
-                                  static_cast<float>(wy) + 0.5f) != entt::null) {
-            ++spawned;
-        }
+    if (m_ctx.world == nullptr) {
+        return;
     }
+    const int spawned = game::SpawnDemoGroundItems(
+        *m_ctx.ecs, *m_ctx.items, *m_ctx.world, 70.0f, 24.0f);
     m_demoItemsScattered = true;
     ZL_INFO("items", "地面物品散落：{} 处（村庄附近；F 拾取最近）", spawned);
 }
@@ -1928,42 +2992,130 @@ void WorldDemoState::DropFirstItem() {
             removed, game::CountGroundItems(*m_ctx.ecs));
 }
 
-void WorldDemoState::AppendEquippedWeapon() {
-    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_ctx.assets == nullptr ||
-        m_player == entt::null) {
+void WorldDemoState::AppendActorPresentation() {
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_ctx.assets == nullptr) {
         return;
     }
     entt::registry& registry = m_ctx.ecs->Registry();
-    const auto* equipment = registry.try_get<ecs::Equipment>(m_player);
-    const auto* pos = registry.try_get<ecs::Position>(m_player);
-    if (equipment == nullptr || pos == nullptr) {
+    const std::vector<AssetProvider::Entry>* pixelFrames =
+        m_ctx.assets->FramesByHash(ecs::HashName("ui.pixel"));
+    if (pixelFrames == nullptr || pixelFrames->empty() ||
+        (*pixelFrames)[0].atlas == nullptr || (*pixelFrames)[0].frame == nullptr) {
         return;
     }
-    const auto& slot =
-        equipment->slots[static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand)];
-    if (!slot.has_value()) {
-        return;
-    }
-    const items::ItemDef* def = m_ctx.items->Find(slot->defId);
-    if (def == nullptr) {
-        return;
-    }
-    const auto* frames = m_ctx.assets->FramesByHash(ecs::HashName(def->icon));
-    if (frames == nullptr || frames->empty()) {
-        return;
-    }
-    const AssetProvider::Entry& entry = frames->front();
-    if (entry.atlas == nullptr || entry.frame == nullptr) {
-        return;
-    }
-    render::DrawItem item;
-    RenderCollectSystem::FillEntityDrawItem(pos->x, pos->y, pos->z, 0xFFFFFFFFu,
-                                            m_ctx.ecs->IdOf(m_player).id, *entry.frame,
-                                            entry.atlas->Texture(), /*subLayer=*/1, &item);
-    // 手持占位：屏幕空间右偏（角色右侧）——正式挂点/动画留后续里程碑
-    item.rect.x += 16.0f;
-    item.rect.y -= 36.0f;
-    m_items.push_back(item);
+    const AssetProvider::Entry& pixel = (*pixelFrames)[0];
+
+    auto pushIcon = [&](const ecs::Position& pos, std::uint64_t stableId,
+                        std::string_view icon, int subLayer, float offsetX,
+                        float offsetY, float scale, std::uint32_t tint) {
+        const items::ItemDef* def = m_ctx.items->Find(icon);
+        if (def == nullptr) {
+            return;
+        }
+        const auto* frames = m_ctx.assets->FramesByHash(ecs::HashName(def->icon));
+        if (frames == nullptr || frames->empty() || frames->front().atlas == nullptr ||
+            frames->front().frame == nullptr) {
+            return;
+        }
+        const AssetProvider::Entry& entry = frames->front();
+        render::DrawItem item;
+        RenderCollectSystem::FillEntityDrawItem(
+            pos.x, pos.y, pos.z, tint, stableId, *entry.frame,
+            entry.atlas->Texture(), subLayer, &item);
+        const float centerX = item.rect.x + item.rect.w * 0.5f;
+        const float centerY = item.rect.y + item.rect.h * 0.5f;
+        item.rect.w *= scale;
+        item.rect.h *= scale;
+        item.rect.x = centerX + offsetX - item.rect.w * 0.5f;
+        item.rect.y = centerY + offsetY - item.rect.h * 0.5f;
+        m_items.push_back(item);
+    };
+
+    auto pushPixel = [&](const ecs::Position& pos, std::uint64_t stableId,
+                         float offsetX, float offsetY, float width, float height,
+                         std::uint32_t tint, int subLayer) {
+        render::DrawItem item;
+        RenderCollectSystem::FillEntityDrawItem(
+            pos.x, pos.y, pos.z, tint, stableId, *pixel.frame,
+            pixel.atlas->Texture(), subLayer, &item);
+        const float centerX = item.rect.x + item.rect.w * 0.5f;
+        const float centerY = item.rect.y + item.rect.h * 0.5f;
+        item.rect.w = width;
+        item.rect.h = height;
+        item.rect.x = centerX + offsetX - width * 0.5f;
+        item.rect.y = centerY + offsetY - height * 0.5f;
+        m_items.push_back(item);
+    };
+
+    registry.view<ecs::Position, ecs::SpriteRef>().each(
+        [&](const ecs::Entity entity, const ecs::Position& pos,
+            const ecs::SpriteRef&) {
+            const std::uint64_t stableId = m_ctx.ecs->IdOf(entity).id;
+            if (const auto* equipment = registry.try_get<ecs::Equipment>(entity);
+                equipment != nullptr) {
+                const auto& primary =
+                    equipment->slots[static_cast<std::size_t>(
+                        ecs::EquipSlot::PrimaryHand)];
+                if (primary.has_value()) {
+                    pushIcon(pos, stableId, primary->defId, 1, 16.0f, -36.0f,
+                             1.0f, 0xFFFFFFFFu);
+                }
+                const auto& body =
+                    equipment->slots[static_cast<std::size_t>(ecs::EquipSlot::Body)];
+                if (body.has_value()) {
+                    pushIcon(pos, stableId, body->defId, 0, 0.0f, -18.0f, 0.72f,
+                             0xD8FFFFFFu);
+                }
+            }
+
+            const auto* action = registry.try_get<ecs::ActionState>(entity);
+            const auto* facing = registry.try_get<ecs::Facing>(entity);
+            if (action == nullptr || facing == nullptr) {
+                return;
+            }
+            if (action->action == ecs::ActorAction::Attacking) {
+                float offsetX = 24.0f;
+                float offsetY = -34.0f;
+                float width = 34.0f;
+                float height = 8.0f;
+                switch (facing->dir) {
+                    case ecs::Direction::Down:
+                        offsetX = 20.0f;
+                        offsetY = -26.0f;
+                        break;
+                    case ecs::Direction::Up:
+                        offsetX = -20.0f;
+                        offsetY = -46.0f;
+                        break;
+                    case ecs::Direction::Left:
+                        offsetX = -26.0f;
+                        offsetY = -34.0f;
+                        break;
+                    case ecs::Direction::Right:
+                        offsetX = 26.0f;
+                        offsetY = -34.0f;
+                        width = 8.0f;
+                        height = 34.0f;
+                        break;
+                }
+                if (facing->dir == ecs::Direction::Up ||
+                    facing->dir == ecs::Direction::Down) {
+                    width = 8.0f;
+                    height = 34.0f;
+                }
+                pushPixel(pos, stableId, offsetX, offsetY, width, height,
+                          0xFFE8A0FFu, 3);
+                pushPixel(pos, stableId, offsetX * 0.7f, offsetY - 8.0f,
+                          width * 0.6f, height * 0.6f, 0xFFFFFFFFu, 3);
+            } else if (action->action == ecs::ActorAction::Crafting) {
+                pushPixel(pos, stableId, -7.0f, -30.0f, 4.0f, 4.0f,
+                          0xFFFFD060u, 3);
+                pushPixel(pos, stableId, 5.0f, -37.0f, 3.0f, 3.0f,
+                          0xFFFFF0A0u, 3);
+                pushPixel(pos, stableId, 0.0f, -23.0f, 3.0f, 3.0f,
+                          0xFFFFB040u, 3);
+            }
+        });
 }
 
 void WorldDemoState::DespawnGroundItems() {
@@ -2015,10 +3167,22 @@ void WorldDemoState::HandleMenuAction(ui::MenuActionType action) {
             ResumeFromMenu();
             break;
         case ui::MenuActionType::ReturnToMainMenu:
+            if (m_networkMode) {
+                if (m_ctx.leaveMultiplayer) {
+                    m_ctx.leaveMultiplayer();
+                }
+                if (m_ctx.states != nullptr) {
+                    m_ctx.states->SetState(std::make_unique<MainMenuState>(m_ctx));
+                }
+                ZL_INFO("ui", "离开联机会话，返回主菜单");
+                break;
+            }
             if (m_ctx.ui != nullptr) {
                 m_ctx.ui->ShowMainMenu(true);
                 ZL_INFO("ui", "返回主菜单（当前世界保留，可继续）");
             }
+            break;
+        case ui::MenuActionType::Multiplayer:
             break;
         case ui::MenuActionType::NewGame:
             if (m_ctx.gameTime != nullptr) {
@@ -2040,6 +3204,7 @@ void WorldDemoState::OnExit() {
     // 退出前自动存档：先采集快照/提交后台，再销毁实体；GameApp 会在关闭时等待 zl-save
     m_ctx.executePlayerCommand = {};
     m_ctx.onSaveFinished = {};
+    m_ctx.quickSave = {};
     if (m_autoSaveOnExit && m_player != entt::null && m_ctx.ecs != nullptr &&
         m_ctx.ecs->Alive(m_player) && m_ctx.saveService != nullptr) {
         if (m_screenshotPending) {
@@ -2052,10 +3217,14 @@ void WorldDemoState::OnExit() {
         }
     }
     m_ctx.activeSaveId.clear();
+    m_ctx.hudState = {};
 
     if (m_ctx.ui != nullptr) {
+        m_ctx.ui->SetHudState(m_ctx.hudState);
         m_ctx.ui->CloseInventory();
         m_ctx.ui->SetInventoryActionHandler({});
+        m_ctx.ui->SetSocialChatHandler({});
+        m_ctx.ui->SetSocialState({});
         m_ctx.ui->HideMenu();
         m_ctx.ui->SetMenuActionHandler({});
     }
@@ -2086,6 +3255,8 @@ void WorldDemoState::OnExit() {
         }
         m_ctx.ecs->Flush();
     }
+    m_networkEntities.clear();
+    m_player = entt::null;
     const auto& stats = m_ctx.chunkManager->GetStats();
     ZL_INFO("render", "退出 WorldDemo：本状态共 {} tick；chunk 累计 加载 {} / 卸载 {} / 取消 {}",
             m_ticksInState, stats.totalLoaded, stats.totalUnloaded, stats.totalCancelled);
@@ -2156,9 +3327,25 @@ void WorldDemoState::UpdateAudio(double frameDt) {
 }
 
 void WorldDemoState::OnTick(double tickDt) {
-    (void)tickDt;
+    if (!m_networkMode) {
+        UpdateCrafting(static_cast<float>(tickDt));
+    } else if (m_ctx.networkClient != nullptr && m_ctx.networkClient->HasPlayer() &&
+               m_moveCommandValid) {
+        // 本地轻量预测：服务器快照到达后在 EntityReplicationClient 内校正/吸附。
+        const glm::vec2 screen(m_lastMoveCommand.x, m_lastMoveCommand.y);
+        if (glm::length(screen) > 0.0001f) {
+            const glm::vec2 grid =
+                glm::normalize(characters::InputSystem::ScreenDirToGridDir(
+                    glm::normalize(screen)));
+            (void)m_ctx.networkClient->AdvanceLocalPrediction(
+                static_cast<float>(tickDt), grid.x, grid.y);
+        }
+    }
+    if (m_networkMode) {
+        RefreshSocialState();
+    }
     ++m_ticksInState;
-    // 感知/AI/位移全部由固定链驱动（Perception → Ai → PathFollow → Movement → PhysicsSync）。
+    // 单机：感知/AI/位移由固定链驱动；网络：服务器权威推进，客户端只应用副本。
 }
 
 void WorldDemoState::OnFrame(double frameDt, double alpha) {
@@ -2167,6 +3354,16 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     const auto frameStart = Clock::now();
     PollSaveScreenshot(frameDt);
     ConsumeSaveWarning();
+    if (m_networkMode) {
+        SyncNetworkReplicas(static_cast<float>(alpha));
+        if (m_ctx.networkClient != nullptr && !m_ctx.networkClient->IsConnected() &&
+            m_noticeTimer <= 0.0f) {
+            const std::string reason = m_ctx.networkClient->LastError();
+            SetNotice(reason.empty() ? "multiplayer: disconnected, reconnecting..."
+                                     : "multiplayer: " + reason,
+                      kNoticeFailColor, 2.0f);
+        }
+    }
     HandleFrameInput(frameDt);
     if (m_ctx.ui == nullptr || !m_ctx.ui->IsMenuOpen()) {
         UpdatePathFeedback(frameDt);  // M4-T7：点击移动反馈（提示文字/目标标记计时与状态跃迁）
@@ -2181,8 +3378,10 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
 
     // M4-T4：目标 chunk 加载完成后生成玩家（村庄中心附近找可走格）
     EnsurePlayerSpawned();
-    // M6-T3：玩家就绪后散落地面物品（同样等 chunk 就绪）
-    EnsureDemoItemsScattered();
+    // M6-T3：玩家就绪后散落地面物品（网络客户端不持有权威世界物品）
+    if (!m_networkMode) {
+        EnsureDemoItemsScattered();
+    }
     // M11-T3：脚步/地面材质 → OnSound（音频 + AI 听觉）
     UpdateAudio(frameDt);
     const auto afterStreaming = Clock::now();
@@ -2196,7 +3395,7 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     }
     const auto afterEntityCollect = Clock::now();
     // M6-T5：手持武器（装备槽 → 玩家旁图标；画在同格角色之上）
-    AppendEquippedWeapon();
+    AppendActorPresentation();
     std::sort(m_items.begin(), m_items.end(), render::DrawItemLess);
     const auto afterSort = Clock::now();
     DrawWorld();
@@ -2304,6 +3503,24 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
                     commandStats.queuedCommands,
                     static_cast<unsigned long long>(commandStats.snapshotsReceived),
                     serverTick > 0 && nowTick >= serverTick ? nowTick - serverTick : 0);
+        }
+        if (m_ctx.networkClient != nullptr) {
+            const NetworkClient::Stats netStats = m_ctx.networkClient->GetStats();
+            ZL_INFO("net",
+                    "客户端: 连接={} 玩家={} | 分配={} 快照={} 状态={} | 命令包发/拒={}/{} | "
+                    "会话 发/收={}/{} 数据 发/收={}/{} | 实体副本={}",
+                    m_ctx.networkClient->IsConnected() ? "yes" : "no",
+                    static_cast<unsigned long long>(m_ctx.networkClient->PlayerStableId()),
+                    static_cast<unsigned long long>(netStats.assignments),
+                    static_cast<unsigned long long>(netStats.snapshotsReceived),
+                    static_cast<unsigned long long>(netStats.playerStatesReceived),
+                    static_cast<unsigned long long>(netStats.commandPacketsSent),
+                    static_cast<unsigned long long>(netStats.commandPacketsRejected),
+                    static_cast<unsigned long long>(netStats.session.messagesSent),
+                    static_cast<unsigned long long>(netStats.session.messagesReceived),
+                    static_cast<unsigned long long>(netStats.session.dataSent),
+                    static_cast<unsigned long long>(netStats.session.dataReceived),
+                    m_ctx.networkClient->Replication().Actors().size());
         }
     }
 
@@ -2451,6 +3668,9 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     }
     if (input.IsActionPressed("DemoGunshot")) {
         SubmitPlayerCommand(MakePlayerCommand(net::CommandType::Gunshot));
+    }
+    if (input.IsActionPressed("DemoProjectile")) {
+        SubmitPlayerCommand(MakePlayerCommand(net::CommandType::FireProjectile));
     }
     if (input.IsActionPressed("ReloadBindings")) {
         events.Emit(EventProbe::kInputActionEvent, std::string("ReloadBindings"));
@@ -2928,7 +4148,7 @@ void WorldDemoState::DrawDebugText() {
             percStats.alerted, percStats.heard);
     }
     bgfx::dbgTextPrintf(0, 9, 0x07,
-                        "WASD/LMB move | SPACE attack | F pickup | E use | R equip | G drop | I bag | F6 demo-kill | F7 gunshot | F4 cam | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
+                        "WASD/LMB move | SPACE attack | F pickup | E use | R equip | G drop | I bag | F6 demo-kill | F7 gunshot | V projectile | F4 cam | F9 grid | F1 pause | F2 speed | F5 reload | ESC quit");
     // M5-T5：LOD 档位 + 虚拟群落统计（虚拟化 = 统计层，不入 registry）
     if (m_ctx.lod != nullptr) {
         const ai::LodSystem::Stats lodStats = m_ctx.lod->GetStats();
@@ -2973,7 +4193,7 @@ void WorldDemoState::DrawDebugText() {
                                 itemCount, items::TotalWeight(*container, *m_ctx.items),
                                 container->capacityKg, game::CountGroundItems(*m_ctx.ecs));
         }
-        // M6-T5：装备槽（手持渲染由 AppendEquippedWeapon 落世界；此处 HUD 展示）
+        // M6-T5：装备槽（装备/动作由 AppendActorPresentation 落世界；此处 HUD 展示）
         const auto* equipment = m_ctx.ecs->Registry().try_get<ecs::Equipment>(m_player);
         if (equipment != nullptr) {
             const auto& primary =

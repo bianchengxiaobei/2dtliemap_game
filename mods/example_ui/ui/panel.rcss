@@ -1,0 +1,44 @@
+body {
+  font-family: zl_ui;
+  font-size: 14px;
+  color: #f2f2f2;
+}
+
+.script-panel {
+  position: absolute;
+  right: 24px;
+  bottom: 120px;
+  width: 240px;
+  padding: 12px;
+  background: #191919f0;
+  border-width: 1px;
+  border-color: #777;
+  border-radius: 4px;
+}
+
+.script-title {
+  font-size: 18px;
+  font-weight: bold;
+  margin-bottom: 8px;
+}
+
+input {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 4px;
+  background: #2a2a2a;
+  border-width: 1px;
+  border-color: #666;
+  color: #fff;
+}
+
+.script-status {
+  margin-bottom: 8px;
+  color: #b9d7ff;
+}
+
+button {
+  margin-right: 8px;
+  padding: 4px 10px;
+}

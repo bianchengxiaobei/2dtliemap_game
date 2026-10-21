@@ -17,7 +17,8 @@ constexpr std::string_view kEventKeys[] = {
     core::kOnGameStart,   core::kOnTick,        core::kOnPlayerMove,  core::kOnPlayerDeath,
     core::kOnZombieSpawn, core::kOnZombieDead,  core::kOnItemPickup,  core::kOnItemDrop,
     core::kOnSound,       core::kOnChunkLoaded, core::kOnChunkUnloaded, core::kOnSaveBegin,
-    core::kOnSaveEnd,     core::kOnModReload,
+    core::kOnSaveEnd,     core::kOnModReload,   core::kOnUiReady,      core::kOnUiEvent,
+    core::kOnMenuChanged, core::kOnInventoryChanged,
 };
 
 std::string_view SoundTypeName(core::SoundType type) {
@@ -72,7 +73,7 @@ std::optional<core::ScriptEvent> EventBridge::Translate(const core::Event& event
     core::ScriptEvent out;
     out.name = event.key;
 
-    if (event.key == core::kOnGameStart) {
+    if (event.key == core::kOnGameStart || event.key == core::kOnUiReady) {
         return out;  // 无载荷
     }
     if (event.key == core::kOnTick) {
@@ -142,13 +143,49 @@ std::optional<core::ScriptEvent> EventBridge::Translate(const core::Event& event
         AddField(out, "cy", static_cast<std::int64_t>(chunk->cy));
         return out;
     }
-    if (event.key == core::kOnSaveBegin || event.key == core::kOnSaveEnd ||
-        event.key == core::kOnModReload) {
+    if (event.key == core::kOnSaveBegin || event.key == core::kOnSaveEnd) {
+        return out;  // 无字段；存档 id 由脚本通过 Save.List() 获取
+    }
+    if (event.key == core::kOnModReload) {
         const auto* text = std::get_if<std::string>(&event.payload);
         if (text == nullptr) {
             return std::nullopt;
         }
-        AddField(out, event.key == core::kOnModReload ? "modId" : "slotName", *text);
+        AddField(out, "modId", *text);
+        return out;
+    }
+    if (event.key == core::kOnUiEvent) {
+        const auto* ui = std::get_if<core::UiEvent>(&event.payload);
+        if (ui == nullptr) {
+            return std::nullopt;
+        }
+        AddField(out, "modId", ui->modId);
+        AddField(out, "document", ui->documentId);
+        AddField(out, "element", ui->elementId);
+        AddField(out, "type", ui->type);
+        AddField(out, "value", ui->value);
+        AddField(out, "key", static_cast<std::int64_t>(ui->key));
+        AddField(out, "button", static_cast<std::int64_t>(ui->button));
+        AddField(out, "mouseX", static_cast<double>(ui->mouseX));
+        AddField(out, "mouseY", static_cast<double>(ui->mouseY));
+        return out;
+    }
+    if (event.key == core::kOnMenuChanged) {
+        const auto* menu = std::get_if<core::MenuChangedEvent>(&event.payload);
+        if (menu == nullptr) {
+            return std::nullopt;
+        }
+        AddField(out, "open", menu->open);
+        AddField(out, "pauseMode", menu->pauseMode);
+        AddField(out, "canContinue", menu->canContinue);
+        return out;
+    }
+    if (event.key == core::kOnInventoryChanged) {
+        const auto* inventory = std::get_if<core::InventoryChangedEvent>(&event.payload);
+        if (inventory == nullptr) {
+            return std::nullopt;
+        }
+        AddField(out, "open", inventory->open);
         return out;
     }
     return std::nullopt;  // 非事件表 v1 的键（如 EventProbe 内部事件）：不派发给脚本

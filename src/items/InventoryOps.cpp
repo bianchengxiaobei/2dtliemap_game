@@ -164,6 +164,16 @@ int CountOf(const ecs::Container& container, std::string_view defId) {
     return total;
 }
 
+int CountUsableTools(const ecs::Container& container, std::string_view defId) {
+    int total = 0;
+    for (const ecs::ItemInstance& entry : container.items) {
+        if (entry.defId == defId && entry.condition > 0.0f) {
+            total += entry.count;
+        }
+    }
+    return total;
+}
+
 float TotalWeight(const ecs::Container& container, const ItemRegistry& registry) {
     float total = 0.0f;
     for (const ecs::ItemInstance& entry : container.items) {

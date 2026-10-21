@@ -122,16 +122,65 @@ TEST_CASE("M7-T4：事件表 v1 翻译（EventBus 载荷 → 脚本字段）") {
         CHECK(FieldIs(*event, "cx", static_cast<std::int64_t>(2)));
         CHECK(FieldIs(*event, "cy", static_cast<std::int64_t>(3)));
     }
-    // OnSaveBegin/End：slotName；OnModReload：modId
+    // OnSaveBegin/End：无字段；OnModReload：modId
     {
         const auto save = script::EventBridge::Translate(
-            core::Event{std::string(core::kOnSaveBegin), std::string("slot1")});
+            core::Event{std::string(core::kOnSaveBegin), {}});
         REQUIRE(save.has_value());
-        CHECK(FieldIs(*save, "slotName", std::string("slot1")));
+        CHECK(save->fields.empty());
         const auto reload = script::EventBridge::Translate(
             core::Event{std::string(core::kOnModReload), std::string("m1")});
         REQUIRE(reload.has_value());
         CHECK(FieldIs(*reload, "modId", std::string("m1")));
+    }
+    // OnUiReady：无字段
+    {
+        const auto ready = script::EventBridge::Translate(
+            core::Event{std::string(core::kOnUiReady), {}});
+        REQUIRE(ready.has_value());
+        CHECK(ready->name == "OnUiReady");
+        CHECK(ready->fields.empty());
+    }
+    // OnUiEvent：文档/元素/类型/值/键盘/鼠标
+    {
+        core::UiEvent ui;
+        ui.modId = "ui_mod";
+        ui.documentId = "panel";
+        ui.elementId = "btn";
+        ui.type = "click";
+        ui.value = "x";
+        ui.key = 65;
+        ui.button = 0;
+        ui.mouseX = 12.5f;
+        ui.mouseY = 34.5f;
+        const auto event = script::EventBridge::Translate(
+            core::Event{std::string(core::kOnUiEvent), ui});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "modId", std::string("ui_mod")));
+        CHECK(FieldIs(*event, "document", std::string("panel")));
+        CHECK(FieldIs(*event, "element", std::string("btn")));
+        CHECK(FieldIs(*event, "type", std::string("click")));
+        CHECK(FieldIs(*event, "value", std::string("x")));
+        CHECK(FieldIs(*event, "key", static_cast<std::int64_t>(65)));
+        CHECK(FieldIs(*event, "button", static_cast<std::int64_t>(0)));
+        CHECK(FieldIs(*event, "mouseX", 12.5));
+        CHECK(FieldIs(*event, "mouseY", 34.5));
+    }
+    // OnMenuChanged：主菜单/暂停菜单同步事件
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnMenuChanged), core::MenuChangedEvent{true, true, true}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "open", true));
+        CHECK(FieldIs(*event, "pauseMode", true));
+        CHECK(FieldIs(*event, "canContinue", true));
+    }
+    // OnInventoryChanged：背包开关/刷新同步事件
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnInventoryChanged), core::InventoryChangedEvent{true}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "open", true));
     }
     // 非 v1 键 / 载荷类型不符 → nullopt
     CHECK_FALSE(script::EventBridge::Translate(core::Event{"InputAction", std::string("Quit")})

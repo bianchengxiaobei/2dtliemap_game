@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -139,6 +140,133 @@ bool ReadEquipment(BinaryReader& reader, ecs::Equipment* equipment) {
         slot = std::move(item);
     }
     *equipment = std::move(loaded);
+    return true;
+}
+
+bool ValidRecipeId(std::string_view id) {
+    if (id.empty() || id.size() > kMaxItemDefIdBytes) {
+        return false;
+    }
+    return std::all_of(id.begin(), id.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+               c == '_' || c == '.';
+    });
+}
+
+bool WriteKnownRecipes(const ecs::KnownRecipes& known, BinaryWriter& writer) {
+    std::vector<std::string> ids = known.recipeIds;
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    if (ids.size() > 256) {
+        return false;
+    }
+    if (!writer.Write(static_cast<std::uint32_t>(ids.size()))) {
+        return false;
+    }
+    for (const std::string& id : ids) {
+        if (!ValidRecipeId(id) || !writer.WriteString(id, kMaxItemDefIdBytes)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ReadKnownRecipes(BinaryReader& reader, ecs::KnownRecipes* known) {
+    std::uint32_t count = 0;
+    if (!reader.Read(count)) {
+        return false;
+    }
+    if (count > 256 || count > reader.RemainingInSegment() / 5) {
+        return false;
+    }
+    ecs::KnownRecipes loaded;
+    loaded.recipeIds.reserve(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        std::string id;
+        if (!reader.ReadString(id, kMaxItemDefIdBytes) || !ValidRecipeId(id) ||
+            std::find(loaded.recipeIds.begin(), loaded.recipeIds.end(), id) !=
+                loaded.recipeIds.end()) {
+            return false;
+        }
+        loaded.recipeIds.push_back(std::move(id));
+    }
+    *known = std::move(loaded);
+    return true;
+}
+
+bool ValidCraftingJob(const ecs::CraftingJob& job) {
+    if (job.queue.size() > static_cast<std::size_t>(ecs::kMaxCraftQueueEntries)) {
+        return false;
+    }
+    for (const ecs::CraftQueueItem& entry : job.queue) {
+        if (!ValidRecipeId(entry.recipeId) || entry.count < 1 ||
+            entry.count > ecs::kMaxCraftBatchCount) {
+            return false;
+        }
+    }
+    if (!job.active) {
+        return job.recipeId.empty() && job.elapsed == 0.0f &&
+               job.duration == 0.0f && job.toolEfficiency == 1.0f &&
+               job.batchTotal == 0 && job.batchCompleted == 0 &&
+               job.queue.empty();
+    }
+    return ValidRecipeId(job.recipeId) && Finite(job.elapsed) &&
+           Finite(job.duration) && Finite(job.toolEfficiency) &&
+           job.duration > 0.0f && job.duration <= 3600.0f &&
+           job.elapsed >= 0.0f && job.elapsed <= job.duration + 1e-4f &&
+           job.toolEfficiency > 0.0f && job.toolEfficiency <= 1.0f &&
+           job.batchTotal >= 1 && job.batchTotal <= ecs::kMaxCraftBatchCount &&
+           job.batchCompleted >= 0 && job.batchCompleted < job.batchTotal;
+}
+
+bool WriteCraftingJob(const ecs::CraftingJob& job, BinaryWriter& writer) {
+    if (!ValidCraftingJob(job) || !writer.Write(job.active) ||
+        !writer.WriteString(job.recipeId, kMaxItemDefIdBytes) ||
+        !writer.Write(job.elapsed) || !writer.Write(job.duration) ||
+        !writer.Write(job.toolEfficiency) || !writer.Write(job.batchTotal) ||
+        !writer.Write(job.batchCompleted)) {
+        return false;
+    }
+    if (!writer.Write(static_cast<std::uint32_t>(job.queue.size()))) {
+        return false;
+    }
+    for (const ecs::CraftQueueItem& entry : job.queue) {
+        if (!writer.WriteString(entry.recipeId, kMaxItemDefIdBytes) ||
+            !writer.Write(entry.count)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ReadCraftingJob(BinaryReader& reader, ecs::CraftingJob* job) {
+    ecs::CraftingJob loaded;
+    if (!reader.Read(loaded.active) ||
+        !reader.ReadString(loaded.recipeId, kMaxItemDefIdBytes) ||
+        !reader.Read(loaded.elapsed) || !reader.Read(loaded.duration) ||
+        !reader.Read(loaded.toolEfficiency) || !reader.Read(loaded.batchTotal) ||
+        !reader.Read(loaded.batchCompleted)) {
+        return false;
+    }
+    std::uint32_t queueCount = 0;
+    if (!reader.Read(queueCount) ||
+        queueCount > static_cast<std::uint32_t>(ecs::kMaxCraftQueueEntries) ||
+        queueCount > reader.RemainingInSegment() / 8u) {
+        return false;
+    }
+    loaded.queue.reserve(queueCount);
+    for (std::uint32_t i = 0; i < queueCount; ++i) {
+        ecs::CraftQueueItem entry;
+        if (!reader.ReadString(entry.recipeId, kMaxItemDefIdBytes) ||
+            !reader.Read(entry.count)) {
+            return false;
+        }
+        loaded.queue.push_back(std::move(entry));
+    }
+    if (!ValidCraftingJob(loaded)) {
+        return false;
+    }
+    *job = std::move(loaded);
     return true;
 }
 
@@ -314,6 +442,30 @@ bool RegisterBuiltinComponents(ComponentRegistry& registry, std::string* error) 
             kSaveComponentPlayerTag, "PlayerTag",
             [](const ecs::PlayerTag&, BinaryWriter&) { return true; },
             [](BinaryReader&, ecs::PlayerTag*) { return true; },
+            kSaveComponentVersion, error)) {
+        return false;
+    }
+
+    if (!registry.Register<ecs::KnownRecipes>(
+            kSaveComponentKnownRecipes, "KnownRecipes",
+            [](const ecs::KnownRecipes& known, BinaryWriter& writer) {
+                return WriteKnownRecipes(known, writer);
+            },
+            [](BinaryReader& reader, ecs::KnownRecipes* known) {
+                return ReadKnownRecipes(reader, known);
+            },
+            kSaveComponentVersion, error)) {
+        return false;
+    }
+
+    if (!registry.Register<ecs::CraftingJob>(
+            kSaveComponentCraftingJob, "CraftingJob",
+            [](const ecs::CraftingJob& job, BinaryWriter& writer) {
+                return WriteCraftingJob(job, writer);
+            },
+            [](BinaryReader& reader, ecs::CraftingJob* job) {
+                return ReadCraftingJob(reader, job);
+            },
             kSaveComponentVersion, error)) {
         return false;
     }

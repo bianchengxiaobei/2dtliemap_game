@@ -13,14 +13,19 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include "core/EventBus.h"
+#include "core/GameEvents.h"
 #include "core/Input.h"
 #include "core/Log.h"
 #include "platform/Window.h"
 #include "render/Renderer.h"
 #include "ui/InventoryPanel.h"
 #include "ui/MenuPanel.h"
+#include "ui/MultiplayerPanel.h"
+#include "ui/SocialPanel.h"
 #include "ui/RmlBgfxRenderInterface.h"
 #include "ui/RmlSystemInterface.h"
+#include "ui/ScriptUiHost.h"
 #include "ui/UiInput.h"
 
 namespace zl::ui {
@@ -28,6 +33,11 @@ namespace {
 
 constexpr uint32_t kFontAtlasPageBudget = 12;
 constexpr uint64_t kFontAtlasByteBudget = 48ull * 1024 * 1024;
+constexpr const char* kCoreUiOwner = "core_ui";
+constexpr const char* kCoreHudDocument = "hud";
+constexpr const char* kCoreMenuDocument = "menu";
+constexpr const char* kCoreInventoryDocument = "inventory";
+constexpr const char* kHudGroup = "hud";
 
 class FunctionListener final : public Rml::EventListener {
 public:
@@ -49,6 +59,8 @@ private:
 UiSystem::UiSystem() = default;
 
 UiSystem::~UiSystem() { Shutdown(); }
+
+void UiSystem::SetEventBus(core::EventBus* events) { m_events = events; }
 
 bool UiSystem::Init(platform::Window& window, int fbWidth, int fbHeight) {
     if (m_initialized) {
@@ -100,13 +112,28 @@ bool UiSystem::Init(platform::Window& window, int fbWidth, int fbHeight) {
         return false;
     }
 
+    m_scriptUi = std::make_unique<ScriptUiHost>(*m_context);
+
+    window.SetCharCallback([this](unsigned int codepoint) { HandleChar(codepoint); });
+    m_context->Update();
+
+    m_initialized = true;
+    ZL_INFO("ui", "RmlUi {} 初始化完成：{}x{}（核心 UI 按需懒加载，脚本 UI Host 就绪）",
+            Rml::GetVersion().c_str(), m_width, m_height);
+    return true;
+}
+
+bool UiSystem::EnsureDebugDocument() {
+    if (m_document != nullptr) {
+        return true;
+    }
+    if (m_debugLoadAttempted) {
+        return false;
+    }
+    m_debugLoadAttempted = true;
     m_document = m_context->LoadDocument("assets/ui/debug.rml");
     if (m_document == nullptr) {
-        ZL_ERROR("ui", "UI 文档加载失败：assets/ui/debug.rml");
-        Rml::Shutdown();
-        m_system.reset();
-        m_renderer->Shutdown();
-        m_renderer.reset();
+        ZL_WARN("ui", "调试面板加载失败：assets/ui/debug.rml");
         return false;
     }
     m_document->Hide();
@@ -150,53 +177,214 @@ bool UiSystem::Init(platform::Window& window, int fbWidth, int fbHeight) {
         m_volumeValueElement->SetInnerRML(
             std::to_string(static_cast<int>(std::lround(value))));
     });
-
-    m_hudDocument = m_context->LoadDocument("assets/ui/hud.rml");
-    if (m_hudDocument != nullptr) {
-        m_hudDocument->Show();
-        m_hudDayElement = m_hudDocument->GetElementById("hud-day");
-        m_hudTimeElement = m_hudDocument->GetElementById("hud-time");
-        m_hudSpeedElement = m_hudDocument->GetElementById("hud-speed");
-        m_hpFillElement = m_hudDocument->GetElementById("hp-fill");
-        m_hpTextElement = m_hudDocument->GetElementById("hp-text");
-        m_staminaFillElement = m_hudDocument->GetElementById("stamina-fill");
-        m_staminaTextElement = m_hudDocument->GetElementById("stamina-text");
-        m_noticeElement = m_hudDocument->GetElementById("notice");
-        for (int i = 0; i < 5; ++i) {
-            const std::string suffix = std::to_string(i);
-            m_hotbarSlots[i] = m_hudDocument->GetElementById("slot-" + suffix);
-            m_hotbarNames[i] = m_hudDocument->GetElementById("slot-name-" + suffix);
-            m_hotbarCounts[i] = m_hudDocument->GetElementById("slot-count-" + suffix);
-        }
-    } else {
-        ZL_WARN("ui", "HUD 加载失败：assets/ui/hud.rml（回退到调试面板）");
-        m_document->Show();
-        m_visible = true;
-    }
-
-    if (m_hudDocument != nullptr) {
-        AddClickHandler(m_hudDocument, "hud-bag", [this] { ToggleInventory(); });
-    }
-
-    m_inventory = std::make_unique<InventoryPanel>();
-    if (!m_inventory->Init(*m_context, "assets/ui/inventory.rml")) {
-        ZL_WARN("ui", "背包界面不可用：assets/ui/inventory.rml");
-        m_inventory.reset();
-    }
-
-    m_menu = std::make_unique<MenuPanel>();
-    if (!m_menu->Init(*m_context, "assets/ui/menu.rml")) {
-        ZL_WARN("ui", "主菜单/暂停菜单不可用：assets/ui/menu.rml");
-        m_menu.reset();
-    }
-
-    window.SetCharCallback([this](unsigned int codepoint) { HandleChar(codepoint); });
-    m_context->Update();
-
-    m_initialized = true;
-    ZL_INFO("ui", "RmlUi {} 初始化完成：{}x{}，HUD 常驻，I/右下角背包，Esc 暂停，F11 调试面板",
-            Rml::GetVersion().c_str(), m_width, m_height);
+    ZL_INFO("ui", "核心 UI 按需加载：调试面板");
     return true;
+}
+
+bool UiSystem::EnsureHudDocument() {
+    if (m_hudDocument != nullptr) {
+        return true;
+    }
+    if (m_hudLoadAttempted) {
+        return false;
+    }
+    m_hudLoadAttempted = true;
+    m_hudDocument = m_context->LoadDocument("assets/ui/hud.rml");
+    if (m_hudDocument == nullptr) {
+        ZL_WARN("ui", "HUD 加载失败：assets/ui/hud.rml");
+        return false;
+    }
+    m_hudDocument->Hide();
+    m_nativeHudNeedsFullRefresh = true;
+    m_hudDayElement = m_hudDocument->GetElementById("hud-day");
+    m_hudTimeElement = m_hudDocument->GetElementById("hud-time");
+    m_hudSpeedElement = m_hudDocument->GetElementById("hud-speed");
+    m_hpFillElement = m_hudDocument->GetElementById("hp-fill");
+    m_hpTextElement = m_hudDocument->GetElementById("hp-text");
+    m_staminaFillElement = m_hudDocument->GetElementById("stamina-fill");
+    m_staminaTextElement = m_hudDocument->GetElementById("stamina-text");
+    m_noticeElement = m_hudDocument->GetElementById("notice");
+    for (int i = 0; i < 5; ++i) {
+        const std::string suffix = std::to_string(i);
+        m_hotbarSlots[i] = m_hudDocument->GetElementById("slot-" + suffix);
+        m_hotbarNames[i] = m_hudDocument->GetElementById("slot-name-" + suffix);
+        m_hotbarCounts[i] = m_hudDocument->GetElementById("slot-count-" + suffix);
+    }
+    AddClickHandler(m_hudDocument, "hud-bag", [this] { ToggleInventory(); });
+    ZL_INFO("ui", "核心 UI 按需加载：HUD");
+    return true;
+}
+
+bool UiSystem::ScriptHudAvailable() const {
+    return m_scriptUi != nullptr &&
+           (m_scriptUi->HasOwner(kCoreUiOwner) ||
+            m_scriptUi->IsLoaded(kCoreUiOwner, kCoreHudDocument));
+}
+
+bool UiSystem::ScriptMenuAvailable() const {
+    return m_scriptUi != nullptr && m_scriptUi->HasOwner(kCoreUiOwner);
+}
+
+bool UiSystem::ScriptInventoryAvailable() const {
+    return m_scriptUi != nullptr && m_scriptUi->HasOwner(kCoreUiOwner);
+}
+
+bool UiSystem::ScriptInventoryVisible() const {
+    return m_scriptUi != nullptr &&
+           m_scriptUi->IsVisible(kCoreUiOwner, kCoreInventoryDocument);
+}
+
+bool UiSystem::ShowNativeInventoryFallback() {
+    if (!EnsureInventoryPanel()) {
+        return false;
+    }
+    InventoryState state = m_pendingInventoryState;
+    state.open = true;
+    m_inventory->SetState(state);
+    m_inventory->Show();
+    SyncInventoryChrome(true);
+    m_inventoryWasOpen = true;
+    return true;
+}
+
+bool UiSystem::ShowNativeMenuFallback(bool pauseMode, bool canContinue) {
+    if (!EnsureMenuPanel()) {
+        return false;
+    }
+    if (pauseMode) {
+        m_menu->ShowPauseMenu();
+    } else {
+        m_menu->ShowMainMenu(canContinue);
+    }
+    if (!m_menu->IsOpen()) {
+        return false;
+    }
+    SyncMenuChrome(true);
+    m_menuWasOpen = true;
+    return true;
+}
+
+void UiSystem::NotifyMenuChanged() {
+    if (m_events == nullptr) {
+        return;
+    }
+    core::MenuChangedEvent event;
+    event.open = m_scriptMenuOpen || (m_menu != nullptr && m_menu->IsOpen());
+    event.pauseMode = m_scriptMenuPauseMode;
+    event.canContinue = m_scriptMenuCanContinue;
+    m_events->Emit(core::kOnMenuChanged, event);
+}
+
+void UiSystem::NotifyInventoryChanged() {
+    if (m_events == nullptr) {
+        return;
+    }
+    core::InventoryChangedEvent event;
+    event.open = IsInventoryOpen();
+    m_events->Emit(core::kOnInventoryChanged, event);
+}
+
+bool UiSystem::EnsureInventoryPanel() {
+    if (m_inventory != nullptr) {
+        return true;
+    }
+    if (m_inventoryLoadAttempted) {
+        return false;
+    }
+    m_inventoryLoadAttempted = true;
+    auto panel = std::make_unique<InventoryPanel>();
+    if (!panel->Init(*m_context, "assets/ui/inventory.rml")) {
+        ZL_WARN("ui", "背包界面不可用：assets/ui/inventory.rml");
+        return false;
+    }
+    m_inventory = std::move(panel);
+    if (m_pendingInventoryActionHandler) {
+        m_inventory->SetActionHandler(m_pendingInventoryActionHandler);
+    }
+    if (m_inventorySoundHandler) {
+        m_inventory->SetSoundHandler(m_inventorySoundHandler);
+    }
+    if (m_hasPendingInventoryState) {
+        m_inventory->SetState(m_pendingInventoryState);
+    }
+    ZL_INFO("ui", "核心 UI 按需加载：背包");
+    return true;
+}
+
+bool UiSystem::EnsureMultiplayerPanel() {
+    if (m_multiplayer != nullptr) {
+        return true;
+    }
+    if (m_multiplayerLoadAttempted) {
+        return false;
+    }
+    m_multiplayerLoadAttempted = true;
+    auto panel = std::make_unique<MultiplayerPanel>();
+    if (!panel->Init(*m_context, "assets/ui/multiplayer.rml")) {
+        ZL_WARN("ui", "联机菜单不可用：assets/ui/multiplayer.rml");
+        return false;
+    }
+    m_multiplayer = std::move(panel);
+    if (m_pendingMultiplayerActionHandler) {
+        m_multiplayer->SetActionHandler(m_pendingMultiplayerActionHandler);
+    }
+    ZL_INFO("ui", "核心 UI 按需加载：联机菜单");
+    return true;
+}
+
+bool UiSystem::EnsureSocialPanel() {
+    if (m_social != nullptr) {
+        return true;
+    }
+    if (m_socialLoadAttempted) {
+        return false;
+    }
+    m_socialLoadAttempted = true;
+    auto panel = std::make_unique<SocialPanel>();
+    if (!panel->Init(*m_context, "assets/ui/social.rml")) {
+        ZL_WARN("ui", "聊天/玩家列表不可用：assets/ui/social.rml");
+        return false;
+    }
+    m_social = std::move(panel);
+    if (m_socialChatHandler) {
+        m_social->SetSendHandler(m_socialChatHandler);
+    }
+    ZL_INFO("ui", "核心 UI 按需加载：聊天/玩家列表");
+    return true;
+}
+bool UiSystem::EnsureMenuPanel() {
+    if (m_menu != nullptr) {
+        return true;
+    }
+    if (m_menuLoadAttempted) {
+        return false;
+    }
+    m_menuLoadAttempted = true;
+    auto menu = std::make_unique<MenuPanel>();
+    if (!menu->Init(*m_context, "assets/ui/menu.rml")) {
+        ZL_WARN("ui", "主菜单/暂停菜单不可用：assets/ui/menu.rml");
+        return false;
+    }
+    m_menu = std::move(menu);
+    ApplyMenuSettings();
+    ZL_INFO("ui", "核心 UI 按需加载：主菜单/暂停菜单");
+    return true;
+}
+
+void UiSystem::ApplyMenuSettings() {
+    if (m_menu == nullptr) {
+        return;
+    }
+    m_menu->SetSettings(m_pendingMenuSettings);
+    if (m_pendingMenuSettingsHandler) {
+        m_menu->SetSettingsHandler(m_pendingMenuSettingsHandler);
+    }
+    if (m_pendingMenuActionHandler) {
+        m_menu->SetActionHandler(m_pendingMenuActionHandler);
+    }
+    if (m_menuSoundHandler) {
+        m_menu->SetSoundHandler(m_menuSoundHandler);
+    }
 }
 
 void UiSystem::Shutdown() {
@@ -221,6 +409,14 @@ void UiSystem::Shutdown() {
         m_menu->Shutdown();
         m_menu.reset();
     }
+    if (m_multiplayer != nullptr) {
+        m_multiplayer->Shutdown();
+        m_multiplayer.reset();
+    }
+    if (m_social != nullptr) {
+        m_social->Shutdown();
+        m_social.reset();
+    }
     m_counterElement = nullptr;
     m_disableSampleElement = nullptr;
     m_volumeElement = nullptr;
@@ -237,6 +433,10 @@ void UiSystem::Shutdown() {
     m_hotbarSlots.fill(nullptr);
     m_hotbarNames.fill(nullptr);
     m_hotbarCounts.fill(nullptr);
+    if (m_scriptUi != nullptr) {
+        m_scriptUi->UnloadAll();
+        m_scriptUi.reset();
+    }
     m_hudDocument = nullptr;
     m_document = nullptr;
     m_hudCacheValid = false;
@@ -244,6 +444,15 @@ void UiSystem::Shutdown() {
     m_consumeGameplayThisFrame = false;
     m_inventoryWasOpen = false;
     m_menuWasOpen = false;
+    m_multiplayerWasOpen = false;
+    m_socialState = {};
+    m_pendingMultiplayerActionHandler = nullptr;
+    m_socialChatHandler = nullptr;
+    m_scriptMenuOpen = false;
+    m_scriptMenuPauseMode = false;
+    m_scriptMenuCanContinue = false;
+    m_scriptInventoryOpen = false;
+    m_events = nullptr;
     if (m_context != nullptr) {
         Rml::RemoveContext("main");
         m_context = nullptr;
@@ -273,26 +482,104 @@ void UiSystem::Update(core::Input& input) {
     if (!m_initialized) {
         return;
     }
+    if (m_scriptUi != nullptr) {
+        m_scriptUi->BeginFrame();
+    }
+    if (m_scriptMenuOpen && !ScriptMenuAvailable()) {
+        const bool pauseMode = m_scriptMenuPauseMode;
+        const bool canContinue = m_scriptMenuCanContinue;
+        m_scriptMenuOpen = false;
+        m_scriptMenuPauseMode = false;
+        ZL_WARN("ui", "core_ui 菜单 owner 已失效，回退 native 菜单");
+        ShowNativeMenuFallback(pauseMode, canContinue);
+    }
+    if (m_scriptInventoryOpen && !ScriptInventoryAvailable()) {
+        m_scriptInventoryOpen = false;
+        ZL_WARN("ui", "core_ui 背包 owner 已失效，回退 native 背包");
+        ShowNativeInventoryFallback();
+    }
     const bool menuOpenAtStart = IsMenuOpen();
+    const bool multiplayerOpenAtStart = IsMultiplayerOpen();
+    if (m_social != nullptr) {
+        m_social->SetSuppressed(menuOpenAtStart || IsInventoryOpen() ||
+                                multiplayerOpenAtStart);
+    }
     if (input.IsKeyPressed(GLFW_KEY_F11) && !menuOpenAtStart &&
-        (m_inventory == nullptr || !m_inventory->IsOpen())) {
+        !multiplayerOpenAtStart && !IsInventoryOpen()) {
         ToggleVisible();
     }
 
+    // 内置 HUD 的 native 版本只作为 fallback：core_ui 脚本存在时由脚本负责；
+    // 第一个 tick 前脚本可能还没加载 HUD 文档，因此这里延迟到 owner 已确定后。
+    if (m_hudCacheValid && !ScriptHudAvailable()) {
+        if (EnsureHudDocument()) {
+            if (m_nativeHudNeedsFullRefresh) {
+                ApplyHudState(m_hudCache, true);
+            }
+            if (IsMenuOpen() || IsInventoryOpen() || IsMultiplayerOpen()) {
+                m_hudDocument->Hide();
+            } else {
+                m_hudDocument->Show();
+            }
+        }
+    } else if (m_hudDocument != nullptr) {
+        m_hudDocument->Hide();
+    }
+
     bool escapeHandled = false;
-    if (menuOpenAtStart && m_menu != nullptr) {
+    int consumedKey = -1;
+    if (multiplayerOpenAtStart) {
         if (input.IsKeyPressed(GLFW_KEY_ESCAPE)) {
-            m_menu->OnEscape();
+            m_multiplayer->TriggerBack();
+            consumedKey = GLFW_KEY_ESCAPE;
             m_consumeGameplayThisFrame = true;
             escapeHandled = true;
         }
-    } else if (m_inventory != nullptr) {
+    } else if (menuOpenAtStart && m_menu != nullptr) {
+        if (input.IsKeyPressed(GLFW_KEY_ESCAPE)) {
+            m_menu->OnEscape();
+            consumedKey = GLFW_KEY_ESCAPE;
+            m_consumeGameplayThisFrame = true;
+            escapeHandled = true;
+        }
+    } else if (m_social != nullptr && m_social->IsChatOpen()) {
+        if (input.IsKeyPressed(GLFW_KEY_ESCAPE)) {
+            m_social->CloseChat();
+            consumedKey = GLFW_KEY_ESCAPE;
+            m_consumeGameplayThisFrame = true;
+            escapeHandled = true;
+        }
+    } else {
+        const bool inventoryOpen = IsInventoryOpen();
         const bool typing = HasInputFocus();
-        if (input.IsKeyPressed(GLFW_KEY_I) && (!typing || m_inventory->IsOpen())) {
+        if (input.IsKeyPressed(GLFW_KEY_I) && (!typing || inventoryOpen)) {
             ToggleInventory();
         }
-        if (m_inventory->IsOpen() && input.IsKeyPressed(GLFW_KEY_ESCAPE)) {
-            m_inventory->Hide();
+        if (inventoryOpen && input.IsKeyPressed(GLFW_KEY_ESCAPE)) {
+            CloseInventory();
+            consumedKey = GLFW_KEY_ESCAPE;
+            m_consumeGameplayThisFrame = true;
+        }
+    }
+
+    if (!menuOpenAtStart && !multiplayerOpenAtStart && !IsInventoryOpen() &&
+        m_social != nullptr && m_social->IsChatOpen()) {
+        const bool enter = input.IsKeyPressed(GLFW_KEY_ENTER);
+        const bool keypadEnter = input.IsKeyPressed(GLFW_KEY_KP_ENTER);
+        if (enter || keypadEnter) {
+            m_social->SubmitChat();
+            consumedKey = enter ? GLFW_KEY_ENTER : GLFW_KEY_KP_ENTER;
+            m_consumeGameplayThisFrame = true;
+        }
+    } else if (!menuOpenAtStart && !multiplayerOpenAtStart &&
+               !IsInventoryOpen() && IsSocialVisible()) {
+        const bool enter = input.IsKeyPressed(GLFW_KEY_ENTER);
+        const bool keypadEnter = input.IsKeyPressed(GLFW_KEY_KP_ENTER);
+        if (enter || keypadEnter) {
+            if (m_social != nullptr) {
+                m_social->OpenChat();
+            }
+            consumedKey = enter ? GLFW_KEY_ENTER : GLFW_KEY_KP_ENTER;
             m_consumeGameplayThisFrame = true;
         }
     }
@@ -313,9 +600,13 @@ void UiSystem::Update(core::Input& input) {
     }
 
     if (!m_visible && m_hudDocument == nullptr && !IsMenuOpen() &&
-        (m_inventory == nullptr || !m_inventory->IsOpen())) {
+        !IsInventoryOpen() && !IsMultiplayerOpen() && !IsSocialVisible() &&
+        (m_scriptUi == nullptr || !m_scriptUi->HasVisibleDocuments())) {
         m_pendingChars.clear();
         input.SetGameplayBlocked(false);
+        if (m_scriptUi != nullptr) {
+            m_scriptUi->EndFrame();
+        }
         return;
     }
 
@@ -348,7 +639,7 @@ void UiSystem::Update(core::Input& input) {
     }
 
     for (int key = GLFW_KEY_SPACE; key <= GLFW_KEY_LAST; ++key) {
-        if (key == capturedKey) {
+        if (key == capturedKey || key == consumedKey) {
             continue;
         }
         const Rml::Input::KeyIdentifier identifier = ToRmlKey(key);
@@ -373,7 +664,15 @@ void UiSystem::Update(core::Input& input) {
 
     m_context->Update();
     const bool menuOpen = IsMenuOpen();
-    const bool inventoryOpen = m_inventory != nullptr && m_inventory->IsOpen();
+    const bool inventoryOpen = IsInventoryOpen();
+    const bool multiplayerOpen = IsMultiplayerOpen();
+    if (m_social != nullptr) {
+        m_social->SetSuppressed(menuOpen || inventoryOpen || multiplayerOpen);
+    }
+    if (multiplayerOpen != m_multiplayerWasOpen) {
+        SyncMenuChrome(multiplayerOpen);
+        m_multiplayerWasOpen = multiplayerOpen;
+    }
     if (menuOpen != m_menuWasOpen) {
         SyncMenuChrome(menuOpen);
         m_menuWasOpen = menuOpen;
@@ -382,8 +681,14 @@ void UiSystem::Update(core::Input& input) {
         SyncInventoryChrome(inventoryOpen);
         m_inventoryWasOpen = inventoryOpen;
     }
+    if (m_scriptUi != nullptr) {
+        m_scriptUi->EndFrame();
+    }
     const bool focusBlocked = HasInputFocus();
-    input.SetGameplayBlocked(menuOpen || inventoryOpen || focusBlocked ||
+    const bool scriptBlocked = m_scriptUi != nullptr && m_scriptUi->IsInputCaptured();
+    const bool scriptConsumed = m_scriptUi != nullptr && m_scriptUi->InputConsumedThisFrame();
+    input.SetGameplayBlocked(menuOpen || inventoryOpen || multiplayerOpen ||
+                             focusBlocked || scriptBlocked || scriptConsumed ||
                              m_consumeGameplayThisFrame);
     m_consumeGameplayThisFrame = false;
 }
@@ -393,7 +698,9 @@ void UiSystem::Render() {
         return;
     }
     if (!m_visible && m_hudDocument == nullptr &&
-        (m_inventory == nullptr || !m_inventory->IsOpen()) && !IsMenuOpen()) {
+        !IsInventoryOpen() && !IsMenuOpen() && !IsMultiplayerOpen() &&
+        !IsSocialVisible() &&
+        (m_scriptUi == nullptr || !m_scriptUi->HasVisibleDocuments())) {
         return;
     }
     const glm::mat4 view(1.0f);
@@ -401,6 +708,9 @@ void UiSystem::Render() {
                                             static_cast<float>(m_height), 0.0f, -1.0f, 1.0f);
     bgfx::setViewTransform(static_cast<bgfx::ViewId>(render::ViewId::UI),
                            glm::value_ptr(view), glm::value_ptr(projection));
+    // 状态/脚本在 UiSystem::Update 之后修改文本或加载文档；渲染前再布局一次，
+    // 否则新增文本要等下一帧 Update 才进入几何（暂停/菜单下尤其明显）。
+    m_context->Update();
     m_context->Render();
     UpdateFontAtlasStats();
 }
@@ -439,10 +749,20 @@ void UiSystem::UpdateFontAtlasStats() {
 }
 
 void UiSystem::SetHudState(const HudState& state) {
+    const bool first = !m_hudCacheValid;
+    if (m_hudDocument != nullptr && !ScriptHudAvailable()) {
+        ApplyHudState(state, first);
+    }
+    m_hudCache = state;
+    m_hudCacheValid = true;
+}
+
+void UiSystem::ApplyHudState(const HudState& state, bool force) {
     if (m_hudDocument == nullptr) {
         return;
     }
-    const bool first = !m_hudCacheValid;
+    const bool first = force || !m_hudCacheValid;
+    m_nativeHudNeedsFullRefresh = false;
 
     auto setText = [](Rml::Element* element, const std::string& text) {
         if (element != nullptr) {
@@ -543,36 +863,98 @@ void UiSystem::SetHudState(const HudState& state) {
 }
 
 void UiSystem::SetInventoryState(const InventoryState& state) {
+    InventoryState current = state;
+    current.open = IsInventoryOpen();
+    const bool changed = !m_hasPendingInventoryState || !(current == m_pendingInventoryState);
+    m_pendingInventoryState = current;
+    m_hasPendingInventoryState = true;
     if (m_inventory != nullptr) {
-        m_inventory->SetState(state);
+        m_inventory->SetState(current);
+    }
+    if (m_scriptInventoryOpen && changed) {
+        NotifyInventoryChanged();
     }
 }
 
 void UiSystem::SetInventoryActionHandler(InventoryActionHandler handler) {
+    m_pendingInventoryActionHandler = handler;
     if (m_inventory != nullptr) {
         m_inventory->SetActionHandler(std::move(handler));
     }
 }
 
+bool UiSystem::GetInventoryState(InventoryState& out) const {
+    out = m_pendingInventoryState;
+    out.open = IsInventoryOpen();
+    return m_initialized;
+}
+
+bool UiSystem::InvokeInventoryAction(const InventoryAction& action) {
+    if (!m_pendingInventoryActionHandler) {
+        return false;
+    }
+    m_pendingInventoryActionHandler(action);
+    return true;
+}
+
+void UiSystem::PlayInventoryClick() {
+    if (m_inventorySoundHandler) {
+        m_inventorySoundHandler();
+    }
+}
+
 bool UiSystem::IsInventoryOpen() const {
-    return m_inventory != nullptr && m_inventory->IsOpen();
+    return m_scriptInventoryOpen || (m_inventory != nullptr && m_inventory->IsOpen());
 }
 
 void UiSystem::ToggleInventory() {
-    if (m_inventory == nullptr || IsMenuOpen()) {
+    if (IsMenuOpen()) {
+        return;
+    }
+    if (m_scriptInventoryOpen) {
+        CloseInventory();
+        return;
+    }
+    if (ScriptInventoryAvailable()) {
+        if (Rml::Element* focus = m_context->GetFocusElement(); focus != nullptr) {
+            focus->Blur();
+        }
+        m_scriptInventoryOpen = true;
+        SyncInventoryChrome(true);
+        m_inventoryWasOpen = true;
+        NotifyInventoryChanged();
+        if (!ScriptInventoryVisible()) {
+            ZL_WARN("ui", "core_ui 背包文档未显示，回退 native 背包");
+            m_scriptInventoryOpen = false;
+            ShowNativeInventoryFallback();
+        }
+        return;
+    }
+    if (!EnsureInventoryPanel()) {
         return;
     }
     if (m_inventory->IsOpen()) {
         m_inventory->Hide();
+        SyncInventoryChrome(false);
+        m_inventoryWasOpen = false;
         return;
     }
     if (Rml::Element* focus = m_context->GetFocusElement(); focus != nullptr) {
         focus->Blur();
     }
     m_inventory->Show();
+    SyncInventoryChrome(true);
+    m_inventoryWasOpen = true;
 }
 
 void UiSystem::CloseInventory() {
+    if (m_scriptInventoryOpen) {
+        m_scriptInventoryOpen = false;
+        NotifyInventoryChanged();
+        SyncInventoryChrome(false);
+        m_inventoryWasOpen = false;
+        return;
+    }
     if (m_inventory != nullptr && m_inventory->IsOpen()) {
         m_inventory->Hide();
         SyncInventoryChrome(false);
@@ -585,13 +967,19 @@ void UiSystem::SyncInventoryChrome(bool open) {
         if (m_hudDocument != nullptr) {
             m_hudDocument->Hide();
         }
+        if (m_scriptUi != nullptr) {
+            m_scriptUi->SetGroupVisible(kHudGroup, false);
+        }
         if (m_visible && m_document != nullptr) {
             m_document->Hide();
         }
         return;
     }
-    if (m_hudDocument != nullptr) {
+    if (m_hudDocument != nullptr && !ScriptHudAvailable()) {
         m_hudDocument->Show();
+    }
+    if (m_scriptUi != nullptr) {
+        m_scriptUi->SetGroupVisible(kHudGroup, true);
     }
     if (m_visible && m_document != nullptr) {
         m_document->Show();
@@ -600,42 +988,63 @@ void UiSystem::SyncInventoryChrome(bool open) {
 }
 
 void UiSystem::SetMenuSettings(const MenuSettings& settings) {
+    m_pendingMenuSettings = settings;
     if (m_menu != nullptr) {
         m_menu->SetSettings(settings);
     }
 }
 
 void UiSystem::SetMenuSettingsHandler(MenuSettingsHandler handler) {
+    m_pendingMenuSettingsHandler = handler;
     if (m_menu != nullptr) {
         m_menu->SetSettingsHandler(std::move(handler));
     }
 }
 
 void UiSystem::SetMenuActionHandler(MenuActionHandler handler) {
+    m_pendingMenuActionHandler = handler;
     if (m_menu != nullptr) {
         m_menu->SetActionHandler(std::move(handler));
     }
 }
 
 void UiSystem::SetMenuSoundHandler(std::function<void()> handler) {
+    m_menuSoundHandler = handler;
     if (m_menu != nullptr) {
         m_menu->SetSoundHandler(std::move(handler));
     }
 }
 
 void UiSystem::SetInventorySoundHandler(std::function<void()> handler) {
+    m_inventorySoundHandler = handler;
     if (m_inventory != nullptr) {
         m_inventory->SetSoundHandler(std::move(handler));
     }
 }
 
 void UiSystem::ShowMainMenu(bool canContinue) {
-    if (m_menu == nullptr) {
+    CloseInventory();
+    if (IsMultiplayerOpen()) {
+        HideMultiplayerMenu();
+    }
+    if (ScriptMenuAvailable()) {
+        m_scriptMenuOpen = true;
+        m_scriptMenuPauseMode = false;
+        m_scriptMenuCanContinue = canContinue;
+        SyncMenuChrome(true);
+        m_menuWasOpen = true;
+        NotifyMenuChanged();
+        if (m_scriptUi->IsLoaded(kCoreUiOwner, kCoreMenuDocument)) {
+            return;
+        }
+        ZL_WARN("ui", "core_ui 菜单文档未加载，回退 native 主菜单");
+        m_scriptMenuOpen = false;
+        m_scriptMenuPauseMode = false;
+        ShowNativeMenuFallback(false, canContinue);
         return;
     }
-    if (m_inventory != nullptr && m_inventory->IsOpen()) {
-        m_inventory->Hide();
-        m_inventoryWasOpen = false;
+    if (!EnsureMenuPanel()) {
+        return;
     }
     m_menu->ShowMainMenu(canContinue);
     if (!m_menu->IsOpen()) {
@@ -646,12 +1055,24 @@ void UiSystem::ShowMainMenu(bool canContinue) {
 }
 
 void UiSystem::ShowPauseMenu() {
-    if (m_menu == nullptr) {
+    CloseInventory();
+    if (ScriptMenuAvailable()) {
+        m_scriptMenuOpen = true;
+        m_scriptMenuPauseMode = true;
+        SyncMenuChrome(true);
+        m_menuWasOpen = true;
+        NotifyMenuChanged();
+        if (m_scriptUi->IsLoaded(kCoreUiOwner, kCoreMenuDocument)) {
+            return;
+        }
+        ZL_WARN("ui", "core_ui 菜单文档未加载，回退 native 暂停菜单");
+        m_scriptMenuOpen = false;
+        m_scriptMenuPauseMode = false;
+        ShowNativeMenuFallback(true, m_scriptMenuCanContinue);
         return;
     }
-    if (m_inventory != nullptr && m_inventory->IsOpen()) {
-        m_inventory->Hide();
-        m_inventoryWasOpen = false;
+    if (!EnsureMenuPanel()) {
+        return;
     }
     m_menu->ShowPauseMenu();
     if (!m_menu->IsOpen()) {
@@ -662,6 +1083,15 @@ void UiSystem::ShowPauseMenu() {
 }
 
 void UiSystem::HideMenu() {
+    if (m_scriptMenuOpen) {
+        m_scriptMenuOpen = false;
+        m_scriptMenuPauseMode = false;
+        m_consumeGameplayThisFrame = true;
+        SyncMenuChrome(false);
+        m_menuWasOpen = false;
+        NotifyMenuChanged();
+        return;
+    }
     if (m_menu == nullptr || !m_menu->IsOpen()) {
         return;
     }
@@ -671,11 +1101,115 @@ void UiSystem::HideMenu() {
 }
 
 bool UiSystem::IsMenuOpen() const {
-    return m_menu != nullptr && m_menu->IsOpen();
+    return m_scriptMenuOpen || (m_menu != nullptr && m_menu->IsOpen());
 }
 
 bool UiSystem::IsMenuSettingsOpen() const {
     return m_menu != nullptr && m_menu->IsSettingsOpen();
+}
+
+bool UiSystem::GetMenuState(MenuState& out) const {
+    out = {};
+    out.open = IsMenuOpen();
+    out.pauseMode = m_scriptMenuPauseMode;
+    out.canContinue = m_scriptMenuCanContinue;
+    out.settings = m_pendingMenuSettings;
+    return m_initialized;
+}
+
+void UiSystem::SetMultiplayerActionHandler(MultiplayerActionHandler handler) {
+    m_pendingMultiplayerActionHandler = std::move(handler);
+    if (m_multiplayer != nullptr) {
+        m_multiplayer->SetActionHandler(m_pendingMultiplayerActionHandler);
+    }
+}
+
+void UiSystem::ShowMultiplayerMenu(const MultiplayerMenuState& state) {
+    CloseInventory();
+    if (m_scriptMenuOpen && m_scriptUi != nullptr) {
+        (void)m_scriptUi->ShowDocument(kCoreUiOwner, kCoreMenuDocument, false);
+    }
+    if (m_menu != nullptr && m_menu->IsOpen()) {
+        m_menu->Hide();
+    }
+    if (!EnsureMultiplayerPanel()) {
+        return;
+    }
+    m_pendingMultiplayerState = state;
+    if (m_pendingMultiplayerActionHandler) {
+        m_multiplayer->SetActionHandler(m_pendingMultiplayerActionHandler);
+    }
+    m_multiplayer->Show(state);
+    SyncMenuChrome(true);
+    m_multiplayerWasOpen = true;
+}
+
+void UiSystem::SetMultiplayerState(const MultiplayerMenuState& state) {
+    m_pendingMultiplayerState = state;
+    if (m_multiplayer != nullptr) {
+        m_multiplayer->SetState(state);
+    }
+}
+
+void UiSystem::HideMultiplayerMenu() {
+    if (m_multiplayer == nullptr || !m_multiplayer->IsOpen()) {
+        return;
+    }
+    m_multiplayer->Hide();
+    SyncMenuChrome(false);
+    m_multiplayerWasOpen = false;
+}
+
+bool UiSystem::IsMultiplayerOpen() const {
+    return m_multiplayer != nullptr && m_multiplayer->IsOpen();
+}
+
+void UiSystem::SetSocialState(const SocialUiState& state) {
+    m_socialState = state;
+    if (state.visible && m_social == nullptr) {
+        EnsureSocialPanel();
+    }
+    if (m_social != nullptr) {
+        m_social->SetState(state);
+    }
+}
+
+void UiSystem::SetSocialChatHandler(SocialChatHandler handler) {
+    m_socialChatHandler = std::move(handler);
+    if (m_social != nullptr) {
+        m_social->SetSendHandler(m_socialChatHandler);
+    }
+}
+
+bool UiSystem::IsSocialVisible() const {
+    return m_socialState.visible;
+}
+
+bool UiSystem::IsSocialChatOpen() const {
+    return m_social != nullptr && m_social->IsChatOpen();
+}
+bool UiSystem::ApplyScriptMenuSettings(const MenuSettings& settings, std::string& error) {
+    if (!m_pendingMenuSettingsHandler) {
+        error = "设置保存不可用";
+        return false;
+    }
+    if (!m_pendingMenuSettingsHandler(settings, error)) {
+        return false;
+    }
+    m_pendingMenuSettings = settings;
+    return true;
+}
+
+void UiSystem::InvokeMenuAction(MenuActionType action) {
+    if (m_pendingMenuActionHandler) {
+        m_pendingMenuActionHandler(action);
+    }
+}
+
+void UiSystem::PlayUiClick() {
+    if (m_menuSoundHandler) {
+        m_menuSoundHandler();
+    }
 }
 
 void UiSystem::SyncMenuChrome(bool open) {
@@ -683,20 +1217,26 @@ void UiSystem::SyncMenuChrome(bool open) {
         if (m_hudDocument != nullptr) {
             m_hudDocument->Hide();
         }
+        if (m_scriptUi != nullptr) {
+            m_scriptUi->SetGroupVisible(kHudGroup, false);
+        }
         if (m_visible && m_document != nullptr) {
             m_document->Hide();
         }
         return;
     }
-    if (IsMenuOpen()) {
+    if (IsMenuOpen() || IsMultiplayerOpen()) {
         return;
     }
-    if (m_inventory != nullptr && m_inventory->IsOpen()) {
+    if (IsInventoryOpen()) {
         SyncInventoryChrome(true);
         return;
     }
-    if (m_hudDocument != nullptr) {
+    if (m_hudDocument != nullptr && !ScriptHudAvailable()) {
         m_hudDocument->Show();
+    }
+    if (m_scriptUi != nullptr) {
+        m_scriptUi->SetGroupVisible(kHudGroup, true);
     }
     if (m_visible && m_document != nullptr) {
         m_document->Show();
@@ -705,7 +1245,13 @@ void UiSystem::SyncMenuChrome(bool open) {
 }
 
 void UiSystem::SetVisible(bool visible) {
-    if (!m_initialized || m_document == nullptr) {
+    if (!m_initialized) {
+        return;
+    }
+    if (visible && !EnsureDebugDocument()) {
+        return;
+    }
+    if (m_document == nullptr) {
         return;
     }
     if (visible) {
@@ -727,7 +1273,7 @@ bool UiSystem::ToggleVisible() {
 }
 
 void UiSystem::HandleChar(unsigned int codepoint) {
-    if (m_initialized && m_visible) {
+    if (m_initialized) {
         m_pendingChars.push_back(codepoint);
     }
 }

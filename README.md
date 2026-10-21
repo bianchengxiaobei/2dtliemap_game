@@ -12,7 +12,7 @@
 | 文档 | 内容 | 何时看 |
 |---|---|---|
 | [docs/00-架构总览.md](docs/00-架构总览.md) | 总体设计、世界模型、渲染/AI/脚本/存档架构、PZ 类对照表、决策记录 | 动手前通读一遍 |
-| [docs/01-里程碑与任务清单.md](docs/01-里程碑与任务清单.md) | ★ 主任务文档：M0~M12 全部任务、验收标准，边做边勾 | 每天都在用 |
+| [docs/01-里程碑与任务清单.md](docs/01-里程碑与任务清单.md) | ★ 主任务文档：M0~M13 全部任务、验收标准，边做边勾 | 每天都在用 |
 | [docs/02-技术选型与开发规范.md](docs/02-技术选型与开发规范.md) | 依赖清单、目录结构、编码/线程/内存规范、Git 流程 | 建工程时 + 写代码前 |
 | [docs/03-脚本系统设计.md](docs/03-脚本系统设计.md) | Lua/Python 双后端、Host API、事件桥接、mod 格式 | M7/M8 阶段 |
 
@@ -24,7 +24,7 @@
 项目在 <项目根目录>（本机 E:\Game\ZomboidLike）。请按顺序读：
 README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md → docs/02-技术选型与开发规范.md
 （涉及脚本系统时再读 docs/03-脚本系统设计.md；涉及占位资源时读 assets_placeholder_pz/README.md）。
-以 docs/01 的任务清单为唯一任务依据，当前里程碑已全部完成（M12 为可选范围）；写代码遵守 docs/02 的规范；
+以 docs/01 的任务清单为唯一任务依据，M1–M12 已完成，当前从 M13 联机基础开始（T1 KCP 传输、T2 会话握手、T3 无窗口 ServerHost、T4 实体复制层、T5 双客户端垂直切片、T6 安全与容错、T7 服务器权威背包/世界交互、T8 玩家持久化、T9 联机入口与聊天/玩家列表、T10 远程装备/动作/投射物复制已完成）；写代码遵守 docs/02 的规范；
 构建命令走 tools/dev.ps1（Ninja 需要 MSVC 环境，如 .\tools\dev.ps1 cmake --build --preset x64-debug）；
 每完成一个任务把清单里对应项勾上，Git 提交信息带任务号（如 feat(render): sprite batch (M2-T3)）。
 ```
@@ -33,7 +33,7 @@ README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md �
 
 1. **README.md（本文件）** —— 全局视图、入口
 2. **docs/00-架构总览.md** —— 动手前通读（分层/世界模型/ECS/渲染/决策记录）
-3. **docs/01-里程碑与任务清单.md** —— ★ 每天的任务依据（当前进度：M1–M12 已完成；M12 完成输入命令化、本地环回、性能冲刺与内容扩充；M0 仅剩跨机验收）；**docs/modding.md** —— 玩家 mod 开发指南（API v1，Lua/Python）
+3. **docs/01-里程碑与任务清单.md** —— ★ 每天的任务依据（当前进度：M1–M12 已完成；M13-T1 KCP 传输、T2 会话握手、T3 无窗口 ServerHost、T4 实体复制层、T5 双客户端垂直切片、T6 安全与容错、T7 服务器权威背包/世界交互、T8 玩家持久化、T9 联机入口与聊天/玩家列表、T10 远程装备/动作/投射物复制已完成；M0 仅剩跨机验收）；**docs/modding.md** —— 玩家 mod 开发指南（API v1，Lua/Python）
 4. **docs/02-技术选型与开发规范.md** —— 建工程、写代码前（依赖/目录/编码规范/占位资源策略）
 5. **docs/03-脚本系统设计.md** —— M7/M8 阶段再读
 6. **assets_placeholder_pz/README.md** —— 用占位资源、重新解包 PZ 纹理时读
@@ -81,6 +81,26 @@ build\x64-debug\ZomboidLike.exe
 
 Debug（`x64-debug`）是 `/Od` 无优化构建，240+ 敌人时帧率会明显低于 Release；排查断点再用。
 
+无窗口服务器冒烟（M13-T3；不带 `--server.ticks` 会持续运行，Ctrl+C 停止；默认监听 UDP，`--server.network=false` 可关闭）：
+
+```powershell
+.\build\x64-debug\ZomboidLike.exe --server --server.ticks=180
+```
+
+双客户端联机（M13-T5）：先启动服务器，再启动两个客户端（默认 `127.0.0.1:7777`，两侧 `net.contentHash` 必须一致）：
+
+```powershell
+.\build\x64-debug\ZomboidLike.exe --server
+.\build\x64-debug\ZomboidLike.exe --net.mode=client --game.startState=world
+.\build\x64-debug\ZomboidLike.exe --net.mode=client --game.startState=world
+```
+
+客户端只发送命令并渲染服务器快照；移动、攻击、离开清理与重连由服务器权威处理。拾取/使用/装备/丢弃/维修/制作同样提交服务器执行，背包面板展示服务器下发的 owner-only 状态；地面物品由 `ZLR1` 复制。`ZLP1` 状态默认每 6 tick 刷新，制作进度与动作提示会随之更新。
+
+客户端首次运行会在 `saves/client_identity.txt` 生成持久身份（也可用 `net.playerIdentity` 固定）；独立服务器默认把玩家档案写到 `saves/multiplayer_players.bin`。同一身份重连（包括旧会话尚未超时的接管）会复用原 `StableId`、位置、背包、装备、配方和生命值；死亡后默认 5 秒在出生点复活（保留背包，生命回满）。档案每 30 秒、断线、死亡、复活和服务器退出时原子保存。
+
+联机入口 UI（M13-T9）：主菜单点“联机游戏”后可填写玩家名称、服务器地址/端口并加入，或在本机“开始主机”（监听 `0.0.0.0`，端口填 0 自动分配）。加入/主机成功后本机自动进入世界；服务器地址可收藏到 `saves/servers.json`（主菜单服务器列表）。游戏内按 `Enter` 打开聊天、再按 `Enter` 发送、`Esc` 取消；右上角显示在线玩家列表，聊天记录显示在左下角。联机模式按 `V` 发射服务器权威投射物（演示用，无弹药消耗）。命令行 `--server` / `--net.mode=client` 仍保留用于独立服务器和自动化测试。
+
 ## 里程碑状态
 
 （每完成一个里程碑，更新此表并打 tag，规则见任务清单开头）
@@ -100,6 +120,7 @@ Debug（`x64-debug`）是 `/Od` 无优化构建，240+ 敌人时帧率会明显�
 | M10 | 存档系统 | 完成（T1–T5，验收 2026-10-18） | |
 | M11 | 音频系统 | 完成（T1–T4，验收 2026-10-18） | |
 | M12 | 打磨与联机命令层预留（可选） | 完成（T1–T4，验收 2026-10-18） | 2026-10-18 |
+| M13 | 联机基础（KCP + 权威服务器） | 完成 T1–T10；M0 跨机验收待做 | |
 
 ## 许可与合规
 

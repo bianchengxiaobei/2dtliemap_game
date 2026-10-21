@@ -86,6 +86,7 @@ bool InventoryPanel::Init(Rml::Context& context, const std::string& path) {
     m_contextButtons[2] = m_document->GetElementById("ctx-unequip");
     m_contextButtons[3] = m_document->GetElementById("ctx-drop");
     m_contextButtons[4] = m_document->GetElementById("ctx-pickup");
+    m_contextButtons[5] = m_document->GetElementById("ctx-repair");
 
     for (int i = 0; i < kInventoryBagSlots; ++i) {
         const std::string suffix = std::to_string(i);
@@ -144,6 +145,8 @@ bool InventoryPanel::Init(Rml::Context& context, const std::string& path) {
                      [this] { TriggerContextAction(InventoryActionType::Drop); });
     AddClickListener("ctx-pickup",
                      [this] { TriggerContextAction(InventoryActionType::Pickup); });
+    AddClickListener("ctx-repair",
+                     [this] { TriggerContextAction(InventoryActionType::Repair); });
 
     auto addSlotEvents = [this](Rml::Element* slot) {
         if (slot == nullptr) {
@@ -325,7 +328,14 @@ void InventoryPanel::RefreshSlot(InventoryArea area, int index, const InventoryS
 
     if (name != nullptr) {
         if (slot.filled) {
-            SetText(name, slot.label);
+            std::string label = slot.label;
+            if (slot.condition < 0.999f) {
+                char suffix[24];
+                std::snprintf(suffix, sizeof(suffix), " %d%%",
+                              static_cast<int>(slot.condition * 100.0f + 0.5f));
+                label += suffix;
+            }
+            SetText(name, label);
         } else {
             SetText(name, area == InventoryArea::Loot ? "无" : "空");
         }
@@ -553,10 +563,12 @@ void InventoryPanel::OpenContextMenu(Rml::Element* slot, float mouseX, float mou
     bool unequip = false;
     bool drop = false;
     bool pickup = false;
+    bool repair = false;
     if (area == InventoryArea::Backpack) {
         use = state->usable;
         equip = state->equippable;
         drop = true;
+        repair = state->damaged;
     } else if (area == InventoryArea::Equipment) {
         unequip = true;
         drop = true;
@@ -569,10 +581,15 @@ void InventoryPanel::OpenContextMenu(Rml::Element* slot, float mouseX, float mou
     SetDisplay(m_contextButtons[2], unequip);
     SetDisplay(m_contextButtons[3], drop);
     SetDisplay(m_contextButtons[4], pickup);
+    SetDisplay(m_contextButtons[5], repair);
+    if (repair) {
+        SetText(m_contextButtons[5], state->repairAvailable ? "维修"
+                                                           : "维修（缺维修包）");
+    }
 
     const int visible = static_cast<int>(use) + static_cast<int>(equip) +
                         static_cast<int>(unequip) + static_cast<int>(drop) +
-                        static_cast<int>(pickup);
+                        static_cast<int>(pickup) + static_cast<int>(repair);
     const float menuHeight = static_cast<float>(visible * 30 + 10);
     const Rml::Vector2i dimensions = m_context->GetDimensions();
     const float x = std::clamp(mouseX, 0.0f,

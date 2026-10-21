@@ -30,6 +30,7 @@ find_package(Lua REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
 find_package(RmlUi CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
+find_package(kcp CONFIG REQUIRED)
 find_path(MINIAUDIO_INCLUDE_DIR NAMES miniaudio.h REQUIRED)
 
 if (ZL_ENABLE_PYTHON)
@@ -58,6 +59,7 @@ add_executable(ZomboidLike
     src/ai/systems/SpawnLodSystem.cpp
     src/audio/AudioEngine.cpp
     src/audio/SoundManager.cpp
+    src/characters/systems/ActionPresentationSystem.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/CombatSystem.cpp
     src/characters/systems/DeathSystem.cpp
@@ -76,24 +78,44 @@ add_executable(ZomboidLike
     src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
     src/game/AssetProvider.cpp
+    src/game/EmbeddedServer.cpp
     src/game/EventProbe.cpp
+    src/game/EntityReplication.cpp
     src/game/GameApp.cpp
     src/game/GroundItems.cpp
+    src/game/NetworkClient.cpp
+    src/game/PlayerInventoryService.cpp
+    src/game/ServerList.cpp
     src/game/RenderCollectSystem.cpp
+    src/game/WorldSimulation.cpp
     src/game/ZombieFactory.cpp
     src/game/states/MainMenuState.cpp
     src/game/states/RenderDemoState.cpp
     src/game/states/SandboxState.cpp
     src/game/states/WorldDemoState.cpp
+    src/items/Crafting.cpp
     src/items/ItemDef.cpp
     src/items/ItemRegistry.cpp
     src/items/InventoryOps.cpp
+    src/items/RecipeRegistry.cpp
+    src/items/Repair.cpp
     src/net/Command.cpp
     src/net/CommandCodec.cpp
     src/net/CommandPipeline.cpp
     src/net/Loopback.cpp
+    src/net/FrameCodec.cpp
+    src/net/Kcp.cpp
+    src/net/SessionProtocol.cpp
+    src/net/KcpSession.cpp
+    src/net/PlayerAssignment.cpp
+    src/net/PlayerIdentity.cpp
+    src/net/PlayerState.cpp
+    src/net/SocialProtocol.cpp
+    src/net/Replication.cpp
     src/platform/KeyNames.cpp
     src/platform/Window.cpp
+    src/server/PlayerProfile.cpp
+    src/server/ServerHost.cpp
     src/physics/PhysicsSyncSystem.cpp
     src/physics/PhysicsWorld.cpp
     src/render/Atlas.cpp
@@ -116,8 +138,11 @@ add_executable(ZomboidLike
     src/save/Thumbnail.cpp
     src/ui/InventoryPanel.cpp
     src/ui/MenuPanel.cpp
+    src/ui/MultiplayerPanel.cpp
+    src/ui/SocialPanel.cpp
     src/ui/RmlBgfxRenderInterface.cpp
     src/ui/RmlSystemInterface.cpp
+    src/ui/ScriptUiHost.cpp
     src/ui/UiInput.cpp
     src/ui/UiSystem.cpp
     src/script/EventBridge.cpp
@@ -128,6 +153,7 @@ add_executable(ZomboidLike
     src/script/PythonSupport.cpp
     src/script/ScriptApi.cpp
     src/script/ScriptManager.cpp
+    src/script/ScriptUiApi.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp
     src/world/ChunkData.cpp
@@ -155,6 +181,8 @@ target_link_libraries(ZomboidLike PRIVATE
     ${BULLET_LIBRARIES}
     RmlUi::RmlUi
     unofficial::sqlite3::sqlite3
+    kcp::kcp
+    ws2_32
 )
 
 if (WIN32)
@@ -191,6 +219,7 @@ add_executable(ZomboidLikeTests
     tests/test_spawn_lod.cpp
     tests/test_items.cpp
     tests/test_inventory.cpp
+    tests/test_recipes.cpp
     tests/test_ground_items.cpp
     tests/test_script.cpp
     tests/test_lua_runtime.cpp
@@ -202,6 +231,7 @@ add_executable(ZomboidLikeTests
     tests/test_python_runtime.cpp
     tests/test_python_api.cpp
     tests/test_ui.cpp
+    tests/test_script_ui.cpp
     tests/test_config.cpp
     tests/test_serialization.cpp
     tests/test_chunk_diff.cpp
@@ -212,6 +242,21 @@ add_executable(ZomboidLikeTests
     tests/test_screenshot.cpp
     tests/test_world.cpp
     tests/test_net.cpp
+    tests/test_kcp.cpp
+    tests/test_kcp_session.cpp
+    tests/test_server_host.cpp
+    tests/test_player_profile.cpp
+    tests/test_server_security.cpp
+    tests/test_replication.cpp
+    tests/test_network_integration.cpp
+    tests/test_player_state.cpp
+    tests/test_social_protocol.cpp
+    tests/test_server_list.cpp
+    tests/test_server_social.cpp
+    tests/test_inventory_service.cpp
+    tests/test_network_inventory.cpp
+    tests/test_network_persistence.cpp
+    tests/test_embedded_server.cpp
     src/core/Config.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -225,6 +270,7 @@ add_executable(ZomboidLikeTests
     src/ai/systems/SpawnLodSystem.cpp
     src/audio/AudioEngine.cpp
     src/audio/SoundManager.cpp
+    src/characters/systems/ActionPresentationSystem.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/CombatSystem.cpp
     src/characters/systems/DeathSystem.cpp
@@ -240,17 +286,37 @@ add_executable(ZomboidLikeTests
     src/ecs/EcsWorld.cpp
     src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
+    src/game/EntityReplication.cpp
     src/game/GroundItems.cpp
+    src/game/EmbeddedServer.cpp
+    src/game/NetworkClient.cpp
+    src/game/PlayerInventoryService.cpp
+    src/game/ServerList.cpp
+    src/game/WorldSimulation.cpp
     src/game/ZombieFactory.cpp
+    src/items/Crafting.cpp
     src/items/ItemDef.cpp
     src/items/ItemRegistry.cpp
     src/items/InventoryOps.cpp
+    src/items/RecipeRegistry.cpp
+    src/items/Repair.cpp
     src/net/Command.cpp
     src/net/CommandCodec.cpp
     src/net/CommandPipeline.cpp
     src/net/Loopback.cpp
+    src/net/FrameCodec.cpp
+    src/net/Kcp.cpp
+    src/net/SessionProtocol.cpp
+    src/net/KcpSession.cpp
+    src/net/PlayerAssignment.cpp
+    src/net/PlayerIdentity.cpp
+    src/net/PlayerState.cpp
+    src/net/SocialProtocol.cpp
+    src/net/Replication.cpp
     src/platform/KeyNames.cpp
     src/physics/PhysicsSyncSystem.cpp
+    src/server/PlayerProfile.cpp
+    src/server/ServerHost.cpp
     src/physics/PhysicsWorld.cpp
     src/render/Camera.cpp
     src/render/IsoMath.cpp
@@ -268,6 +334,9 @@ add_executable(ZomboidLikeTests
     src/save/Thumbnail.cpp
     src/ui/InventoryPanel.cpp
     src/ui/MenuPanel.cpp
+    src/ui/MultiplayerPanel.cpp
+    src/ui/SocialPanel.cpp
+    src/ui/ScriptUiHost.cpp
     src/ui/UiInput.cpp
     src/script/EventBridge.cpp
     src/script/LuaRuntime.cpp
@@ -277,6 +346,7 @@ add_executable(ZomboidLikeTests
     src/script/PythonSupport.cpp
     src/script/ScriptApi.cpp
     src/script/ScriptManager.cpp
+    src/script/ScriptUiApi.cpp
     src/world/Cell.cpp
     src/world/Chunk.cpp
     src/world/ChunkData.cpp
@@ -302,6 +372,8 @@ target_link_libraries(ZomboidLikeTests PRIVATE
     ${BULLET_LIBRARIES}
     RmlUi::RmlUi
     unofficial::sqlite3::sqlite3
+    kcp::kcp
+    ws2_32
     glfw
 )
 

@@ -1,0 +1,137 @@
+<rml>
+<head>
+    <title>ZomboidLike Menu</title>
+    <link type="text/rcss" href="theme.rcss"/>
+    <link type="text/rcss" href="menu.rcss"/>
+</head>
+<body>
+    <div id="menu-overlay">
+        <div id="main-menu" class="menu-view menu-main">
+            <div class="menu-brand">ZOMBOIDLIKE</div>
+            <div class="menu-title">末日余生</div>
+            <div class="menu-subtitle">在尸潮中活下去，直到下一个清晨。</div>
+            <div class="menu-accent"></div>
+            <div class="menu-actions">
+                <div id="menu-new-game" class="menu-btn primary">新游戏</div>
+                <div id="menu-continue" class="menu-btn disabled">继续（暂无存档）</div>
+                <div id="menu-load" class="menu-btn disabled">读取存档</div>
+                <div id="menu-multiplayer" class="menu-btn">联机游戏</div>
+                <div id="menu-settings" class="menu-btn">设置</div>
+                <div id="menu-quit" class="menu-btn danger">退出</div>
+            </div>
+            <div class="menu-hint">WASD 移动 · 左键 点击移动 · I 背包 · Esc 暂停</div>
+            <div class="menu-version">M9 UI SYSTEM · RmlUi + bgfx</div>
+        </div>
+
+        <div id="pause-menu" class="menu-view menu-pause">
+            <div class="menu-kicker">PAUSED</div>
+            <div class="menu-title">游戏暂停</div>
+            <div class="menu-subtitle">世界已冻结，调整设置不会丢失当前进度。</div>
+            <div class="menu-accent"></div>
+            <div class="menu-actions">
+                <div id="pause-resume" class="menu-btn primary">继续游戏</div>
+                <div id="pause-save" class="menu-btn">保存游戏</div>
+                <div id="pause-settings" class="menu-btn">设置</div>
+                <div id="pause-main-menu" class="menu-btn">返回主菜单</div>
+                <div id="pause-quit" class="menu-btn danger">退出游戏</div>
+            </div>
+            <div id="pause-save-status" class="pause-save-status"></div>
+            <div class="menu-hint">保存会生成缩略图并自动继续游戏</div>
+        </div>
+
+        <div id="load-menu" class="menu-view menu-load">
+            <div class="menu-kicker">SAVES</div>
+            <div class="menu-title">读取存档</div>
+            <div class="menu-subtitle">选择最近存档；载入前当前进度会自动保存。</div>
+            <div class="menu-accent"></div>
+            <div id="load-list" class="load-list">
+                <div id="load-empty" class="load-empty">暂无存档</div>
+                <div id="save-row-1" class="save-row"><span id="save-name-1" class="save-name"></span><span id="save-time-1" class="save-time"></span><span id="save-delete-1" class="save-delete">删除</span></div>
+                <div id="save-row-2" class="save-row"><span id="save-name-2" class="save-name"></span><span id="save-time-2" class="save-time"></span><span id="save-delete-2" class="save-delete">删除</span></div>
+                <div id="save-row-3" class="save-row"><span id="save-name-3" class="save-name"></span><span id="save-time-3" class="save-time"></span><span id="save-delete-3" class="save-delete">删除</span></div>
+                <div id="save-row-4" class="save-row"><span id="save-name-4" class="save-name"></span><span id="save-time-4" class="save-time"></span><span id="save-delete-4" class="save-delete">删除</span></div>
+                <div id="save-row-5" class="save-row"><span id="save-name-5" class="save-name"></span><span id="save-time-5" class="save-time"></span><span id="save-delete-5" class="save-delete">删除</span></div>
+                <div id="save-row-6" class="save-row"><span id="save-name-6" class="save-name"></span><span id="save-time-6" class="save-time"></span><span id="save-delete-6" class="save-delete">删除</span></div>
+                <div id="save-row-7" class="save-row"><span id="save-name-7" class="save-name"></span><span id="save-time-7" class="save-time"></span><span id="save-delete-7" class="save-delete">删除</span></div>
+                <div id="save-row-8" class="save-row"><span id="save-name-8" class="save-name"></span><span id="save-time-8" class="save-time"></span><span id="save-delete-8" class="save-delete">删除</span></div>
+            </div>
+            <div id="load-more" class="load-more"></div>
+            <div id="load-status" class="load-status"></div>
+            <div id="load-pager" class="load-pager">
+                <div id="load-prev" class="menu-btn">上一页</div>
+                <span id="load-page" class="load-page-label"></span>
+                <div id="load-next" class="menu-btn">下一页</div>
+            </div>
+            <div class="settings-footer">
+                <div id="load-back" class="menu-btn">返回</div>
+            </div>
+        </div>
+
+        <div id="load-delete-confirm" class="load-confirm">
+            <div class="load-confirm-card">
+                <div class="load-confirm-title">删除存档？</div>
+                <div id="load-delete-text" class="load-confirm-text"></div>
+                <div class="load-confirm-hint">删除后无法恢复。</div>
+                <div class="load-confirm-actions">
+                    <div id="load-delete-cancel" class="menu-btn">取消</div>
+                    <div id="load-delete-yes" class="menu-btn danger">删除</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="settings-menu" class="menu-view menu-settings">
+            <div class="menu-kicker">OPTIONS</div>
+            <div class="settings-title">设置</div>
+            <div class="settings-subtitle">音量组与键位保存到 config/game.json，重启后仍然生效。</div>
+
+            <div class="settings-section">音频</div>
+            <div class="settings-volume-grid">
+                <div class="settings-volume-cell">
+                    <span class="settings-label">主音量</span>
+                    <input type="range" id="setting-volume" min="0" max="100" value="65"/>
+                    <span id="setting-volume-value" class="settings-value">65</span>
+                </div>
+                <div class="settings-volume-cell">
+                    <span class="settings-label">音乐</span>
+                    <input type="range" id="setting-music-volume" min="0" max="100" value="70"/>
+                    <span id="setting-music-volume-value" class="settings-value">70</span>
+                </div>
+                <div class="settings-volume-cell">
+                    <span class="settings-label">音效</span>
+                    <input type="range" id="setting-sfx-volume" min="0" max="100" value="85"/>
+                    <span id="setting-sfx-volume-value" class="settings-value">85</span>
+                </div>
+                <div class="settings-volume-cell">
+                    <span class="settings-label">环境</span>
+                    <input type="range" id="setting-ambient-volume" min="0" max="100" value="55"/>
+                    <span id="setting-ambient-volume-value" class="settings-value">55</span>
+                </div>
+            </div>
+
+            <div class="settings-section">键位</div>
+            <div class="settings-columns">
+                <div class="settings-column">
+                    <div class="settings-row"><span class="settings-label">向上移动</span><div id="bind-MoveUp" class="key-btn">W</div></div>
+                    <div class="settings-row"><span class="settings-label">向下移动</span><div id="bind-MoveDown" class="key-btn">S</div></div>
+                    <div class="settings-row"><span class="settings-label">向左移动</span><div id="bind-MoveLeft" class="key-btn">A</div></div>
+                    <div class="settings-row"><span class="settings-label">向右移动</span><div id="bind-MoveRight" class="key-btn">D</div></div>
+                    <div class="settings-row"><span class="settings-label">攻击</span><div id="bind-Attack" class="key-btn">SPACE</div></div>
+                </div>
+                <div class="settings-column">
+                    <div class="settings-row"><span class="settings-label">拾取</span><div id="bind-Pickup" class="key-btn">F</div></div>
+                    <div class="settings-row"><span class="settings-label">使用</span><div id="bind-Use" class="key-btn">E</div></div>
+                    <div class="settings-row"><span class="settings-label">装备</span><div id="bind-Equip" class="key-btn">R</div></div>
+                    <div class="settings-row"><span class="settings-label">丢弃</span><div id="bind-Drop" class="key-btn">G</div></div>
+                    <div class="settings-row"><span class="settings-label">暂停 / 倍速</span><div id="bind-Pause" class="key-btn">F1</div></div>
+                </div>
+            </div>
+
+            <div class="settings-footer">
+                <div id="settings-back" class="menu-btn">返回</div>
+                <div id="settings-apply" class="menu-btn primary">应用</div>
+            </div>
+            <div id="settings-status" class="menu-status status-info">键位与音量修改后按“应用”保存</div>
+        </div>
+    </div>
+</body>
+</rml>

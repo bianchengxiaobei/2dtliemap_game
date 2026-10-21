@@ -4,6 +4,7 @@
 #include <string>
 
 #include "core/Constants.h"
+#include "game/WorldQueries.h"
 #include "world/Cell.h"
 #include "world/Chunk.h"
 #include "world/GridSquare.h"
@@ -267,6 +268,31 @@ TEST_CASE("World：cell 稀疏网格与跨 chunk 访问") {
 
     world.Clear();
     CHECK(world.LoadedCellCount() == 0u);
+}
+
+TEST_CASE("WorldQueries：工作台范围按对象逻辑名与已加载 chunk 查询") {
+    world::World world;
+    world::GridSquare& square = world.GetOrCreateSquare(72, 25, 0);
+    const world::ChunkCoord cc = world::ChunkOf(72, 25);
+    world::Chunk* chunk = game::FindChunkInWorld(world, cc.cx, cc.cy);
+    REQUIRE(chunk != nullptr);
+    chunk->SetState(world::ChunkState::Loading);
+    chunk->SetState(world::ChunkState::Loaded);
+    square.AddObject(world::SquareLayer::Furniture,
+                     {"object.workbench", 0, 0, true});
+    world::GridSquare& campSquare = world.GetOrCreateSquare(76, 25, 0);
+    campSquare.AddObject(world::SquareLayer::Furniture,
+                         {"object.campfire", 0, 0, true});
+
+    CHECK(game::HasStationNearby(world, 70.6f, 25.5f, 0, "workbench", 2.5f));
+    CHECK(game::HasStationNearby(world, 70.6f, 25.5f, 0, "object.workbench", 2.5f));
+    CHECK(game::HasStationNearby(world, 76.5f, 25.5f, 0, "campfire", 2.5f));
+    CHECK_FALSE(game::HasStationNearby(world, 76.5f, 25.5f, 0, "workbench", 2.5f));
+    CHECK_FALSE(game::HasStationNearby(world, 80.0f, 25.0f, 0, "workbench", 2.5f));
+    CHECK_FALSE(game::HasStationNearby(world, 72.5f, 25.5f, 0, "workbench", 0.0f));
+    CHECK_FALSE(game::HasStationNearby(world, 72.5f, 25.5f, 0, "workbench", -1.0f));
+    CHECK_FALSE(game::HasStationNearby(world, 72.5f, 25.5f, 0, "forge", 2.5f));
+    CHECK_FALSE(game::HasStationNearby(world, 72.5f, 25.5f, 1, "workbench", 2.5f));
 }
 
 TEST_CASE("World：RemoveEmptyCells 回收空 cell") {

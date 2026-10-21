@@ -30,6 +30,8 @@ const char* CommandTypeName(CommandType type) {
             return "Gunshot";
         case CommandType::SelectHotbar:
             return "SelectHotbar";
+        case CommandType::FireProjectile:
+            return "FireProjectile";
     }
     return "Unknown";
 }

@@ -6,6 +6,7 @@
 
 #include <GLFW/glfw3.h>
 #include <RmlUi/Core.h>
+#include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <doctest/doctest.h>
 
 #include "core/Input.h"
@@ -14,6 +15,10 @@
 #include "ui/InventoryUi.h"
 #include "ui/MenuPanel.h"
 #include "ui/MenuUi.h"
+#include "ui/MultiplayerPanel.h"
+#include "ui/MultiplayerUi.h"
+#include "ui/SocialPanel.h"
+#include "ui/SocialUi.h"
 #include "ui/UiInput.h"
 
 namespace {
@@ -450,9 +455,11 @@ TEST_CASE("M9-T5 背包状态渲染与右键菜单") {
     state.playerValid = true;
     state.weight = 4.2f;
     state.capacity = 20.0f;
-    state.bagStacks = 2;
+    state.bagStacks = 3;
     state.bag[0] = zl::ui::InventorySlot{true, "绷带", 3, true, false, 0};
     state.bag[1] = zl::ui::InventorySlot{true, "消防斧", 1, false, true, 0};
+    state.bag[2] = zl::ui::InventorySlot{true, "锤子", 1, false, true, 0,
+                                         0.6f, true, true};
     state.equipment[0] = zl::ui::InventorySlot{true, "消防斧", 1, false, false, 0};
     state.loot[0] = zl::ui::InventorySlot{true, "破布", 2, false, false, 9001};
     state.lootStacks = 1;
@@ -469,9 +476,10 @@ TEST_CASE("M9-T5 背包状态渲染与右键菜单") {
     CHECK(panel.IsOpen());
     CHECK(bag0->IsClassSet("filled"));
     CHECK(bag1->IsClassSet("filled"));
-    CHECK(!document->GetElementById("bag-slot-2")->IsClassSet("filled"));
+    CHECK(!document->GetElementById("bag-slot-3")->IsClassSet("filled"));
     CHECK(document->GetElementById("bag-name-0")->GetInnerRML() == "绷带");
     CHECK(document->GetElementById("bag-count-0")->GetInnerRML() == "3");
+    CHECK(document->GetElementById("bag-name-2")->GetInnerRML() == "锤子 60%");
     CHECK(document->GetElementById("equip-slot-0")->IsClassSet("filled"));
     CHECK(document->GetElementById("equip-name-0")->GetInnerRML() == "消防斧");
     CHECK(document->GetElementById("loot-slot-0")->IsClassSet("filled"));
@@ -528,6 +536,16 @@ TEST_CASE("M9-T5 背包状态渲染与右键菜单") {
     CHECK(actions[2].type == zl::ui::InventoryActionType::Unequip);
     CHECK(actions[2].from == zl::ui::InventoryArea::Equipment);
     CHECK(actions[2].fromIndex == 0);
+
+    rightClick(document->GetElementById("bag-slot-2"));
+    REQUIRE(menu->IsVisible());
+    CHECK(document->GetElementById("ctx-repair")->IsVisible());
+    CHECK(document->GetElementById("ctx-repair")->GetInnerRML() == "维修");
+    clickElement(document->GetElementById("ctx-repair"), 0);
+    REQUIRE(actions.size() == 4);
+    CHECK(actions[3].type == zl::ui::InventoryActionType::Repair);
+    CHECK(actions[3].from == zl::ui::InventoryArea::Backpack);
+    CHECK(actions[3].fromIndex == 2);
 
     panel.Shutdown();
     Rml::RemoveContext("inventory");
@@ -780,9 +798,181 @@ TEST_CASE("M9-T6 主菜单、暂停菜单与设置页") {
     CHECK(panel.OnEscape());  // 主菜单 ESC 保持打开
     CHECK(panel.IsOpen());
 
+    clickElement("menu-multiplayer");
+    REQUIRE(actions.size() == 5);
+    CHECK(actions[4] == zl::ui::MenuActionType::Multiplayer);
+
     panel.Hide();
     CHECK(!panel.IsOpen());
     panel.Shutdown();
     Rml::RemoveContext("menu");
+    Rml::Shutdown();
+}
+TEST_CASE("M13-T9 UI 联机入口菜单：地址/端口/服务器列表/主机动线") {
+    NullRenderInterface renderInterface;
+    NullSystemInterface systemInterface;
+    Rml::SetRenderInterface(&renderInterface);
+    Rml::SetSystemInterface(&systemInterface);
+    REQUIRE(Rml::Initialise());
+
+    const std::string fontDir = std::string(ZL_SOURCE_DIR) + "/assets/fonts/";
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Regular.otf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Normal));
+
+    Rml::Context* context = Rml::CreateContext("multiplayer", Rml::Vector2i(1280, 720));
+    REQUIRE(context != nullptr);
+    zl::ui::MultiplayerPanel panel;
+    REQUIRE(panel.Init(*context,
+                       std::string(ZL_SOURCE_DIR) + "/assets/ui/multiplayer.rml"));
+
+    std::vector<zl::ui::MultiplayerActionType> actions;
+    zl::ui::MultiplayerMenuState received;
+    panel.SetActionHandler([&](zl::ui::MultiplayerActionType action,
+                               const zl::ui::MultiplayerMenuState& state) {
+        actions.push_back(action);
+        received = state;
+    });
+    zl::ui::MultiplayerMenuState state;
+    state.playerName = "Alice";
+    state.joinHost = "192.168.1.7";
+    state.joinPort = 7788;
+    state.hostPort = 7777;
+    state.servers = {
+        {"本地测试", "127.0.0.1", 7777},
+        {"朋友", "10.0.0.8", 9000},
+    };
+    state.status = "选择服务器";
+    state.statusTone = "info";
+    panel.Show(state);
+    context->Update();
+    REQUIRE(panel.IsOpen());
+    Rml::ElementDocument* document = panel.Document();
+    REQUIRE(document != nullptr);
+    CHECK(document->GetElementById("mp-overlay")->IsVisible());
+    CHECK(document->GetElementById("mp-server-0")->IsVisible());
+    CHECK(document->GetElementById("mp-server-1")->IsVisible());
+    CHECK(!document->GetElementById("mp-server-2")->IsVisible());
+    CHECK(document->GetElementById("mp-server-name-0")->GetInnerRML() == "本地测试");
+    CHECK(document->GetElementById("mp-status")->GetInnerRML() == "选择服务器");
+
+    auto input = [&](const char* id) {
+        return static_cast<Rml::ElementFormControlInput*>(document->GetElementById(id));
+    };
+    CHECK(input("mp-name")->GetValue() == "Alice");
+    CHECK(input("mp-host")->GetValue() == "192.168.1.7");
+    CHECK(input("mp-port")->GetValue() == "7788");
+    CHECK(input("mp-host-port")->GetValue() == "7777");
+
+    auto click = [&](const char* id) {
+        Rml::Element* element = document->GetElementById(id);
+        REQUIRE(element != nullptr);
+        const Rml::Vector2f offset = element->GetAbsoluteOffset(Rml::BoxArea::Border);
+        context->ProcessMouseMove(static_cast<int>(offset.x) + 8,
+                                  static_cast<int>(offset.y) + 8, 0);
+        context->ProcessMouseButtonDown(0, 0);
+        context->ProcessMouseButtonUp(0, 0);
+        context->Update();
+    };
+
+    click("mp-server-0");
+    CHECK(input("mp-host")->GetValue() == "127.0.0.1");
+    CHECK(input("mp-port")->GetValue() == "7777");
+
+    input("mp-host")->SetValue("10.0.0.8");
+    input("mp-port")->SetValue("9000");
+    input("mp-name")->SetValue("Bob");
+    click("mp-join");
+    REQUIRE(actions.size() == 1);
+    CHECK(actions[0] == zl::ui::MultiplayerActionType::Join);
+    CHECK(received.joinHost == "10.0.0.8");
+    CHECK(received.joinPort == 9000);
+    CHECK(received.playerName == "Bob");
+
+    input("mp-host-port")->SetValue("0");
+    click("mp-host-start");
+    REQUIRE(actions.size() == 2);
+    CHECK(actions[1] == zl::ui::MultiplayerActionType::Host);
+    CHECK(received.hostPort == 0);
+
+    click("mp-add-server");
+    REQUIRE(actions.size() == 3);
+    CHECK(actions[2] == zl::ui::MultiplayerActionType::AddServer);
+
+    click("mp-refresh");
+    REQUIRE(actions.size() == 4);
+    CHECK(actions[3] == zl::ui::MultiplayerActionType::RefreshServers);
+
+    click("mp-back");
+    REQUIRE(actions.size() == 5);
+    CHECK(actions[4] == zl::ui::MultiplayerActionType::Back);
+
+    panel.Hide();
+    panel.Shutdown();
+    Rml::RemoveContext("multiplayer");
+    Rml::Shutdown();
+}
+
+TEST_CASE("M13-T9 Social 聊天/玩家列表：显示、输入与抑制") {
+    NullRenderInterface renderInterface;
+    NullSystemInterface systemInterface;
+    Rml::SetRenderInterface(&renderInterface);
+    Rml::SetSystemInterface(&systemInterface);
+    REQUIRE(Rml::Initialise());
+
+    const std::string fontDir = std::string(ZL_SOURCE_DIR) + "/assets/fonts/";
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Regular.otf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Normal));
+
+    Rml::Context* context = Rml::CreateContext("social", Rml::Vector2i(1280, 720));
+    REQUIRE(context != nullptr);
+    zl::ui::SocialPanel panel;
+    REQUIRE(panel.Init(*context, std::string(ZL_SOURCE_DIR) + "/assets/ui/social.rml"));
+
+    zl::ui::SocialUiState state;
+    state.visible = true;
+    state.players = {{1, "Alice", true}, {2, "Bob", false}};
+    state.chat = {{"Bob", "集合点在北边"}};
+    panel.SetState(state);
+    context->Update();
+    CHECK(panel.IsVisible());
+    CHECK(panel.Document()->GetElementById("social-player-0")->IsVisible());
+    CHECK(panel.Document()->GetElementById("social-player-1")->IsVisible());
+    CHECK(!panel.Document()->GetElementById("social-player-2")->IsVisible());
+    CHECK(panel.Document()->GetElementById("social-chat-0")
+              ->GetInnerRML()
+              .find("集合点在北边") != std::string::npos);
+    CHECK(panel.Document()->GetElementById("social-player-count")->GetInnerRML() == "2");
+
+    std::string sent;
+    panel.SetSendHandler([&](const std::string& text, std::string& error) {
+        sent = text;
+        error.clear();
+        return true;
+    });
+    panel.OpenChat();
+    context->Update();
+    CHECK(panel.IsChatOpen());
+    CHECK(panel.Document()->GetElementById("social-chat-input-row")->IsVisible());
+    auto* input = static_cast<Rml::ElementFormControlInput*>(
+        panel.Document()->GetElementById("social-chat-input"));
+    input->SetValue("你好");
+    CHECK(panel.SubmitChat());
+    CHECK(sent == "你好");
+    CHECK(!panel.IsChatOpen());
+
+    panel.SetSuppressed(true);
+    context->Update();
+    CHECK(!panel.Document()->GetElementById("social-players")->IsVisible());
+    panel.SetSuppressed(false);
+    context->Update();
+    CHECK(panel.Document()->GetElementById("social-players")->IsVisible());
+
+    panel.SetState({});
+    context->Update();
+    CHECK(!panel.Document()->GetElementById("social-players")->IsVisible());
+    panel.Shutdown();
+    Rml::RemoveContext("social");
     Rml::Shutdown();
 }

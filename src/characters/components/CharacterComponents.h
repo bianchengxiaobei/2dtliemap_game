@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace zl::ecs {
 
@@ -9,6 +11,41 @@ namespace zl::ecs {
 
 // 本地玩家标记（一局一个）。只有带 PlayerTag 的实体读键盘。
 struct PlayerTag {};
+
+// M13-T4：实体归属。0 = 服务器/环境所有；非 0 = 由对应玩家 StableId 控制。
+// 玩家实体默认 owner = 自己；未来驯服/召唤物可复用本组件，复制层只读取元数据。
+// 这是会话内元数据，不进入存档；读档玩家没有本组件时，复制层按 PlayerTag 回退为自身。
+struct NetworkOwner {
+    std::uint64_t stableId = 0;
+};
+
+// 玩家已学会的锁定配方 id（蓝图/杂志解锁）。保存时只记录额外学会的配方；
+// 未锁定配方始终可用。容器保持排序去重，便于存档与比较。
+struct KnownRecipes {
+    std::vector<std::string> recipeIds;
+};
+
+// 跨存档保留的制作任务：活跃批次进度 + 后续 FIFO 队列。
+// 运行时以 WorldDemoState 为准，保存前同步到本组件；读档后恢复，配方存在/已学会才继续，
+// 制作站与材料在计时完成或队首开始时再校验（读档时 chunk 可能尚未加载）。
+inline constexpr int kMaxCraftBatchCount = 99;
+inline constexpr int kMaxCraftQueueEntries = 8;
+
+struct CraftQueueItem {
+    std::string recipeId;
+    int count = 1;
+};
+
+struct CraftingJob {
+    bool active = false;
+    std::string recipeId;
+    float elapsed = 0.0f;
+    float duration = 0.0f;
+    float toolEfficiency = 1.0f;
+    int batchTotal = 0;
+    int batchCompleted = 0;
+    std::vector<CraftQueueItem> queue;
+};
 
 // 本地控制参数（玩家专属；AI 实体不挂）
 struct LocalControl {
@@ -51,6 +88,21 @@ struct AnimState {
     std::uint8_t framesPerDir = 2;  // 每方向帧数
     float fps = 8.0f;               // 行走帧率
     float time = 0.0f;              // 帧计时累加器（循环取模，不无界增长）
+};
+
+enum class ActorAction : std::uint8_t {
+    Idle = 0,
+    Moving = 1,
+    Attacking = 2,
+    Crafting = 3,
+    Hit = 4,
+    Dead = 5,
+};
+
+struct ActionState {
+    ActorAction action = ActorAction::Idle;
+    float elapsed = 0.0f;
+    float duration = 0.0f;
 };
 
 // M5-T1：生命值。current <= 0 = 死亡（DeathSystem 检测 → 生成尸体 + 延迟销毁实体）。

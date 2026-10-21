@@ -14,7 +14,7 @@ namespace zl::script {
 // - EventBus 载荷 → ScriptEvent「事件名 + 命名字段」（Translate，可单测）；
 // - 经 ScriptManager::DispatchEvent 按加载顺序派发（错误隔离/禁用策略在 manager）。
 // 语义：事件随总线队列在主线程 tick 末统一派发（EmitQueued 生产者侧约定）。
-// 说明：OnSaveBegin/OnSaveEnd 的翻译已就绪，生产端随存档系统（后续里程碑）接入。
+// 说明：OnSaveBegin/OnSaveEnd 无字段，由 WorldDemoState 在后台存档提交/完成时发出。
 class EventBridge {
 public:
     EventBridge(core::EventBus& bus, ScriptManager& scripts);

@@ -223,6 +223,31 @@ TEST_CASE("M6-T5：use 效果字段解析与校验") {
     CHECK(Contains(error, "必须是数字"));
 }
 
+TEST_CASE("M12：unlocksRecipes 配方图纸字段校验") {
+    items::ItemRegistry registry;
+    std::string error;
+    auto load = [&](const std::string& body) {
+        error.clear();
+        return registry.LoadFromString(MakeJson("    " + body), "test", &error);
+    };
+
+    REQUIRE(load(R"({ "id": "magazine", "name": "book", "icon": "i", "weight": 0.2, "maxStack": 1, "type": "generic", "unlocksRecipes": ["campfire_beans", "field_bandage"] })"));
+    const items::ItemDef* magazine = registry.Find("magazine");
+    REQUIRE(magazine != nullptr);
+    REQUIRE(magazine->unlocksRecipes.size() == 2u);
+    CHECK(magazine->unlocksRecipes[0] == "campfire_beans");
+    CHECK(magazine->unlocksRecipes[1] == "field_bandage");
+
+    CHECK_FALSE(load(R"({ "id": "x", "name": "x", "icon": "i", "weight": 1, "maxStack": 1, "type": "generic", "unlocksRecipes": "campfire_beans" })"));
+    CHECK(Contains(error, "unlocksRecipes"));
+    CHECK_FALSE(load(R"({ "id": "x", "name": "x", "icon": "i", "weight": 1, "maxStack": 1, "type": "generic", "unlocksRecipes": [] })"));
+    CHECK(Contains(error, "unlocksRecipes"));
+    CHECK_FALSE(load(R"({ "id": "x", "name": "x", "icon": "i", "weight": 1, "maxStack": 1, "type": "generic", "unlocksRecipes": ["a", "a"] })"));
+    CHECK(Contains(error, "重复"));
+    CHECK_FALSE(load(R"({ "id": "x", "name": "x", "icon": "i", "weight": 1, "maxStack": 1, "type": "consumable", "use": { "heal": 1 }, "unlocksRecipes": ["a"] })"));
+    CHECK(Contains(error, "不能与 'use'"));
+}
+
 TEST_CASE("M6-T1：文件不存在与仓库内置物品文件") {
     items::ItemRegistry registry;
     std::string error;

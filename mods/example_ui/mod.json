@@ -1,0 +1,7 @@
+{
+  "id": "example_ui",
+  "name": "Example Script UI",
+  "version": "1.0.0",
+  "api": 1,
+  "loadOrder": 120
+}

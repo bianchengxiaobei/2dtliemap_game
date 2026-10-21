@@ -32,6 +32,9 @@ bool MoveStack(ecs::Container& container, const ItemRegistry& registry, std::siz
 // 容器内 defId 的总数量（跨堆叠求和）
 int CountOf(const ecs::Container& container, std::string_view defId);
 
+// 容器内 condition > 0 的 defId 数量（工具可用性；损坏工具不计）
+int CountUsableTools(const ecs::Container& container, std::string_view defId);
+
 // 容器当前总重量（kg）；未知 defId 记 0 并告警
 float TotalWeight(const ecs::Container& container, const ItemRegistry& registry);
 

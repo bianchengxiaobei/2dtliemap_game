@@ -29,9 +29,9 @@ body {
 
 .menu-main {
     width: 440px;
-    height: 500px;
+    height: 556px;
     margin-left: -220px;
-    margin-top: -250px;
+    margin-top: -278px;
 }
 
 .menu-pause {

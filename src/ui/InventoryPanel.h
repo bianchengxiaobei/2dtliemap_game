@@ -82,7 +82,7 @@ private:
     std::array<Rml::Element*, kInventoryLootSlots> m_lootSlots{};
     std::array<Rml::Element*, kInventoryLootSlots> m_lootNames{};
     std::array<Rml::Element*, kInventoryLootSlots> m_lootCounts{};
-    std::array<Rml::Element*, 5> m_contextButtons{};
+    std::array<Rml::Element*, 6> m_contextButtons{};
     struct ListenerBinding {
         Rml::Element* element = nullptr;
         std::string event;

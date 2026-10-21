@@ -20,6 +20,9 @@
 #include "core/EventBus.h"
 #include "core/Log.h"
 #include "script/ScriptApi.h"
+#include "script/ScriptUiApi.h"
+#include "ui/HudState.h"
+#include "ui/ScriptUiHost.h"
 
 namespace py = pybind11;
 
@@ -209,16 +212,19 @@ struct PythonRuntime::Impl {
     bool initialized = false;
     bool ownsInterpreter = false;  // false = 复用已存在的解释器（测试进程等）
     const ScriptApi* api = nullptr;
+    ui::ScriptUiHost* uiHost = nullptr;
 
     std::unordered_map<std::string, ModEntry> mods;
     std::vector<std::string> loadedIds;
 
     // Host API（M8-T3）：与 Lua 侧同名同参数，绑定为 per-mod 命名空间对象。
     // api 为 nullptr 时绑定安全默认值。
-    void BindApi(py::dict& globals, const std::string& modId,
+    void BindApi(py::dict& globals, const ModInfo& mod,
                  const std::shared_ptr<HandlerMap>& handlers,
                  const std::shared_ptr<std::vector<Timer>>& timers) {
         const ScriptApi* scriptApi = api;
+        const std::string& modId = mod.id;
+        auto uiApi = std::make_shared<ScriptUiApi>(uiHost, mod.id, mod.rootPath);
         const auto makeNamespace = [] {
             return py::module_::import("types").attr("SimpleNamespace")();
         };
@@ -241,6 +247,15 @@ struct PythonRuntime::Impl {
             out["minute"] = dt.minute;
             out["totalMinutes"] = scriptApi != nullptr ? scriptApi->GetTotalGameMinutes() : 0.0;
             return out;
+        });
+        game.attr("ToggleInventory") = py::cpp_function([scriptApi]() -> bool {
+            return scriptApi != nullptr && scriptApi->ToggleInventory();
+        });
+        game.attr("IsInventoryOpen") = py::cpp_function([scriptApi]() -> bool {
+            return scriptApi != nullptr && scriptApi->IsInventoryOpen();
+        });
+        game.attr("IsMenuOpen") = py::cpp_function([scriptApi]() -> bool {
+            return scriptApi != nullptr && scriptApi->IsMenuOpen();
         });
         game.attr("SetTimer") = py::cpp_function(
             [scriptApi, timers](double seconds, py::function fn) {
@@ -348,6 +363,447 @@ struct PythonRuntime::Impl {
             py::arg("defId"));
         globals["Items"] = itemsApi;
 
+        py::object hud = makeNamespace();
+        hud.attr("GetState") = py::cpp_function([scriptApi]() -> py::dict {
+            ui::HudState state;
+            if (scriptApi != nullptr) {
+                (void)scriptApi->GetHudState(state);
+            }
+            py::dict out;
+            out["active"] = state.active;
+            out["day"] = state.day;
+            out["time"] = state.time;
+            out["speed"] = state.speed;
+            out["playerValid"] = state.playerValid;
+            out["health"] = state.health;
+            out["healthMax"] = state.healthMax;
+            out["stamina"] = state.stamina;
+            out["staminaMax"] = state.staminaMax;
+            out["selectedSlot"] = state.selectedSlot;
+            out["notice"] = state.notice;
+            out["noticeTone"] = state.noticeTone;
+            out["noticeRemaining"] = state.noticeRemaining;
+            out["noticeDuration"] = state.noticeDuration;
+            py::list slots;
+            for (const ui::HudSlot& slot : state.slots) {
+                py::dict item;
+                item["label"] = slot.label;
+                item["count"] = slot.count;
+                slots.append(item);
+            }
+            out["slots"] = slots;
+            return out;
+        });
+        globals["Hud"] = hud;
+
+        py::object menu = makeNamespace();
+        menu.attr("GetState") = py::cpp_function([scriptApi]() -> py::dict {
+            ui::MenuState state;
+            if (scriptApi != nullptr) {
+                (void)scriptApi->GetMenuState(state);
+            }
+            py::dict out;
+            out["open"] = state.open;
+            out["pauseMode"] = state.pauseMode;
+            out["canContinue"] = state.canContinue;
+            out["volume"] = state.settings.volume;
+            out["musicVolume"] = state.settings.musicVolume;
+            out["sfxVolume"] = state.settings.sfxVolume;
+            out["ambientVolume"] = state.settings.ambientVolume;
+            py::list bindings;
+            for (const ui::MenuKeyBinding& binding : state.settings.bindings) {
+                py::dict item;
+                item["action"] = binding.action;
+                item["label"] = binding.label;
+                item["key"] = binding.key;
+                bindings.append(item);
+            }
+            out["bindings"] = bindings;
+            return out;
+        });
+        menu.attr("Action") = py::cpp_function(
+            [scriptApi](const std::string& action) -> bool {
+                return scriptApi != nullptr && scriptApi->MenuAction(action);
+            },
+            py::arg("action"));
+        menu.attr("ApplySettings") = py::cpp_function(
+            [scriptApi](py::dict settings) -> py::dict {
+                py::dict result;
+                ui::MenuSettings parsed;
+                parsed.volume = py::cast<int>(settings["volume"]);
+                parsed.musicVolume = py::cast<int>(settings["musicVolume"]);
+                parsed.sfxVolume = py::cast<int>(settings["sfxVolume"]);
+                parsed.ambientVolume = py::cast<int>(settings["ambientVolume"]);
+                py::object rawBindings = settings["bindings"];
+                if (!py::isinstance<py::list>(rawBindings)) {
+                    result["ok"] = false;
+                    result["error"] = "bindings 必须是列表";
+                    return result;
+                }
+                for (py::handle item : rawBindings) {
+                    if (!py::isinstance<py::dict>(item)) {
+                        result["ok"] = false;
+                        result["error"] = "bindings 项必须是 dict";
+                        return result;
+                    }
+                    py::dict entry = py::reinterpret_borrow<py::dict>(item);
+                    ui::MenuKeyBinding binding;
+                    binding.action = py::cast<std::string>(entry["action"]);
+                    binding.label = py::cast<std::string>(entry["label"]);
+                    binding.key = py::cast<std::string>(entry["key"]);
+                    parsed.bindings.push_back(std::move(binding));
+                }
+                std::string error;
+                const bool ok = scriptApi != nullptr &&
+                                scriptApi->ApplyMenuSettings(parsed, error);
+                result["ok"] = ok;
+                result["error"] = ok ? std::string() : (error.empty() ? "保存设置失败" : error);
+                return result;
+            },
+            py::arg("settings"));
+        menu.attr("KeyName") = py::cpp_function(
+            [scriptApi](int key) -> std::string {
+                return scriptApi != nullptr ? scriptApi->MenuKeyName(key) : std::string();
+            },
+            py::arg("key"));
+        menu.attr("PlayClick") = py::cpp_function([scriptApi] {
+            if (scriptApi != nullptr) {
+                scriptApi->PlayUiClick();
+            }
+        });
+        globals["Menu"] = menu;
+
+        py::object save = makeNamespace();
+        save.attr("List") = py::cpp_function([scriptApi]() -> py::dict {
+            std::vector<ScriptSaveInfo> saves;
+            std::string error;
+            const bool ok = scriptApi != nullptr && scriptApi->ListSaves(saves, error);
+            py::dict out;
+            out["ok"] = ok;
+            out["error"] = ok ? std::string() : (error.empty() ? "读取存档列表失败" : error);
+            py::list list;
+            for (const ScriptSaveInfo& entry : saves) {
+                py::dict item;
+                item["id"] = entry.id;
+                item["name"] = entry.name;
+                item["updatedText"] = entry.updatedText;
+                item["mapId"] = entry.mapId;
+                item["gameVersion"] = entry.gameVersion;
+                list.append(item);
+            }
+            out["saves"] = list;
+            return out;
+        });
+        save.attr("Load") = py::cpp_function(
+            [scriptApi](const std::string& id) -> py::dict {
+                std::string error;
+                const bool ok = scriptApi != nullptr && scriptApi->LoadSave(id, error);
+                py::dict out;
+                out["ok"] = ok;
+                out["error"] = ok ? std::string() : (error.empty() ? "读取存档失败" : error);
+                return out;
+            },
+            py::arg("id"));
+        save.attr("Delete") = py::cpp_function(
+            [scriptApi](const std::string& id) -> py::dict {
+                std::string error;
+                const bool ok = scriptApi != nullptr && scriptApi->DeleteSave(id, error);
+                py::dict out;
+                out["ok"] = ok;
+                out["error"] = ok ? std::string() : (error.empty() ? "删除存档失败" : error);
+                return out;
+            },
+            py::arg("id"));
+        save.attr("QuickSave") = py::cpp_function([scriptApi]() -> bool {
+            return scriptApi != nullptr && scriptApi->QuickSave();
+        });
+        globals["Save"] = save;
+
+        py::object inventory = makeNamespace();
+        inventory.attr("GetState") = py::cpp_function([scriptApi]() -> py::dict {
+            ui::InventoryState state;
+            if (scriptApi != nullptr) {
+                (void)scriptApi->GetInventoryState(state);
+            }
+            py::dict out;
+            out["open"] = state.open;
+            out["playerValid"] = state.playerValid;
+            out["weight"] = state.weight;
+            out["capacity"] = state.capacity;
+            out["bagStacks"] = state.bagStacks;
+            out["lootStacks"] = state.lootStacks;
+            out["status"] = state.status;
+            out["statusTone"] = state.statusTone;
+            py::list recipes;
+            for (const ui::InventoryRecipe& entry : state.recipes) {
+                py::dict recipe;
+                recipe["id"] = entry.id;
+                recipe["name"] = entry.name;
+                recipe["outputDefId"] = entry.outputDefId;
+                recipe["outputLabel"] = entry.outputLabel;
+                recipe["outputCount"] = entry.outputCount;
+                recipe["known"] = entry.known;
+                recipe["canCraft"] = entry.canCraft;
+                recipe["estimatedSeconds"] = entry.estimatedSeconds;
+                recipe["station"] = entry.station;
+                recipe["stationLabel"] = entry.stationLabel;
+                recipe["stationNearby"] = entry.stationNearby;
+                py::list ingredients;
+                for (const ui::InventoryRecipeIngredient& ingredient :
+                     entry.ingredients) {
+                    py::dict item;
+                    item["label"] = ingredient.label;
+                    item["required"] = ingredient.required;
+                    item["have"] = ingredient.have;
+                    ingredients.append(item);
+                }
+                recipe["ingredients"] = ingredients;
+                py::list tools;
+                for (const ui::InventoryRecipeIngredient& tool : entry.tools) {
+                    py::dict item;
+                    item["label"] = tool.label;
+                    item["required"] = tool.required;
+                    item["have"] = tool.have;
+                    tools.append(item);
+                }
+                recipe["tools"] = tools;
+                recipes.append(recipe);
+            }
+            out["recipes"] = recipes;
+            py::dict crafting;
+            crafting["active"] = state.crafting.active;
+            crafting["recipeId"] = state.crafting.recipeId;
+            crafting["outputLabel"] = state.crafting.outputLabel;
+            crafting["outputCount"] = state.crafting.outputCount;
+            crafting["elapsed"] = state.crafting.elapsed;
+            crafting["duration"] = state.crafting.duration;
+            crafting["progress"] = state.crafting.progress;
+            crafting["toolEfficiency"] = state.crafting.toolEfficiency;
+            crafting["batchCount"] = state.crafting.batchCount;
+            crafting["completedCount"] = state.crafting.completedCount;
+            py::list queue;
+            for (const ui::InventoryQueuedCraft& entry : state.crafting.queue) {
+                py::dict item;
+                item["recipeId"] = entry.recipeId;
+                item["outputLabel"] = entry.outputLabel;
+                item["outputCount"] = entry.outputCount;
+                item["count"] = entry.count;
+                queue.append(item);
+            }
+            crafting["queue"] = queue;
+            out["crafting"] = crafting;
+            auto appendSlots = [](py::list& target, const auto& source) {
+                for (const ui::InventorySlot& entry : source) {
+                    py::dict slot;
+                    slot["filled"] = entry.filled;
+                    slot["label"] = entry.label;
+                    slot["count"] = entry.count;
+                    slot["usable"] = entry.usable;
+                    slot["equippable"] = entry.equippable;
+                    slot["entityId"] = entry.entityId;
+                    slot["condition"] = entry.condition;
+                    slot["damaged"] = entry.damaged;
+                    slot["repairAvailable"] = entry.repairAvailable;
+                    target.append(slot);
+                }
+            };
+            py::list bag;
+            py::list equipment;
+            py::list loot;
+            appendSlots(bag, state.bag);
+            appendSlots(equipment, state.equipment);
+            appendSlots(loot, state.loot);
+            out["bag"] = bag;
+            out["equipment"] = equipment;
+            out["loot"] = loot;
+            return out;
+        });
+        inventory.attr("Action") = py::cpp_function(
+            [scriptApi](py::dict action) -> bool {
+                if (scriptApi == nullptr) {
+                    return false;
+                }
+                auto parseArea = [](const std::string& value,
+                                    ui::InventoryArea& out) -> bool {
+                    if (value == "bag" || value == "backpack") {
+                        out = ui::InventoryArea::Backpack;
+                    } else if (value == "equipment") {
+                        out = ui::InventoryArea::Equipment;
+                    } else if (value == "loot") {
+                        out = ui::InventoryArea::Loot;
+                    } else {
+                        return false;
+                    }
+                    return true;
+                };
+                ui::InventoryAction parsed;
+                const std::string type = action.contains("type")
+                                             ? py::cast<std::string>(action["type"])
+                                             : std::string();
+                if (type == "transfer") {
+                    parsed.type = ui::InventoryActionType::Transfer;
+                } else if (type == "use") {
+                    parsed.type = ui::InventoryActionType::Use;
+                } else if (type == "equip") {
+                    parsed.type = ui::InventoryActionType::Equip;
+                } else if (type == "unequip") {
+                    parsed.type = ui::InventoryActionType::Unequip;
+                } else if (type == "drop") {
+                    parsed.type = ui::InventoryActionType::Drop;
+                } else if (type == "pickup") {
+                    parsed.type = ui::InventoryActionType::Pickup;
+                } else if (type == "craft") {
+                    parsed.type = ui::InventoryActionType::Craft;
+                } else if (type == "cancel_craft") {
+                    parsed.type = ui::InventoryActionType::CancelCraft;
+                } else if (type == "repair") {
+                    parsed.type = ui::InventoryActionType::Repair;
+                } else if (type == "queue_up") {
+                    parsed.type = ui::InventoryActionType::QueueMoveUp;
+                } else if (type == "queue_down") {
+                    parsed.type = ui::InventoryActionType::QueueMoveDown;
+                } else if (type == "queue_remove") {
+                    parsed.type = ui::InventoryActionType::QueueRemove;
+                } else if (type == "queue_count") {
+                    parsed.type = ui::InventoryActionType::QueueSetCount;
+                } else {
+                    return false;
+                }
+                const std::string from =
+                    action.contains("from") ? py::cast<std::string>(action["from"]) : "bag";
+                const std::string to =
+                    action.contains("to") ? py::cast<std::string>(action["to"]) : "bag";
+                if (!parseArea(from, parsed.from) || !parseArea(to, parsed.to)) {
+                    return false;
+                }
+                parsed.fromIndex = action.contains("fromIndex")
+                                        ? py::cast<int>(action["fromIndex"])
+                                        : -1;
+                parsed.toIndex = action.contains("toIndex")
+                                      ? py::cast<int>(action["toIndex"])
+                                      : -1;
+                parsed.fromEntityId = action.contains("fromEntityId")
+                                          ? py::cast<std::uint64_t>(action["fromEntityId"])
+                                          : 0;
+                parsed.count = std::clamp(
+                    action.contains("count") ? py::cast<int>(action["count"]) : 1, 1, 99);
+                return scriptApi->InventoryAction(parsed);
+            },
+            py::arg("action"));
+        inventory.attr("Close") = py::cpp_function([scriptApi]() -> bool {
+            if (scriptApi == nullptr || !scriptApi->IsInventoryOpen()) {
+                return false;
+            }
+            return !scriptApi->ToggleInventory();
+        });
+        inventory.attr("PlayClick") = py::cpp_function([scriptApi] {
+            if (scriptApi != nullptr) {
+                scriptApi->PlayInventoryClick();
+            }
+        });
+        globals["Inventory"] = inventory;
+
+        py::object ui = makeNamespace();
+        ui.attr("LoadDocument") = py::cpp_function(
+            [uiApi](const std::string& documentId, const std::string& path, bool show,
+                    bool modal, const std::string& group) {
+                return uiApi->LoadDocument(documentId, path, show, modal, group);
+            },
+            py::arg("documentId"), py::arg("path"), py::arg("show") = true,
+            py::arg("modal") = false, py::arg("group") = std::string());
+        ui.attr("OpenDocument") = py::cpp_function(
+            [uiApi](const std::string& documentId, const std::string& path, bool modal,
+                    const std::string& group) {
+                return uiApi->OpenDocument(documentId, path, modal, group);
+            },
+            py::arg("documentId"), py::arg("path"), py::arg("modal") = true,
+            py::arg("group") = std::string());
+        ui.attr("CloseDocument") = py::cpp_function(
+            [uiApi](const std::string& documentId, bool unload) {
+                return uiApi->CloseDocument(documentId, unload);
+            },
+            py::arg("documentId"), py::arg("unload") = false);
+        ui.attr("UnloadDocument") = py::cpp_function(
+            [uiApi](const std::string& documentId) {
+                return uiApi->UnloadDocument(documentId);
+            },
+            py::arg("documentId"));
+        ui.attr("UnloadGroup") = py::cpp_function(
+            [uiApi](const std::string& group) { uiApi->UnloadGroup(group); },
+            py::arg("group"));
+        ui.attr("Show") = py::cpp_function(
+            [uiApi](const std::string& documentId, bool visible) {
+                return uiApi->Show(documentId, visible);
+            },
+            py::arg("documentId"), py::arg("visible") = true);
+        ui.attr("IsLoaded") = py::cpp_function(
+            [uiApi](const std::string& documentId) {
+                return uiApi->IsLoaded(documentId);
+            },
+            py::arg("documentId"));
+        ui.attr("IsVisible") = py::cpp_function(
+            [uiApi](const std::string& documentId) {
+                return uiApi->IsVisible(documentId);
+            },
+            py::arg("documentId"));
+        ui.attr("SetModal") = py::cpp_function(
+            [uiApi](const std::string& documentId, bool modal) {
+                return uiApi->SetModal(documentId, modal);
+            },
+            py::arg("documentId"), py::arg("modal"));
+        ui.attr("IsInputCaptured") = py::cpp_function(
+            [uiApi]() { return uiApi->IsInputCaptured(); });
+        ui.attr("SetText") = py::cpp_function(
+            [uiApi](const std::string& documentId, const std::string& elementId,
+                    const std::string& text) {
+                return uiApi->SetText(documentId, elementId, text);
+            },
+            py::arg("documentId"), py::arg("elementId"), py::arg("text"));
+        ui.attr("SetAttribute") = py::cpp_function(
+            [uiApi](const std::string& documentId, const std::string& elementId,
+                    const std::string& name, const std::string& value) {
+                return uiApi->SetAttribute(documentId, elementId, name, value);
+            },
+            py::arg("documentId"), py::arg("elementId"), py::arg("name"),
+            py::arg("value"));
+        ui.attr("RemoveAttribute") = py::cpp_function(
+            [uiApi](const std::string& documentId, const std::string& elementId,
+                    const std::string& name) {
+                return uiApi->RemoveAttribute(documentId, elementId, name);
+            },
+            py::arg("documentId"), py::arg("elementId"), py::arg("name"));
+        ui.attr("SetClass") = py::cpp_function(
+            [uiApi](const std::string& documentId, const std::string& elementId,
+                    const std::string& className, bool enabled) {
+                return uiApi->SetClass(documentId, elementId, className, enabled);
+            },
+            py::arg("documentId"), py::arg("elementId"), py::arg("className"),
+            py::arg("enabled") = true);
+        ui.attr("SetProperty") = py::cpp_function(
+            [uiApi](const std::string& documentId, const std::string& elementId,
+                    const std::string& property, const std::string& value) {
+                return uiApi->SetProperty(documentId, elementId, property, value);
+            },
+            py::arg("documentId"), py::arg("elementId"), py::arg("property"),
+            py::arg("value"));
+        ui.attr("GetValue") = py::cpp_function(
+            [uiApi](const std::string& documentId, const std::string& elementId) {
+                return uiApi->GetValue(documentId, elementId);
+            },
+            py::arg("documentId"), py::arg("elementId"));
+        ui.attr("SetValue") = py::cpp_function(
+            [uiApi](const std::string& documentId, const std::string& elementId,
+                    const std::string& value) {
+                return uiApi->SetValue(documentId, elementId, value);
+            },
+            py::arg("documentId"), py::arg("elementId"), py::arg("value"));
+        ui.attr("Focus") = py::cpp_function(
+            [uiApi](const std::string& documentId, const std::string& elementId) {
+                return uiApi->Focus(documentId, elementId);
+            },
+            py::arg("documentId"), py::arg("elementId"));
+        globals["UI"] = ui;
+
         py::object events = makeNamespace();
         events.attr("On") = py::cpp_function(
             [handlers](const std::string& name, py::function fn) {
@@ -412,7 +868,7 @@ struct PythonRuntime::Impl {
         const auto handlers = std::make_shared<HandlerMap>();
         const auto timers = std::make_shared<std::vector<Timer>>();
         py::dict globals = MakeModGlobals(mod.id, path);
-        BindApi(globals, mod.id, handlers, timers);
+        BindApi(globals, mod, handlers, timers);
         try {
             // 经 compile(filename=路径) 得到带真实文件名的 code 对象，异常定位更准
             // 不能用 py::exec：pybind11 3.x 只提供 str 重载，会隐式把 code 对象转成
@@ -453,6 +909,10 @@ const char* PythonRuntime::Name() const {
 
 void PythonRuntime::SetApi(const ScriptApi* api) {
     m_impl->api = api;
+}
+
+void PythonRuntime::SetUiHost(ui::ScriptUiHost* host) {
+    m_impl->uiHost = host;
 }
 
 bool PythonRuntime::Initialize(std::string& errorOut) {

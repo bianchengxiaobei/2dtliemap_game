@@ -23,15 +23,16 @@ enum class CommandType : std::uint16_t {
     Unequip = 8,       // payload.index = 装备槽
     DropBag = 9,       // payload.index = 背包索引（-1 = 第一堆）
     DropEquipment = 10,  // payload.index = 装备槽
-    InventoryAction = 11,  // payload.flags = ui::InventoryActionType，area/index/entity 见 UI
+    InventoryAction = 11,  // payload.flags 低 8 位 = ui::InventoryActionType，高 8 位 = 批量件数
     Gunshot = 12,
     SelectHotbar = 13,  // payload.index = 0..4
+    FireProjectile = 14,  // payload.x/y = 世界方向；payload.entityId = 可选目标 StableId
 };
 
 inline constexpr std::uint64_t kNoEntity = 0;
 
 // 固定字段 payload：网络编码不需要 variant/JSON；未使用字段保持默认值。
-// flags 低 8 位保存 InventoryActionType，其余位预留给后续协议。
+// flags 低 8 位保存 InventoryActionType，高 8 位保存批量制作件数（0 兼容旧命令，视为 1）。
 struct CommandPayload {
     float x = 0.0f;
     float y = 0.0f;
@@ -52,7 +53,7 @@ struct Command {
 };
 
 constexpr bool IsValidCommandType(CommandType type) {
-    return type >= CommandType::Move && type <= CommandType::SelectHotbar;
+    return type >= CommandType::Move && type <= CommandType::FireProjectile;
 }
 
 const char* CommandTypeName(CommandType type);

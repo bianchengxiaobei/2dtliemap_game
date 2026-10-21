@@ -8,6 +8,10 @@
 #include "items/ItemComponents.h"
 #include "items/ItemRegistry.h"
 
+namespace zl::world {
+class World;
+}
+
 namespace zl::game {
 
 // M6-T3：地面物品——带 ItemInstance + SpriteRef(icon) 的实体（无 Collider/RigidBody：
@@ -23,6 +27,11 @@ ecs::Entity SpawnGroundItem(ecs::EcsWorld& world, const items::ItemRegistry& reg
 
 // 地面物品实体数（调试/HUD）
 int CountGroundItems(ecs::EcsWorld& world);
+
+// M13-T7：单机/服务器的村庄出生点演示散落物（同一份数据，保证联机世界也有可拾取物）。
+// 返回成功生成的堆数；调用方需保证出生点所在 chunk 已加载。
+int SpawnDemoGroundItems(ecs::EcsWorld& world, const items::ItemRegistry& registry,
+                         world::World& map, float baseX, float baseY, int z = 0);
 
 // 半径内最近的同层（z 相等）地面物品；无 → entt::null
 ecs::Entity FindNearestGroundItem(ecs::EcsWorld& world, float px, float py, int z,

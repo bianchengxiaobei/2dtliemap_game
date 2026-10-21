@@ -1,0 +1,238 @@
+#mp-overlay {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+    background-color: #070c12e8;
+}
+
+#mp-window {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 900px;
+    height: 600px;
+    margin-left: -450px;
+    margin-top: -300px;
+    padding: 28px 32px;
+    background-color: #10161d;
+    border-width: 1px;
+    border-color: #3d566d;
+    border-radius: 16px;
+}
+
+.mp-kicker {
+    font-size: 12px;
+    line-height: 20px;
+    color: #5798c8;
+    font-weight: bold;
+}
+
+.mp-title {
+    margin-top: 6px;
+    font-size: 38px;
+    line-height: 46px;
+    color: #ffd479;
+    font-weight: bold;
+}
+
+.mp-subtitle {
+    margin-top: 3px;
+    font-size: 13px;
+    line-height: 20px;
+    color: #9fb3c8;
+}
+
+.mp-accent {
+    width: 64px;
+    height: 3px;
+    margin-top: 14px;
+    margin-bottom: 18px;
+    background-color: #2f6f9f;
+    border-radius: 2px;
+}
+
+.mp-columns {
+    width: 100%;
+}
+
+.mp-card {
+    display: inline-block;
+    width: 385px;
+    min-height: 220px;
+    padding: 14px 16px;
+    margin-right: 18px;
+    background-color: #16202a;
+    border-width: 1px;
+    border-color: #2c3e4f;
+    border-radius: 10px;
+    vertical-align: top;
+}
+
+.mp-list-card {
+    margin-right: 0px;
+}
+
+.mp-section-title {
+    font-size: 15px;
+    line-height: 24px;
+    color: #ffd479;
+    font-weight: bold;
+}
+
+.mp-row {
+    height: 42px;
+    line-height: 42px;
+}
+
+.mp-label {
+    display: inline-block;
+    width: 92px;
+    color: #d7e2ec;
+    font-size: 13px;
+}
+
+.mp-row input {
+    width: 250px;
+}
+
+.mp-actions {
+    margin-top: 10px;
+}
+
+.mp-actions .menu-btn {
+    display: inline-block;
+    width: 170px;
+    margin-right: 8px;
+    margin-bottom: 0px;
+    font-size: 14px;
+}
+
+.mp-list-head {
+    height: 24px;
+    line-height: 24px;
+}
+
+.mp-refresh {
+    float: right;
+    font-size: 13px;
+    color: #5798c8;
+    cursor: pointer;
+}
+
+.mp-refresh:hover {
+    color: #ffd479;
+}
+
+.mp-empty {
+    height: 34px;
+    line-height: 34px;
+    margin-top: 8px;
+    color: #6f8498;
+    font-size: 13px;
+}
+
+.mp-server-row {
+    height: 28px;
+    line-height: 28px;
+    margin-top: 5px;
+    padding: 0px 8px;
+    background-color: #0b1117;
+    border-width: 1px;
+    border-color: #34495c;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.mp-server-row:hover {
+    border-color: #5798c8;
+    background-color: #162430;
+}
+
+.mp-server-name {
+    display: inline-block;
+    width: 140px;
+    color: #e6edf3;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mp-server-addr {
+    display: inline-block;
+    width: 210px;
+    color: #8fa4b8;
+    font-size: 12px;
+    text-align: right;
+}
+
+.mp-list-hint {
+    margin-top: 10px;
+    font-size: 11px;
+    color: #6f8498;
+}
+
+.mp-host-card {
+    width: 100%;
+    height: 64px;
+    margin-top: 14px;
+    padding: 14px 16px;
+    background-color: #16202a;
+    border-width: 1px;
+    border-color: #2c3e4f;
+    border-radius: 10px;
+}
+
+.mp-host-card > div {
+    display: inline-block;
+    vertical-align: top;
+}
+
+.mp-host-controls {
+    float: right;
+    margin-top: 2px;
+}
+
+.mp-host-controls .mp-label {
+    width: 52px;
+}
+
+.mp-host-controls input {
+    width: 100px;
+    margin-right: 10px;
+}
+
+.mp-host-controls .menu-btn {
+    display: inline-block;
+    width: 140px;
+    margin-bottom: 0px;
+}
+
+.mp-status {
+    margin-top: 10px;
+    min-height: 20px;
+    font-size: 13px;
+    line-height: 20px;
+    color: #ffd479;
+}
+
+.mp-status.status-ok {
+    color: #7fe08a;
+}
+
+.mp-status.status-fail {
+    color: #ff8a7a;
+}
+
+.mp-footer {
+    position: absolute;
+    right: 32px;
+    bottom: 20px;
+}
+
+.mp-footer .menu-btn {
+    width: 150px;
+    margin-bottom: 0px;
+}

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "ai/PathfindingService.h"
 #include "characters/components/CharacterComponents.h"
@@ -262,6 +263,276 @@ Events.On('OnTick', bad)
     CHECK(errors[0].message.find("ValueError") != std::string::npos);
     CHECK(errors[0].message.find("boom") != std::string::npos);
     CHECK(errors[0].message.find("main.py") != std::string::npos);
+}
+
+TEST_CASE("M8-T3：Python Menu API 状态/动作/设置/键名") {
+    script::PythonRuntime* runtime = SharedRuntimePtr();
+    REQUIRE(runtime != nullptr);
+    Fixture f;
+    ui::MenuState menuState;
+    menuState.open = true;
+    menuState.pauseMode = true;
+    menuState.canContinue = true;
+    menuState.settings.volume = 42;
+    menuState.settings.bindings.push_back(ui::MenuKeyBinding{"MoveUp", "向上移动", "W"});
+    f.ctx.getMenuState = [&menuState](ui::MenuState& out) {
+        out = menuState;
+        return true;
+    };
+    bool acted = false;
+    f.ctx.menuAction = [&acted](ui::MenuActionType action) {
+        acted = action == ui::MenuActionType::Resume;
+    };
+    bool applied = false;
+    f.ctx.applyMenuSettings = [&applied](const ui::MenuSettings& settings,
+                                         std::string& error) {
+        if (settings.volume != 55 || settings.bindings.size() != 1) {
+            error = "bad settings";
+            return false;
+        }
+        applied = true;
+        return true;
+    };
+    runtime->SetApi(&f.api);
+
+    zltest::TempModRoot mods;
+    const script::ModInfo mod = mods.MakeModPy("py_menu", R"py(
+m = Menu.GetState()
+assert m['open'] is True and m['pauseMode'] is True
+assert m['volume'] == 42 and len(m['bindings']) == 1
+assert Menu.KeyName(34) == 'W'
+assert Menu.Action('resume') is True
+assert Menu.Action('unknown') is False
+r = Menu.ApplySettings({
+    'volume': 55, 'musicVolume': 60, 'sfxVolume': 70,
+    'ambientVolume': 80, 'bindings': m['bindings']
+})
+assert r['ok'] is True and r['error'] == ''
+)py");
+    std::string error;
+    CHECK(runtime->LoadMod(mod, error));
+    CHECK(error.empty());
+    CHECK(acted);
+    CHECK(applied);
+    runtime->UnloadMod("py_menu");
+}
+
+TEST_CASE("M8-T3：Python Inventory API 状态/动作/点击音效") {
+    script::PythonRuntime* runtime = SharedRuntimePtr();
+    REQUIRE(runtime != nullptr);
+    Fixture f;
+    ui::InventoryState source;
+    source.open = true;
+    source.playerValid = true;
+    source.weight = 3.2f;
+    source.capacity = 20.0f;
+    source.bag[0] = ui::InventorySlot{true, "绷带", 2, true, false, 0};
+    source.bag[0].condition = 0.75f;
+    source.bag[0].damaged = true;
+    source.bag[0].repairAvailable = true;
+    source.loot[0] = ui::InventorySlot{true, "破布", 3, false, false, 77};
+    source.recipes.push_back(ui::InventoryRecipe{
+        "field_bandage", "简易绷带", "bandage", "绷带", 1, true, true,
+        {{"破布", 2, 2}}, {{"锤子", 1, 1}}});
+    source.recipes.back().estimatedSeconds = 1.5f;
+    source.recipes.back().station = "workbench";
+    source.recipes.back().stationLabel = "工作台";
+    source.recipes.back().stationNearby = true;
+    source.crafting.active = true;
+    source.crafting.recipeId = "field_bandage";
+    source.crafting.outputLabel = "绷带";
+    source.crafting.outputCount = 1;
+    source.crafting.elapsed = 0.75f;
+    source.crafting.duration = 1.5f;
+    source.crafting.progress = 0.5f;
+    source.crafting.toolEfficiency = 0.75f;
+    source.crafting.batchCount = 3;
+    source.crafting.completedCount = 1;
+    source.crafting.queue.push_back(
+        ui::InventoryQueuedCraft{"makeshift_spear", "简易长矛", 1, 2});
+    f.ctx.getInventoryState = [&source](ui::InventoryState& out) {
+        out = source;
+        return true;
+    };
+    bool transferActed = false;
+    bool craftActed = false;
+    bool cancelCraftActed = false;
+    bool repairActed = false;
+    bool queueUpActed = false;
+    bool queueDownActed = false;
+    bool queueRemoveActed = false;
+    bool queueCountActed = false;
+    int queueActionIndex = -1;
+    int queueCountValue = 0;
+    int craftBatchCount = 0;
+    f.ctx.inventoryAction = [&](const ui::InventoryAction& action) {
+        if (action.type == ui::InventoryActionType::Transfer &&
+            action.fromIndex == 0 && action.toIndex == 0) {
+            transferActed = true;
+            return true;
+        }
+        if (action.type == ui::InventoryActionType::Craft && action.fromIndex == 0) {
+            craftActed = true;
+            craftBatchCount = action.count;
+            return true;
+        }
+        if (action.type == ui::InventoryActionType::CancelCraft) {
+            cancelCraftActed = true;
+            return true;
+        }
+        if (action.type == ui::InventoryActionType::Repair &&
+            action.fromIndex == 0) {
+            repairActed = true;
+            return true;
+        }
+        if (action.type == ui::InventoryActionType::QueueMoveUp &&
+            action.fromIndex == 0) {
+            queueUpActed = true;
+            queueActionIndex = action.fromIndex;
+            return true;
+        }
+        if (action.type == ui::InventoryActionType::QueueMoveDown &&
+            action.fromIndex == 0) {
+            queueDownActed = true;
+            queueActionIndex = action.fromIndex;
+            return true;
+        }
+        if (action.type == ui::InventoryActionType::QueueRemove &&
+            action.fromIndex == 0) {
+            queueRemoveActed = true;
+            queueActionIndex = action.fromIndex;
+            return true;
+        }
+        if (action.type == ui::InventoryActionType::QueueSetCount &&
+            action.fromIndex == 0 && action.count == 7) {
+            queueCountActed = true;
+            queueActionIndex = action.fromIndex;
+            queueCountValue = action.count;
+            return true;
+        }
+        return false;
+    };
+    int clicks = 0;
+    f.ctx.playInventoryClick = [&clicks] { ++clicks; };
+    runtime->SetApi(&f.api);
+
+    zltest::TempModRoot mods;
+    const script::ModInfo mod = mods.MakeModPy("py_inventory", R"py(
+s = Inventory.GetState()
+assert s['open'] is True and s['playerValid'] is True
+assert len(s['bag']) == 25 and len(s['loot']) == 6
+assert s['bag'][0]['label'] == '绷带'
+assert s['bag'][0]['condition'] == 0.75
+assert s['bag'][0]['damaged'] and s['bag'][0]['repairAvailable']
+assert len(s['recipes']) == 1 and s['recipes'][0]['canCraft'] is True
+assert s['recipes'][0]['estimatedSeconds'] == 1.5
+assert s['recipes'][0]['known'] is True
+assert s['recipes'][0]['station'] == 'workbench'
+assert s['recipes'][0]['stationLabel'] == '工作台'
+assert s['recipes'][0]['stationNearby'] is True
+assert s['recipes'][0]['ingredients'][0]['label'] == '破布'
+assert len(s['recipes'][0]['tools']) == 1 and s['recipes'][0]['tools'][0]['label'] == '锤子'
+assert s['crafting']['active'] and s['crafting']['recipeId'] == 'field_bandage'
+assert s['crafting']['outputLabel'] == '绷带' and s['crafting']['outputCount'] == 1
+assert s['crafting']['elapsed'] == 0.75 and s['crafting']['duration'] == 1.5
+assert s['crafting']['progress'] == 0.5
+assert s['crafting']['toolEfficiency'] == 0.75
+assert s['crafting']['batchCount'] == 3 and s['crafting']['completedCount'] == 1
+assert len(s['crafting']['queue']) == 1
+assert s['crafting']['queue'][0]['recipeId'] == 'makeshift_spear'
+assert s['crafting']['queue'][0]['outputLabel'] == '简易长矛'
+assert s['crafting']['queue'][0]['outputCount'] == 1 and s['crafting']['queue'][0]['count'] == 2
+assert Inventory.Action({
+    'type': 'transfer', 'from': 'bag', 'fromIndex': 0,
+    'to': 'equipment', 'toIndex': 0
+})
+assert Inventory.Action({
+    'type': 'craft', 'from': 'bag', 'fromIndex': 0, 'to': 'bag', 'toIndex': -1,
+    'count': 3
+})
+assert Inventory.Action({'type': 'cancel_craft'})
+assert Inventory.Action({'type': 'repair', 'from': 'bag', 'fromIndex': 0})
+assert Inventory.Action({'type': 'queue_up', 'from': 'bag', 'fromIndex': 0})
+assert Inventory.Action({'type': 'queue_down', 'from': 'bag', 'fromIndex': 0})
+assert Inventory.Action({'type': 'queue_remove', 'from': 'bag', 'fromIndex': 0})
+assert Inventory.Action({
+    'type': 'queue_count', 'from': 'bag', 'fromIndex': 0, 'count': 7
+})
+assert Inventory.Action({'type': 'bogus'}) is False
+Inventory.PlayClick()
+)py");
+    std::string error;
+    CHECK(runtime->LoadMod(mod, error));
+    CHECK(error.empty());
+    CHECK(transferActed);
+    CHECK(craftActed);
+    CHECK(craftBatchCount == 3);
+    CHECK(cancelCraftActed);
+    CHECK(repairActed);
+    CHECK(queueUpActed);
+    CHECK(queueDownActed);
+    CHECK(queueRemoveActed);
+    CHECK(queueCountActed);
+    CHECK(queueActionIndex == 0);
+    CHECK(queueCountValue == 7);
+    CHECK(clicks == 1);
+    runtime->UnloadMod("py_inventory");
+}
+
+TEST_CASE("Python Save API：列表、读档与快速保存") {
+    script::PythonRuntime* runtime = SharedRuntimePtr();
+    REQUIRE(runtime != nullptr);
+    Fixture f;
+    save::SaveMetadata entry;
+    entry.id = "py-save";
+    entry.name = "Python 存档";
+    entry.mapId = "village_demo";
+    f.ctx.listSaves = [&entry](std::vector<save::SaveMetadata>& out,
+                               std::string& error) {
+        out.assign(1, entry);
+        error.clear();
+        return true;
+    };
+    std::string loadedSave;
+    f.ctx.loadSave = [&loadedSave](const std::string& id, std::string& error) {
+        loadedSave = id;
+        error.clear();
+        return true;
+    };
+    int quickSaves = 0;
+    f.ctx.quickSave = [&quickSaves] {
+        ++quickSaves;
+        return true;
+    };
+    std::string deletedSave;
+    f.ctx.deleteSave = [&deletedSave](const std::string& id, std::string& error) {
+        if (id != "py-save") {
+            error = "不存在";
+            return false;
+        }
+        deletedSave = id;
+        return true;
+    };
+    runtime->SetApi(&f.api);
+
+    zltest::TempModRoot mods;
+    const script::ModInfo mod = mods.MakeModPy("py_save", R"py(
+s = Save.List()
+assert s['ok'] is True and len(s['saves']) == 1
+assert s['saves'][0]['id'] == 'py-save'
+assert s['saves'][0]['name'] == 'Python 存档'
+assert Save.QuickSave() is True
+assert Save.Load('py-save')['ok'] is True
+assert Save.Delete('py-save')['ok'] is True
+assert Save.Delete('missing')['ok'] is False
+)py");
+    std::string error;
+    CHECK(runtime->LoadMod(mod, error));
+    CHECK(error.empty());
+    CHECK(quickSaves == 1);
+    CHECK(loadedSave == "py-save");
+    CHECK(deletedSave == "py-save");
+    runtime->UnloadMod("py_save");
 }
 
 #else

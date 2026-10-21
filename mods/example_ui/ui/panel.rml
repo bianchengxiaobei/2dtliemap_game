@@ -1,0 +1,14 @@
+<rml>
+<head>
+  <link type="text/rcss" href="panel.rcss" />
+</head>
+<body>
+  <div id="script-panel" class="script-panel">
+    <div id="script-title" class="script-title">Script UI</div>
+    <input id="script-name" type="text" value="survivor" />
+    <div id="script-status" class="script-status">ready</div>
+    <button id="script-refresh">刷新</button>
+    <button id="script-close">关闭</button>
+  </div>
+</body>
+</rml>

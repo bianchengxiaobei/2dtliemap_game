@@ -1,7 +1,14 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
+
+#include "save/SaveTypes.h"
+#include "ui/HudState.h"
+#include "ui/InventoryUi.h"
+#include "ui/MenuUi.h"
 
 namespace zl::core {
 class AppStateMachine;
@@ -34,6 +41,7 @@ class CombatSystem;
 
 namespace zl::items {
 class ItemRegistry;
+class RecipeRegistry;
 }  // namespace zl::items
 
 namespace zl::save {
@@ -78,6 +86,18 @@ struct Command;
 namespace zl::game {
 
 class AssetProvider;
+class NetworkClient;
+class WorldSimulation;
+
+struct MultiplayerRequest {
+    std::string host;
+    std::uint16_t port = 7777;
+    std::string playerName;
+};
+
+struct MultiplayerStartResult {
+    std::uint16_t serverPort = 0;
+};
 
 // 状态的依赖注入容器：由 GameApp 组装，状态只拿指针不拿所有权。
 struct GameContext {    core::Config* config = nullptr;
@@ -96,6 +116,17 @@ struct GameContext {    core::Config* config = nullptr;
     render::AtlasManager* atlases = nullptr;
     AssetProvider* assets = nullptr;
     ui::UiSystem* ui = nullptr;
+    ui::HudState hudState;
+    std::function<bool()> toggleInventory;
+    std::function<bool()> isInventoryOpen;
+    std::function<bool()> isMenuOpen;
+    std::function<bool(ui::MenuState&)> getMenuState;
+    std::function<bool(const ui::MenuSettings&, std::string&)> applyMenuSettings;
+    std::function<void(ui::MenuActionType)> menuAction;
+    std::function<bool(ui::InventoryState&)> getInventoryState;
+    std::function<bool(const ui::InventoryAction&)> inventoryAction;
+    std::function<void()> playUiClick;
+    std::function<void()> playInventoryClick;
 
     // 音频（M11）：设备不可用时内部 no-op；状态只发世界声音/2D 音效
     audio::SoundManager* audio = nullptr;
@@ -103,6 +134,17 @@ struct GameContext {    core::Config* config = nullptr;
     // 玩家命令（M12）：世界状态只提交 Command；Direct/Loopback 由 pipeline 决定执行时机。
     net::CommandPipeline* commands = nullptr;
     std::function<bool(const net::Command&, std::string&)> executePlayerCommand;
+
+    // M13-T5：真实 KCP 客户端（net.mode=client 时存在）；状态只读副本并发送命令。
+    NetworkClient* networkClient = nullptr;
+    std::function<bool(const MultiplayerRequest&, MultiplayerStartResult&,
+                       std::string&)> startHosting;
+    std::function<bool(const MultiplayerRequest&, MultiplayerStartResult&,
+                       std::string&)> startJoining;
+    std::function<void()> leaveMultiplayer;
+
+    // M13-T3：模拟单一所有者（世界/ECS/物理/AI/固定链）；状态不拥有、不销毁。
+    WorldSimulation* simulation = nullptr;
 
     // 世界与流式加载（M3 起）
     world::World* world = nullptr;
@@ -137,6 +179,8 @@ struct GameContext {    core::Config* config = nullptr;
 
     // 物品定义（M6-T1 起）：只读查询（ItemDef 生命周期同进程）
     items::ItemRegistry* items = nullptr;
+    // 配方定义（后续扩展）：与 items 同期加载，配方 UI/制作逻辑只读查询。
+    items::RecipeRegistry* recipes = nullptr;
 
     // 存档管理（M10-T4/T5 起）：元数据 + 后台写入；组件表只在主线程生成快照时使用
     save::SaveManager* saveManager = nullptr;
@@ -148,6 +192,12 @@ struct GameContext {    core::Config* config = nullptr;
     std::function<void(bool ok, bool created, const std::string& id,
                        const std::string& error)>
         onSaveFinished;
+
+    // 脚本 Save API：列表/读档/删除由 GameApp 提供；快速保存由当前世界状态提供。
+    std::function<bool(std::vector<save::SaveMetadata>&, std::string&)> listSaves;
+    std::function<bool(const std::string&, std::string&)> loadSave;
+    std::function<bool(const std::string&, std::string&)> deleteSave;
+    std::function<bool()> quickSave;
 
     // GameApp 提供的动作：重载配置文件并重新应用键位（F5）
     std::function<void()> reloadConfigAndBindings;

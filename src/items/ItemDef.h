@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace zl::items {
 
@@ -45,6 +46,7 @@ struct ItemDef {
     int maxStack = 1;     // 堆叠上限（1 ~ 9999）
     ItemType type = ItemType::Generic;
     UseEffect use;        // 使用效果（M6-T5；消耗品用）
+    std::vector<std::string> unlocksRecipes;  // 使用后学会的锁定配方 id（蓝图/杂志）
 };
 
 }  // namespace zl::items

@@ -8,8 +8,11 @@
 #include <string>
 #include <vector>
 
+#include "ui/HudState.h"
 #include "ui/InventoryUi.h"
 #include "ui/MenuUi.h"
+#include "ui/MultiplayerUi.h"
+#include "ui/SocialUi.h"
 
 namespace Rml {
 class Context;
@@ -19,6 +22,7 @@ class EventListener;
 }  // namespace Rml
 
 namespace zl::core {
+class EventBus;
 class Input;
 }
 
@@ -30,30 +34,11 @@ namespace zl::ui {
 
 class InventoryPanel;
 class MenuPanel;
+class MultiplayerPanel;
+class SocialPanel;
 class RmlBgfxRenderInterface;
 class RmlSystemInterface;
-
-struct HudSlot {
-    std::string label;
-    int count = 0;
-};
-
-struct HudState {
-    std::string day;
-    std::string time;
-    std::string speed;
-    bool playerValid = false;
-    float health = 0.0f;
-    float healthMax = 100.0f;
-    float stamina = 0.0f;
-    float staminaMax = 100.0f;
-    std::array<HudSlot, 5> slots{};
-    int selectedSlot = 0;
-    std::string notice;
-    std::string noticeTone = "info";
-    float noticeRemaining = 0.0f;
-    float noticeDuration = 1.0f;
-};
+class ScriptUiHost;
 
 class UiSystem {
 public:
@@ -71,6 +56,13 @@ public:
     void SetHudState(const HudState& state);
     void SetInventoryState(const InventoryState& state);
     void SetInventoryActionHandler(InventoryActionHandler handler);
+    bool GetInventoryState(InventoryState& out) const;
+    bool InvokeInventoryAction(const InventoryAction& action);
+    void PlayInventoryClick();
+
+    // 脚本 UI 文档宿主；无业务语义，供 ScriptUiApi 使用。
+    ScriptUiHost* ScriptHost() const { return m_scriptUi.get(); }
+    void SetEventBus(core::EventBus* events);
 
     bool IsVisible() const { return m_visible; }
     void SetVisible(bool visible);
@@ -93,7 +85,40 @@ public:
     bool IsMenuSettingsOpen() const;
     void SyncMenuChrome(bool open);
 
+    void SetMultiplayerActionHandler(MultiplayerActionHandler handler);
+    void ShowMultiplayerMenu(const MultiplayerMenuState& state);
+    void SetMultiplayerState(const MultiplayerMenuState& state);
+    void HideMultiplayerMenu();
+    bool IsMultiplayerOpen() const;
+
+    void SetSocialState(const SocialUiState& state);
+    void SetSocialChatHandler(SocialChatHandler handler);
+    bool IsSocialVisible() const;
+    bool IsSocialChatOpen() const;
+
+    // 脚本菜单控制器使用的数据/动作接口（native MenuPanel 保留为 fallback）。
+    bool GetMenuState(MenuState& out) const;
+    bool ApplyScriptMenuSettings(const MenuSettings& settings, std::string& error);
+    void InvokeMenuAction(MenuActionType action);
+    void PlayUiClick();
+
 private:
+    bool EnsureDebugDocument();
+    bool EnsureHudDocument();
+    bool EnsureInventoryPanel();
+    bool EnsureMenuPanel();
+    bool ScriptHudAvailable() const;
+    bool ScriptMenuAvailable() const;
+    bool ScriptInventoryAvailable() const;
+    bool ScriptInventoryVisible() const;
+    bool EnsureMultiplayerPanel();
+    bool EnsureSocialPanel();
+    bool ShowNativeMenuFallback(bool pauseMode, bool canContinue);
+    bool ShowNativeInventoryFallback();
+    void NotifyMenuChanged();
+    void NotifyInventoryChanged();
+    void ApplyHudState(const HudState& state, bool force);
+    void ApplyMenuSettings();
     void HandleChar(unsigned int codepoint);
     bool HasInputFocus() const;
     void UpdateFontAtlasStats();
@@ -104,6 +129,7 @@ private:
                          std::function<void()> action);
 
     platform::Window* m_window = nullptr;
+    core::EventBus* m_events = nullptr;
     std::unique_ptr<RmlBgfxRenderInterface> m_renderer;
     std::unique_ptr<RmlSystemInterface> m_system;
     Rml::Context* m_context = nullptr;
@@ -111,6 +137,27 @@ private:
     Rml::ElementDocument* m_hudDocument = nullptr;
     std::unique_ptr<InventoryPanel> m_inventory;
     std::unique_ptr<MenuPanel> m_menu;
+    std::unique_ptr<MultiplayerPanel> m_multiplayer;
+    std::unique_ptr<SocialPanel> m_social;
+    std::unique_ptr<ScriptUiHost> m_scriptUi;
+    MenuSettings m_pendingMenuSettings;
+    MenuSettingsHandler m_pendingMenuSettingsHandler;
+    MenuActionHandler m_pendingMenuActionHandler;
+    MultiplayerActionHandler m_pendingMultiplayerActionHandler;
+    MultiplayerMenuState m_pendingMultiplayerState;
+    SocialUiState m_socialState;
+    SocialChatHandler m_socialChatHandler;
+    InventoryActionHandler m_pendingInventoryActionHandler;
+    std::function<void()> m_menuSoundHandler;
+    std::function<void()> m_inventorySoundHandler;
+    InventoryState m_pendingInventoryState;
+    bool m_hasPendingInventoryState = false;
+    bool m_debugLoadAttempted = false;
+    bool m_inventoryLoadAttempted = false;
+    bool m_menuLoadAttempted = false;
+    bool m_multiplayerLoadAttempted = false;
+    bool m_socialLoadAttempted = false;
+    bool m_hudLoadAttempted = false;
     Rml::Element* m_counterElement = nullptr;
     Rml::Element* m_disableSampleElement = nullptr;
     Rml::Element* m_volumeElement = nullptr;
@@ -146,10 +193,16 @@ private:
     bool m_atlasBudgetWarned = false;
     HudState m_hudCache;
     bool m_hudCacheValid = false;
+    bool m_nativeHudNeedsFullRefresh = false;
     bool m_noticeVisible = false;
     bool m_consumeGameplayThisFrame = false;
     bool m_inventoryWasOpen = false;
     bool m_menuWasOpen = false;
+    bool m_multiplayerWasOpen = false;
+    bool m_scriptMenuOpen = false;
+    bool m_scriptMenuPauseMode = false;
+    bool m_scriptMenuCanContinue = false;
+    bool m_scriptInventoryOpen = false;
     bool m_visible = false;
     bool m_initialized = false;
 };

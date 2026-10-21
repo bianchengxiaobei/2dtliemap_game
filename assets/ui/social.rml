@@ -1,0 +1,43 @@
+<rml>
+<head>
+    <title>ZomboidLike Social</title>
+    <link type="text/rcss" href="theme.rcss"/>
+    <link type="text/rcss" href="social.rcss"/>
+</head>
+<body>
+    <div id="social-root">
+        <div id="social-players" class="social-card">
+            <div class="social-title">在线玩家 <span id="social-player-count" class="social-count">0</span></div>
+            <div id="social-player-0" class="social-player"><span id="social-player-name-0"></span></div>
+            <div id="social-player-1" class="social-player"><span id="social-player-name-1"></span></div>
+            <div id="social-player-2" class="social-player"><span id="social-player-name-2"></span></div>
+            <div id="social-player-3" class="social-player"><span id="social-player-name-3"></span></div>
+            <div id="social-player-4" class="social-player"><span id="social-player-name-4"></span></div>
+            <div id="social-player-5" class="social-player"><span id="social-player-name-5"></span></div>
+            <div id="social-player-6" class="social-player"><span id="social-player-name-6"></span></div>
+            <div id="social-player-7" class="social-player"><span id="social-player-name-7"></span></div>
+        </div>
+
+        <div id="social-chat" class="social-card">
+            <div class="social-title">聊天</div>
+            <div id="social-chat-log">
+                <div id="social-chat-0" class="social-chat-line"></div>
+                <div id="social-chat-1" class="social-chat-line"></div>
+                <div id="social-chat-2" class="social-chat-line"></div>
+                <div id="social-chat-3" class="social-chat-line"></div>
+                <div id="social-chat-4" class="social-chat-line"></div>
+                <div id="social-chat-5" class="social-chat-line"></div>
+                <div id="social-chat-6" class="social-chat-line"></div>
+                <div id="social-chat-7" class="social-chat-line"></div>
+            </div>
+            <div id="social-chat-input-row">
+                <input id="social-chat-input" type="text" maxlength="64"/>
+                <div id="social-chat-send" class="social-send">发送</div>
+            </div>
+            <div id="social-chat-hint" class="social-hint">Enter 聊天</div>
+        </div>
+
+        <div id="social-status" class="social-status status-info"></div>
+    </div>
+</body>
+</rml>

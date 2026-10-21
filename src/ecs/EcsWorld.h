@@ -26,6 +26,9 @@ class EcsWorld {
 public:
     using Entity = entt::entity;
     static constexpr Entity kNull = entt::null;
+    // M13-T8：高位段预留给外部档案/持久玩家 StableId，不推进自动分配游标，
+    // 避免一个高 ID 让后续普通实体跳到 2^63 附近。
+    static constexpr std::uint64_t kExternalStableIdStart = 1ull << 63U;
 
     // ---- 创建 ----
 

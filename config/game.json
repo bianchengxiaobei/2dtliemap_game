@@ -38,6 +38,16 @@
   "items": {
     "file": "assets/items.json"
   },
+  "recipes": {
+    "file": "assets/recipes.json"
+  },
+  "crafting": {
+    "stationRange": 2.5,
+    "stationLabels": {
+      "workbench": "工作台",
+      "campfire": "篝火"
+    }
+  },
   "save": {
     "root": "saves",
     "gameVersion": "0.3.0",
@@ -53,7 +63,10 @@
   "inventory": {
     "playerCapacityKg": 20.0,
     "pickupRadius": 1.6,
-    "lootRange": 3.0
+    "lootRange": 3.0,
+    "repairKit": "repair_kit",
+    "repairKitCount": 1,
+    "repairAmount": 0.5
   },
   "health": {
     "playerMaxHp": 100.0,
@@ -133,8 +146,44 @@
     "refillBandWidth": 20.0,
     "mergeRadius": 15.0
   },
+  "server": {
+    "network": false,
+    "tickRate": 60
+  },
   "net": {
     "mode": "direct",
+    "host": "127.0.0.1",
+    "port": 7777,
+    "contentHash": 0,
+    "autoReconnect": true,
+    "reconnectDelayMs": 1000,
+    "handshakeTimeoutMs": 5000,
+    "heartbeatIntervalMs": 5000,
+    "heartbeatTimeoutMs": 15000,
+    "predictionSpeed": 4.0,
+    "bindHost": "127.0.0.1",
+    "maxSessions": 8,
+    "aoiRadius": 48.0,
+    "maxEntities": 256,
+    "maxCommandsPerTick": 8,
+    "maxMoveToDistance": 64.0,
+    "maxAttackDistance": 3.0,
+    "attackCooldownSeconds": 0.35,
+    "projectileDamage": 24.0,
+    "projectileSpeed": 18.0,
+    "projectileLifetimeSeconds": 2.5,
+    "projectileCooldownSeconds": 0.5,
+    "maxProjectileDistance": 24.0,
+    "playerStateIntervalTicks": 6,
+    "socialStateIntervalTicks": 30,
+    "chatCooldownSeconds": 1.0,
+    "playerIdentity": "",
+    "identityFile": "saves/client_identity.txt",
+    "serversFile": "saves/servers.json",
+    "playerName": "Player",
+    "playerProfilesFile": "saves/multiplayer_players.bin",
+    "playerProfileSaveSeconds": 30.0,
+    "respawnDelaySeconds": 5.0,
     "maxCommandsPerPacket": 32,
     "maxPacketsPerPump": 64,
     "maxQueuedPackets": 256
@@ -159,6 +208,7 @@
       "ToggleFreeCam": "F4",
       "DemoKill": "F6",
       "DemoGunshot": "F7",
+      "DemoProjectile": "V",
       "Attack": "SPACE",
       "Pickup": "F",
       "Use": "E",

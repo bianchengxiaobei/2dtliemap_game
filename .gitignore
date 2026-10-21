@@ -15,6 +15,10 @@ saves/
 imgui.ini
 *.log
 
+# Python 运行时缓存
+__pycache__/
+*.pyc
+
 # vcpkg（manifest 模式下生成在 build/ 内，兜底忽略）
 vcpkg_installed/
 

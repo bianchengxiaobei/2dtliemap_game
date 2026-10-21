@@ -244,14 +244,13 @@ bool ItemRegistry::LoadFromString(std::string_view text, const std::string& sour
             return itemFail("条目必须是对象");
         }
 
-        static const std::unordered_set<std::string> kAllowedKeys = {"id",       "name",
-                                                                     "icon",     "weight",
-                                                                     "maxStack", "type",
-                                                                     "use"};
+        static const std::unordered_set<std::string> kAllowedKeys = {
+            "id", "name", "icon", "weight", "maxStack", "type", "use",
+            "unlocksRecipes"};
         for (auto it = item.begin(); it != item.end(); ++it) {
             if (!kAllowedKeys.contains(it.key())) {
                 return itemFail("未知字段 '" + it.key() +
-                                "'（允许: id/name/icon/weight/maxStack/type/use）");
+                                "'（允许: id/name/icon/weight/maxStack/type/use/unlocksRecipes）");
             }
         }
 
@@ -363,6 +362,38 @@ bool ItemRegistry::LoadFromString(std::string_view text, const std::string& sour
                 }
             }
             def.use = UseEffect{heal, needs[0], needs[1], needs[2]};
+        }
+
+        if (item.contains("unlocksRecipes")) {
+            const nlohmann::json& unlocks = item["unlocksRecipes"];
+            if (!unlocks.is_array() || unlocks.empty() || unlocks.size() > 32) {
+                return itemFail("字段 'unlocksRecipes' 必须是非空数组（1~32 个配方 id）");
+            }
+            if (def.use.Any()) {
+                return itemFail("字段 'unlocksRecipes' 不能与 'use' 同时使用");
+            }
+            std::unordered_set<std::string> recipeIds;
+            for (const nlohmann::json& value : unlocks) {
+                if (!value.is_string()) {
+                    return itemFail("unlocksRecipes 的每一项都必须是非空字符串");
+                }
+                const std::string recipeId = value.get<std::string>();
+                if (recipeId.empty() || recipeId.size() > kMaxIdLength) {
+                    return itemFail("unlocksRecipes 中的配方 id 长度非法（1~64 字符）");
+                }
+                const bool recipeCharsetOk =
+                    std::all_of(recipeId.begin(), recipeId.end(), [](char c) {
+                        return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                               c == '_' || c == '.';
+                    });
+                if (!recipeCharsetOk) {
+                    return itemFail("unlocksRecipes 中的配方 id 非法：仅允许小写字母/数字/下划线/点");
+                }
+                if (!recipeIds.insert(recipeId).second) {
+                    return itemFail("unlocksRecipes 中的配方 id 重复: \"" + recipeId + "\"");
+                }
+                def.unlocksRecipes.push_back(recipeId);
+            }
         }
 
         idLines.emplace(def.id, LineOf(text, elemOff));

@@ -1,15 +1,16 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include "core/AppState.h"
 #include "game/GameContext.h"
+#include "game/ServerList.h"
 #include "ui/MenuUi.h"
+#include "ui/MultiplayerUi.h"
 
 namespace zl::game {
 
-// M9-T6：启动主菜单。新游戏通过 AppState 切换到 WorldDemoState；
-// 暂停菜单与“返回主菜单”是 UI 覆盖层，保留当前世界状态以便“继续”。
 class MainMenuState final : public core::AppState {
 public:
     explicit MainMenuState(GameContext& context) : m_ctx(context) {}
@@ -23,9 +24,18 @@ public:
 
 private:
     void HandleMenuAction(ui::MenuActionType action);
+    void ShowMultiplayer();
+    void HideMultiplayer();
+    void RefreshServerList();
+    void HandleMultiplayerAction(ui::MultiplayerActionType action,
+                                 const ui::MultiplayerMenuState& state);
+    bool SaveServerList();
+    void SetMultiplayerStatus(std::string text, std::string tone);
 
     GameContext& m_ctx;
     std::string m_latestSaveId;
+    std::unique_ptr<ServerListStore> m_serverList;
+    ui::MultiplayerMenuState m_multiplayerState;
 };
 
 }  // namespace zl::game

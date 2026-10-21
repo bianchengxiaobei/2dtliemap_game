@@ -1,0 +1,64 @@
+<rml>
+<head>
+    <title>ZomboidLike HUD</title>
+    <link type="text/rcss" href="theme.rcss"/>
+    <link type="text/rcss" href="hud.rcss"/>
+</head>
+<body>
+    <div id="hud-clock" class="hud-box">
+        <div id="hud-day" class="hud-day">第 1 天</div>
+        <div class="hud-clock-row">
+            <span id="hud-time" class="hud-time">07:30</span>
+            <span id="hud-speed" class="hud-speed">1x</span>
+        </div>
+    </div>
+
+    <div id="hud-vitals" class="hud-box">
+        <div class="vital-row">
+            <span class="vital-label">生命</span>
+            <div class="vital-track"><div id="hp-fill" class="vital-fill hp"></div></div>
+            <span id="hp-text" class="vital-value">100</span>
+        </div>
+        <div class="vital-row">
+            <span class="vital-label">体力</span>
+            <div class="vital-track"><div id="stamina-fill" class="vital-fill stamina"></div></div>
+            <span id="stamina-text" class="vital-value">100</span>
+        </div>
+    </div>
+
+    <div id="hotbar">
+        <div id="slot-0" class="slot selected">
+            <div class="slot-key">1</div>
+            <div id="slot-name-0" class="slot-name">空</div>
+            <div id="slot-count-0" class="slot-count"></div>
+        </div>
+        <div id="slot-1" class="slot">
+            <div class="slot-key">2</div>
+            <div id="slot-name-1" class="slot-name">空</div>
+            <div id="slot-count-1" class="slot-count"></div>
+        </div>
+        <div id="slot-2" class="slot">
+            <div class="slot-key">3</div>
+            <div id="slot-name-2" class="slot-name">空</div>
+            <div id="slot-count-2" class="slot-count"></div>
+        </div>
+        <div id="slot-3" class="slot">
+            <div class="slot-key">4</div>
+            <div id="slot-name-3" class="slot-name">空</div>
+            <div id="slot-count-3" class="slot-count"></div>
+        </div>
+        <div id="slot-4" class="slot">
+            <div class="slot-key">5</div>
+            <div id="slot-name-4" class="slot-name">空</div>
+            <div id="slot-count-4" class="slot-count"></div>
+        </div>
+    </div>
+
+    <div id="hud-bag" class="hud-bag">
+        <span class="hud-bag-label">背包</span>
+        <span class="hud-bag-key">I</span>
+    </div>
+
+    <div id="notice" class="notice notice-info"></div>
+</body>
+</rml>

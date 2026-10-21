@@ -23,6 +23,8 @@ constexpr float kKnockbackDampingPerSecond = 6.0f;
 
 // 受击闪红：时长 + tint（0xRRGGBBAA；渲染侧 SpriteRef.tint 直接乘到精灵色）
 constexpr float kFlashSeconds = 0.15f;
+constexpr float kAttackPresentationSeconds = 0.28f;
+constexpr float kHitPresentationSeconds = 0.22f;
 constexpr std::uint32_t kHitFlashTint = 0xFF6060FFu;
 constexpr std::uint32_t kTintRestore = 0xFFFFFFFFu;
 
@@ -58,6 +60,17 @@ bool CombatSystem::ApplyDamage(ecs::EcsWorld& world, ecs::Entity target,
         }
     }
     hit.flashLeft = std::max(hit.flashLeft, kFlashSeconds);
+    ecs::ActionState& action =
+        registry.get_or_emplace<ecs::ActionState>(target);
+    if (health->current <= 0.0f) {
+        action.action = ecs::ActorAction::Dead;
+        action.elapsed = 0.0f;
+        action.duration = 0.0f;
+    } else {
+        action.action = ecs::ActorAction::Hit;
+        action.elapsed = 0.0f;
+        action.duration = std::max(event.staggerSeconds, kHitPresentationSeconds);
+    }
     if (auto* sprite = registry.try_get<ecs::SpriteRef>(target); sprite != nullptr) {
         sprite->tint = kHitFlashTint;
     }
@@ -138,6 +151,11 @@ void CombatSystem::Update(ecs::EcsWorld& world, float dt) {
                 return;  // continue
             }
             ++m_stats.swings;
+            ecs::ActionState& action =
+                registry.get_or_emplace<ecs::ActionState>(attacker);
+            action.action = ecs::ActorAction::Attacking;
+            action.elapsed = 0.0f;
+            action.duration = kAttackPresentationSeconds;
 
             const float dirLen =
                 std::sqrt(attack.dirX * attack.dirX + attack.dirY * attack.dirY);

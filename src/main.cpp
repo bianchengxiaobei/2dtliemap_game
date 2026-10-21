@@ -1,7 +1,9 @@
 #include "game/GameApp.h"
+#include "server/ServerHost.h"
 
 #include <windows.h>
 
+#include <cstring>
 #include <filesystem>
 #include <system_error>
 #include <vector>
@@ -36,5 +38,10 @@ void UseProjectRootWorkingDirectory() {
 
 int main(int argc, char** argv) {
     UseProjectRootWorkingDirectory();
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--server") == 0) {
+            return zl::server::ServerHost::Run(argc, argv);
+        }
+    }
     return zl::game::GameApp::Run(argc, argv);
 }

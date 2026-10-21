@@ -11,6 +11,7 @@
 """
 
 import json
+import math
 import os
 import random
 
@@ -99,6 +100,67 @@ def make_tree(seed):
         d.ellipse([gx - gw, gy - gh, gx + gw, gy + gh], fill=col + (255,))
     # 高光
     d.ellipse([cx - 40, 60, cx + 10, 105], fill=(84, 150, 80, 255))
+    return canvas
+
+
+def make_workbench():
+    """制作工作台占位：画布 64x128，桌面 + 四条腿 + 台钳，脚底对齐格中心。"""
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    dark = (38, 30, 24, 255)
+    wood = (150, 108, 68, 255)
+    wood_light = (184, 140, 92, 255)
+    metal = (118, 124, 132, 255)
+
+    # 地面阴影
+    d.ellipse([7, 104, 57, 116], fill=(0, 0, 0, 55))
+    # 桌腿
+    d.rectangle([15, 88, 21, 112], fill=(104, 72, 44, 255), outline=dark)
+    d.rectangle([43, 88, 49, 112], fill=(104, 72, 44, 255), outline=dark)
+    # 横撑
+    d.rectangle([21, 98, 43, 102], fill=(122, 84, 52, 255), outline=dark)
+    # 桌面（顶面 + 前缘）
+    d.rectangle([8, 78, 56, 88], fill=wood, outline=dark)
+    d.rectangle([8, 86, 56, 92], fill=(112, 78, 48, 255), outline=dark)
+    d.line([(10, 80), (54, 80)], fill=wood_light, width=2)
+    # 木纹
+    for y in (83, 85):
+        d.line([(12, y), (52, y)], fill=(128, 92, 58, 255), width=1)
+    # 台钳
+    d.rectangle([45, 70, 54, 82], fill=metal, outline=dark)
+    d.rectangle([48, 66, 51, 72], fill=(78, 84, 92, 255), outline=dark)
+    d.line([(42, 77), (56, 77)], fill=(70, 76, 84, 255), width=2)
+    # 台面上的锤子/木料
+    d.line([(16, 77), (30, 77)], fill=(88, 62, 40, 255), width=3)
+    d.rectangle([29, 74, 35, 80], fill=(164, 168, 176, 255), outline=dark)
+    return canvas
+
+
+def make_campfire():
+    """篝火占位（recipes-v3 station=campfire；逻辑名 object.campfire）：
+    石圈 + 交叉木柴 + 橙黄火焰，脚底对齐格中心。"""
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    dark = (42, 32, 26, 255)
+
+    d.ellipse([8, 102, 56, 116], fill=(0, 0, 0, 65))
+    stone = (126, 124, 118, 255)
+    stone_dark = (94, 92, 88, 255)
+    for i in range(8):
+        angle = i * 3.14159265 / 4.0
+        sx = 32 + int(18 * (1 if i % 2 == 0 else 0.82) * math.cos(angle))
+        sy = 107 + int(7 * math.sin(angle))
+        d.ellipse([sx - 5, sy - 3, sx + 5, sy + 4], fill=stone, outline=stone_dark)
+    d.ellipse([20, 101, 44, 109], fill=(58, 46, 36, 255))
+    d.line([(20, 105), (43, 101)], fill=(116, 82, 52, 255), width=4)
+    d.line([(22, 100), (41, 107)], fill=(132, 94, 58, 255), width=4)
+    d.line([(22, 108), (41, 100)], fill=(88, 60, 38, 255), width=3)
+    # 火焰：外橙内黄，静态占位
+    d.polygon([(25, 102), (29, 87), (32, 94), (36, 82), (39, 101)],
+              fill=(214, 98, 36, 255))
+    d.polygon([(28, 102), (31, 93), (34, 97), (36, 90), (37, 102)],
+              fill=(248, 176, 54, 255))
+    d.polygon([(31, 102), (33, 97), (36, 102)], fill=(255, 232, 130, 255))
     return canvas
 
 
@@ -263,6 +325,23 @@ def make_item_icon(kind):
         d.ellipse([cx - 7, cy - 13, cx + 7, cy - 7], fill=(222, 224, 230, 255), outline=dark)
         d.rectangle([cx - 7, cy - 4, cx + 7, cy + 4], fill=(176, 92, 58, 255))
         d.line([(cx - 4, cy), (cx + 4, cy)], fill=(242, 240, 230, 255), width=2)
+    elif kind == "magazine_cooking":
+        d.rectangle([cx - 10, cy - 13, cx + 10, cy + 13], fill=(176, 62, 52, 255),
+                    outline=dark)
+        d.rectangle([cx - 7, cy - 10, cx + 7, cy + 10], fill=(232, 224, 198, 255))
+        d.line([(cx - 5, cy - 7), (cx + 5, cy - 7)], fill=(96, 72, 52, 255), width=2)
+        d.line([(cx - 5, cy - 3), (cx + 4, cy - 3)], fill=(150, 118, 82, 255), width=1)
+        d.line([(cx - 5, cy), (cx + 1, cy)], fill=(150, 118, 82, 255), width=1)
+        d.rectangle([cx + 2, cy - 13, cx + 6, cy - 4], fill=(226, 180, 64, 255),
+                    outline=dark)
+    elif kind == "cooked_beans":
+        d.rectangle([cx - 7, cy - 8, cx + 7, cy + 10], fill=(176, 112, 62, 255), outline=dark)
+        d.ellipse([cx - 7, cy - 11, cx + 7, cy - 5], fill=(214, 176, 112, 255), outline=dark)
+        d.ellipse([cx - 5, cy - 9, cx + 5, cy - 6], fill=(120, 66, 36, 255))
+        d.ellipse([cx - 4, cy - 8, cx - 1, cy - 6], fill=(184, 126, 58, 255))
+        d.ellipse([cx + 1, cy - 8, cx + 4, cy - 6], fill=(184, 126, 58, 255))
+        d.line([(cx - 4, cy - 16), (cx - 2, cy - 12)], fill=(232, 232, 220, 170), width=1)
+        d.line([(cx + 3, cy - 17), (cx + 4, cy - 12)], fill=(232, 232, 220, 140), width=1)
     elif kind == "axe":
         d.line([(cx - 10, cy + 12), (cx + 5, cy - 9)], fill=(126, 92, 58, 255), width=4)
         d.polygon([(cx + 1, cy - 13), (cx + 14, cy - 7), (cx + 9, cy + 4), (cx - 3, cy - 3)],
@@ -403,10 +482,23 @@ def main():
         specs.append((f"tree_{i + 1}", canvas, (bbox[0], bbox[1],
                      bbox[2] - bbox[0], bbox[3] - bbox[1]), bbox[0], bbox[1], 192, 256))
 
+    # 工作台占位（recipes-v3 station=workbench；逻辑名 object.workbench）
+    canvas = make_workbench()
+    bbox = canvas.getbbox()
+    specs.append(("workbench_1", canvas, (bbox[0], bbox[1],
+                 bbox[2] - bbox[0], bbox[3] - bbox[1]), bbox[0], bbox[1], 64, 128))
+
+    # 篝火占位（recipes-v3 station=campfire；逻辑名 object.campfire）
+    canvas = make_campfire()
+    bbox = canvas.getbbox()
+    specs.append(("campfire_1", canvas, (bbox[0], bbox[1],
+                 bbox[2] - bbox[0], bbox[3] - bbox[1]), bbox[0], bbox[1], 64, 128))
+
     # 物品图标占位（M6-T3：地面物品实体；逻辑名 item.<id> 见 asset_manifest）
     for kind in ("bandage", "canned_beans", "axe", "kitchen_knife", "rag", "jacket",
                  "tote_bag", "water_bottle", "painkillers", "hammer", "screwdriver",
-                 "energy_bar", "hiking_boots", "backpack"):
+                 "energy_bar", "hiking_boots", "backpack", "cooked_beans",
+                 "magazine_cooking"):
         canvas = make_item_icon(kind)
         bbox = canvas.getbbox()
         specs.append((f"item_{kind}", canvas, (bbox[0], bbox[1],
