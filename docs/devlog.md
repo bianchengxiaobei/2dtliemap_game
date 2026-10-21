@@ -2043,3 +2043,25 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 **落地**：`tools/tiled_import.py` 支持 TMX/TSX 与 TMJ/TSJ、内嵌或外部 tileset、CSV/base64（zlib/gzip）图块数据；tile 的 `floor`/`sprite`/class 映射为 manifest 逻辑名（缺省严格报错，`--allow-unmapped` 可生成占位名）。图块层按 `zlayer` 或名称映射 ground/floor/wall/furniture/item/mark，最底层无名层自动作为地面；对象层支持矩形、图块对象、`solid`/`ox`/`oy`/`fill`，`class=room` 矩形转为跨 chunk 裁剪的房间。输出保持 10×10 chunk、默认地面稀疏落盘、UTF-8/LF/indent=1，并对非空目录覆盖做保护。
 
 **验证**：`py -3 tools/tests/test_tiled_import.py -v` 6/6 通过（JSON 内嵌/外部 tileset、XML 外部 TSX、base64+zlib、无名地面层/图块对象、跨 chunk 房间、稀疏输出、确定性、未映射错误）；导入规则写入 `docs/tiled-import.md` 并回链 `docs/mapformat.md`。窗口冒烟：`demo.tmx` 导入为 `tiled_smoke`（2×1 chunks），日志显示“地图已加载”，门对象生成物理静态体，无导入/加载错误。
+
+**提交**：Tiled 导入器改动已提交 `94625db feat(tools): add Tiled map importer (M12-T4)`。
+
+## 2026-10-22 美术垂直切片 v1
+
+**目标**：用一组同风格的**程序化像素稿**替换核心占位资源，先验证比例、锚点、色板和资源接口，避免直接进入全量手绘后返工。
+
+**规范**：新增 `docs/art-pipeline.md`，固定：
+- 2:1 等距、`64×32`/格；地面画布 `64×128`（内容底部 `64×32`，`oy=96`）、墙 `64×224`（内容底部 `64×112`）、角色/僵尸/尸体/道具 `64×128`（脚底 `y=112`）、树 `192×256`；
+- 4 向 × 2 帧、`index=dir*2+frame`；当前攻击/受击/死亡仍由代码表现，正式动画 v2 需要片段/挂点/阴影/事件帧；
+- 逻辑名、manifest `own` 帧表、图集页宽/重叠/页面边界、Tiled→manifest 工作流与验收清单；
+- 色板、描边、光照与后续全量美术的非目标。
+
+**落地**：
+- 新增 `tools/gen_art_slice.py`：生成 61 帧 `assets/own/atlas_own.png`，包括 8 地面、3 砖墙、2 门、玩家 8 帧、僵尸 8 帧、尸体 2、树 3、草丛 3、工作台/篝火、9 个代表性物品图标、投射物/命中特效；未列入切片的图标仍复用占位帧。
+- 新增 `character.zombie` 逻辑名与 4 向 × 2 帧；`ZombieFactory` 改用该资源，玩家仍用兼容名 `character.placeholder`。墙面增加 StableId 变体选择。
+- 新增 `tools/tests/test_art_slice.py`（8 项）：所有 `own` 帧存在、矩形不重叠、页面边界、地面/墙/角色锚点、玩家/僵尸帧序、切片专用帧、物品图标与 manifest 解析。
+- 地面保留逐格噪点/草叶/裂纹，但去掉逐格描边，实机确认相邻菱形无缝；僵尸与玩家现在有独立轮廓和色板。
+
+**验证**：`py -3 tools/tests/test_art_slice.py -v` **8/8**；C++ Debug **321/321（121001 assertions）**；窗口 `village_demo` 冒烟加载新图集无缺帧，玩家/僵尸/地面/墙/树/工作台/篝火/物品图标同屏（尸体/木地板由图集预览与单测覆盖），截图 `build/art-slice.png`（构建产物不入库）。当前美术改动未提交；M0 跨机验收仍待另一台 Windows 机器。
+
+**范围/后续**：程序化像素稿不是最终手绘；未完成正式角色动画 v2、全量物品/UI 皮肤、正式音频；下一步优先动画/挂点或生存内容循环。

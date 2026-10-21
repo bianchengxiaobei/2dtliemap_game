@@ -16,6 +16,7 @@
 | [docs/02-技术选型与开发规范.md](docs/02-技术选型与开发规范.md) | 依赖清单、目录结构、编码/线程/内存规范、Git 流程 | 建工程时 + 写代码前 |
 | [docs/03-脚本系统设计.md](docs/03-脚本系统设计.md) | Lua/Python 双后端、Host API、事件桥接、mod 格式 | M7/M8 阶段 |
 | [docs/tiled-import.md](docs/tiled-import.md) | Tiled TMX/TSX/TMJ/TSJ → zomboidlike-map-v1 导入约定、属性、限制 | 制作/导入地图时 |
+| [docs/art-pipeline.md](docs/art-pipeline.md) | 美术方向、画布/锚点、命名、动画契约、垂直切片与验收 | 制作/替换正式美术时 |
 
 ## 新对话启动指南（写代码从这里开始）
 

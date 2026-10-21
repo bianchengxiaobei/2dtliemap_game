@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "comment": "逻辑名 -> 各 provider 的图集绑定（docs/02 §9.1）。own=自制占位（可提交）；placeholder_pz=本地 PZ 导出（assets_placeholder_pz，禁止分发）。切换 config/game.json 的 assets.provider 即可，无需改代码。",
+  "comment": "逻辑名 -> 各 provider 的图集绑定（docs/02 §9.1、docs/art-pipeline.md）。own=自制资源/美术切片（可提交）；placeholder_pz=本地 PZ 导出（assets_placeholder_pz，禁止分发）。切换 config/game.json 的 assets.provider 即可，无需改代码。",
   "logical": {
     "tile.floor.grass": {
       "own": {
@@ -37,13 +37,13 @@
     "wall.brick": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["wall_brick_1"]
+        "frames": ["wall_brick_1", "wall_brick_2", "wall_brick_3"]
       }
     },
     "wall.door": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["wall_door_1"]
+        "frames": ["wall_door_1", "wall_door_2"]
       }
     },
     "decor.grass_tuft": {
@@ -91,7 +91,7 @@
     "character.placeholder": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "comment": "帧序约定：index = dir*2 + frame，dir: down=0, left=1, right=2, up=3（M4-T4）",
+        "comment": "玩家；旧逻辑名保留兼容。帧序：index = dir*2 + frame，dir: down=0, left=1, right=2, up=3",
         "frames": [
           "character_down_0",
           "character_down_1",
@@ -101,6 +101,22 @@
           "character_right_1",
           "character_up_0",
           "character_up_1"
+        ]
+      }
+    },
+    "character.zombie": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "comment": "僵尸专用 4 向 × 2 帧；帧序与玩家相同",
+        "frames": [
+          "character_zombie_down_0",
+          "character_zombie_down_1",
+          "character_zombie_left_0",
+          "character_zombie_left_1",
+          "character_zombie_right_0",
+          "character_zombie_right_1",
+          "character_zombie_up_0",
+          "character_zombie_up_1"
         ]
       }
     },
@@ -198,15 +214,13 @@
     "item.makeshift_spear": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_kitchen_knife"],
-        "comment": "配方产物占位图标：正式美术替换为独立帧"
+        "frames": ["item_makeshift_spear"]
       }
     },
     "item.padded_jacket": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_jacket"],
-        "comment": "配方产物占位图标：正式美术替换为独立帧"
+        "frames": ["item_padded_jacket"]
       }
     },
     "item.cooked_beans": {
@@ -224,22 +238,19 @@
     "item.repair_kit": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_rag"],
-        "comment": "维修包占位图标：正式美术替换为独立帧"
+        "frames": ["item_repair_kit"]
       }
     },
     "projectile.bullet": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_screwdriver"],
-        "comment": "投射物占位：正式美术替换为独立帧"
+        "frames": ["projectile_bullet"]
       }
     },
     "effect.impact": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_rag"],
-        "comment": "命中特效占位：正式美术替换为独立帧"
+        "frames": ["effect_impact"]
       }
     },
     "ui.pixel": {

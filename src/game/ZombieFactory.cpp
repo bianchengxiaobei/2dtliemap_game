@@ -11,6 +11,10 @@
 
 namespace zl::game {
 
+namespace {
+constexpr const char* kZombieSpriteName = "character.zombie";
+}  // namespace
+
 ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, float px, float py,
                         core::EventBus* events) {
     entt::registry& registry = world.Registry();
@@ -19,7 +23,7 @@ ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, fl
     registry.emplace<ecs::Velocity>(e, ecs::Velocity{});
     registry.emplace<ecs::Collider>(e, ecs::Collider{});
     registry.emplace<ecs::SpriteRef>(
-        e, ecs::SpriteRef{ecs::HashName("character.placeholder"), 0, 0xFFFFFFFFu});
+        e, ecs::SpriteRef{ecs::HashName(kZombieSpriteName), 0, 0xFFFFFFFFu});
     registry.emplace<ecs::Facing>(e, ecs::Facing{});
     registry.emplace<ecs::AnimState>(e, ecs::AnimState{});
     registry.emplace<ecs::ActionState>(e, ecs::ActionState{});
