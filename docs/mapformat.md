@@ -109,3 +109,7 @@ z 为世界层（0=地面，见 `core::kMaxZ`）。
 | `objects[]` | `GridSquare::Layer(layer)` 里 append `SquareObject` |
 | `rooms[]` | `GridSquare::SetRoomId` |
 | chunk 文件缺失 | `Chunk` 保持默认地面、无对象（T3/T4 直接产出空 ChunkData） |
+
+## 6. Tiled 导入
+
+Tiled 地图通过 `tools/tiled_import.py` 离线转换为本格式，运行时不需要 Tiled。支持 TMX/TSX 与 TMJ/TSJ、有限正交地图、图块层/对象层/房间；详细映射、属性和限制见 [tiled-import.md](tiled-import.md)。

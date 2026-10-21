@@ -1788,7 +1788,7 @@ direct/loopback FPS 中位均 60（direct 最低 55、loopback 57），loopback 
 **内容管线**：`tools/pack_tileset.py`（PNG 目录 → shelf 图集页 + pz-atlas-v1 JSON，可选
 `texturec` 生成发布 DDS）；`assets/items.json` 7→14 条，新增水/止痛药/能量棒/锤子/
 螺丝刀/登山靴/登山背包及 7 个自制图标，asset_manifest 全走数据文件。Tiled 导入器与
-配方系统尚未建模（可选/后续）。
+配方系统当时尚未建模，二者已在后续扩展完成（Tiled 见 2026-10-21 条目）。
 
 **验证**：`test_net.cpp`（协议全字段/非法包/快照往返/直连环回一致性/背压）、
 `test_player_control`（MoveInput 与键盘一致、地面批纹理排序）、`test_items` 加载 14 条。
@@ -2032,6 +2032,14 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 - 新增 `FireProjectile` 命令与演示键 `V`：服务器从玩家位置生成带 Velocity 的投射物，固定 tick 推进后检测已加载地图阻挡和角色半径，命中经 `CombatSystem::ApplyDamage` 结算并生成 `TransientEffect`；支持会话冷却、可选目标/朝向方向、生命周期和墙体/角色结果。配置 `net.projectileDamage/projectileSpeed/projectileLifetimeSeconds/projectileCooldownSeconds/maxProjectileDistance`。
 - 客户端重连/全量快照会重建装备/动作/投射物/特效副本；投射物和特效使用服务器 StableId，离开 AOI 或到期后按 ZLR1 removal 清理。
 
-**验证**：新增 `M13-T10 Replication`（装备/动作/Effect/Projectile 往返）与 `M13-T10 ActorAction`（攻击/受击/死亡动作）单元测试；M13-T5 双客户端增加装备与攻击动作复制检查，M13-T7 联机背包增加投射物命中、命中特效和投射物实体复制检查。Debug **321/321（121001 assertions）**、Release **321/321（121002 assertions）** 全绿。未提交；M0 跨机验收仍待另一台 Windows 机器。
+**验证**：新增 `M13-T10 Replication`（装备/动作/Effect/Projectile 往返）与 `M13-T10 ActorAction`（攻击/受击/死亡动作）单元测试；M13-T5 双客户端增加装备与攻击动作复制检查，M13-T7 联机背包增加投射物命中、命中特效和投射物实体复制检查。Debug **321/321（121001 assertions）**、Release **321/321（121002 assertions）** 全绿。已提交 `967799f`；M0 跨机验收仍待另一台 Windows 机器。
 
 **范围/后续**：远程表现仍是占位挂点/图标和几何挥砍，不含正式角色动画帧；投射物为无弹药/无弹道的通用直线投射物，PvP 命中默认关闭；装备外观只复制两槽，不含背包/手持动画同步。
+
+## 2026-10-21 Tiled 地图导入器（M12-T4 后续）
+
+**目标**：把 Tiled 编辑器产出的 TMX/TMJ 地图离线转换为 `zomboidlike-map-v1`，让地图制作不再依赖手写 chunk JSON。
+
+**落地**：`tools/tiled_import.py` 支持 TMX/TSX 与 TMJ/TSJ、内嵌或外部 tileset、CSV/base64（zlib/gzip）图块数据；tile 的 `floor`/`sprite`/class 映射为 manifest 逻辑名（缺省严格报错，`--allow-unmapped` 可生成占位名）。图块层按 `zlayer` 或名称映射 ground/floor/wall/furniture/item/mark，最底层无名层自动作为地面；对象层支持矩形、图块对象、`solid`/`ox`/`oy`/`fill`，`class=room` 矩形转为跨 chunk 裁剪的房间。输出保持 10×10 chunk、默认地面稀疏落盘、UTF-8/LF/indent=1，并对非空目录覆盖做保护。
+
+**验证**：`py -3 tools/tests/test_tiled_import.py -v` 6/6 通过（JSON 内嵌/外部 tileset、XML 外部 TSX、base64+zlib、无名地面层/图块对象、跨 chunk 房间、稀疏输出、确定性、未映射错误）；导入规则写入 `docs/tiled-import.md` 并回链 `docs/mapformat.md`。窗口冒烟：`demo.tmx` 导入为 `tiled_smoke`（2×1 chunks），日志显示“地图已加载”，门对象生成物理静态体，无导入/加载错误。
