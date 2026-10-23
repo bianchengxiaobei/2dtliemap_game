@@ -39,7 +39,10 @@ class ArtSliceTest(unittest.TestCase):
                 continue
             self.assertTrue(own["atlas"].startswith("assets/own/"), logical)
             self.assertTrue(own["frames"], logical)
-            for name in own["frames"]:
+            names = list(own["frames"])
+            for clip in own.get("animations", {}).values():
+                names.extend(clip["frames"])
+            for name in names:
                 self.assertIn(name, self.frames, "%s / %s" % (logical, name))
                 frame = self.frames[name]
                 self.assertGreater(frame["w"], 0, name)
@@ -95,6 +98,38 @@ class ArtSliceTest(unittest.TestCase):
             self.assertLessEqual(frame["ox"] + frame["w"], 64, name)
             self.assertLessEqual(frame["oy"] + frame["h"], 128, name)
 
+    def test_character_animation_v2_contract(self):
+        specs = {
+            "idle": (2, 3, True, []),
+            "walk": (2, 5, True, [(1, "footstep")]),
+            "attack": (3, 10, False, [(1, "hit")]),
+            "hit": (1, 8, False, []),
+            "death": (2, 6, False, []),
+        }
+        for logical, prefix in (("character.placeholder", "character"),
+                                ("character.zombie", "character_zombie")):
+            own = self.manifest["logical"][logical]["own"]
+            animations = own["animations"]
+            self.assertEqual(set(animations), set(specs), logical)
+            for clip, (per_dir, fps, loop, events) in specs.items():
+                data = animations[clip]
+                self.assertEqual(data["framesPerDir"], per_dir, clip)
+                self.assertEqual(data["fps"], fps, clip)
+                self.assertEqual(data["loop"], loop, clip)
+                expected_events = [{"frame": f, "type": t} for f, t in events]
+                self.assertEqual(data["events"], expected_events, clip)
+                expected = []
+                for direction in DIRECTIONS:
+                    for frame in range(per_dir):
+                        if clip == "walk":
+                            expected.append("%s_%s_%d" % (prefix, direction, frame))
+                        else:
+                            expected.append("%s_%s_%s_%d" %
+                                            (prefix, clip, direction, frame))
+                self.assertEqual(data["frames"], expected, clip)
+                for name in expected:
+                    self.assertIn(name, self.frames, name)
+
     def test_slice_specific_frames_exist(self):
         required = (
             "character_zombie_down_0",
@@ -104,6 +139,11 @@ class ArtSliceTest(unittest.TestCase):
             "item_makeshift_spear",
             "item_padded_jacket",
             "item_repair_kit",
+            "crate_1",
+            "locker_1",
+            "radio_1",
+            "extraction_1",
+            "item_radio_part",
             "projectile_bullet",
             "effect_impact",
         )

@@ -37,6 +37,10 @@ TEST_CASE("角色组件集：Health/Needs/Corpse 默认值、平凡可拷贝、�
     CHECK(needs.hunger == 0.0f);
     CHECK(needs.thirst == 0.0f);
     CHECK(needs.fatigue == 0.0f);
+    CHECK(needs.moveScale == 1.0f);
+    CHECK(needs.damageScale == 1.0f);
+    CHECK(needs.healthDrainPerSecond == 0.0f);
+    CHECK(needs.warning == 0);
     const Corpse corpse;
     CHECK(corpse.sourceId == 0u);
 
@@ -92,8 +96,8 @@ TEST_CASE("DeathSystem：HP<=0 → 物理体先销毁 + 延迟销毁 + 尸体实
     CHECK(world.Registry().valid(dying));
     CHECK(physics.DynamicBodyCount() == 1u);  // 物理体窗口内保留（击退滑行仍可）
     CHECK(world.AliveCount() == 2u);          // 死者 + 健康者（尸体尚未创建）
-    // 表现：换尸体帧（倒下）+ 速度冻结
-    CHECK(registry.get<SpriteRef>(dying).sprite == ecs::HashName("corpse.placeholder"));
+    // M14-T3：倒地窗口保留角色资源播放 death，速度冻结；窗口结束才生成 corpse。
+    CHECK(registry.get<SpriteRef>(dying).sprite == ecs::HashName("character.placeholder"));
     CHECK(registry.get<Velocity>(dying).x == doctest::Approx(0.0f));
 
     // 推进倒地窗口（0.5s）→ 销毁物理体 + 延迟销毁 + 尸体（Flush 前尸体仍属延迟创建）

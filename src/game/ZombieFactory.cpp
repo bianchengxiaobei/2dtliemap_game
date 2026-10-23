@@ -1,5 +1,7 @@
 #include "game/ZombieFactory.h"
 
+#include <algorithm>
+
 #include "ai/components/AiComponents.h"
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
@@ -7,6 +9,7 @@
 #include "core/GameEvents.h"
 #include "ecs/components/CommonComponents.h"
 #include "ecs/components/PhysicsComponents.h"
+#include "game/ZombieVariants.h"
 #include "physics/PhysicsWorld.h"
 
 namespace zl::game {
@@ -16,25 +19,33 @@ constexpr const char* kZombieSpriteName = "character.zombie";
 }  // namespace
 
 ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, float px, float py,
-                        core::EventBus* events) {
+                        core::EventBus* events, ecs::ZombieVariantKind variantKind) {
+    const ZombieVariantProfile& profile = ZombieVariantProfileFor(variantKind);
+    const float visualScale = std::clamp(profile.visualScale, 0.5f, 2.0f);
+    const ecs::Collider baseCollider;
+    const ecs::Collider collider{baseCollider.radius * visualScale,
+                                 baseCollider.height * visualScale,
+                                 baseCollider.category, baseCollider.mask};
     entt::registry& registry = world.Registry();
     const ecs::Entity e = world.Create();
     registry.emplace<ecs::Position>(e, ecs::Position{px, py, 0});
     registry.emplace<ecs::Velocity>(e, ecs::Velocity{});
-    registry.emplace<ecs::Collider>(e, ecs::Collider{});
+    registry.emplace<ecs::Collider>(e, collider);
     registry.emplace<ecs::SpriteRef>(
-        e, ecs::SpriteRef{ecs::HashName(kZombieSpriteName), 0, 0xFFFFFFFFu});
+        e, ecs::SpriteRef{ecs::HashName(kZombieSpriteName), 0, profile.tint});
     registry.emplace<ecs::Facing>(e, ecs::Facing{});
     registry.emplace<ecs::AnimState>(e, ecs::AnimState{});
     registry.emplace<ecs::ActionState>(e, ecs::ActionState{});
-    registry.emplace<ecs::Health>(e, ecs::Health{});  // M5-T1：死亡流程（HP<=0 → 尸体）
+    ecs::Health health;
+    health.max = 100.0f * profile.healthScale;
+    health.current = health.max;
+    registry.emplace<ecs::Health>(e, health);
     registry.emplace<ecs::Needs>(e, ecs::Needs{});
+    registry.emplace<ecs::ZombieVariant>(e, MakeZombieVariant(variantKind));
 
-    // M4-T3：物理胶囊（位置/速度由 Bullet 接管）
     if (physics != nullptr) {
-        const ecs::Collider def;
         ecs::RigidBody rigid;
-        rigid.body = physics->CreateCharacterBody(def.radius, def.height, px, py, 0);
+        rigid.body = physics->CreateCharacterBody(collider.radius, collider.height, px, py, 0);
         registry.emplace<ecs::RigidBody>(e, rigid);
     }
 

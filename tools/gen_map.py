@@ -31,7 +31,7 @@ DEFAULT_CHAR = CHAR_OF[DEFAULT_FLOOR]
 
 
 # 阻挡移动的精灵（M4 物理/A*）：写对象时附 "solid": true（解析端缺省 false，向后兼容）
-SOLID_SPRITES = {"wall.brick", "wall.door", "object.tree"}
+SOLID_SPRITES = {"wall.brick", "object.tree", "object.workbench", "object.campfire"}
 
 
 def _object_json(o, x0, y0):
@@ -175,6 +175,15 @@ def gen_village(mapd, rng, center_x, center_y, house_rects):
     return placed
 
 
+def gen_objective_poi(mapd):
+    for x, y, sprite in ((70, 25, "object.workbench"),
+                         (74, 25, "object.campfire"),
+                         (72, 20, "object.radio"),
+                         (66, 28, "object.extraction")):
+        if mapd.in_bounds(x, y):
+            mapd.add_object(x, y, 0, "furniture", sprite)
+
+
 def gen_trees(mapd, rng, forests, scatter_divisor):
     """森林斑块（概率密植）+ 稀疏散布"""
     for _ in range(forests):
@@ -307,6 +316,8 @@ def main():
     parser.add_argument("--roads", type=int, default=2, help="横竖路对数（每对各一条）")
     parser.add_argument("--patches", type=int, default=0, help="泥土补丁数（0=按面积自动）")
     parser.add_argument("--forests", type=int, default=0, help="森林斑块数（0=按面积自动）")
+    parser.add_argument("--objective-poi", action="store_true",
+                        help="添加 T6 任务目标物（无线电/撤离点，固定坐标）")
     parser.add_argument("--out", default="", help="输出目录（缺省 assets/maps/<name>）")
     args = parser.parse_args()
 
@@ -342,6 +353,8 @@ def main():
     gen_trees(mapd, rng, forests, scatter_divisor=1500)
     if area_chunks <= 400:  # 小地图铺草丛；大地图交给森林/散布即可
         gen_tufts(mapd, rng, divisor=90)
+    if args.objective_poi:
+        gen_objective_poi(mapd)
 
     meta = {
         "format": "zomboidlike-map-v1",
@@ -356,6 +369,7 @@ def main():
                 "roads": args.roads,
                 "patches": patches,
                 "forests": forests,
+                "objectivePoi": bool(args.objective_poi),
             },
         },
         "bounds": {"chunkX0": 0, "chunkY0": 0, "chunksX": chunks_x, "chunksY": chunks_y},

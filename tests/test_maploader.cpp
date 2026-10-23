@@ -267,9 +267,9 @@ TEST_CASE("MapLoader：整张 village_demo 全量解析一致性") {
             roomOccurrences += static_cast<int>(data.rooms.size());
         }
     }
-    // 与生成器输出一致（确定性地图：131 个非默认 chunk / 400 对象（含 z=1 楼上、工作台与篝火）/ 15 房间出现）
+    // 与生成器输出一致（确定性地图：131 个非默认 chunk / 402 对象（含 z=1 楼上、工作台、篝火与 T6 目标物）/ 15 房间出现）
     CHECK(filesLoaded == 131);
-    CHECK(objectTotal == 400);
+    CHECK(objectTotal == 402);
     CHECK(roomOccurrences == 15);
 }
 

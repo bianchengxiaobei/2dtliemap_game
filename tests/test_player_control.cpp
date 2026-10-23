@@ -223,43 +223,49 @@ TEST_CASE("AnimationSystem：速度 → 4 向朝向（屏幕主轴）") {
     CHECK(AnimationSystem::FacingFromVelocity(1.0f, 0.0f) == Direction::Down);   // 格东（平局）
 }
 
-TEST_CASE("AnimationSystem：行走帧推进 + 站立复位（朝向保持）") {
+TEST_CASE("AnimationSystem：walk/idle/attack/death 片段切换与推进") {
     EcsWorld world;
     const ecs::Entity e = world.Create();
     entt::registry& registry = world.Registry();
     registry.emplace<Velocity>(e, Velocity{1.0f, 0.0f});
     registry.emplace<Facing>(e, Facing{});
-    AnimState anim;
-    anim.fps = 8.0f;
-    anim.framesPerDir = 2;
-    registry.emplace<AnimState>(e, anim);
+    registry.emplace<AnimState>(e, AnimState{});
+    registry.emplace<ecs::Health>(e, ecs::Health{100.0f, 100.0f});
+    registry.emplace<ecs::ActionState>(e, ecs::ActionState{});
 
     AnimationSystem system;
-    // 0.1s → t=0.1 → frame 0；再 0.1 → t=0.2 → frame 1；再 0.1 → t=0.3 → 2.4 → frame 0
+    // walk：2 帧 @5fps，周期 0.4s；0.2s 进入 frame 1，0.4s 回卷 frame 0。
     system.Update(world, 0.1f);
+    CHECK(registry.get<AnimState>(e).clip == ecs::AnimClip::Walk);
     CHECK(registry.get<AnimState>(e).frame == 0);
     system.Update(world, 0.1f);
     CHECK(registry.get<AnimState>(e).frame == 1);
     system.Update(world, 0.1f);
+    CHECK(registry.get<AnimState>(e).frame == 1);
+    system.Update(world, 0.1f);
     CHECK(registry.get<AnimState>(e).frame == 0);
-    // 速度 (1,0) = 格东（屏幕右下 45°）→ 平局取上下 → 朝下
     CHECK(registry.get<Facing>(e).dir == Direction::Down);
 
-    // 静止：帧复位 0、计时清零；朝向保持最后值
+    // 静止：切 Idle，帧继续按 3fps 呼吸，朝向保持。
     registry.get<Velocity>(e).x = 0.0f;
     registry.get<Velocity>(e).y = 0.0f;
     system.Update(world, 0.1f);
+    CHECK(registry.get<AnimState>(e).clip == ecs::AnimClip::Idle);
     CHECK(registry.get<AnimState>(e).frame == 0);
-    CHECK(registry.get<AnimState>(e).time == 0.0f);
     CHECK(registry.get<Facing>(e).dir == Direction::Down);
 
-    // framesPerDir=1：恒为第 0 帧，不除零
-    registry.get<Velocity>(e).x = 1.0f;
-    registry.get<AnimState>(e).framesPerDir = 1;
-    for (int i = 0; i < 10; ++i) {
-        system.Update(world, 0.1f);
-    }
-    CHECK(registry.get<AnimState>(e).frame == 0);
+    // Attacking 优先于移动；3 帧片段。
+    auto& action = registry.get<ecs::ActionState>(e);
+    action.action = ecs::ActorAction::Attacking;
+    action.duration = 0.3f;
+    system.Update(world, 0.1f);
+    CHECK(registry.get<AnimState>(e).clip == ecs::AnimClip::Attack);
+    CHECK(registry.get<AnimState>(e).framesPerDir == 3);
+
+    // 生命归零优先于动作：Death 片段。
+    registry.get<ecs::Health>(e).current = 0.0f;
+    system.Update(world, 0.1f);
+    CHECK(registry.get<AnimState>(e).clip == ecs::AnimClip::Death);
 }
 
 TEST_CASE("RenderCollectSystem::PickFrameIndex：动画实体按 dir*N+frame，静态实体哈希变体") {

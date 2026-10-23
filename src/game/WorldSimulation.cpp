@@ -23,15 +23,19 @@
 #include "characters/systems/DeathSystem.h"
 #include "characters/systems/InputSystem.h"
 #include "characters/systems/MovementSystem.h"
+#include "characters/systems/NeedsSystem.h"
 #include "core/Config.h"
 #include "core/Constants.h"
 #include "core/EventBus.h"
+#include "core/GameTime.h"
 #include "core/Log.h"
 #include "core/TaskScheduler.h"
 #include "ecs/SpatialIndex.h"
 #include "ecs/components/PhysicsComponents.h"
+#include "game/Objectives.h"
 #include "game/WorldQueries.h"
 #include "game/ZombieFactory.h"
+#include "game/ZombieVariants.h"
 #include "items/ItemComponents.h"
 #include "physics/PhysicsSyncSystem.h"
 #include "physics/PhysicsWorld.h"
@@ -51,6 +55,10 @@ void SetWarning(std::string* warning, const std::string& text) {
     }
 }
 
+int CurrentZombieSpawnHour(const core::GameTime* gameTime) {
+    return gameTime != nullptr ? gameTime->Now().hour : 12;
+}
+
 }  // namespace
 
 struct WorldSimulation::Impl {
@@ -68,6 +76,7 @@ struct WorldSimulation::Impl {
     ecs::SpatialIndex spatial;
 
     std::unique_ptr<characters::InputSystem> inputSystem;
+    std::unique_ptr<characters::NeedsSystem> needsSystem;
     std::unique_ptr<characters::MovementSystem> movementSystem;
     std::unique_ptr<physics::PhysicsSyncSystem> physicsSyncSystem;
     std::unique_ptr<characters::ActionPresentationSystem> actionPresentationSystem;
@@ -86,6 +95,7 @@ struct WorldSimulation::Impl {
     core::EventBus::SubscriptionId soundSubscription =
         core::EventBus::kInvalidSubscription;
     ecs::Entity player = entt::null;
+    std::uint64_t zombieSpawnSerial = 0;
     float playerMaxHp = 100.0f;
     float playerStartHp = 100.0f;
     float playerCapacityKg = 20.0f;
@@ -136,6 +146,7 @@ struct WorldSimulation::Impl {
         registry.emplace<ecs::Equipment>(entity, ecs::Equipment{});
         registry.emplace<ecs::KnownRecipes>(entity);
         registry.emplace<ecs::CraftingJob>(entity);
+        registry.emplace<ecs::Objective>(entity);
         return entity;
     }
 
@@ -193,8 +204,19 @@ struct WorldSimulation::Impl {
                 continue;
             }
 
+            float visualScale = 1.0f;
+            if (!isPlayer) {
+                if (const auto* variant = registry.try_get<ecs::ZombieVariant>(entity);
+                    variant != nullptr) {
+                    visualScale = std::clamp(variant->visualScale, 0.5f, 2.0f);
+                }
+            }
             if (!registry.all_of<ecs::Collider>(entity)) {
-                registry.emplace<ecs::Collider>(entity);
+                const ecs::Collider defaults;
+                registry.emplace<ecs::Collider>(
+                    entity, ecs::Collider{defaults.radius * visualScale,
+                                          defaults.height * visualScale, defaults.category,
+                                          defaults.mask});
             }
             if (physics != nullptr && !registry.all_of<ecs::RigidBody>(entity)) {
                 const auto* collider = registry.try_get<ecs::Collider>(entity);
@@ -244,6 +266,9 @@ struct WorldSimulation::Impl {
                 }
                 if (!registry.all_of<ecs::CraftingJob>(entity)) {
                     registry.emplace<ecs::CraftingJob>(entity);
+                }
+                if (!registry.all_of<ecs::Objective>(entity)) {
+                    registry.emplace<ecs::Objective>(entity);
                 }
                 if (player == entt::null) {
                     player = entity;
@@ -452,7 +477,10 @@ bool WorldSimulation::Init(std::string* error) {
     s.spawnLodSystem = std::make_unique<ai::SpawnLodSystem>(
         walkable,
         [&s](ecs::EcsWorld& world, float px, float py) {
-            return SpawnZombie(world, s.physics.get(), px, py, s.options.events);
+            const int hour = CurrentZombieSpawnHour(s.options.gameTime);
+            const ecs::ZombieVariantKind variant =
+                PickZombieVariant(px, py, hour, ++s.zombieSpawnSerial);
+            return SpawnZombie(world, s.physics.get(), px, py, s.options.events, variant);
         },
         [&s](ecs::EcsWorld& world, ecs::Entity entity) {
             if (s.physics == nullptr) {
@@ -471,8 +499,45 @@ bool WorldSimulation::Init(std::string* error) {
     s.playerCapacityKg =
         static_cast<float>(config.Get<double>("inventory.playerCapacityKg", 20.0));
 
+    characters::NeedsParams needsParams;
+    needsParams.hungerPerDay =
+        static_cast<float>(config.Get<double>("needs.hungerPerDay", 1.4));
+    needsParams.thirstPerDay =
+        static_cast<float>(config.Get<double>("needs.thirstPerDay", 1.8));
+    needsParams.fatiguePerDay =
+        static_cast<float>(config.Get<double>("needs.fatiguePerDay", 1.2));
+    needsParams.gameSecondsPerDay = static_cast<float>(
+        std::max(1.0, config.Get<double>("game.dayLengthMinutes", 60.0) * 60.0));
+    needsParams.hungerDamageThreshold = static_cast<float>(
+        config.Get<double>("needs.hungerDamageThreshold", 0.70));
+    needsParams.hungerDamagePenalty = static_cast<float>(
+        config.Get<double>("needs.hungerDamagePenalty", 0.35));
+    needsParams.fatigueDamageThreshold = static_cast<float>(
+        config.Get<double>("needs.fatigueDamageThreshold", 0.80));
+    needsParams.fatigueDamagePenalty = static_cast<float>(
+        config.Get<double>("needs.fatigueDamagePenalty", 0.20));
+    needsParams.thirstMoveThreshold = static_cast<float>(
+        config.Get<double>("needs.thirstMoveThreshold", 0.65));
+    needsParams.thirstMovePenalty = static_cast<float>(
+        config.Get<double>("needs.thirstMovePenalty", 0.30));
+    needsParams.fatigueMoveThreshold = static_cast<float>(
+        config.Get<double>("needs.fatigueMoveThreshold", 0.70));
+    needsParams.fatigueMovePenalty = static_cast<float>(
+        config.Get<double>("needs.fatigueMovePenalty", 0.30));
+    needsParams.minMoveScale =
+        static_cast<float>(config.Get<double>("needs.minMoveScale", 0.35));
+    needsParams.hungerCritical =
+        static_cast<float>(config.Get<double>("needs.hungerCritical", 0.90));
+    needsParams.thirstCritical =
+        static_cast<float>(config.Get<double>("needs.thirstCritical", 0.90));
+    needsParams.starvationHpPerSecond = static_cast<float>(
+        config.Get<double>("needs.starvationHpPerSecond", 0.35));
+    needsParams.dehydrationHpPerSecond = static_cast<float>(
+        config.Get<double>("needs.dehydrationHpPerSecond", 0.60));
+
     s.ecs = std::make_unique<ecs::EcsWorld>();
     s.inputSystem = std::make_unique<characters::InputSystem>();
+    s.needsSystem = std::make_unique<characters::NeedsSystem>(needsParams);
     s.movementSystem = std::make_unique<characters::MovementSystem>();
     s.physicsSyncSystem = std::make_unique<physics::PhysicsSyncSystem>(s.physics.get());
     s.actionPresentationSystem =
@@ -489,6 +554,9 @@ bool WorldSimulation::Init(std::string* error) {
     systems.AddSystem("LodSystem", [&s](ecs::EcsWorld& value, float) {
         s.lodSystem->SetFocus(s.focus.x, s.focus.y);
         s.lodSystem->Update(value);
+    });
+    systems.AddSystem("NeedsSystem", [&s](ecs::EcsWorld& value, float dt) {
+        s.needsSystem->Update(value, dt);
     });
     systems.AddSystem("InputSystem",
                       [&s](ecs::EcsWorld& value, float) { s.inputSystem->Update(value); });
@@ -569,6 +637,7 @@ void WorldSimulation::Shutdown() {
     s.combatSystem.reset();
     s.physicsSyncSystem.reset();
     s.movementSystem.reset();
+    s.needsSystem.reset();
     s.inputSystem.reset();
     s.pathFollowSystem.reset();
     s.boidsSystem.reset();
@@ -808,7 +877,10 @@ ecs::Entity WorldSimulation::SpawnZombieAt(float x, float y) {
     if (!s.initialized || s.ecs == nullptr || !std::isfinite(x) || !std::isfinite(y)) {
         return entt::null;
     }
-    return SpawnZombie(*s.ecs, s.physics.get(), x, y, s.options.events);
+    const int hour = CurrentZombieSpawnHour(s.options.gameTime);
+    const ecs::ZombieVariantKind variant =
+        PickZombieVariant(x, y, hour, ++s.zombieSpawnSerial);
+    return SpawnZombie(*s.ecs, s.physics.get(), x, y, s.options.events, variant);
 }
 
 void WorldSimulation::DespawnEntity(ecs::Entity entity) {
@@ -886,23 +958,55 @@ void WorldSimulation::SpawnDemoPopulation() {
     constexpr float kBoxY0 = 4.0f;
     constexpr float kBoxX1 = 96.0f;
     constexpr float kBoxY1 = 32.0f;
-    constexpr int kCount = 40;
-    for (int i = 0; i < kCount; ++i) {
+    constexpr float kSafeX = 70.0f;
+    constexpr float kSafeY = 24.0f;
+    const core::Config* config = s.options.config;
+    const int demoZombies =
+        config != nullptr ? std::clamp(config->Get<int>("spawner.demoZombies", 40), 0, 400)
+                          : 40;
+    const int demoHordes =
+        config != nullptr ? std::clamp(config->Get<int>("spawner.demoHordes", 5), 0, 20)
+                          : 5;
+    const int demoZombiesPerHorde =
+        config != nullptr
+            ? std::clamp(config->Get<int>("spawner.demoZombiesPerHorde", 40), 0, 400)
+            : 40;
+    const float demoSafeRadius =
+        config != nullptr
+            ? std::max(0.0f,
+                       static_cast<float>(config->Get<double>("spawner.demoSafeRadius", 0.0)))
+            : 0.0f;
+    const float demoSafeRadiusSq = demoSafeRadius * demoSafeRadius;
+    const int hour = CurrentZombieSpawnHour(s.options.gameTime);
+    int spawned = 0;
+    for (int attempt = 0; attempt < demoZombies * 8 && spawned < demoZombies; ++attempt) {
         const float px = kBoxX0 + u01(rng) * (kBoxX1 - kBoxX0);
         const float py = kBoxY0 + u01(rng) * (kBoxY1 - kBoxY0);
-        SpawnZombie(*s.ecs, s.physics.get(), px, py, s.options.events);
+        if (demoSafeRadiusSq > 0.0f) {
+            const float dx = px - kSafeX;
+            const float dy = py - kSafeY;
+            if (dx * dx + dy * dy < demoSafeRadiusSq) {
+                continue;  // 出生点安全区：避免开局被围
+            }
+        }
+        const ecs::ZombieVariantKind variant =
+            PickZombieVariant(px, py, hour, rng());
+        SpawnZombie(*s.ecs, s.physics.get(), px, py, s.options.events, variant);
+        ++spawned;
     }
-    ZL_INFO("sim", "生成 {} 个 AI 游荡者（区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]）",
-            kCount, kBoxX0, kBoxX1, kBoxY0, kBoxY1);
+    ZL_INFO("sim", "生成 {} 个 AI 游荡者（区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]，"
+                   "出生安全半径 {:.0f}）",
+            spawned, kBoxX0, kBoxX1, kBoxY0, kBoxY1,
+            static_cast<double>(demoSafeRadius));
 
     s.virtualHordes.Clear();
-    constexpr int kHordes = 5;
-    constexpr int kPerHorde = 40;
-    for (int i = 0; i < kHordes; ++i) {
-        const float angle = static_cast<float>(i) * (6.2831853f / kHordes);
+    for (int i = 0; i < demoHordes; ++i) {
+        const float angle = static_cast<float>(i) *
+                            (6.2831853f / static_cast<float>(std::max(1, demoHordes)));
         const float radius = 55.0f + static_cast<float>(i) * 5.0f;
         s.virtualHordes.AddHorde(70.0f + std::cos(angle) * radius,
-                                 18.0f + std::sin(angle) * radius, kPerHorde,
+                                 18.0f + std::sin(angle) * radius,
+                                 demoZombiesPerHorde,
                                  /*spread=*/8.0f);
     }
     const auto stats = s.virtualHordes.GetStats(70.0f, 18.0f);

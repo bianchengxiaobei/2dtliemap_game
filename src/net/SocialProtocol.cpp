@@ -1,6 +1,7 @@
 #include "net/SocialProtocol.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <unordered_set>
 #include <utility>
@@ -113,6 +114,12 @@ void PutU64(std::vector<std::uint8_t>& out, std::uint64_t value) {
     }
 }
 
+void PutF64(std::vector<std::uint8_t>& out, double value) {
+    std::uint64_t raw = 0;
+    std::memcpy(&raw, &value, sizeof(raw));
+    PutU64(out, raw);
+}
+
 bool PutString(std::vector<std::uint8_t>& out, std::string_view value,
                std::size_t maxBytes, std::string* error) {
     if (!ValidDisplayText(value, maxBytes)) {
@@ -160,6 +167,15 @@ public:
         }
         *value = result;
         m_offset += 8;
+        return true;
+    }
+
+    bool F64(double* value) {
+        std::uint64_t raw = 0;
+        if (!U64(&raw)) {
+            return false;
+        }
+        std::memcpy(value, &raw, sizeof(raw));
         return true;
     }
 
@@ -253,8 +269,13 @@ std::vector<std::uint8_t> EncodeSocialState(const SocialState& state,
         return {};
     }
 
+    if (!std::isfinite(state.gameMinutes) || state.gameMinutes < 0.0) {
+        SetError(error, "游戏时间非法");
+        return {};
+    }
+
     std::unordered_set<std::uint64_t> ids;
-    std::size_t estimated = 24;
+    std::size_t estimated = 32;
     for (const SocialPlayer& player : state.players) {
         if (player.stableId == 0 || !ids.insert(player.stableId).second ||
             !ValidDisplayText(player.name, kMaxSocialNameBytes)) {
@@ -284,6 +305,7 @@ std::vector<std::uint8_t> EncodeSocialState(const SocialState& state,
     PutU16(bytes, 0);
     PutU64(bytes, state.serverTick);
     PutU32(bytes, state.sequence);
+    PutF64(bytes, state.gameMinutes);
     PutU16(bytes, static_cast<std::uint16_t>(state.players.size()));
     PutU16(bytes, static_cast<std::uint16_t>(state.chat.size()));
     for (const SocialPlayer& player : state.players) {
@@ -321,7 +343,8 @@ bool DecodeSocialState(std::span<const std::uint8_t> bytes, SocialState* state,
     SocialState decoded;
     if (!reader.U32(&magic) || !reader.U16(&version) || !reader.U16(&reserved) ||
         !reader.U64(&decoded.serverTick) || !reader.U32(&decoded.sequence) ||
-        !reader.U16(&playerCount) || !reader.U16(&chatCount)) {
+        !reader.F64(&decoded.gameMinutes) || !reader.U16(&playerCount) ||
+        !reader.U16(&chatCount)) {
         SetError(error, "社交状态头截断");
         return false;
     }
@@ -335,6 +358,10 @@ bool DecodeSocialState(std::span<const std::uint8_t> bytes, SocialState* state,
     }
     if (reserved != 0) {
         SetError(error, "社交状态保留字段非 0");
+        return false;
+    }
+    if (!std::isfinite(decoded.gameMinutes) || decoded.gameMinutes < 0.0) {
+        SetError(error, "社交状态游戏时间非法");
         return false;
     }
     if (playerCount > kMaxSocialPlayers || chatCount > kMaxSocialChatMessages) {

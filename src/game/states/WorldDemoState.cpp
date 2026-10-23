@@ -35,6 +35,7 @@
 #include "audio/SoundManager.h"
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
+#include "characters/WeaponSocket.h"
 #include "characters/systems/AnimationSystem.h"
 #include "characters/systems/CombatSystem.h"
 #include "characters/systems/InputSystem.h"
@@ -51,7 +52,9 @@
 #include "game/states/MainMenuState.h"
 #include "game/ZombieFactory.h"
 #include "game/GroundItems.h"
+#include "game/LootContainers.h"
 #include "items/Crafting.h"
+#include "items/LootTable.h"
 #include "items/Repair.h"
 #include "items/InventoryOps.h"
 #include "items/ItemComponents.h"
@@ -136,6 +139,11 @@ void WorldDemoState::OnEnter() {
     camera.SetCenter(render::ToScreen(70.0f, 24.0f));
     m_followCamera = config.Get<bool>("camera.follow", true);
     m_followRate = static_cast<float>(config.Get<double>("camera.followRate", 8.0));
+    // M14-T1：玩家被墙/门遮住时降到该 alpha（1=不透明）
+    m_wallOcclusionAlpha = std::clamp(
+        static_cast<float>(config.Get<double>("render.wallOcclusionAlpha", 0.35)), 0.05f, 1.0f);
+    // M14-T10：进入房间后切换为剖切视图（隐藏房间上层与前方边界墙）
+    m_roomCutaway = config.Get<bool>("render.roomCutaway", true);
 
     // 自动巡航压测（M3-T7；F8 手动切换）
     m_cruiseEnabled = config.Get<bool>("world.autoCruise", false);
@@ -146,10 +154,6 @@ void WorldDemoState::OnEnter() {
     m_cruiseMinutes = config.Get<double>("world.cruiseMinutes", 5.0);
     // M5-T4：演示枪声基础可闻半径（隔墙衰减由感知系统的传播模型按听者计算）
     m_gunshotRadius = static_cast<float>(config.Get<double>("sounds.gunshotRadius", 30.0));
-    m_footstepStride =
-        std::max(0.2f, static_cast<float>(config.Get<double>("audio.footstepStride", 0.9)));
-    m_footstepAnchorValid = false;
-    m_footstepDistance = 0.0f;
     // M5-T6：玩家挥击参数（伤害管线入口，CombatSystem 消费 AttackIntent）
     m_playerAttackDamage = static_cast<float>(config.Get<double>("combat.playerDamage", 40.0));
     m_playerAttackRange = static_cast<float>(config.Get<double>("combat.playerRange", 1.7));
@@ -164,6 +168,20 @@ void WorldDemoState::OnEnter() {
     m_pickupRadius = static_cast<float>(config.Get<double>("inventory.pickupRadius", 1.6));
     m_inventoryRange =
         static_cast<float>(config.Get<double>("inventory.lootRange", 3.0));
+    m_radioPartDefId =
+        config.Get<std::string>("objective.radioPart", "radio_part");
+    m_radioX = static_cast<float>(config.Get<double>("objective.radioX", 72.5));
+    m_radioY = static_cast<float>(config.Get<double>("objective.radioY", 20.5));
+    m_extractionX =
+        static_cast<float>(config.Get<double>("objective.extractionX", 66.5));
+    m_extractionY =
+        static_cast<float>(config.Get<double>("objective.extractionY", 28.5));
+    m_extractionRadius = std::clamp(
+        static_cast<float>(config.Get<double>("objective.extractionRadius", 1.5)),
+        0.25f, 8.0f);
+    m_objectiveInteractRange = std::clamp(
+        static_cast<float>(config.Get<double>("objective.interactRange", 2.2)),
+        0.25f, 8.0f);
     m_repairKitDefId =
         config.Get<std::string>("inventory.repairKit", "repair_kit");
     m_repairKitCount = std::max(1, config.Get<int>("inventory.repairKitCount", 1));
@@ -201,6 +219,9 @@ void WorldDemoState::OnEnter() {
         }
     }
     m_demoItemsScattered = false;
+    m_demoLootContainersSpawned = false;
+    m_houseLootContainersSpawned = false;
+    m_runOutcome = RunOutcome::None;
     if (m_cruiseEnabled) {
         camera.SetCenter(render::ToScreen(m_cruiseCenterX + m_cruiseRadius, m_cruiseCenterY));
         ZL_INFO("perf", "自动巡航开启：圆心=({:.0f},{:.0f}) 半径={:.0f} 速度={:.0f}格/s 时长={:.1f}min",
@@ -257,7 +278,7 @@ void WorldDemoState::OnEnter() {
     }
     ConsumeSaveWarning();
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 攻击 | F 拾取 | E 使用 | R 装备 | G 丢弃 | I 背包（或右下角按钮） | Enter 聊天 | F6 演示击杀 | F7 开枪（声音引怪） | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | F12 快速存档 | ESC 暂停菜单");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 攻击 | F 拾取 | E 使用/修理电台 | R 装备 | G 丢弃 | I 背包（或右下角按钮） | Enter 聊天 | F6 演示击杀 | F7 开枪（声音引怪） | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | F12 快速存档 | ESC 暂停菜单");
 }
 
 bool WorldDemoState::LoadFromSave() {
@@ -330,6 +351,8 @@ bool WorldDemoState::LoadFromSave() {
     m_ctx.activeSaveId = m_loadSaveId;
     m_ctx.activeSaveUseBackup = report.usedBackup;
     m_demoItemsScattered = true;
+    m_demoLootContainersSpawned = true;
+    m_houseLootContainersSpawned = false;
     m_followSnapped = false;
     if (m_ctx.virtualHordes != nullptr) {
         m_ctx.virtualHordes->Clear();
@@ -369,8 +392,19 @@ void WorldDemoState::RestoreRuntimeComponents(
             continue;
         }
 
+        float visualScale = 1.0f;
+        if (!isPlayer) {
+            if (const auto* variant = registry.try_get<ecs::ZombieVariant>(entity);
+                variant != nullptr) {
+                visualScale = std::clamp(variant->visualScale, 0.5f, 2.0f);
+            }
+        }
         if (!registry.all_of<ecs::Collider>(entity)) {
-            registry.emplace<ecs::Collider>(entity);
+            const ecs::Collider defaults;
+            registry.emplace<ecs::Collider>(
+                entity, ecs::Collider{defaults.radius * visualScale,
+                                      defaults.height * visualScale, defaults.category,
+                                      defaults.mask});
         }
         if (m_ctx.physics != nullptr &&
             !registry.all_of<ecs::RigidBody>(entity)) {
@@ -418,6 +452,9 @@ void WorldDemoState::RestoreRuntimeComponents(
             }
             if (!registry.all_of<ecs::CraftingJob>(entity)) {
                 registry.emplace<ecs::CraftingJob>(entity);
+            }
+            if (!registry.all_of<ecs::Objective>(entity)) {
+                registry.emplace<ecs::Objective>(entity);
             }
             if (m_player == entt::null) {
                 m_player = entity;
@@ -738,7 +775,16 @@ void WorldDemoState::SyncNetworkReplicas(float alpha) {
         }
         if (actor.hasAnim) {
             if (auto* anim = registry.try_get<ecs::AnimState>(entity); anim != nullptr) {
+                // 网络负载只含旧 4 字段；clip/事件序号是本地运行时状态，保留不被快照清空，
+                // 否则本地脚步/命中事件会在每次快照后重复或丢失。
+                const std::uint32_t eventSerial = anim->eventSerial;
+                const bool sameClip = anim->clip == actor.anim.clip;
+                const std::uint8_t eventMaskDone = sameClip ? anim->eventMaskDone : 0;
+                const ecs::AnimEvent lastEvent = anim->lastEvent;
                 *anim = actor.anim;
+                anim->eventSerial = eventSerial;
+                anim->eventMaskDone = eventMaskDone;
+                anim->lastEvent = lastEvent;
             } else {
                 registry.emplace<ecs::AnimState>(entity, actor.anim);
             }
@@ -756,6 +802,9 @@ void WorldDemoState::SyncNetworkReplicas(float alpha) {
         }
         if (actor.hasAction) {
             registry.emplace_or_replace<ecs::ActionState>(entity, actor.action);
+        }
+        if (actor.hasVariant) {
+            registry.emplace_or_replace<ecs::ZombieVariant>(entity, actor.variant);
         }
     }
 
@@ -780,7 +829,7 @@ void WorldDemoState::SyncNetworkReplicas(float alpha) {
     if (nextPlayer != m_player) {
         m_player = nextPlayer;
         m_followSnapped = false;
-        m_footstepAnchorValid = false;
+        m_lastPlayerAnimEventSerial = 0;
         m_lastPlayerPathState = ecs::PathStatus::None;
         m_markerPathActive = false;
         m_lastMoveCommand = glm::vec2(0.0f, 0.0f);
@@ -868,7 +917,14 @@ void WorldDemoState::ApplyNetworkPlayerState() {
 }
 
 void WorldDemoState::RefreshSocialState() {
-    if (m_ctx.ui == nullptr || !m_networkMode || m_ctx.networkClient == nullptr) {
+    if (!m_networkMode || m_ctx.networkClient == nullptr) {
+        return;
+    }
+    if (m_ctx.gameTime != nullptr && m_ctx.networkClient->HasSocialState()) {
+        m_ctx.gameTime->SetTotalGameMinutes(
+            m_ctx.networkClient->SocialState().gameMinutes);
+    }
+    if (m_ctx.ui == nullptr) {
         return;
     }
     ui::SocialUiState state;
@@ -920,7 +976,7 @@ void WorldDemoState::EnsurePlayerSpawned() {
             m_player = next;
             if (m_player != entt::null) {
                 m_followSnapped = false;
-                m_footstepAnchorValid = false;
+                m_lastPlayerAnimEventSerial = 0;
                 m_lastPlayerPathState = ecs::PathStatus::None;
                 m_markerPathActive = false;
                 m_lastMoveCommand = glm::vec2(0.0f, 0.0f);
@@ -929,11 +985,15 @@ void WorldDemoState::EnsurePlayerSpawned() {
         }
         return;
     }
-    // M5-T1：玩家死亡（实体已回收）→ 清引用重新生成（尸体留在原地）
+    if (m_runOutcome != RunOutcome::None) {
+        return;
+    }
+    // M14-T8：单机玩家死亡（实体已回收）→ 结束本局并显示结算，不再原地自动重生。
     if (m_player != entt::null && !m_ctx.ecs->Alive(m_player)) {
-        ZL_INFO("game", "玩家实体已死亡，重新生成（旧实体 ID {}）",
+        ZL_INFO("game", "玩家实体已死亡，结束本局（旧实体 ID {}）",
                 m_ctx.ecs->IdOf(m_player).id);
         m_player = entt::null;
+        m_lastPlayerAnimEventSerial = 0;
         m_lastPlayerPathState = ecs::PathStatus::None;
         m_markerPathActive = false;
         m_lastMoveCommand = glm::vec2(0.0f, 0.0f);
@@ -941,6 +1001,8 @@ void WorldDemoState::EnsurePlayerSpawned() {
         if (m_ctx.ui != nullptr) {
             m_ctx.ui->CloseInventory();
         }
+        FinishRun(false);
+        return;
     }
     if (m_player != entt::null) {
         return;
@@ -950,8 +1012,7 @@ void WorldDemoState::EnsurePlayerSpawned() {
     if (m_player == entt::null) {
         return;
     }
-    m_footstepAnchorValid = false;
-    m_footstepDistance = 0.0f;
+    m_lastPlayerAnimEventSerial = 0;
     m_lastPlayerPathState = ecs::PathStatus::None;
     m_markerPathActive = false;
     m_lastMoveCommand = glm::vec2(0.0f, 0.0f);
@@ -968,6 +1029,13 @@ void WorldDemoState::SetNotice(std::string text, uint32_t color, float seconds) 
 
 void WorldDemoState::RefreshHud() {
     if (m_ctx.ui == nullptr || m_ctx.gameTime == nullptr) {
+        return;
+    }
+    if (m_runOutcome != RunOutcome::None) {
+        return;  // 结算页已接管；避免旧 HUD 状态覆盖/闪烁
+    }
+    UpdateObjective();
+    if (m_runOutcome != RunOutcome::None) {
         return;
     }
     ui::HudState hud;
@@ -999,9 +1067,25 @@ void WorldDemoState::RefreshHud() {
         if (const auto* needs = registry.try_get<ecs::Needs>(m_player); needs != nullptr) {
             hud.stamina = (1.0f - std::clamp(needs->fatigue, 0.0f, 1.0f)) * 100.0f;
             hud.staminaMax = 100.0f;
+            char status[112];
+            const char* prefix =
+                needs->warning >= 2 ? "危险 " : needs->warning == 1 ? "警告 " : "";
+            std::snprintf(status, sizeof(status), "%s饥饿 %d%%  口渴 %d%%  疲劳 %d%%", prefix,
+                          static_cast<int>(std::lround(
+                              std::clamp(needs->hunger, 0.0f, 1.0f) * 100.0f)),
+                          static_cast<int>(std::lround(
+                              std::clamp(needs->thirst, 0.0f, 1.0f) * 100.0f)),
+                          static_cast<int>(std::lround(
+                              std::clamp(needs->fatigue, 0.0f, 1.0f) * 100.0f)));
+            hud.needsValid = true;
+            hud.needsStatus = status;
+            hud.needsTone = needs->warning >= 2 ? "fail"
+                            : needs->warning == 1 ? "warn"
+                                                  : "info";
         } else {
             hud.stamina = 100.0f;
             hud.staminaMax = 100.0f;
+            hud.needsStatus = "状态 --";
         }
         if (const auto* container = registry.try_get<ecs::Container>(m_player);
             container != nullptr) {
@@ -1015,6 +1099,33 @@ void WorldDemoState::RefreshHud() {
                 hud.slots[i].count = entry.count;
             }
         }
+        if (!m_networkMode) {
+            if (const auto* objective = registry.try_get<ecs::Objective>(m_player);
+                objective != nullptr) {
+                const bool hasPart = PlayerHasRadioPart();
+                hud.objective = game::ObjectiveText(objective->step, hasPart, m_extractionX,
+                                                    m_extractionY);
+                hud.objectiveTone = game::ObjectiveTone(objective->step);
+                if (const auto* position = registry.try_get<ecs::Position>(m_player);
+                    position != nullptr) {
+                    const float dx = position->x - m_radioX;
+                    const float dy = position->y - m_radioY;
+                    if (dx * dx + dy * dy <=
+                        m_objectiveInteractRange * m_objectiveInteractRange) {
+                        if (objective->step == ecs::ObjectiveStep::RepairRadio) {
+                            hud.objectiveHint =
+                                hasPart ? "E 修理电台" : "缺少无线电零件";
+                        } else if (objective->step == ecs::ObjectiveStep::FindRadioPart) {
+                            hud.objectiveHint = "需要无线电零件";
+                        } else if (objective->step == ecs::ObjectiveStep::ReachExtraction) {
+                            hud.objectiveHint = "电台已修复";
+                        } else {
+                            hud.objectiveHint = "目标已完成";
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (networkState && m_player == entt::null) {
@@ -1023,6 +1134,7 @@ void WorldDemoState::RefreshHud() {
         hud.healthMax = m_networkHealthMax;
         hud.stamina = 100.0f;
         hud.staminaMax = 100.0f;
+        hud.needsStatus = "状态 --";
     }
     if (networkState && !m_networkPlayerAlive && m_noticeTimer <= 0.0f) {
         hud.notice = "等待复活";
@@ -1213,22 +1325,76 @@ void WorldDemoState::RefreshInventory() {
         }
     }
 
+    state.lootTitle = "附近地面";
     if (position != nullptr) {
-        const std::vector<game::GroundItemInfo> ground =
-            game::GroundItemsInRadius(*m_ctx.ecs, position->x, position->y, position->z,
-                                      m_inventoryRange);
-        state.lootStacks = static_cast<int>(ground.size());
-        const int lootCount =
-            std::min<int>(static_cast<int>(ground.size()), ui::kInventoryLootSlots);
-        for (int i = 0; i < lootCount; ++i) {
-            const game::GroundItemInfo& info = ground[static_cast<std::size_t>(i)];
-            const items::ItemDef* def = m_ctx.items->Find(info.item.defId);
-            ui::InventorySlot& slot = state.loot[static_cast<std::size_t>(i)];
-            slot.filled = true;
-            slot.label = def != nullptr ? def->name : info.item.defId;
-            slot.count = info.item.count;
-            slot.entityId = m_ctx.ecs->IdOf(info.entity).id;
-            slot.condition = info.item.condition;
+        const ecs::Entity groundEntity = game::FindNearestGroundItem(
+            *m_ctx.ecs, position->x, position->y, position->z, m_inventoryRange);
+        const ecs::Entity containerEntity = game::FindNearestLootContainer(
+            *m_ctx.ecs, position->x, position->y, position->z, m_inventoryRange);
+        bool useContainer = containerEntity != entt::null;
+        if (useContainer && groundEntity != entt::null) {
+            const auto* containerPosition =
+                registry.try_get<ecs::Position>(containerEntity);
+            const auto* groundPosition = registry.try_get<ecs::Position>(groundEntity);
+            if (containerPosition != nullptr && groundPosition != nullptr) {
+                const float cdx = containerPosition->x - position->x;
+                const float cdy = containerPosition->y - position->y;
+                const float gdx = groundPosition->x - position->x;
+                const float gdy = groundPosition->y - position->y;
+                useContainer = cdx * cdx + cdy * cdy < gdx * gdx + gdy * gdy;
+            }
+        }
+        if (useContainer) {
+            if (!m_networkMode && m_ctx.ui->IsInventoryOpen()) {
+                SearchNearbyLootContainer();
+            }
+            const auto* loot = registry.try_get<ecs::LootContainer>(containerEntity);
+            const auto* lootContainer =
+                registry.try_get<ecs::Container>(containerEntity);
+            if (loot != nullptr && lootContainer != nullptr) {
+                const items::LootTable* table =
+                    m_ctx.lootTables != nullptr
+                        ? m_ctx.lootTables->Find(loot->tableId)
+                        : nullptr;
+                state.lootTitle = "容器：" +
+                                  (table != nullptr ? table->name
+                                                    : std::string("未知容器"));
+                if (lootContainer->items.empty()) {
+                    state.lootTitle += "（空）";
+                }
+                state.lootStacks = static_cast<int>(lootContainer->items.size());
+                const int lootCount = std::min<int>(
+                    static_cast<int>(lootContainer->items.size()),
+                    ui::kInventoryLootSlots);
+                for (int i = 0; i < lootCount; ++i) {
+                    const ecs::ItemInstance& item =
+                        lootContainer->items[static_cast<std::size_t>(i)];
+                    const items::ItemDef* def = m_ctx.items->Find(item.defId);
+                    ui::InventorySlot& slot = state.loot[static_cast<std::size_t>(i)];
+                    slot.filled = true;
+                    slot.label = def != nullptr ? def->name : item.defId;
+                    slot.count = item.count;
+                    slot.entityId = m_ctx.ecs->IdOf(containerEntity).id;
+                    slot.condition = item.condition;
+                }
+            }
+        } else {
+            const std::vector<game::GroundItemInfo> ground =
+                game::GroundItemsInRadius(*m_ctx.ecs, position->x, position->y,
+                                          position->z, m_inventoryRange);
+            state.lootStacks = static_cast<int>(ground.size());
+            const int lootCount = std::min<int>(
+                static_cast<int>(ground.size()), ui::kInventoryLootSlots);
+            for (int i = 0; i < lootCount; ++i) {
+                const game::GroundItemInfo& info = ground[static_cast<std::size_t>(i)];
+                const items::ItemDef* def = m_ctx.items->Find(info.item.defId);
+                ui::InventorySlot& slot = state.loot[static_cast<std::size_t>(i)];
+                slot.filled = true;
+                slot.label = def != nullptr ? def->name : info.item.defId;
+                slot.count = info.item.count;
+                slot.entityId = m_ctx.ecs->IdOf(info.entity).id;
+                slot.condition = info.item.condition;
+            }
         }
     }
 
@@ -1305,18 +1471,66 @@ void WorldDemoState::EquipBagItem(int index, ecs::EquipSlot slot) {
     ZL_INFO("items", "装备（背包槽 {}）：{}", index, def->name);
 }
 
-void WorldDemoState::EquipLootItem(std::uint64_t stableId, ecs::EquipSlot slot) {
+void WorldDemoState::EquipLootItem(std::uint64_t stableId, ecs::EquipSlot slot,
+                                   int index) {
     if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_player == entt::null) {
         return;
     }
     const ecs::Entity entity = m_ctx.ecs->FindById(stableId);
-    if (entity == entt::null) {
+    if (entity == entt::null || !m_ctx.ecs->Alive(entity)) {
         return;
     }
     entt::registry& registry = m_ctx.ecs->Registry();
-    auto* instance = registry.try_get<ecs::ItemInstance>(entity);
     auto* equipment = registry.try_get<ecs::Equipment>(m_player);
-    if (instance == nullptr || equipment == nullptr) {
+    if (equipment == nullptr) {
+        return;
+    }
+
+    if (registry.all_of<ecs::LootContainer>(entity)) {
+        auto* source = registry.try_get<ecs::Container>(entity);
+        if (source == nullptr) {
+            return;
+        }
+        const int sourceIndex = index < 0 ? 0 : index;
+        if (static_cast<std::size_t>(sourceIndex) >= source->items.size()) {
+            SetNotice("容器物品不存在", kNoticeFailColor, 1.5f);
+            return;
+        }
+        const ecs::ItemInstance entry =
+            source->items[static_cast<std::size_t>(sourceIndex)];
+        const items::ItemDef* def = m_ctx.items->Find(entry.defId);
+        if (def == nullptr || !items::SlotAccepts(slot, def->type)) {
+            SetNotice("无法装备该物品", kNoticeFailColor, 1.5f);
+            return;
+        }
+        ecs::ItemInstance one = entry;
+        one.count = 1;
+        ecs::ItemInstance removed;
+        if (!items::TakeAt(*source, static_cast<std::size_t>(sourceIndex), 1,
+                           &removed)) {
+            return;
+        }
+        ecs::ItemInstance swapped;
+        if (!items::Equip(*equipment, *m_ctx.items, slot, one, &swapped)) {
+            (void)items::AddItem(*source, *m_ctx.items, removed);
+            SetNotice("装备失败", kNoticeFailColor, 1.5f);
+            return;
+        }
+        if (m_ctx.events != nullptr) {
+            m_ctx.events->EmitQueued(
+                core::kOnItemPickup,
+                core::ItemEvent{m_ctx.ecs->IdOf(entity).id, one.defId, 1});
+        }
+        if (swapped.Valid()) {
+            ReturnOrDropItem(swapped);
+        }
+        SetNotice("装备了 " + def->name, kNoticeOkColor, 1.5f);
+        ZL_INFO("items", "装备（容器）：{}", def->name);
+        return;
+    }
+
+    auto* instance = registry.try_get<ecs::ItemInstance>(entity);
+    if (instance == nullptr) {
         return;
     }
     const items::ItemDef* def = m_ctx.items->Find(instance->defId);
@@ -1594,12 +1808,12 @@ void WorldDemoState::DropEquipmentItem(int index) {
             def != nullptr ? def->name : removed.defId);
 }
 
-void WorldDemoState::PickupLootItem(std::uint64_t stableId) {
+void WorldDemoState::PickupLootItem(std::uint64_t stableId, int index) {
     if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_player == entt::null) {
         return;
     }
     const ecs::Entity entity = m_ctx.ecs->FindById(stableId);
-    if (entity == entt::null) {
+    if (entity == entt::null || !m_ctx.ecs->Alive(entity)) {
         return;
     }
     entt::registry& registry = m_ctx.ecs->Registry();
@@ -1607,6 +1821,44 @@ void WorldDemoState::PickupLootItem(std::uint64_t stableId) {
     if (container == nullptr) {
         return;
     }
+
+    if (registry.all_of<ecs::LootContainer>(entity)) {
+        const auto* source = registry.try_get<ecs::Container>(entity);
+        if (source == nullptr) {
+            return;
+        }
+        const int slot = index < 0 ? 0 : index;
+        const game::LootTakeResult result = game::TakeLootContainerItem(
+            *m_ctx.ecs, *m_ctx.items, entity, *container, slot);
+        if (!result.found) {
+            SetNotice("容器里没有可拿取的物品", kNoticeInfoColor, 1.5f);
+            return;
+        }
+        const items::ItemDef* def = m_ctx.items->Find(result.defId);
+        const std::string name = def != nullptr ? def->name : result.defId;
+        if (result.taken > 0) {
+            if (result.remaining > 0) {
+                SetNotice("取出了 " + name + " ×" + std::to_string(result.taken) +
+                              "（容器剩 " + std::to_string(result.remaining) + "）",
+                          kNoticeOkColor, 2.0f);
+            } else {
+                SetNotice("取出了 " + name + " ×" + std::to_string(result.taken),
+                          kNoticeOkColor, 2.0f);
+            }
+            if (m_ctx.events != nullptr) {
+                m_ctx.events->EmitQueued(
+                    core::kOnItemPickup,
+                    core::ItemEvent{m_ctx.ecs->IdOf(entity).id, result.defId,
+                                    result.taken});
+            }
+            ZL_INFO("items", "拾取（容器）：{} x{}（容器剩余 {}）", name, result.taken,
+                    result.remaining);
+        } else {
+            SetNotice("背包已满", kNoticeFailColor, 1.5f);
+        }
+        return;
+    }
+
     const game::PickupResult result =
         game::PickupGroundItem(*m_ctx.ecs, *m_ctx.items, *container, entity);
     if (!result.found) {
@@ -1758,7 +2010,7 @@ bool WorldDemoState::ExecutePlayerCommand(const net::Command& command, std::stri
             PickupNearestItem();
             return true;
         case net::CommandType::PickupEntity:
-            PickupLootItem(command.payload.entityId);
+            PickupLootItem(command.payload.entityId, command.payload.index);
             return true;
         case net::CommandType::UseBag:
             if (command.payload.index < 0) {
@@ -2089,12 +2341,13 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
                 DropEquipmentItem(action.fromIndex);
             } else if (action.from == ui::InventoryArea::Loot &&
                        action.to == ui::InventoryArea::Backpack) {
-                PickupLootItem(action.fromEntityId);
+                PickupLootItem(action.fromEntityId, action.fromIndex);
             } else if (action.from == ui::InventoryArea::Loot &&
                        action.to == ui::InventoryArea::Equipment) {
                 if (action.toIndex >= 0 && action.toIndex < ui::kInventoryEquipmentSlots) {
                     EquipLootItem(action.fromEntityId,
-                                  static_cast<ecs::EquipSlot>(action.toIndex));
+                                  static_cast<ecs::EquipSlot>(action.toIndex),
+                                  action.fromIndex);
                 }
             }
             break;
@@ -2139,7 +2392,7 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
             RepairBagItem(action.fromIndex);
             break;
         case ui::InventoryActionType::Pickup:
-            PickupLootItem(action.fromEntityId);
+            PickupLootItem(action.fromEntityId, action.fromIndex);
             break;
         case ui::InventoryActionType::Craft: {
             if (m_ctx.recipes == nullptr) {
@@ -2826,6 +3079,290 @@ void WorldDemoState::EnsureDemoItemsScattered() {
     ZL_INFO("items", "地面物品散落：{} 处（村庄附近；F 拾取最近）", spawned);
 }
 
+void WorldDemoState::EnsureDemoLootContainers() {
+    if (m_networkMode || m_demoLootContainersSpawned || m_ctx.ecs == nullptr ||
+        m_ctx.lootTables == nullptr || m_ctx.lootTables->Size() == 0) {
+        return;
+    }
+    const world::ChunkCoord targetChunk = world::ChunkOf(70, 24);
+    const world::Chunk* target = FindChunk(targetChunk.cx, targetChunk.cy);
+    if (target == nullptr || target->State() != world::ChunkState::Loaded) {
+        return;
+    }
+    if (m_ctx.world == nullptr) {
+        return;
+    }
+    const int spawned = game::SpawnDemoLootContainers(
+        *m_ctx.ecs, *m_ctx.lootTables, *m_ctx.world, 70.0f, 24.0f);
+    m_demoLootContainersSpawned = true;
+    ZL_INFO("items", "战利品容器生成：{} 个（村庄附近；打开背包搜索）", spawned);
+}
+
+void WorldDemoState::EnsureHouseLootContainers() {
+    if (m_networkMode || m_houseLootContainersSpawned || m_ctx.ecs == nullptr ||
+        m_ctx.lootTables == nullptr || m_ctx.lootTables->Size() == 0) {
+        return;
+    }
+    const world::ChunkCoord targetChunk = world::ChunkOf(72, 21);
+    const world::Chunk* target = FindChunk(targetChunk.cx, targetChunk.cy);
+    if (target == nullptr || target->State() != world::ChunkState::Loaded) {
+        return;
+    }
+    if (m_ctx.world == nullptr) {
+        return;
+    }
+    const int spawned = game::SpawnHouseLootContainers(
+        *m_ctx.ecs, *m_ctx.lootTables, *m_ctx.world);
+    m_houseLootContainersSpawned = true;
+    if (spawned > 0) {
+        ZL_INFO("items", "房屋战利品容器生成：{} 个（屋内 workshop/kitchen/crate）", spawned);
+    }
+}
+
+void WorldDemoState::SearchNearbyLootContainer() {
+    if (m_networkMode || m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
+        m_ctx.lootTables == nullptr || m_player == entt::null) {
+        return;
+    }
+    const auto* position = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    const ecs::Entity container = game::FindNearestLootContainer(
+        *m_ctx.ecs, position->x, position->y, position->z, m_inventoryRange);
+    if (container == entt::null) {
+        return;
+    }
+    const auto* loot =
+        m_ctx.ecs->Registry().try_get<ecs::LootContainer>(container);
+    if (loot == nullptr || loot->searched) {
+        return;
+    }
+    const game::LootSearchResult result =
+        game::SearchLootContainer(*m_ctx.ecs, *m_ctx.items, *m_ctx.lootTables,
+                                  container);
+    if (!result.found) {
+        return;
+    }
+    const items::LootTable* table = m_ctx.lootTables->Find(result.tableId);
+    const std::string name = table != nullptr ? table->name : "容器";
+    if (!result.error.empty()) {
+        SetNotice("搜索失败：" + result.error, kNoticeFailColor, 2.5f);
+        ZL_WARN("items", "搜索容器失败：{}", result.error);
+        return;
+    }
+    if (!result.searchedNow) {
+        return;
+    }
+    if (result.totalItems > 0) {
+        SetNotice("搜索了" + name + "：发现 " + std::to_string(result.totalItems) +
+                      " 件物品",
+                  kNoticeOkColor, 2.5f);
+    } else {
+        SetNotice("搜索了" + name + "：空的", kNoticeInfoColor, 2.0f);
+    }
+}
+
+bool WorldDemoState::PlayerHasRadioPart() const {
+    if (m_ctx.ecs == nullptr || m_player == entt::null || m_ctx.items == nullptr) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    if (const auto* container = registry.try_get<ecs::Container>(m_player);
+        container != nullptr && items::CountOf(*container, m_radioPartDefId) > 0) {
+        return true;
+    }
+    if (const auto* equipment = registry.try_get<ecs::Equipment>(m_player);
+        equipment != nullptr) {
+        for (const auto& slot : equipment->slots) {
+            if (slot.has_value() && slot->defId == m_radioPartDefId) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool WorldDemoState::RadioPartExistsInWorld() const {
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    bool found = false;
+    registry.view<ecs::Container>().each(
+        [&](const ecs::Entity entity, const ecs::Container& container) {
+            if (!found && m_ctx.ecs->Alive(entity) &&
+                items::CountOf(container, m_radioPartDefId) > 0) {
+                found = true;
+            }
+        });
+    if (found) {
+        return true;
+    }
+    registry.view<ecs::ItemInstance>().each(
+        [&](const ecs::Entity entity, const ecs::ItemInstance& item) {
+            if (!found && m_ctx.ecs->Alive(entity) && item.defId == m_radioPartDefId) {
+                found = true;
+            }
+        });
+    if (found) {
+        return true;
+    }
+    registry.view<ecs::Equipment>().each([&](const ecs::Equipment& equipment) {
+        for (const auto& slot : equipment.slots) {
+            if (!found && slot.has_value() && slot->defId == m_radioPartDefId) {
+                found = true;
+            }
+        }
+    });
+    return found;
+}
+
+std::string WorldDemoState::BuildRunStats() const {
+    std::ostringstream out;
+    if (m_ctx.gameTime != nullptr) {
+        const auto& now = m_ctx.gameTime->Now();
+        const int day =
+            1 + static_cast<int>(m_ctx.gameTime->TotalGameMinutes() / (24.0 * 60.0));
+        char timeText[16];
+        std::snprintf(timeText, sizeof(timeText), "%02d:%02d", now.hour, now.minute);
+        out << "生存：第 " << day << " 天 " << timeText << "<br/>";
+    }
+    const characters::CombatSystem::Stats stats =
+        m_ctx.combat != nullptr ? m_ctx.combat->GetStats()
+                                : characters::CombatSystem::Stats{};
+    out << "击杀：" << stats.kills << " 只僵尸<br/>";
+    out << "造成伤害：" << static_cast<long long>(std::lround(stats.damageDealt));
+    return out.str();
+}
+
+void WorldDemoState::FinishRun(bool victory) {
+    if (m_runOutcome != RunOutcome::None) {
+        return;
+    }
+    m_runOutcome = victory ? RunOutcome::Escaped : RunOutcome::Dead;
+    // 结算后不再自动存档，避免把已结束/已死亡的一局写成可继续的快速档。
+    m_autoSaveOnExit = false;
+    if (m_ctx.gameTime != nullptr) {
+        m_ctx.gameTime->SetSpeed(core::GameTime::Speed::Paused);
+    }
+    const std::string title = victory ? "成功撤离" : "你死了";
+    const std::string subtitle =
+        victory ? "无线电已修复，你在撤离点等到了救援。"
+                : "你倒在了尸潮中。世界不会为你停下。";
+    if (m_ctx.ui != nullptr) {
+        m_ctx.ui->CloseInventory();
+        m_ctx.ui->ShowEndScreen(victory, title, subtitle, BuildRunStats());
+    }
+    int day = 1;
+    int hour = 0;
+    int minute = 0;
+    if (m_ctx.gameTime != nullptr) {
+        day = 1 + static_cast<int>(m_ctx.gameTime->TotalGameMinutes() / (24.0 * 60.0));
+        hour = m_ctx.gameTime->Now().hour;
+        minute = m_ctx.gameTime->Now().minute;
+    }
+    ZL_INFO("game", "单机局结束：{}（第 {} 天 {:02d}:{:02d}）",
+            victory ? "撤离成功" : "死亡", day, hour, minute);
+}
+
+void WorldDemoState::UpdateObjective() {
+    if (m_networkMode || m_runOutcome != RunOutcome::None || m_ctx.ecs == nullptr ||
+        m_ctx.items == nullptr || m_player == entt::null) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* objective = registry.try_get<ecs::Objective>(m_player);
+    if (objective == nullptr) {
+        objective = &registry.emplace<ecs::Objective>(m_player);
+    }
+    const auto* position = registry.try_get<ecs::Position>(m_player);
+    const bool hasPart = PlayerHasRadioPart();
+    const auto before = objective->step;
+    const bool atExtraction =
+        position != nullptr &&
+        (position->x - m_extractionX) * (position->x - m_extractionX) +
+                (position->y - m_extractionY) * (position->y - m_extractionY) <=
+            m_extractionRadius * m_extractionRadius;
+    objective->step = game::AdvanceObjective(objective->step, hasPart, atExtraction);
+
+    if (objective->step == ecs::ObjectiveStep::RepairRadio && !hasPart &&
+        !RadioPartExistsInWorld()) {
+        if (game::SpawnGroundItem(*m_ctx.ecs, *m_ctx.items,
+                                  ecs::ItemInstance{m_radioPartDefId, 1, 1.0f},
+                                  m_radioX + 0.6f, m_radioY + 0.6f, 0) != entt::null) {
+            SetNotice("无线电零件掉落在电台旁", kNoticeInfoColor, 3.0f);
+            ZL_INFO("objective", "玩家失去无线电零件，已在电台旁补充");
+        }
+    }
+
+    if (objective->step != before) {
+        SetNotice(game::ObjectiveText(objective->step, hasPart, m_extractionX,
+                                      m_extractionY),
+                  objective->step == ecs::ObjectiveStep::Complete ? kNoticeOkColor
+                                                                  : kNoticeInfoColor,
+                  objective->step == ecs::ObjectiveStep::Complete ? 5.0f : 3.0f);
+        ZL_INFO("objective", "目标推进：{}", game::ObjectiveStepName(objective->step));
+    }
+    if (objective->step == ecs::ObjectiveStep::Complete &&
+        before != ecs::ObjectiveStep::Complete) {
+        FinishRun(true);
+    }
+}
+
+bool WorldDemoState::TryInteractRadio() {
+    if (m_networkMode || m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
+        m_player == entt::null) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* position = registry.try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return false;
+    }
+    const float dx = position->x - m_radioX;
+    const float dy = position->y - m_radioY;
+    if (dx * dx + dy * dy > m_objectiveInteractRange * m_objectiveInteractRange) {
+        return false;
+    }
+
+    auto* objective = registry.try_get<ecs::Objective>(m_player);
+    if (objective == nullptr) {
+        objective = &registry.emplace<ecs::Objective>(m_player);
+    }
+    if (objective->step == ecs::ObjectiveStep::FindRadioPart &&
+        PlayerHasRadioPart()) {
+        objective->step = ecs::ObjectiveStep::RepairRadio;
+    }
+    if (objective->step == ecs::ObjectiveStep::FindRadioPart) {
+        SetNotice("电台缺少无线电零件，先搜刮屋内工具柜", kNoticeFailColor, 2.5f);
+        return true;
+    }
+    if (objective->step == ecs::ObjectiveStep::RepairRadio) {
+        if (!PlayerHasRadioPart()) {
+            SetNotice("缺少无线电零件", kNoticeFailColor, 2.0f);
+            return true;
+        }
+        auto* container = registry.try_get<ecs::Container>(m_player);
+        if (container == nullptr ||
+            items::RemoveItem(*container, m_radioPartDefId, 1) != 1) {
+            SetNotice("无法使用无线电零件", kNoticeFailColor, 2.0f);
+            return true;
+        }
+        objective->step = ecs::ObjectiveStep::ReachExtraction;
+        SetNotice("电台修复完成！前往撤离点", kNoticeOkColor, 4.0f);
+        ZL_INFO("objective", "电台已修复，目标推进：{}",
+                game::ObjectiveStepName(objective->step));
+        return true;
+    }
+    if (objective->step == ecs::ObjectiveStep::ReachExtraction) {
+        SetNotice("电台已修复，前往撤离点", kNoticeInfoColor, 2.0f);
+        return true;
+    }
+    SetNotice("目标已完成", kNoticeOkColor, 2.0f);
+    return true;
+}
+
 void WorldDemoState::PickupNearestItem() {
     if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_player == entt::null) {
         return;
@@ -3051,14 +3588,22 @@ void WorldDemoState::AppendActorPresentation() {
         [&](const ecs::Entity entity, const ecs::Position& pos,
             const ecs::SpriteRef&) {
             const std::uint64_t stableId = m_ctx.ecs->IdOf(entity).id;
+            const auto* action = registry.try_get<ecs::ActionState>(entity);
+            const auto* facing = registry.try_get<ecs::Facing>(entity);
+            const auto* anim = registry.try_get<ecs::AnimState>(entity);
             if (const auto* equipment = registry.try_get<ecs::Equipment>(entity);
                 equipment != nullptr) {
                 const auto& primary =
                     equipment->slots[static_cast<std::size_t>(
                         ecs::EquipSlot::PrimaryHand)];
                 if (primary.has_value()) {
-                    pushIcon(pos, stableId, primary->defId, 1, 16.0f, -36.0f,
-                             1.0f, 0xFFFFFFFFu);
+                    const characters::WeaponSocketOffset socket =
+                        characters::PrimaryHandSocket(
+                            facing != nullptr ? facing->dir : ecs::Direction::Down,
+                            action != nullptr ? action->action : ecs::ActorAction::Idle,
+                            anim != nullptr ? anim->frame : 0);
+                    pushIcon(pos, stableId, primary->defId, 1, socket.x, socket.y,
+                             socket.scale, 0xFFFFFFFFu);
                 }
                 const auto& body =
                     equipment->slots[static_cast<std::size_t>(ecs::EquipSlot::Body)];
@@ -3068,8 +3613,6 @@ void WorldDemoState::AppendActorPresentation() {
                 }
             }
 
-            const auto* action = registry.try_get<ecs::ActionState>(entity);
-            const auto* facing = registry.try_get<ecs::Facing>(entity);
             if (action == nullptr || facing == nullptr) {
                 return;
             }
@@ -3177,6 +3720,14 @@ void WorldDemoState::HandleMenuAction(ui::MenuActionType action) {
                 ZL_INFO("ui", "离开联机会话，返回主菜单");
                 break;
             }
+            if (m_runOutcome != RunOutcome::None) {
+                // 结算页不能把已结束的世界作为“继续”恢复；回到真正的主菜单。
+                if (m_ctx.states != nullptr) {
+                    m_ctx.states->SetState(std::make_unique<MainMenuState>(m_ctx));
+                }
+                ZL_INFO("ui", "结算结束，返回主菜单");
+                break;
+            }
             if (m_ctx.ui != nullptr) {
                 m_ctx.ui->ShowMainMenu(true);
                 ZL_INFO("ui", "返回主菜单（当前世界保留，可继续）");
@@ -3205,7 +3756,8 @@ void WorldDemoState::OnExit() {
     m_ctx.executePlayerCommand = {};
     m_ctx.onSaveFinished = {};
     m_ctx.quickSave = {};
-    if (m_autoSaveOnExit && m_player != entt::null && m_ctx.ecs != nullptr &&
+    if (m_autoSaveOnExit && m_runOutcome == RunOutcome::None &&
+        m_player != entt::null && m_ctx.ecs != nullptr &&
         m_ctx.ecs->Alive(m_player) && m_ctx.saveService != nullptr) {
         if (m_screenshotPending) {
             m_screenshotPending = false;
@@ -3265,64 +3817,62 @@ void WorldDemoState::OnExit() {
 void WorldDemoState::UpdateAudio(double frameDt) {
     (void)frameDt;
     if (m_ctx.ecs == nullptr || m_player == entt::null) {
-        m_footstepAnchorValid = false;
         return;
     }
-    const auto* position = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
-    if (position == nullptr) {
-        m_footstepAnchorValid = false;
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* position = registry.try_get<ecs::Position>(m_player);
+    const auto* anim = registry.try_get<ecs::AnimState>(m_player);
+    if (position == nullptr || anim == nullptr) {
         return;
     }
-    const glm::vec2 current{position->x, position->y};
-    if (!m_footstepAnchorValid) {
-        m_footstepAnchor = current;
-        m_footstepAnchorValid = true;
-        m_footstepDistance = 0.0f;
+    if (anim->eventSerial == m_lastPlayerAnimEventSerial) {
         return;
     }
-    const glm::vec2 delta = current - m_footstepAnchor;
-    const float moved = std::sqrt(delta.x * delta.x + delta.y * delta.y);
-    m_footstepAnchor = current;
-    if (moved > 2.0f) {  // 传送/读档落位：不补一大串脚步
-        m_footstepDistance = 0.0f;
-        return;
-    }
+    m_lastPlayerAnimEventSerial = anim->eventSerial;
 
     const bool paused = m_menuPaused ||
                         (m_ctx.ui != nullptr && m_ctx.ui->IsMenuOpen()) ||
                         (m_ctx.gameTime != nullptr && m_ctx.gameTime->SpeedScale() <= 0.0);
-    if (paused || moved <= 0.0001f) {
+    if (paused || anim->lastEvent == ecs::AnimEvent::None) {
         return;
     }
-    m_footstepDistance += moved;
-    if (m_footstepDistance < m_footstepStride) {
-        return;
-    }
-    m_footstepDistance = std::fmod(m_footstepDistance, m_footstepStride);
 
-    std::string_view floorSprite = "tile.floor.grass";
-    if (m_ctx.world != nullptr) {
-        const int wx = static_cast<int>(std::floor(current.x));
-        const int wy = static_cast<int>(std::floor(current.y));
-        if (const world::GridSquare* square = m_ctx.world->GetSquare(wx, wy, 0);
-            square != nullptr) {
-            if (const world::SquareObject* floorObject = square->Floor();
-                floorObject != nullptr && !floorObject->sprite.empty()) {
-                floorSprite = floorObject->sprite;
+    if (anim->lastEvent == ecs::AnimEvent::Footstep) {
+        std::string_view floorSprite = "tile.floor.grass";
+        if (m_ctx.world != nullptr) {
+            const int wx = static_cast<int>(std::floor(position->x));
+            const int wy = static_cast<int>(std::floor(position->y));
+            if (const world::GridSquare* square = m_ctx.world->GetSquare(wx, wy, 0);
+                square != nullptr) {
+                if (const world::SquareObject* floorObject = square->Floor();
+                    floorObject != nullptr && !floorObject->sprite.empty()) {
+                    floorSprite = floorObject->sprite;
+                }
             }
         }
-    }
-
-    core::SoundEvent step;
-    step.x = current.x;
-    step.y = current.y;
-    step.radius = 2.5f;
-    step.type = core::SoundType::Footstep;
-    step.clip = std::string(audio::FootstepClipForFloor(floorSprite));
-    if (m_ctx.audio != nullptr) {
-        m_ctx.audio->EmitWorldSound(std::move(step));
-    } else if (m_ctx.events != nullptr) {
-        m_ctx.events->EmitQueued(core::kOnSound, std::move(step));
+        core::SoundEvent step;
+        step.x = position->x;
+        step.y = position->y;
+        step.radius = 2.5f;
+        step.type = core::SoundType::Footstep;
+        step.clip = std::string(audio::FootstepClipForFloor(floorSprite));
+        if (m_ctx.audio != nullptr) {
+            m_ctx.audio->EmitWorldSound(std::move(step));
+        } else if (m_ctx.events != nullptr) {
+            m_ctx.events->EmitQueued(core::kOnSound, std::move(step));
+        }
+    } else if (anim->lastEvent == ecs::AnimEvent::Hit) {
+        core::SoundEvent hit;
+        hit.x = position->x;
+        hit.y = position->y;
+        hit.radius = 5.0f;
+        hit.type = core::SoundType::Impact;
+        hit.clip = audio::kImpact;
+        if (m_ctx.audio != nullptr) {
+            m_ctx.audio->EmitWorldSound(std::move(hit));
+        } else if (m_ctx.events != nullptr) {
+            m_ctx.events->EmitQueued(core::kOnSound, std::move(hit));
+        }
     }
 }
 
@@ -3381,6 +3931,8 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     // M6-T3：玩家就绪后散落地面物品（网络客户端不持有权威世界物品）
     if (!m_networkMode) {
         EnsureDemoItemsScattered();
+        EnsureDemoLootContainers();
+        EnsureHouseLootContainers();
     }
     // M11-T3：脚步/地面材质 → OnSound（音频 + AI 听觉）
     UpdateAudio(frameDt);
@@ -3397,6 +3949,7 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     // M6-T5：手持武器（装备槽 → 玩家旁图标；画在同格角色之上）
     AppendActorPresentation();
     std::sort(m_items.begin(), m_items.end(), render::DrawItemLess);
+    ApplyWallOcclusion();
     const auto afterSort = Clock::now();
     DrawWorld();
     const auto afterWorldDraw = Clock::now();
@@ -3649,9 +4202,11 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
         SubmitPlayerCommand(MakePlayerCommand(net::CommandType::PickupNearest));
     }
     if (input.IsActionPressed("Use")) {
-        net::Command command = MakePlayerCommand(net::CommandType::UseBag);
-        command.payload.index = -1;
-        SubmitPlayerCommand(command);
+        if (!TryInteractRadio()) {
+            net::Command command = MakePlayerCommand(net::CommandType::UseBag);
+            command.payload.index = -1;
+            SubmitPlayerCommand(command);
+        }
     }
     if (input.IsActionPressed("Equip")) {
         net::Command command = MakePlayerCommand(net::CommandType::EquipBag);
@@ -3787,7 +4342,7 @@ world::Chunk* WorldDemoState::FindChunk(int chunkX, int chunkY) const {
 }
 
 void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int wy, int z,
-                                world::SquareLayer layer) {
+                                world::SquareLayer layer, int roomId) {
     if (m_cachedSprite.empty() || object.sprite != m_cachedSprite) {
         m_cachedSprite = object.sprite;
         m_cachedFrames = m_ctx.assets->Frames(object.sprite);
@@ -3821,6 +4376,7 @@ void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int w
     item.gx = wx;
     item.layer = static_cast<int>(layer);
     item.tieBreaker = 0;  // 世界对象同格同层视为无序（0）
+    item.roomId = roomId;
     m_items.push_back(item);
 }
 
@@ -3884,11 +4440,13 @@ void WorldDemoState::CollectWorld() {
                         if (square.IsEmpty()) {
                             continue;
                         }
+                        // 所有层共用地面格的房间 ID；室内剖切据此只隐藏当前房间上方的楼层。
+                        const int groundRoomId = chunk->Square(lx, ly, 0).RoomId();
                         for (int layerIndex = 0; layerIndex < world::kSquareLayerCount;
                              ++layerIndex) {
                             const auto layer = static_cast<world::SquareLayer>(layerIndex);
                             for (const world::SquareObject& object : square.Layer(layer)) {
-                                PushObject(object, wx, wy, z, layer);
+                                PushObject(object, wx, wy, z, layer, groundRoomId);
                             }
                         }
                     }
@@ -3898,6 +4456,143 @@ void WorldDemoState::CollectWorld() {
     }
 
     // 排序：地面批 + 对象批统一画家序（含 M4-T2 追加的实体高度精灵），见 OnFrame
+}
+
+int WorldDemoState::RoomIdAt(int wx, int wy, int z) const {
+    if (m_ctx.world == nullptr) {
+        return -1;
+    }
+    const world::ChunkCoord cc = world::ChunkOf(wx, wy);
+    const world::Chunk* chunk = FindChunk(cc.cx, cc.cy);
+    if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
+        return -1;
+    }
+    const world::SquareLocal local = world::SquareLocalOf(wx, wy);
+    return chunk->Square(local.lx, local.ly, z).RoomId();
+}
+
+int WorldDemoState::PlayerRoomId() const {
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return -1;
+    }
+    const auto* pos = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (pos == nullptr || pos->z != 0 || !std::isfinite(pos->x) || !std::isfinite(pos->y)) {
+        return -1;
+    }
+    const int cx = static_cast<int>(std::floor(pos->x));
+    const int cy = static_cast<int>(std::floor(pos->y));
+    const int direct = RoomIdAt(cx, cy, 0);
+    if (direct >= 0) {
+        return direct;
+    }
+
+    // 角色贴墙/卡在房间角落时，碰撞体会把中心推到墙格（地面格 RoomId=-1），
+    // 但身体仍有一部分在房间里。此时在 3×3 格内找最近的有房间 ID 的格，
+    // 距离限制约一个碰撞半径，避免站在屋外也误触发剖切。
+    constexpr float kRoomProbeDistance = 0.75f;
+    constexpr float kRoomProbeDistanceSq = kRoomProbeDistance * kRoomProbeDistance;
+    int nearestRoom = -1;
+    float nearestDistSq = kRoomProbeDistanceSq;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            const int wx = cx + dx;
+            const int wy = cy + dy;
+            if (RoomIdAt(wx, wy, 0) < 0) {
+                continue;
+            }
+            const float nearestX =
+                std::clamp(pos->x, static_cast<float>(wx), static_cast<float>(wx + 1));
+            const float nearestY =
+                std::clamp(pos->y, static_cast<float>(wy), static_cast<float>(wy + 1));
+            const float ddx = pos->x - nearestX;
+            const float ddy = pos->y - nearestY;
+            const float distSq = ddx * ddx + ddy * ddy;
+            if (distSq <= nearestDistSq) {
+                nearestDistSq = distSq;
+                nearestRoom = RoomIdAt(wx, wy, 0);
+            }
+        }
+    }
+    return nearestRoom;
+}
+
+void WorldDemoState::CutawayRoomWalls(int roomId, std::size_t playerIndex) {
+    if (roomId < 0) {
+        return;
+    }
+    for (std::size_t i = 0; i < m_items.size(); ++i) {
+        render::DrawItem& item = m_items[i];
+        if (item.stage != 1) {
+            continue;
+        }
+        if (item.z == 0) {
+            // 地面层只切玩家前方（画家序之后）的边界墙。
+            if (i <= playerIndex ||
+                item.layer != static_cast<int>(world::SquareLayer::Wall)) {
+                continue;
+            }
+        } else if (item.z >= 1) {
+            // 楼上没有独立房间 ID：地基格是墙时取四邻接房间，剖掉房间边界上的楼上墙。
+            if (item.layer != static_cast<int>(world::SquareLayer::Wall) ||
+                item.roomId == roomId) {
+                continue;  // 本房间上方楼板，已由 CutawayUpperLayersInRoom 处理
+            }
+        } else {
+            continue;
+        }
+        const int wx = item.gx;
+        const int wy = item.diag - item.gx;
+        // 用 3×3 邻域而不是四邻接：房屋外墙的转角格只与房间对角相邻，
+        // 站在房间角落时仍会挡住角色，必须一起剖掉。
+        bool touchesRoom = false;
+        for (int dy = -1; dy <= 1 && !touchesRoom; ++dy) {
+            for (int dx = -1; dx <= 1 && !touchesRoom; ++dx) {
+                touchesRoom = RoomIdAt(wx + dx, wy + dy, 0) == roomId;
+            }
+        }
+        if (!touchesRoom) {
+            continue;
+        }
+        item.color &= 0x00FFFFFFu;
+    }
+}
+
+void WorldDemoState::ApplyWallOcclusion() {
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return;
+    }
+    const auto* pos = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (pos == nullptr || pos->z != 0) {
+        return;
+    }
+    const std::uint64_t playerId = m_ctx.ecs->IdOf(m_player).id;
+    std::size_t playerIndex = m_items.size();
+    const render::DrawItem* playerItem = nullptr;
+    for (std::size_t i = 0; i < m_items.size(); ++i) {
+        const render::DrawItem& item = m_items[i];
+        if (item.layer >= RenderCollectSystem::kEntityLayerBase &&
+            item.tieBreaker == playerId) {
+            playerIndex = i;
+            playerItem = &item;
+            break;
+        }
+    }
+    if (playerItem == nullptr) {
+        return;
+    }
+    if (m_roomCutaway) {
+        const int roomId = PlayerRoomId();
+        if (roomId >= 0) {
+            // 房间内：先剖掉本房间上方楼层，再移除玩家前方/相交的边界墙（含楼上边界墙）。
+            RenderCollectSystem::CutawayUpperLayersInRoom(roomId, m_items);
+            CutawayRoomWalls(roomId, playerIndex);
+            RenderCollectSystem::FadeOccludingWalls(playerItem->rect, playerIndex, 0, m_items);
+            return;
+        }
+    }
+    const std::uint32_t alpha = static_cast<std::uint32_t>(
+        std::clamp(m_wallOcclusionAlpha, 0.05f, 1.0f) * 255.0f + 0.5f);
+    RenderCollectSystem::FadeOccludingWalls(playerItem->rect, playerIndex, alpha, m_items);
 }
 
 void WorldDemoState::DrawWorld() {

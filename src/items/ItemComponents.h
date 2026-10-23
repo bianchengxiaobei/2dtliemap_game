@@ -27,6 +27,14 @@ struct Container {
     float capacityKg = 20.0f;  // 重量上限（kg）
 };
 
+// M14-T5：可搜刮容器。Container 负责物品/容量，本组件负责一次性 roll 与存档状态。
+// tableId 指向 assets/loot.json；rollSeed 首搜时落定，保证固定种子可复现且读档后不再重 roll。
+struct LootContainer {
+    std::string tableId;
+    std::uint64_t rollSeed = 0;
+    bool searched = false;
+};
+
 // M6-T2：装备槽（M6 最小集；扩展 = 加枚举值 + SlotAccepts 规则 + 渲染挂点）
 enum class EquipSlot : std::uint8_t {
     PrimaryHand = 0,  // 主手（仅武器）

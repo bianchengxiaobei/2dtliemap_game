@@ -26,7 +26,7 @@
 项目在 <项目根目录>（本机 E:\Game\ZomboidLike）。请按顺序读：
 README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md → docs/02-技术选型与开发规范.md
 （涉及脚本系统时再读 docs/03-脚本系统设计.md；涉及占位资源时读 assets_placeholder_pz/README.md）。
-以 docs/01 的任务清单为唯一任务依据，M1–M12 已完成，当前从 M13 联机基础开始（T1 KCP 传输、T2 会话握手、T3 无窗口 ServerHost、T4 实体复制层、T5 双客户端垂直切片、T6 安全与容错、T7 服务器权威背包/世界交互、T8 玩家持久化、T9 联机入口与聊天/玩家列表、T10 远程装备/动作/投射物复制已完成）；写代码遵守 docs/02 的规范；
+以 docs/01 的任务清单为唯一任务依据，M1–M13 已完成，M14 可玩性垂直切片已完成（T1–T10：建筑遮挡、动画 v2、Needs、Loot、室内 POI/目标链、僵尸变体、结算、端到端验收、室内剖切）；下一步 M15 战斗与生存 2.0 已规划、待开始；写代码遵守 docs/02 的规范；
 构建命令走 tools/dev.ps1（Ninja 需要 MSVC 环境，如 .\tools\dev.ps1 cmake --build --preset x64-debug）；
 每完成一个任务把清单里对应项勾上，Git 提交信息带任务号（如 feat(render): sprite batch (M2-T3)）。
 ```
@@ -35,7 +35,7 @@ README.md → docs/00-架构总览.md → docs/01-里程碑与任务清单.md �
 
 1. **README.md（本文件）** —— 全局视图、入口
 2. **docs/00-架构总览.md** —— 动手前通读（分层/世界模型/ECS/渲染/决策记录）
-3. **docs/01-里程碑与任务清单.md** —— ★ 每天的任务依据（当前进度：M1–M12 已完成；M13-T1 KCP 传输、T2 会话握手、T3 无窗口 ServerHost、T4 实体复制层、T5 双客户端垂直切片、T6 安全与容错、T7 服务器权威背包/世界交互、T8 玩家持久化、T9 联机入口与聊天/玩家列表、T10 远程装备/动作/投射物复制已完成；M0 仅剩跨机验收）；**docs/modding.md** —— 玩家 mod 开发指南（API v1，Lua/Python）
+3. **docs/01-里程碑与任务清单.md** —— ★ 每天的任务依据（当前进度：M1–M13 已完成；M14 已完成（T1–T10，用户实机验收 2026-10-23）；M15 战斗与生存 2.0 已规划、待开始；M0 仅剩跨机验收）；**docs/modding.md** —— 玩家 mod 开发指南（API v1，Lua/Python）
 4. **docs/02-技术选型与开发规范.md** —— 建工程、写代码前（依赖/目录/编码规范/占位资源策略）
 5. **docs/03-脚本系统设计.md** —— M7/M8 阶段再读
 6. **assets_placeholder_pz/README.md** —— 用占位资源、重新解包 PZ 纹理时读
@@ -89,12 +89,12 @@ Debug（`x64-debug`）是 `/Od` 无优化构建，240+ 敌人时帧率会明显�
 .\build\x64-debug\ZomboidLike.exe --server --server.ticks=180
 ```
 
-双客户端联机（M13-T5）：先启动服务器，再启动两个客户端（默认 `127.0.0.1:7777`，两侧 `net.contentHash` 必须一致）：
+双客户端联机（M13-T5）：先启动服务器，再启动两个客户端（默认 `127.0.0.1:7777`，两侧 `net.contentHash` 必须一致）。同一台机器开两个客户端时**必须给每个客户端不同的 `net.playerIdentity`**；共用默认 `saves/client_identity.txt` 会被服务器当成“同一玩家重连接管”，表现为双方频繁闪烁、瞬移和不同步：
 
 ```powershell
 .\build\x64-debug\ZomboidLike.exe --server
-.\build\x64-debug\ZomboidLike.exe --net.mode=client --game.startState=world
-.\build\x64-debug\ZomboidLike.exe --net.mode=client --game.startState=world
+.\build\x64-debug\ZomboidLike.exe --net.mode=client --game.startState=world --net.playerIdentity=alice --net.playerName=Alice
+.\build\x64-debug\ZomboidLike.exe --net.mode=client --game.startState=world --net.playerIdentity=bob --net.playerName=Bob
 ```
 
 客户端只发送命令并渲染服务器快照；移动、攻击、离开清理与重连由服务器权威处理。拾取/使用/装备/丢弃/维修/制作同样提交服务器执行，背包面板展示服务器下发的 owner-only 状态；地面物品由 `ZLR1` 复制。`ZLP1` 状态默认每 6 tick 刷新，制作进度与动作提示会随之更新。
@@ -123,6 +123,8 @@ Debug（`x64-debug`）是 `/Od` 无优化构建，240+ 敌人时帧率会明显�
 | M11 | 音频系统 | 完成（T1–T4，验收 2026-10-18） | |
 | M12 | 打磨与联机命令层预留（可选） | 完成（T1–T4，验收 2026-10-18） | 2026-10-18 |
 | M13 | 联机基础（KCP + 权威服务器） | 完成 T1–T10；M0 跨机验收待做 | |
+| M14 | 可玩性垂直切片（遮挡/动画/生存/目标） | 完成（T1–T10，用户实机验收） | 2026-10-23 |
+| M15 | 战斗与生存 2.0 | 待开始（T1–T6 已规划） | |
 
 ## 许可与合规
 

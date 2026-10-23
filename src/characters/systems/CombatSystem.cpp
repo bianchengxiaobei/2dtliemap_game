@@ -183,10 +183,15 @@ void CombatSystem::Update(ecs::EcsWorld& world, float dt) {
                 if (dist > 0.0001f && (ox * dirX + oy * dirY) / dist < halfCos) {
                     continue;  // 扇形外
                 }
+                float damageScale = 1.0f;
+                if (const auto* needs = registry.try_get<ecs::Needs>(attacker);
+                    needs != nullptr) {
+                    damageScale = std::clamp(needs->damageScale, 0.05f, 1.0f);
+                }
                 ecs::DamageEvent event;
                 event.sourceId = world.IdOf(attacker).id;
                 event.type = attack.type;
-                event.amount = attack.damage;
+                event.amount = attack.damage * damageScale;
                 event.dirX = dirX;
                 event.dirY = dirY;
                 event.knockback = attack.knockback;

@@ -42,6 +42,20 @@ def refresh():
     UI.SetClass(DOC, "hp-fill", "low", s["playerValid"] and hp_ratio < 0.3)
     set_bar("stamina-fill", "stamina-text", s["stamina"], s["staminaMax"],
             s["playerValid"])
+    UI.SetText(DOC, "needs-status", s["needsStatus"])
+    UI.SetProperty(DOC, "needs-status", "display",
+                   "block" if s["needsStatus"] != "" else "none")
+    UI.SetClass(DOC, "needs-status", "status-warn", s["needsTone"] == "warn")
+    UI.SetClass(DOC, "needs-status", "status-fail", s["needsTone"] == "fail")
+
+    UI.SetText(DOC, "objective-text", s["objective"])
+    UI.SetProperty(DOC, "hud-objective", "display",
+                   "block" if s["objective"] != "" else "none")
+    UI.SetClass(DOC, "objective-text", "objective-warn", s["objectiveTone"] == "warn")
+    UI.SetClass(DOC, "objective-text", "objective-ok", s["objectiveTone"] == "ok")
+    UI.SetText(DOC, "objective-hint", s["objectiveHint"])
+    UI.SetProperty(DOC, "objective-hint", "display",
+                   "block" if s["objectiveHint"] != "" else "none")
 
     for i in range(5):
         slot = s["slots"][i]
@@ -688,6 +702,7 @@ def inv_refresh():
     else:
         UI.SetText(INV_DOC, "inv-weight", "无玩家")
     UI.SetText(INV_DOC, "bag-stack-count", "%d 堆" % s["bagStacks"])
+    UI.SetText(INV_DOC, "loot-title", s.get("lootTitle", "附近地面"))
     UI.SetText(INV_DOC, "loot-stack-count", "%d 堆" % s["lootStacks"])
     UI.SetText(INV_DOC, "inv-status", s["status"])
     UI.SetClass(INV_DOC, "inv-status", "status-info", s["statusTone"] == "info")

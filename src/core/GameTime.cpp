@@ -1,5 +1,6 @@
 #include "core/GameTime.h"
 
+#include <cmath>
 #include <cstdio>
 
 #include "core/Constants.h"
@@ -40,9 +41,46 @@ std::string FormatDateTime(const DateTime& dt) {
 
 void GameTime::Configure(double gameMinutesPerRealSecond, const DateTime& start) {
     m_minutesPerTick = gameMinutesPerRealSecond * kTickDt;
+    m_start = start;
     m_now = start;
     m_totalMinutes = 0.0;
     m_minuteFraction = 0.0;
+}
+
+void GameTime::SetTotalGameMinutes(double totalMinutes) {
+    if (!std::isfinite(totalMinutes) || totalMinutes < 0.0) {
+        return;
+    }
+    m_totalMinutes = totalMinutes;
+    m_minuteFraction = 0.0;
+
+    const std::int64_t wholeMinutes =
+        static_cast<std::int64_t>(std::floor(totalMinutes));
+    std::int64_t addedDays = wholeMinutes / (kHoursPerDay * kMinutesPerHour);
+    std::int64_t minutesOfDay =
+        wholeMinutes % (kHoursPerDay * kMinutesPerHour) +
+        static_cast<std::int64_t>(m_start.hour) * kMinutesPerHour + m_start.minute;
+    addedDays += minutesOfDay / (kHoursPerDay * kMinutesPerHour);
+    minutesOfDay %= kHoursPerDay * kMinutesPerHour;
+
+    m_now = m_start;
+    m_now.hour = static_cast<int>(minutesOfDay / kMinutesPerHour);
+    m_now.minute = static_cast<int>(minutesOfDay % kMinutesPerHour);
+
+    while (addedDays > 0) {
+        const int daysInMonth = DaysInMonth(m_now.year, m_now.month);
+        const int remaining = daysInMonth - m_now.day;
+        if (addedDays <= remaining) {
+            m_now.day += static_cast<int>(addedDays);
+            break;
+        }
+        addedDays -= remaining + 1;
+        m_now.day = 1;
+        if (++m_now.month > kMonthsPerYear) {
+            m_now.month = 1;
+            ++m_now.year;
+        }
+    }
 }
 
 void GameTime::Tick() {

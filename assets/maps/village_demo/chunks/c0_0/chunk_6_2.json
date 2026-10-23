@@ -43,8 +43,7 @@
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.door",
-   "solid": true
+   "sprite": "wall.door"
   },
   {
    "x": 6,
@@ -69,6 +68,13 @@
    "layer": "wall",
    "sprite": "wall.brick",
    "solid": true
+  },
+  {
+   "x": 6,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.extraction"
   }
  ],
  "rooms": [

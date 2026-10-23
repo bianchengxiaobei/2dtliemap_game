@@ -2065,3 +2065,154 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 **验证**：`py -3 tools/tests/test_art_slice.py -v` **8/8**；C++ Debug **321/321（121001 assertions）**；窗口 `village_demo` 冒烟加载新图集无缺帧，玩家/僵尸/地面/墙/树/工作台/篝火/物品图标同屏（尸体/木地板由图集预览与单测覆盖），截图 `build/art-slice.png`（构建产物不入库）。当前美术改动未提交；M0 跨机验收仍待另一台 Windows 机器。
 
 **范围/后续**：程序化像素稿不是最终手绘；未完成正式角色动画 v2、全量物品/UI 皮肤、正式音频；下一步优先动画/挂点或生存内容循环。
+
+## 2026-10-22 M14 可玩性垂直切片：任务清单与 T1 建筑遮挡
+
+**目标**：把技术 demo 收敛成一局 15~30 分钟、无需调试键的生存流程；详细任务与验收已写入 `docs/01-里程碑与任务清单.md` 的 M14，按 T1→T9 顺序推进。
+
+**T1 落地**：
+- `RenderCollectSystem::FadeOccludingWalls`（纯函数、内联）：输入已排序的 DrawItem、玩家下标与玩家屏幕矩形，把画家序在玩家之后、z=0、`SquareLayer::Wall` 且与玩家矩形相交的墙/门 alpha 降到目标值；只改本帧颜色，不改排序、碰撞或存档。
+- `WorldDemoState::ApplyWallOcclusion` 在排序后查找本机玩家 DrawItem，调用上述函数；`render.wallOcclusionAlpha` 默认 0.35（配置 `config/game.json`）。
+- 处理了同 diag / 更大 gx 的相邻墙：按排序后的玩家下标判断，而不是只比较 `diag`，否则玩家站在墙角时会被右侧墙完整盖住。
+- 单测 `M14-T1 FadeOccludingWalls` 覆盖：玩家之前/之后、非墙、已更透明、楼上、屏幕不相交；7 assertions。
+
+**验证**：C++ Debug **322/322（121008 assertions）**；窗口 `village_demo` 用 F12 缩略图确认玩家透过淡出的砖墙可见，截图 `build/m14-t1-thumb2.png`（构建产物不入库）。当前只处理 z=0 墙/门，家具（工作台等）仍可能遮住角色，后续按需扩展。
+
+## 2026-10-22 M14-T2/T3：角色动画 v2（片段/事件/挂点）
+
+**T2 数据契约**：
+- `assets/asset_manifest.json` 的角色 provider 新增 `animations`：`idle`（2 帧 @3fps，循环）、`walk`（2 帧 @5fps，循环，事件帧 1=footstep）、`attack`（3 帧 @10fps，一次性，事件帧 1=hit）、`hit`（1 帧，一次性）、`death`（2 帧 @6fps，一次性）；帧表固定按 `dir * framesPerDir + frame` 排列。
+- `game/AnimationManifest` 解析并校验帧数/fps/循环/事件帧/帧名数量，且与 `AnimationSystem::Spec` 的运行时契约逐项一致；缺片段、事件越界、元数据漂移都会拒绝加载。
+- `AssetProvider` 解析 `animations` 为 `AnimationSet`，按逻辑名/哈希提供；v2 缺失或旧 provider 时保留旧 `frames` 回退。图集从 61 帧扩到 125 帧，新增 idle/attack/hit/death 四向帧，walk 暂复用旧 8 帧。
+- Python `test_art_slice.py` 增加 v2 片段/帧序/事件/资源存在性检查，并覆盖 `animations` 中的全部帧。
+
+**T3 运行时**：
+- `AnimClip`/`AnimEvent` 与 `AnimationSystem::{Spec,ParseClipName,SelectClip,Advance}`：生命归零 → Death，`Attacking` → Attack，`Hit` → Hit，移动 → Walk，否则 Idle；walk/attack 事件帧通过 `eventSerial` 通知表现层，循环片段回卷后允许下一轮再次触发。
+- `RenderCollectSystem::PickClipFrameIndex` 按片段帧表选帧；无 v2 资源时把 3/4 帧索引夹到旧 8 帧的 0/1，避免错位。
+- 死亡窗口改为保留角色资源播放 death，窗口结束才生成 corpse；`ActionPresentationSystem` 不再每 tick 清零 Dead 计时。
+- `AnimState` 新增字段仅运行时使用，不进入存档和 M13 复制负载；网络客户端用复制到的速度/动作/生命重新推导片段，旧快照仍按原 `frame/framesPerDir/fps/time` 解码。主手武器图标改走 `PrimaryHandSocket`，攻击第 1 帧向前送。
+- 脚步/命中音效改由事件帧驱动（伤害仍由 CombatSystem 权威判定，事件只负责表现时序）；`audio.footstepStride` 不再使用，配置已移除。
+
+**验证**：C++ Debug **327/327（121123 assertions）**；Python **15/15**；窗口 `village_demo` 日志确认 `atlas 125 帧`、`动画集 2 项`、无 manifest 错误；暂停截图 `build/m14-v2-idle.png`、装备斧头后的挂点截图 `build/m14-v2-weapon.png`，动画帧接触表 `build/m14-animation-contact.png`（构建产物不入库）。
+
+**范围/后续**：walk 仍复用旧 8 帧；武器/衣物挂点仍是图标叠加，不是骨骼蒙皮；没有阴影层；命中音效复用通用 impact，远端脚步不播音；正式手绘/动画 v2 精修留给后续美术。下一任务 M14-T4 Needs。
+
+## 2026-10-22 M14-T4：Needs 衰减与后果
+
+**实现**：
+- 新增 `characters::NeedsSystem`，在固定链 `InputSystem` 之前按游戏日速率衰减玩家 `hunger/thirst/fatigue`；暂停时不推进，数值钳制 `[0,1]`，仅处理 `PlayerTag`（僵尸不受影响）。
+- `Needs` 新增 `moveScale/damageScale/healthDrainPerSecond/warning` 运行时派生字段，不写存档、不进复制负载；读档后由下一 tick 重新计算。
+- 阈值效果：hunger/fatigue 降低攻击伤害，thirst/fatigue 降低移动速度；hunger/thirst 达到危险阈值时直接扣血（不走受击闪红/硬直管线），随后由 `DeathSystem` 接管倒地。
+- `MovementSystem` 对玩家应用 `moveScale`；`CombatSystem` 对攻击者应用 `damageScale`；数值全部来自 `config/game.json` 的 `needs.*`，`WorldSimulation` 统一读取。
+- HUD 新增 `needs-status`：显示饥饿/口渴/疲劳百分比，警告/危险时加“警告/危险”前缀并着色；native RmlUi、Lua、Python 三条路径同步，网络客户端无需求副本时显示“状态 --”。
+- 食物/饮水仍走 `items::ApplyUseEffect`，服务器背包动作 `UseBag` 已补集成测试，确认消耗品降低对应需求。
+
+**验证**：C++ Debug **332/332（121164 assertions）**；Python **15/15**；窗口实机截图 `build/m14-t4-needs.png`（正常状态）与 `build/m14-t4-warning.png`（危险状态/持续掉血），日志确认 `NeedsSystem` 耗时约 0.03ms、警告等级切换与移速/伤害倍率变化。
+
+**范围/后续**：需求当前只在服务器/单机权威侧计算，M13 客户端尚未复制 Needs，联机 HUD 显示“状态 --”；下一任务 M14-T5 Loot table 与可搜刮容器。
+
+## 2026-10-22 M14-T5：Loot table 与可搜刮容器
+
+**实现**：
+- 新增 `assets/loot.json`（`loot-v1`）与 `items::LootTableRegistry`：固定根 seed、`guaranteed` 保底条目、加权随机条目；启动时与 `ItemRegistry` 交叉校验未知物品、重复表 id、未知字段、rolls/权重/数量越界。`RollLootTable` 用自实现 SplitMix64（不依赖实现定义的 `std::uniform_*`），同 seed 逐堆可复现。
+- 新增 `ecs::LootContainer{tableId,rollSeed,searched}`，与 `Container`/`Position`/`SpriteRef` 组成容器实体；首次搜索按 `lootSeed + tableId + StableId` 派生并写回 `rollSeed`，重复搜索只读现有内容，空表/空容器不重 roll。注册 `LOOT` v1 存档 codec，容器物品与搜索状态随实体快照往返。
+- `game::LootContainers` 提供生成、最近容器查询、首次搜索与拿取；拿取先在玩家背包副本上探测容量，满包/非法索引不修改源容器，部分拿取保留源堆叠。
+- `WorldDemoState::RefreshInventory` 比较最近地面物品与最近容器距离；容器更近时标题切为“容器：木箱/储物柜”，打开背包自动搜索。`Pickup`/`Transfer`/`Equip` 动作携带容器 StableId 与槽位下标；地面物品路径保持不变。Lua/Python/native 三路 `InventoryState.lootTitle` 同步。
+- 村庄出生点演示生成木箱/储物柜各 1 个；新增自制 `object.crate`/`object.locker` 帧，图集 125→127 帧。
+
+**验证**：C++ Debug **337/337（121316 assertions）**；Python **18/18**；`--game.startState=world --game.startHour=14` 实机确认容器渲染、打开背包自动搜索、标题“容器：储物柜 3 堆”、容器物品可拖入背包/空容器状态；截图 `build/m14-t5-container.png`、`build/m14-t5-containers-world.png`（构建产物不入库）。测试 `tests/test_loot.cpp` 覆盖 loot 解析/固定 seed/重复搜索/空容器/容量失败/存档往返，`tools/tests/test_loot_data.py` 校验资源引用。
+
+**范围/后续**：容器暂不参与物理阻挡，联机不复制 `LootContainer`（单机验收主线）；下阶段 M14-T6 把容器放进可进入房屋，并接无线电零件/目标链。
+
+## 2026-10-22 M14-T6：室内 POI 与目标链
+
+**实现**：
+- 地图生成器新增 `--objective-poi`：`village_demo` 固定放置屋内 `object.radio`（72,20）与道路 `object.extraction`（66,28）；`wall.door` 改为 open-door 美术并从 `SOLID_SPRITES` 移除，房屋可通行。
+- 新增 `house_workshop` loot 表（必出 `radio_part`）与 `radio_part` 物品/图标；`game::SpawnHouseLootContainers` 在屋内生成工具柜/厨房/木箱 3 个容器，读档按表 id + 位置去重。
+- `ecs::Objective{step}` 挂玩家，状态 `FindRadioPart → RepairRadio → ReachExtraction → Complete`；`OBJV` v1 存档 codec；死亡时携带状态，`RepairRadio` 且零件不在世界时在电台旁补零件，避免软锁。
+- 靠近电台按 E 修理并消耗 `radio_part`；HUD 新增 `objective/objectiveHint`，native/Lua/Python 三路同步；配置 `objective.*`。
+- 新增 `object.radio`/`object.extraction`/`item.radio_part` 自制帧，图集 127→130。
+- `test_objective.cpp` 覆盖状态推进、HUD 文本与存档往返；`test_loot`/`test_maploader`/`test_art_slice`/`test_loot_data` 更新 T6 内容。
+
+**验证**：C++ Debug **339/339（121360 assertions）**；Python **18/18**；用户实机确认“功能完全没问题”；目标 HUD 截图 `build/m14-t6-objective.png`。测试覆盖房屋容器、固定种子、目标推进、E 修理、存档/死亡携带。
+
+**范围/后续**：用户反馈进入房间后人物仍会被房间/上层遮挡，当前 T1 仅淡出 z=0 墙，楼层剖切/室内可见性需要单独专项优化；容器物理阻挡、联机复制仍未接入。下一任务 M14-T7 僵尸变体与威胁曲线。
+
+## 2026-10-22 M14-T7：僵尸变体与威胁曲线
+
+**实现**：
+- 新增 `ecs::ZombieVariant{Normal,Fast,Strong}`（kind/speedScale/damageScale/visualScale）；`game/ZombieVariants.h` 定义三档生命/速度/伤害/缩放/色调，普通白、快速冷蓝、强壮橙红。
+- `SpawnZombie` 统一写生命上限、碰撞半径、色调与变体组件；PathFollow 按速度缩放，AiSystem 按伤害缩放，RenderCollectSystem 以脚底为锚点缩放，不新增任何 PZ 资源。
+- 生成权重按房屋 POI（x 67~79/y 16~28）与夜间 20:00~06:00 调整：基础 70/20/10，夜间快速增加，房区强壮增加，房区夜间 35/30/35；演示人口、SpawnLod 实体化与 `SpawnZombieAt` 共用确定性选择器。
+- `ZVAR` v1 存档 codec 与 `ZLR1` 复制组件（含客户端 SyncNetworkReplicas 应用）保留变体；读档补建碰撞半径按视觉缩放。
+- `test_zombie_variants.cpp` 覆盖权重、确定性、三档属性差异与存档往返；`test_replication` 注册表 10 项。
+
+**验证**：C++ Debug **343/343（121398 assertions）**；Python **18/18**；日间实机截图 `build/m14-t7-variants.png` 可见强壮体型明显大于普通/快速，夜间权重截图 `build/m14-t7-night-full.png`。
+
+**范围/后续**：变体是属性/色调/缩放层，不是独立骨骼或动作；联机客户端已复制变体参数，服务端权威仍以属性为准。下一任务 M14-T8 新游戏/死亡重开/结算。
+
+## 2026-10-22 M14-T8：新游戏/死亡重开/结算
+
+**实现**：
+- `WorldDemoState::RunOutcome{None,Escaped,Dead}`：目标推进到 `Complete` 时 `FinishRun(true)`；单机玩家实体被 DeathSystem 回收后 `FinishRun(false)`，不再走 M5 的原地自动重生。结算立即暂停 `GameTime`、关闭背包并禁用本局退出自动存档。
+- `UiSystem::ShowEndScreen` 打开 native `menu.rml` 新增的 `end-menu`，与脚本主菜单解耦；`MenuPanel` 显示生存天数/时间、击杀/伤害，按钮映射 `NewGame` / `ReturnToMainMenu`。结算页 ESC 只消费不绕过；`ReturnToMainMenu` 在结算状态切换到真实 `MainMenuState`，避免把已结束世界作为“继续”恢复；暂停菜单保留原世界与倍速。
+- 主菜单“新游戏”沿用现有 `WorldDemoState` 新会话路径；结算“重新开始”复用同一路径生成新世界。联机死亡/复活不使用单机 `RunOutcome`，服务器权威路径不变。
+- `tests/test_ui.cpp` 增加结算页显示、victory/death 样式、按钮动作与 ESC 不绕过断言。
+
+**验证**：C++ Debug **343/343（121414 assertions）**；Python **18/18**。临时 Lua smoke mod（不提交）生成 8 只僵尸验证死亡结算，日志 `玩家实体已死亡，结束本局` → `单机局结束：死亡`；`build/m14-t8-death.png`。临时 teleport/addItem + E 维修 + 撤离验证成功结算，日志 `电台已修复，目标推进：reach_extraction` → `单机局结束：撤离成功`；`build/m14-t8-victory.png`。实机点击“重新开始”确认 `状态退出: WorldDemo` → `状态进入: WorldDemo`；点击“返回主菜单”确认 `状态退出: WorldDemo` → `状态进入: MainMenu`。另在默认 `core_ui` 加载下验证 native 结算页覆盖 HUD 正常。临时 mod、进程和临时存档已清理；未提交。
+
+**范围/后续**：结算页只有重新开始/返回主菜单，不含本局统计历史/排行；返回主菜单后“继续”依赖既有最近存档。T9 端到端仍需从主菜单完整走一局并做联机冒烟。
+
+## 2026-10-23 M14-T9 平衡调整：降低开局僵尸压力
+
+**现象**：新游戏出生后容易立刻被多只僵尸围住；240 人口（40 实体 + 200 虚拟）对 15~30 分钟单局过于密集。
+
+**调整**：
+- `spawner.populationTarget` 240→80，`maxLive` 320→120，`materializePerSecond` 16→10，`refillPerSecond` 2→0.8。
+- 演示实体人口改为配置化 `spawner.demoZombies`，默认 40，当前 16；虚拟群落 `demoHordes=3`、`demoZombiesPerHorde=20`，合计约 76 只（16 实体 + 60 虚拟）。
+- 新增 `spawner.demoSafeRadius=14`：初始实体僵尸不在出生点 `(70,24)` 14 格内生成，避免落地即被围；后续补给仍保持 `minSpawnDistance=30`。
+- `test_server_host` 的演示人口断言同步为 ≥16；C++ Debug **343/343（121414 assertions）**。
+
+**验证**：新开局日志 `生成 16 个 AI 游荡者（出生安全半径 14）`、`虚拟群落种子：3 群 / 60 只`；空闲 12 秒无受伤日志；Release 已重建。联机服务器需重启后才会读取新配置。
+
+## 2026-10-23 M14-T9 联机时间同步：HUD 天数一致
+
+**现象**：双客户端各自用本机 `GameTime` 显示天数和时间；加入服务器的时间不同或本机时钟推进不同，会出现“第 1 天 / 第 2 天”不一致。
+
+**实现**：
+- `net::SocialState` 升至 v2，新增 `gameMinutes`（服务器从开局起经过的游戏分钟）；`ServerHost::FillSocialState` 写入 `m_gameTime->TotalGameMinutes()`。
+- `core::GameTime::SetTotalGameMinutes` 按开局日期重建当前日/时/分；客户端在 `WorldDemoState::RefreshSocialState` 每帧应用最近一次 `ZLS2` 时间，HUD、目标提示与结算页统一使用服务器时间。
+- `tests/test_social_protocol` 覆盖时间字段往返与跨日重建（含 23:30 + 60 分钟）；`test_server_social` 断言两客户端收到相同且非零的 `gameMinutes`。
+
+**验证**：C++ Debug **344/344（121426 assertions）**。旧版客户端/服务器因 `ZLS2` 版本升级不兼容，联机双方需同时重启更新。
+
+## 2026-10-23 M14-T9 端到端验收通过
+
+**验收**：用户按 T9 流程实机确认：新存档无 F6/F7/控制台，完成搜刮工具柜→取得无线电零件→E 修电台→到达撤离点→结算；重新开始/返回主菜单正常；单机 15~30 分钟流程可走。联机双客户端（不同 `net.playerIdentity`）连接、移动/攻击、聊天正常，HUD 天数/时间一致，无同身份接管/资源缺失。
+
+**自动化**：C++ Debug **344/344（121426 assertions）**、Release **344/344（121427 assertions）**，Python 资源/工具测试 **18/18**；Release 已重建。用户明确不补截图，验收记录以本条与 `docs/01` 勾选为准。
+
+**收尾**：M14 全部任务与验收完成；未提交。剩余非阻塞项仅为 M0 跨机验收、`x64-debug-python` 构建验证与室内可见性后续打磨。
+
+## 2026-10-23 M14-T10 室内剖切与房间可见性
+
+**现象**：玩家进入房屋后，z≥1 楼板/楼上墙体以 35% 透明度整层覆盖在 z=0 角色之上；同时玩家前方的 z=0 外墙只淡出到 35%，角色仍被明显遮挡，屋内家具也不易辨认。
+
+**实现**：
+- `render::DrawItem` 增加 `roomId`：世界对象统一取所在格 **z=0 地面格**的 `RoomId`，上层楼板沿用地基房间，便于按当前房间精确剖切且不误伤邻栋；楼上边界墙的地基格本身无房间 ID，改由四邻接房间匹配。
+- `WorldDemoState::PlayerRoomId/RoomIdAt` 查询玩家当前房间（只认已挂载 chunk）；`CutawayUpperLayersInRoom` 隐藏当前房间上方 z≥1 的全部 DrawItem；`CutawayRoomWalls` 隐藏画家序在玩家之后、且 3×3 邻域命中当前房间的 z=0 边界墙，并按同一邻接规则剖掉 z≥1 边界墙；`FadeOccludingWalls(..., 0)` 兜底与玩家矩形相交的墙/门。离开房间后每帧按查询结果恢复。
+- 首版用四邻接判断，站在房间角落时房屋外角的对角墙格仍未被剖掉，会挡住角色；改为 3×3 邻域后解决对角墙。
+- 仍有“最里面的角落”失效：角色贴墙时碰撞体把中心推到墙格（地面格 RoomId=-1），`PlayerRoomId` 直接返回 -1，整个剖切关闭。现于中心无房间时在 3×3 格内按点到格矩形距离 ≤0.75 取最近房间，覆盖贴墙/卡角落；实机确认角落不再被墙挡住。
+- 配置 `render.roomCutaway`（默认 true）；不改碰撞、寻路、存档和网络负载。
+
+**验证**：同一位置（72.5,21.5，关闭演示僵尸以隔离渲染）对比：`roomCutaway=false` 时上层楼板覆盖角色（`build/room-nocutaway-clean.png`）；开启后屋顶/前方边界墙剖掉，角色、电台和屋内容器均可见（`build/room-cutaway-clean.png`）。C++ Debug **345/345（121433 assertions）**、Release **345/345（121434 assertions）**；临时 teleport 测试 mod 与临时存档已删除，未提交。
+
+## 2026-10-23 M15 规划：战斗与生存 2.0
+
+**状态**：仅记录，不开始实现。按 `docs/01` 的 M15-T1→T6 顺序推进，每个任务验收后再进入下一个。
+
+**内容**：武器数据化与耐久、伤口/流血/绷带、僵尸攻击前摇与命中反馈、医疗与疼痛、HUD/死亡结算、平衡与端到端验收。目标是让现有 15~30 分钟单局出现“武器取舍 → 受伤 → 止血 → 继续搜刮/撤离”的决策链。
+
+**边界**：不新开地图/POI，不做基地建造、完整感染/疾病树、枪械系统或全量美术音频；联机只保证不回归。新增组件需兼容旧存档/旧客户端缺省值。
+
+**前置**：M14 基线提交（当前未提交）；M0 跨机验收可并行。详细任务与验收见 `docs/01-里程碑与任务清单.md` 的 M15。

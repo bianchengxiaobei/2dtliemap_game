@@ -25,7 +25,7 @@ save::ComponentRegistry MakeRegistry() {
     std::string error;
     REQUIRE(save::RegisterBuiltinComponents(registry, &error));
     CHECK(error.empty());
-    CHECK(registry.Size() == 13u);
+    CHECK(registry.Size() == 16u);
     return registry;
 }
 
@@ -111,7 +111,7 @@ save::EntitySnapshot SnapshotOf(const save::SavedEntity& entity) {
 
 }  // namespace
 
-TEST_CASE("M10-T3 玩家与物品栏按 StableId 往返") {
+TEST_CASE("M10-T3 玩家与物品栏StableId 往") {
     const save::ComponentRegistry components = MakeRegistry();
 
     ecs::EcsWorld source;
@@ -229,7 +229,7 @@ TEST_CASE("M10-T3 玩家与物品栏按 StableId 往返") {
     CHECK(body->defId == "jacket");
 }
 
-TEST_CASE("M10-T3 CraftingJob 拒绝非法批次与队列") {
+TEST_CASE("M10-T3 CraftingJob 拒绝非法批次与队") {
     const save::ComponentRegistry components = MakeRegistry();
     std::string error;
 
@@ -337,7 +337,7 @@ TEST_CASE("M10-T3 全量快照保留 StableId、排序与 Corpse 引用") {
     CHECK(item->condition == doctest::Approx(0.5f));
 }
 
-TEST_CASE("M10-T3 未知组件按段跳过，已知组件继续应用") {
+TEST_CASE("M10-T3 未知组件按段跳过，已知组件继续应") {
     const save::ComponentRegistry components = MakeRegistry();
     ecs::EcsWorld source;
     const ecs::Entity player = source.Create();
@@ -375,14 +375,14 @@ TEST_CASE("M10-T3 未知组件按段跳过，已知组件继续应用") {
               .has_value());
 }
 
-TEST_CASE("M10-T3 CapturePlayer 要求唯一的 PlayerTag") {
+TEST_CASE("M10-T3 CapturePlayer 要求唯一PlayerTag") {
     const save::ComponentRegistry components = MakeRegistry();
     std::string error;
     save::SavedEntity saved;
 
     ecs::EcsWorld empty;
     CHECK_FALSE(save::CapturePlayer(empty, components, &saved, &error));
-    CHECK(error.find("未找到") != std::string::npos);
+    CHECK(error.find("未找") != std::string::npos);
 
     ecs::EcsWorld multiple;
     multiple.Registry().emplace<ecs::PlayerTag>(multiple.Create());
@@ -391,7 +391,7 @@ TEST_CASE("M10-T3 CapturePlayer 要求唯一的 PlayerTag") {
     CHECK(error.find("数量") != std::string::npos);
 }
 
-TEST_CASE("M10-T3 实体快照拒绝重复 ID、版本不兼容与非法组件") {
+TEST_CASE("M10-T3 实体快照拒绝重复 ID、版本不兼容与非法组") {
     const save::ComponentRegistry components = MakeRegistry();
     std::string error;
 
@@ -414,7 +414,7 @@ TEST_CASE("M10-T3 实体快照拒绝重复 ID、版本不兼容与非法组件")
         CHECK(error.find("版本") != std::string::npos);
     }
 
-    SUBCASE("组件版本不兼容") {
+    SUBCASE("组件版本不兼") {
         save::SavedEntity saved;
         saved.stableId = 42;
         saved.components.push_back(MakeComponent(
@@ -476,7 +476,7 @@ TEST_CASE("M10-T3 实体快照拒绝重复 ID、版本不兼容与非法组件")
     }
 }
 
-TEST_CASE("M10-T3 LoadEntities 冲突时回滚本次创建") {
+TEST_CASE("M10-T3 LoadEntities 冲突时回滚本次创") {
     const save::ComponentRegistry components = MakeRegistry();
     save::EntitySnapshot snapshot;
     snapshot.entities.push_back(save::SavedEntity{10, {}});

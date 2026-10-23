@@ -32,6 +32,7 @@
 #include "game/GameContext.h"
 #include "game/WorldSimulation.h"
 #include "items/ItemRegistry.h"
+#include "items/LootTable.h"
 #include "items/RecipeRegistry.h"
 #include "net/CommandPipeline.h"
 #include "physics/PhysicsSyncSystem.h"
@@ -121,6 +122,7 @@ private:
     items::ItemRegistry m_itemRegistry;
     // 配方注册表：依赖物品定义做交叉校验（校验失败以空表继续）
     items::RecipeRegistry m_recipeRegistry;
+    items::LootTableRegistry m_lootTableRegistry;
 
     // 存档管理（M10-T4/T5）：save.root 下的元数据、原子写盘与 zl-save 后台线程
     std::unique_ptr<save::SaveManager> m_saveManager;

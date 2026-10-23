@@ -80,6 +80,9 @@ public:
     void SetInventorySoundHandler(std::function<void()> handler);
     void ShowMainMenu(bool canContinue);
     void ShowPauseMenu();
+    // M14-T8：单机局结束结算；native 面板独立于脚本主菜单，保证核心流程可用。
+    void ShowEndScreen(bool victory, const std::string& title,
+                       const std::string& subtitle, const std::string& stats);
     void HideMenu();
     bool IsMenuOpen() const;
     bool IsMenuSettingsOpen() const;
@@ -170,6 +173,10 @@ private:
     Rml::Element* m_hpTextElement = nullptr;
     Rml::Element* m_staminaFillElement = nullptr;
     Rml::Element* m_staminaTextElement = nullptr;
+    Rml::Element* m_needsStatusElement = nullptr;
+    Rml::Element* m_objectivePanelElement = nullptr;
+    Rml::Element* m_objectiveElement = nullptr;
+    Rml::Element* m_objectiveHintElement = nullptr;
     Rml::Element* m_noticeElement = nullptr;
     std::array<Rml::Element*, 5> m_hotbarSlots{};
     std::array<Rml::Element*, 5> m_hotbarNames{};

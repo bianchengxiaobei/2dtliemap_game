@@ -16,6 +16,7 @@
 #include "ecs/EcsWorld.h"
 #include "game/AssetProvider.h"
 #include "game/GameContext.h"
+#include "game/Objectives.h"
 #include "game/RenderCollectSystem.h"
 #include "items/Crafting.h"
 #include "items/ItemComponents.h"
@@ -82,6 +83,17 @@ private:
     void EnsureDemoItemsScattered();
     void PickupNearestItem();
     void DespawnGroundItems();
+    // M14-T5：村庄演示可搜刮容器；打开背包时自动搜索最近容器并展示其内容
+    void EnsureDemoLootContainers();
+    void EnsureHouseLootContainers();
+    void SearchNearbyLootContainer();
+    void UpdateObjective();
+    bool TryInteractRadio();
+    bool PlayerHasRadioPart() const;
+    bool RadioPartExistsInWorld() const;
+    // M14-T8：单机局结束（撤离成功/死亡）→ 冻结世界并显示结算页。
+    void FinishRun(bool victory);
+    std::string BuildRunStats() const;
     // M6-T5：装备/使用闭环（键盘快捷键；M9-T5 起背包 UI 走同一套容器/装备规则）
     void UseConsumableItem();       // E：使用背包中第一个带效果的物品（消耗 1 件）
     void ToggleEquipWeapon();       // R：主手武器 ↔ 背包第一件武器（换装/卸下）
@@ -107,7 +119,7 @@ private:
     void ResumeFromMenu();
     void HandleMenuAction(ui::MenuActionType action);
     void EquipBagItem(int index, ecs::EquipSlot slot);
-    void EquipLootItem(std::uint64_t stableId, ecs::EquipSlot slot);
+    void EquipLootItem(std::uint64_t stableId, ecs::EquipSlot slot, int index = -1);
     void UnequipEquipment(int index);
     void UseBagItem(int index);
     bool UseBlueprintItem(int index, const items::ItemDef& def);
@@ -118,7 +130,7 @@ private:
     bool RecipeKnown(std::string_view recipeId) const;
     void DropBagItem(int index);
     void DropEquipmentItem(int index);
-    void PickupLootItem(std::uint64_t stableId);
+    void PickupLootItem(std::uint64_t stableId, int index = -1);
     void ReturnOrDropItem(const ecs::ItemInstance& item);
     // M5-T1：演示击杀——离参考点（玩家/相机中心）最近的存活游荡者 HP 归零 → DeathSystem 转尸体
     void KillNearestDemoEntity();
@@ -141,8 +153,14 @@ private:
     void UpdateCruise(double frameDt);
     void LogPerfSample(const char* tag);
     void PushObject(const world::SquareObject& object, int wx, int wy, int z,
-                    world::SquareLayer layer);
+                    world::SquareLayer layer, int roomId = -1);
     world::Chunk* FindChunk(int chunkX, int chunkY) const;
+    int RoomIdAt(int wx, int wy, int z) const;
+    int PlayerRoomId() const;
+    // M14-T10：隐藏当前房间前方（画家序在玩家之后）的边界墙与边界上方楼墙；3×3 邻域覆盖转角
+    void CutawayRoomWalls(int roomId, std::size_t playerIndex);
+    // M14-T1：玩家被墙/门挡住时淡出遮挡项（只改本帧 DrawItem 颜色）
+    void ApplyWallOcclusion();
     void DrawWorld();
     void DrawDebugOverlay();
     void DrawPhysicsDebug();
@@ -172,11 +190,8 @@ private:
     float m_networkRespawnSeconds = 0.0f;
     // M5-T4：演示枪声基础可闻半径（格；config sounds.gunshotRadius）
     float m_gunshotRadius = 30.0f;
-    // M11-T3：脚步累计距离与步幅（按地面材质切换 footstep_*.wav）
-    glm::vec2 m_footstepAnchor{0.0f, 0.0f};
-    bool m_footstepAnchorValid = false;
-    float m_footstepDistance = 0.0f;
-    float m_footstepStride = 0.9f;
+    // M14-T3：玩家动画事件序号（事件帧驱动脚步/命中音效）
+    std::uint32_t m_lastPlayerAnimEventSerial = 0;
     // M12-T1：上次提交的 Move 屏幕方向（去重，避免每帧重复发包）
     glm::vec2 m_lastMoveCommand{0.0f, 0.0f};
     bool m_moveCommandValid = false;
@@ -197,6 +212,17 @@ private:
     std::unordered_map<std::string, std::string> m_stationLabels;
     std::unordered_set<std::string> m_blueprintRecipes;
     bool m_demoItemsScattered = false;
+    bool m_demoLootContainersSpawned = false;
+    bool m_houseLootContainersSpawned = false;
+    std::string m_radioPartDefId = "radio_part";
+    float m_radioX = 72.5f;
+    float m_radioY = 20.5f;
+    float m_extractionX = 66.5f;
+    float m_extractionY = 28.5f;
+    float m_extractionRadius = 1.5f;
+    float m_objectiveInteractRange = 2.2f;
+    enum class RunOutcome { None, Escaped, Dead };
+    RunOutcome m_runOutcome = RunOutcome::None;
     // M4-T7：点击移动反馈（notice 文本 + 目标格标记）
     std::string m_noticeText;
     std::string m_noticeTone = "info";
@@ -208,6 +234,10 @@ private:
     bool m_markerPathActive = false;  // 寻路中（Pending/Following）：目标标记常显
     uint32_t m_markerColor = 0xFFFFFFFFu;
     ecs::PathStatus m_lastPlayerPathState = ecs::PathStatus::None;
+    // M14-T1：遮挡墙体透明度（config render.wallOcclusionAlpha）
+    float m_wallOcclusionAlpha = 0.35f;
+    // M14-T10：进入房间后剖掉本房间上层与前方边界墙（config render.roomCutaway）
+    bool m_roomCutaway = true;
     // M4-T5：相机模式（F4 切换；follow 平滑跟随玩家并夹取到地图边界）
     bool m_followCamera = true;
     bool m_followSnapped = false;  // 下次跟随直接落位（刚切换/生成时不做缓动）

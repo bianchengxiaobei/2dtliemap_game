@@ -72,6 +72,11 @@ bool MenuPanel::Init(Rml::Context& context, const std::string& path) {
     m_mainView = m_document->GetElementById("main-menu");
     m_pauseView = m_document->GetElementById("pause-menu");
     m_settingsView = m_document->GetElementById("settings-menu");
+    m_endView = m_document->GetElementById("end-menu");
+    m_endKicker = m_document->GetElementById("end-kicker");
+    m_endTitle = m_document->GetElementById("end-title");
+    m_endSubtitle = m_document->GetElementById("end-subtitle");
+    m_endStats = m_document->GetElementById("end-stats");
     m_continueButton = m_document->GetElementById("menu-continue");
     m_volumeElement = m_document->GetElementById("setting-volume");
     m_volumeValueElement = m_document->GetElementById("setting-volume-value");
@@ -129,6 +134,17 @@ bool MenuPanel::Init(Rml::Context& context, const std::string& path) {
         }
     });
 
+    AddClickListener("end-restart", [this] {
+        if (m_actionHandler) {
+            m_actionHandler(MenuActionType::NewGame);
+        }
+    });
+    AddClickListener("end-main-menu", [this] {
+        if (m_actionHandler) {
+            m_actionHandler(MenuActionType::ReturnToMainMenu);
+        }
+    });
+
     AddClickListener("settings-back", [this] { CloseSettings(); });
     AddClickListener("settings-apply", [this] { ApplySettings(); });
 
@@ -149,6 +165,7 @@ bool MenuPanel::Init(Rml::Context& context, const std::string& path) {
     SetVisible(m_mainView, false);
     SetVisible(m_pauseView, false);
     SetVisible(m_settingsView, false);
+    SetVisible(m_endView, false);
     m_document->Hide();
     m_open = false;
     return true;
@@ -177,6 +194,11 @@ void MenuPanel::Shutdown() {
     m_mainView = nullptr;
     m_pauseView = nullptr;
     m_settingsView = nullptr;
+    m_endView = nullptr;
+    m_endKicker = nullptr;
+    m_endTitle = nullptr;
+    m_endSubtitle = nullptr;
+    m_endStats = nullptr;
     m_continueButton = nullptr;
     m_volumeElement = nullptr;
     m_volumeValueElement = nullptr;
@@ -196,6 +218,7 @@ void MenuPanel::Shutdown() {
     m_continueEnabled = false;
     m_open = false;
     m_pauseMode = false;
+    m_endMode = false;
     m_settingsOpen = false;
     m_rebindIndex = -1;
 }
@@ -228,6 +251,7 @@ void MenuPanel::ShowMainMenu(bool canContinue) {
         return;
     }
     m_pauseMode = false;
+    m_endMode = false;
     m_settingsOpen = false;
     m_rebindIndex = -1;
     m_continueEnabled = canContinue;
@@ -243,11 +267,35 @@ void MenuPanel::ShowPauseMenu() {
         return;
     }
     m_pauseMode = true;
+    m_endMode = false;
     m_settingsOpen = false;
     m_rebindIndex = -1;
     m_document->Show();
     m_document->PullToFront();
     ShowView("pause-menu");
+    m_open = true;
+}
+
+void MenuPanel::ShowEndScreen(bool victory, const std::string& title,
+                              const std::string& subtitle, const std::string& stats) {
+    if (m_document == nullptr) {
+        return;
+    }
+    m_pauseMode = false;
+    m_endMode = true;
+    m_settingsOpen = false;
+    m_rebindIndex = -1;
+    m_document->Show();
+    m_document->PullToFront();
+    if (m_endView != nullptr) {
+        m_endView->SetClass("victory", victory);
+        m_endView->SetClass("death", !victory);
+    }
+    SetText(m_endKicker, victory ? "RUN COMPLETE" : "YOU DIED");
+    SetText(m_endTitle, title);
+    SetText(m_endSubtitle, subtitle);
+    SetText(m_endStats, stats);
+    ShowView("end-menu");
     m_open = true;
 }
 
@@ -261,6 +309,7 @@ void MenuPanel::Hide() {
         m_document->Hide();
     }
     m_open = false;
+    m_endMode = false;
     m_settingsOpen = false;
     m_rebindIndex = -1;
 }
@@ -270,6 +319,7 @@ void MenuPanel::ShowView(const char* viewId) {
     SetVisible(m_mainView, id == "main-menu");
     SetVisible(m_pauseView, id == "pause-menu");
     SetVisible(m_settingsView, id == "settings-menu");
+    SetVisible(m_endView, id == "end-menu");
     m_settingsOpen = id == "settings-menu";
     if (m_settingsOpen) {
         m_editSettings = m_settings;
@@ -489,6 +539,9 @@ bool MenuPanel::OnEscape() {
     if (m_settingsOpen) {
         CloseSettings();
         return true;
+    }
+    if (m_endMode) {
+        return true;  // 结算页必须用按钮重开/返回主菜单，ESC 不绕过
     }
     if (m_pauseMode) {
         if (m_actionHandler) {

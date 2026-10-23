@@ -117,6 +117,14 @@ bool GameApp::Init(int argc, char** argv) {
     }
     m_ctx.recipes = &m_recipeRegistry;
 
+    // 1.53 战利品表（M14-T5）：与物品定义交叉校验；失败只让容器搜索不可用。
+    const std::string lootFile =
+        m_config.Get<std::string>("loot.file", "assets/loot.json");
+    if (!m_lootTableRegistry.LoadFile(lootFile, m_itemRegistry)) {
+        ZL_WARN("items", "战利品表为空，可搜刮容器不可用（文件: {}）", lootFile);
+    }
+    m_ctx.lootTables = &m_lootTableRegistry;
+
     // 1.55 存档管理（M10-T4）：根目录来自 save.root；文件在首次创建时落盘
     save::SaveManager::Options saveOptions;
     saveOptions.root = m_config.Get<std::string>("save.root", "saves");
@@ -250,6 +258,7 @@ bool GameApp::Init(int argc, char** argv) {
         WorldSimulation::Options simulationOptions;
         simulationOptions.config = &m_config;
         simulationOptions.events = &m_events;
+        simulationOptions.gameTime = &m_gameTime;
         simulationOptions.tasks = m_tasks.get();
         simulationOptions.saveManager = m_saveManager.get();
         simulationOptions.saveComponents = &m_saveComponents;

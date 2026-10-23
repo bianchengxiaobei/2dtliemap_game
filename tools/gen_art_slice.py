@@ -190,20 +190,20 @@ def make_wall(seed, variant=0, door=False):
         return canvas
     d = ImageDraw.Draw(canvas)
     x0, y0, x1, y1 = 17, 132, 47, 223
-    # 门框比墙洞略宽，形成清楚的“可进入”轮廓。
-    d.rectangle([x0 - 3, y0 - 3, x1 + 3, y1], fill=(68, 43, 31, 255),
-                outline=(42, 29, 23, 255), width=2)
-    d.rectangle([x0, y0, x1, y1], fill=(118, 79, 48, 255), outline=OUTLINE)
-    for py in (y0 + 8, y0 + 38, y0 + 68):
-        d.rectangle([x0 + 4, py, x1 - 4, py + 20], fill=(134, 92, 55, 255),
-                    outline=(75, 49, 32, 255))
-    d.line([(x0 + 15, y0 + 3), (x0 + 15, y1 - 3)], fill=(75, 49, 32, 255), width=1)
-    d.ellipse([x1 - 8, y0 + 47, x1 - 4, y0 + 51], fill=(222, 190, 104, 255),
+    d.rectangle([x0 - 4, y0 - 4, x1 + 4, y1], fill=(54, 35, 26, 255),
+                outline=(38, 25, 19, 255), width=2)
+    d.rectangle([x0, y0, x1, y1], fill=(16, 14, 12, 255))
+    d.rectangle([x0 - 4, y0 - 4, x0 + 3, y1], fill=(76, 49, 33, 255),
+                outline=OUTLINE)
+    d.rectangle([x1 - 3, y0 - 4, x1 + 4, y1], fill=(76, 49, 33, 255),
+                outline=OUTLINE)
+    d.rectangle([x0 - 4, y0 - 4, x1 + 4, y0 + 3], fill=(76, 49, 33, 255),
+                outline=OUTLINE)
+    d.polygon([(x0 - 13, y0 + 6), (x0 - 4, y0 + 13), (x0 - 4, y1 - 2),
+               (x0 - 13, y1 - 9)], fill=(111, 72, 43, 255), outline=OUTLINE)
+    d.ellipse([x0 - 8, y0 + 48, x0 - 4, y0 + 52], fill=(222, 190, 104, 255),
               outline=OUTLINE)
-    d.rectangle([x0 - 2, y0 - 2, x0 + 2, y0 + 8], fill=(146, 105, 64, 255))
-    d.rectangle([x1 - 2, y0 - 2, x1 + 2, y0 + 8], fill=(146, 105, 64, 255))
-    # 门口一块很浅的接触阴影，避免门像贴纸。
-    d.line([(x0 + 2, y1 - 2), (x1 - 2, y1 - 2)], fill=(40, 26, 20, 180), width=2)
+    d.line([(x0 + 2, y1 - 2), (x1 - 2, y1 - 2)], fill=(28, 21, 17, 210), width=2)
     return canvas
 
 
@@ -350,6 +350,85 @@ def make_zombie(direction, walk_frame):
     return _humanoid(direction, walk_frame, zombie=True)
 
 
+def _offset_canvas(canvas, dx, dy):
+    out = new_canvas(canvas.size)
+    out.alpha_composite(canvas, (dx, dy))
+    return out
+
+
+def _attack_overlay(canvas, direction, frame, zombie=False):
+    d = ImageDraw.Draw(canvas)
+    skin = color(ZSKIN[0] if zombie else SKIN[0])
+    sleeve = color(ZSHIRT[0] if zombie else SHIRT[0])
+    reach = (0, 7, 3)[frame]
+    if direction == "down":
+        d.line([(45, 68), (51 + reach, 74)], fill=sleeve, width=6)
+        d.rectangle([49 + reach, 70, 55 + reach, 77], fill=skin, outline=OUTLINE)
+    elif direction == "up":
+        d.line([(19, 68), (12 - reach, 64)], fill=sleeve, width=6)
+        d.rectangle([7 - reach, 60, 13 - reach, 68], fill=skin, outline=OUTLINE)
+    else:
+        d.line([(18, 68), (10 - reach, 65)], fill=sleeve, width=6)
+        d.rectangle([5 - reach, 61, 11 - reach, 69], fill=skin, outline=OUTLINE)
+    if frame == 1:
+        arc = (238, 214, 160, 170)
+        if direction == "down":
+            d.line([(52, 62), (57, 70), (55, 80)], fill=arc, width=2)
+        elif direction == "up":
+            d.line([(8, 56), (4, 66), (8, 76)], fill=arc, width=2)
+        else:
+            d.line([(4, 58), (0, 67), (4, 77)], fill=arc, width=2)
+    return canvas
+
+
+def _hit_overlay(canvas, direction, zombie=False):
+    d = ImageDraw.Draw(canvas)
+    skin = color(ZSKIN[0] if zombie else SKIN[0])
+    streak = (196, 62, 52, 210)
+    if direction == "down":
+        d.line([(46, 58), (54, 52)], fill=streak, width=2)
+        d.line([(47, 66), (56, 64)], fill=streak, width=2)
+        d.rectangle([18, 64, 22, 72], fill=skin, outline=OUTLINE)
+    elif direction == "up":
+        d.line([(10, 58), (4, 52)], fill=streak, width=2)
+        d.line([(9, 67), (2, 66)], fill=streak, width=2)
+        d.rectangle([42, 66, 46, 74], fill=skin, outline=OUTLINE)
+    else:
+        d.line([(9, 58), (2, 53)], fill=streak, width=2)
+        d.line([(8, 67), (1, 66)], fill=streak, width=2)
+        d.rectangle([40, 64, 44, 73], fill=skin, outline=OUTLINE)
+    return canvas
+
+
+def make_character_clip(direction, clip, frame, zombie=False):
+    """M14-T2：idle/attack/hit/death 新帧；walk 复用旧 8 帧。
+
+    所有画布仍为 64x128、脚底 y=112。death 第 2 帧直接用尸体画布，
+    保证倒地窗口与后续 corpse 实体视觉连续。
+    """
+    if clip == "idle":
+        canvas = _humanoid(direction, 0, zombie=zombie)
+        if frame == 1:
+            canvas = _offset_canvas(canvas, 0, 1)
+        return canvas
+    if clip == "walk":
+        return _humanoid(direction, frame % 2, zombie=zombie)
+    if clip == "attack":
+        return _attack_overlay(_humanoid(direction, 0, zombie=zombie), direction,
+                               frame, zombie)
+    if clip == "hit":
+        return _hit_overlay(_humanoid(direction, 0, zombie=zombie), direction, zombie)
+    if clip == "death":
+        if frame == 1:
+            return make_corpse(7300 + frame, flip=(direction == "right"))
+        canvas = _humanoid(direction, 0, zombie=zombie)
+        d = ImageDraw.Draw(canvas)
+        d.line([(27, 74), (38, 80)], fill=(142, 36, 30, 230), width=2)
+        d.line([(31, 82), (35, 92)], fill=(106, 24, 22, 210), width=1)
+        return canvas
+    return _humanoid(direction, 0, zombie=zombie)
+
+
 def make_corpse(seed, flip=False):
     rng = random.Random(seed)
     canvas = new_canvas(FLOOR_CANVAS)
@@ -476,6 +555,83 @@ def make_campfire():
     return canvas
 
 
+def make_crate():
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    _shadow(canvas, [8, 100, 56, 118], 78)
+    dark = OUTLINE
+    wood = (137, 94, 54, 255)
+    light = (184, 132, 76, 255)
+    side = (103, 69, 42, 255)
+    d.rectangle([11, 78, 53, 111], fill=wood, outline=dark)
+    d.rectangle([11, 76, 53, 85], fill=light, outline=dark)
+    d.rectangle([15, 88, 49, 108], fill=side, outline=dark)
+    for y in (93, 99, 105):
+        d.line([(16, y), (48, y)], fill=(120, 81, 48, 255), width=1)
+    d.line([(16, 89), (48, 107)], fill=(168, 118, 69, 255), width=2)
+    d.line([(48, 89), (16, 107)], fill=(168, 118, 69, 255), width=2)
+    d.rectangle([27, 91, 37, 97], fill=(92, 96, 98, 255), outline=dark)
+    d.point((30, 94), fill=(190, 190, 180, 255))
+    return canvas
+
+
+def make_locker():
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    _shadow(canvas, [12, 101, 52, 118], 78)
+    dark = OUTLINE
+    body = (91, 103, 105, 255)
+    shade_body = (69, 80, 84, 255)
+    d.rectangle([17, 58, 47, 111], fill=body, outline=dark)
+    d.rectangle([17, 55, 47, 63], fill=(117, 128, 128, 255), outline=dark)
+    d.rectangle([20, 65, 44, 108], fill=shade_body, outline=dark)
+    d.line([(32, 65), (32, 108)], fill=(39, 46, 48, 255), width=1)
+    d.line([(35, 65), (35, 108)], fill=(112, 122, 121, 255), width=1)
+    for y in (74, 82):
+        d.line([(22, y), (30, y)], fill=(46, 54, 56, 255), width=1)
+        d.line([(36, y), (42, y)], fill=(46, 54, 56, 255), width=1)
+    d.rectangle([27, 85, 30, 92], fill=(191, 174, 112, 255), outline=dark)
+    d.rectangle([38, 85, 41, 92], fill=(191, 174, 112, 255), outline=dark)
+    d.line([(20, 106), (44, 106)], fill=(49, 58, 60, 255), width=2)
+    return canvas
+
+
+def make_radio():
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    _shadow(canvas, [11, 102, 53, 118], 76)
+    dark = OUTLINE
+    body = (88, 76, 55, 255)
+    panel = (122, 106, 73, 255)
+    d.line([(31, 84), (24, 57)], fill=(88, 88, 82, 255), width=3)
+    d.line([(31, 84), (39, 59)], fill=(88, 88, 82, 255), width=3)
+    d.rectangle([12, 79, 52, 112], fill=body, outline=dark)
+    d.rectangle([16, 83, 48, 100], fill=panel, outline=dark)
+    d.rectangle([20, 87, 34, 97], fill=(48, 55, 56, 255), outline=dark)
+    d.line([(23, 91), (31, 91)], fill=(191, 174, 112, 255), width=1)
+    d.ellipse([37, 87, 45, 95], fill=(54, 66, 70, 255), outline=dark)
+    d.ellipse([40, 90, 42, 92], fill=(177, 188, 177, 255))
+    d.rectangle([16, 103, 48, 108], fill=(60, 58, 51, 255), outline=dark)
+    d.line([(20, 106), (44, 106)], fill=(139, 125, 89, 255), width=1)
+    return canvas
+
+
+def make_extraction():
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    _shadow(canvas, [16, 103, 48, 117], 72)
+    d.ellipse([13, 100, 51, 116], fill=(33, 75, 44, 120), outline=OUTLINE)
+    d.ellipse([21, 104, 43, 113], fill=(68, 142, 83, 130), outline=(105, 188, 116, 255))
+    d.line([(32, 106), (32, 61)], fill=(61, 64, 59, 255), width=3)
+    d.line([(33, 106), (33, 62)], fill=(128, 134, 122, 255), width=1)
+    d.polygon([(34, 64), (51, 70), (34, 78)], fill=(103, 214, 117, 255),
+              outline=OUTLINE)
+    d.polygon([(34, 68), (46, 71), (34, 75)], fill=(164, 239, 150, 255))
+    for x, y in ((26, 82), (38, 88), (25, 95)):
+        d.point((x, y), fill=(178, 239, 167, 180))
+    return canvas
+
+
 def make_icon_canvas():
     canvas = new_canvas(FLOOR_CANVAS)
     d = ImageDraw.Draw(canvas)
@@ -544,6 +700,15 @@ def make_icon(kind):
         d.rectangle([29, 94, 35, 105], fill=(190, 194, 198, 255), outline=OUTLINE)
         d.line([(23, 98), (27, 102)], fill=(92, 74, 52, 255), width=2)
         d.point((44, 94), fill=(74, 54, 39, 255))
+    elif kind == "radio_part":
+        d.rectangle([15, 86, 49, 110], fill=(54, 91, 73, 255), outline=OUTLINE)
+        d.rectangle([20, 91, 44, 105], fill=(38, 66, 54, 255), outline=OUTLINE)
+        d.rectangle([25, 94, 39, 102], fill=(164, 174, 159, 255), outline=OUTLINE)
+        for x in (21, 27, 33, 39):
+            d.line([(x, 84), (x, 89)], fill=(194, 186, 135, 255), width=1)
+            d.line([(x, 107), (x, 112)], fill=(194, 186, 135, 255), width=1)
+        d.rectangle([42, 88, 46, 92], fill=(208, 111, 63, 255), outline=OUTLINE)
+        d.line([(18, 98), (14, 98)], fill=(194, 186, 135, 255), width=2)
     elif kind == "projectile_bullet":
         d.line([(13, 94), (28, 94)], fill=(243, 226, 160, 160), width=2)
         d.line([(17, 100), (25, 100)], fill=(222, 192, 116, 140), width=1)
@@ -612,6 +777,27 @@ def build_specs():
             specs.append((f"character_zombie_{dir_name}_{frame}", zcanvas, zbbox,
                           zbbox[0], zbbox[1], 64, 128))
 
+    # M14-T2：v2 新帧。walk 仍引用上面的旧 8 帧，idle/attack/hit/death 使用新姿势。
+    for dir_name in ("down", "left", "right", "up"):
+        for clip, frame_count in (("idle", 2), ("attack", 3), ("hit", 1), ("death", 2)):
+            for frame in range(frame_count):
+                if dir_name == "right":
+                    canvas = ImageOps.mirror(
+                        make_character_clip("left", clip, frame, zombie=False))
+                else:
+                    canvas = make_character_clip(dir_name, clip, frame, zombie=False)
+                bbox = _bbox(canvas)
+                specs.append((f"character_{clip}_{dir_name}_{frame}", canvas, bbox,
+                              bbox[0], bbox[1], 64, 128))
+                if dir_name == "right":
+                    zcanvas = ImageOps.mirror(
+                        make_character_clip("left", clip, frame, zombie=True))
+                else:
+                    zcanvas = make_character_clip(dir_name, clip, frame, zombie=True)
+                zbbox = _bbox(zcanvas)
+                specs.append((f"character_zombie_{clip}_{dir_name}_{frame}", zcanvas,
+                              zbbox, zbbox[0], zbbox[1], 64, 128))
+
     for i in range(3):
         canvas = make_tuft(4100 + i, i)
         specs.append((f"decor_tuft_{i + 1}", canvas, _bbox(canvas),
@@ -628,16 +814,22 @@ def build_specs():
         specs.append((f"tree_{i + 1}", canvas, bbox, bbox[0], bbox[1], 192, 256))
 
     for name, canvas in (("workbench_1", make_workbench()),
-                         ("campfire_1", make_campfire())):
+                         ("campfire_1", make_campfire()),
+                         ("crate_1", make_crate()),
+                         ("locker_1", make_locker()),
+                         ("radio_1", make_radio()),
+                         ("extraction_1", make_extraction())):
         bbox = _bbox(canvas)
         specs.append((name, canvas, bbox, bbox[0], bbox[1], 64, 128))
 
     slice_icons = ("bandage", "canned_beans", "axe", "water_bottle", "backpack",
-                   "hammer", "makeshift_spear", "padded_jacket", "repair_kit")
+                   "hammer", "makeshift_spear", "padded_jacket", "repair_kit",
+                   "radio_part")
     for kind in ("bandage", "canned_beans", "axe", "kitchen_knife", "rag", "jacket",
                  "tote_bag", "water_bottle", "painkillers", "hammer", "screwdriver",
                  "energy_bar", "hiking_boots", "backpack", "cooked_beans",
-                 "magazine_cooking", "makeshift_spear", "padded_jacket", "repair_kit"):
+                 "magazine_cooking", "makeshift_spear", "padded_jacket", "repair_kit",
+                 "radio_part"):
         canvas = make_icon(kind) if kind in slice_icons else base.make_item_icon(kind)
         bbox = _bbox(canvas)
         specs.append((f"item_{kind}", canvas, bbox, bbox[0], bbox[1], 64, 128))

@@ -10,7 +10,7 @@
 namespace zl::net {
 
 inline constexpr std::uint32_t kSocialStateMagic = 0x32534C5Au;
-inline constexpr std::uint16_t kSocialStateVersion = 1;
+inline constexpr std::uint16_t kSocialStateVersion = 2;
 inline constexpr std::uint32_t kChatMessageMagic = 0x31484C5Au;
 inline constexpr std::uint16_t kChatMessageVersion = 1;
 inline constexpr std::size_t kMaxSocialPlayers = 32;
@@ -33,6 +33,7 @@ struct SocialChatLine {
 struct SocialState {
     std::uint64_t serverTick = 0;
     std::uint32_t sequence = 0;
+    double gameMinutes = 0.0;
     std::vector<SocialPlayer> players;
     std::vector<SocialChatLine> chat;
 };

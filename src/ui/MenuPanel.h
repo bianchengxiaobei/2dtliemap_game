@@ -41,6 +41,9 @@ public:
 
     void ShowMainMenu(bool canContinue);
     void ShowPauseMenu();
+    // M14-T8：单机局结束（撤离成功/死亡）结算页；不复用主菜单/暂停的返回语义。
+    void ShowEndScreen(bool victory, const std::string& title,
+                       const std::string& subtitle, const std::string& stats);
     void Hide();
     bool IsOpen() const { return m_open; }
     bool IsSettingsOpen() const { return m_settingsOpen; }
@@ -78,6 +81,11 @@ private:
     Rml::Element* m_mainView = nullptr;
     Rml::Element* m_pauseView = nullptr;
     Rml::Element* m_settingsView = nullptr;
+    Rml::Element* m_endView = nullptr;
+    Rml::Element* m_endKicker = nullptr;
+    Rml::Element* m_endTitle = nullptr;
+    Rml::Element* m_endSubtitle = nullptr;
+    Rml::Element* m_endStats = nullptr;
     Rml::Element* m_continueButton = nullptr;
     Rml::Element* m_volumeElement = nullptr;
     Rml::Element* m_volumeValueElement = nullptr;
@@ -105,6 +113,7 @@ private:
     bool m_continueEnabled = false;
     bool m_open = false;
     bool m_pauseMode = false;
+    bool m_endMode = false;
     bool m_settingsOpen = false;
     int m_rebindIndex = -1;
 };

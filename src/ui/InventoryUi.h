@@ -101,6 +101,7 @@ struct InventoryState {
     InventoryCrafting crafting;
     int bagStacks = 0;
     int lootStacks = 0;
+    std::string lootTitle = "附近地面";
     std::string status;
     std::string statusTone = "info";
 };
@@ -147,7 +148,8 @@ inline bool operator==(const InventoryState& a, const InventoryState& b) {
            a.capacity == b.capacity && a.bag == b.bag && a.equipment == b.equipment &&
            a.loot == b.loot && a.recipes == b.recipes && a.crafting == b.crafting &&
            a.bagStacks == b.bagStacks && a.lootStacks == b.lootStacks &&
-           a.status == b.status && a.statusTone == b.statusTone;
+           a.lootTitle == b.lootTitle && a.status == b.status &&
+           a.statusTone == b.statusTone;
 }
 
 struct InventoryAction {

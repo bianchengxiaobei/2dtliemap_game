@@ -311,6 +311,12 @@ struct LuaRuntime::Impl {
             out["healthMax"] = state.healthMax;
             out["stamina"] = state.stamina;
             out["staminaMax"] = state.staminaMax;
+            out["needsValid"] = state.needsValid;
+            out["needsStatus"] = state.needsStatus;
+            out["needsTone"] = state.needsTone;
+            out["objective"] = state.objective;
+            out["objectiveTone"] = state.objectiveTone;
+            out["objectiveHint"] = state.objectiveHint;
             out["selectedSlot"] = state.selectedSlot;
             out["notice"] = state.notice;
             out["noticeTone"] = state.noticeTone;
@@ -459,6 +465,7 @@ struct LuaRuntime::Impl {
             out["capacity"] = state.capacity;
             out["bagStacks"] = state.bagStacks;
             out["lootStacks"] = state.lootStacks;
+            out["lootTitle"] = state.lootTitle;
             out["status"] = state.status;
             out["statusTone"] = state.statusTone;
             sol::table recipes =

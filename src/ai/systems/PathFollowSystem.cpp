@@ -1,5 +1,6 @@
 #include "ai/systems/PathFollowSystem.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "ai/PathfindingService.h"
@@ -45,6 +46,10 @@ void ApplyResult(ecs::EcsWorld& world, const ecs::Entity e, ecs::PathRequest& re
                 follow.speed = control->walkSpeed;
             } else {
                 follow.speed = kAiDefaultSpeed;
+                if (const auto* variant = registry.try_get<ecs::ZombieVariant>(e);
+                    variant != nullptr) {
+                    follow.speed *= std::clamp(variant->speedScale, 0.25f, 3.0f);
+                }
             }
             request.state = ecs::PathStatus::Following;
             ZL_TRACE(kLogModule, "寻路完成：稳定 ID {} | 路点 {} | 展开 {} | 代价 {:.2f} | {:.2f}ms",

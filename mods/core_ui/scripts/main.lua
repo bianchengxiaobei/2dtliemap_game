@@ -45,6 +45,20 @@ local function refresh_hud()
     local hp_ratio = set_bar("hp-fill", "hp-text", s.health, s.healthMax, s.playerValid)
     UI.SetClass(HUD_DOC, "hp-fill", "low", s.playerValid and hp_ratio < 0.3)
     set_bar("stamina-fill", "stamina-text", s.stamina, s.staminaMax, s.playerValid)
+    UI.SetText(HUD_DOC, "needs-status", s.needsStatus)
+    UI.SetProperty(HUD_DOC, "needs-status", "display",
+                   s.needsStatus ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "needs-status", "status-warn", s.needsTone == "warn")
+    UI.SetClass(HUD_DOC, "needs-status", "status-fail", s.needsTone == "fail")
+
+    UI.SetText(HUD_DOC, "objective-text", s.objective)
+    UI.SetProperty(HUD_DOC, "hud-objective", "display",
+                   s.objective ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "objective-text", "objective-warn", s.objectiveTone == "warn")
+    UI.SetClass(HUD_DOC, "objective-text", "objective-ok", s.objectiveTone == "ok")
+    UI.SetText(HUD_DOC, "objective-hint", s.objectiveHint)
+    UI.SetProperty(HUD_DOC, "objective-hint", "display",
+                   s.objectiveHint ~= "" and "block" or "none")
 
     for i = 1, 5 do
         local slot = s.slots[i]
@@ -723,6 +737,7 @@ local function inv_refresh()
         UI.SetText(INV_DOC, "inv-weight", "无玩家")
     end
     UI.SetText(INV_DOC, "bag-stack-count", tostring(s.bagStacks) .. " 堆")
+    UI.SetText(INV_DOC, "loot-title", s.lootTitle or "附近地面")
     UI.SetText(INV_DOC, "loot-stack-count", tostring(s.lootStacks) .. " 堆")
     UI.SetText(INV_DOC, "inv-status", s.status)
     UI.SetClass(INV_DOC, "inv-status", "status-info", s.statusTone == "info")

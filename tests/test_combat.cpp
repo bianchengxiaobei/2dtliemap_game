@@ -280,12 +280,12 @@ TEST_CASE("M5-T6 全链路：挥击命中 → 硬直击退 → 致死倒地（Dy
     CHECK(combat.GetStats().hits == 3u);
     CHECK(combat.GetStats().kills == 1u);
 
-    // 倒地窗口：第 1 次 DeathSystem → Dying（实体还在；速度冻结 + 精灵换尸体帧）
+    // 倒地窗口：第 1 次 DeathSystem → Dying（实体还在；速度冻结 + 播放 death 片段）
     death.Update(world, kDt);
     CHECK(registry.all_of<ecs::Dying>(zombie));
     CHECK(world.Alive(zombie));
     CHECK(registry.get<Velocity>(zombie).x == doctest::Approx(0.0f));
-    CHECK(registry.get<SpriteRef>(zombie).sprite == ecs::HashName("corpse.placeholder"));
+    CHECK(registry.get<SpriteRef>(zombie).sprite == ecs::HashName("character.placeholder"));
 
     // 倒地中不再被挥击命中（候选 = HP>0）
     registry.get<ecs::AttackIntent>(attacker).pending = true;

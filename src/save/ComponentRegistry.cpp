@@ -11,6 +11,7 @@
 
 #include "characters/components/CharacterComponents.h"
 #include "ecs/components/CommonComponents.h"
+#include "game/Objectives.h"
 #include "items/ItemComponents.h"
 #include "save/BinaryReader.h"
 #include "save/BinaryWriter.h"
@@ -107,6 +108,29 @@ bool ReadContainer(BinaryReader& reader, ecs::Container* container) {
         loaded.items.push_back(std::move(item));
     }
     *container = std::move(loaded);
+    return true;
+}
+
+bool WriteLootContainer(const ecs::LootContainer& loot, BinaryWriter& writer) {
+    return !loot.tableId.empty() && loot.tableId.size() <= kMaxItemDefIdBytes &&
+           writer.WriteString(loot.tableId, kMaxItemDefIdBytes) &&
+           writer.Write(loot.rollSeed) && writer.Write(loot.searched);
+}
+
+bool ReadLootContainer(BinaryReader& reader, ecs::LootContainer* loot) {
+    std::string tableId;
+    std::uint64_t rollSeed = 0;
+    bool searched = false;
+    if (!reader.ReadString(tableId, kMaxItemDefIdBytes) ||
+        !reader.Read(rollSeed) || !reader.Read(searched)) {
+        return false;
+    }
+    if (tableId.empty() || tableId.size() > kMaxItemDefIdBytes) {
+        return false;
+    }
+    loot->tableId = std::move(tableId);
+    loot->rollSeed = rollSeed;
+    loot->searched = searched;
     return true;
 }
 
@@ -282,6 +306,48 @@ bool ValidNeeds(const ecs::Needs& needs) {
            needs.hunger <= 1.0f && needs.thirst >= 0.0f &&
            needs.thirst <= 1.0f && needs.fatigue >= 0.0f &&
            needs.fatigue <= 1.0f;
+}
+
+bool WriteObjective(const ecs::Objective& objective, BinaryWriter& writer) {
+    const auto step = static_cast<std::uint8_t>(objective.step);
+    return game::IsObjectiveStepValid(step) && writer.Write(step);
+}
+
+bool ReadObjective(BinaryReader& reader, ecs::Objective* objective) {
+    std::uint8_t step = 0;
+    if (!reader.Read(step) || !game::IsObjectiveStepValid(step)) {
+        return false;
+    }
+    objective->step = static_cast<ecs::ObjectiveStep>(step);
+    return true;
+}
+
+bool ValidVariantScale(float value) {
+    return Finite(value) && value >= 0.25f && value <= 4.0f;
+}
+
+bool WriteZombieVariant(const ecs::ZombieVariant& variant, BinaryWriter& writer) {
+    const auto kind = static_cast<std::uint8_t>(variant.kind);
+    return kind <= static_cast<std::uint8_t>(ecs::ZombieVariantKind::Strong) &&
+           ValidVariantScale(variant.speedScale) &&
+           ValidVariantScale(variant.damageScale) &&
+           ValidVariantScale(variant.visualScale) && writer.Write(kind) &&
+           writer.Write(variant.speedScale) && writer.Write(variant.damageScale) &&
+           writer.Write(variant.visualScale);
+}
+
+bool ReadZombieVariant(BinaryReader& reader, ecs::ZombieVariant* variant) {
+    std::uint8_t kind = 0;
+    ecs::ZombieVariant loaded;
+    if (!reader.Read(kind) || kind > static_cast<std::uint8_t>(ecs::ZombieVariantKind::Strong) ||
+        !reader.Read(loaded.speedScale) || !reader.Read(loaded.damageScale) ||
+        !reader.Read(loaded.visualScale) || !ValidVariantScale(loaded.speedScale) ||
+        !ValidVariantScale(loaded.damageScale) || !ValidVariantScale(loaded.visualScale)) {
+        return false;
+    }
+    loaded.kind = static_cast<ecs::ZombieVariantKind>(kind);
+    *variant = loaded;
+    return true;
 }
 
 }  // namespace
@@ -470,6 +536,30 @@ bool RegisterBuiltinComponents(ComponentRegistry& registry, std::string* error) 
         return false;
     }
 
+    if (!registry.Register<ecs::Objective>(
+            kSaveComponentObjective, "Objective",
+            [](const ecs::Objective& objective, BinaryWriter& writer) {
+                return WriteObjective(objective, writer);
+            },
+            [](BinaryReader& reader, ecs::Objective* objective) {
+                return ReadObjective(reader, objective);
+            },
+            kSaveComponentVersion, error)) {
+        return false;
+    }
+
+    if (!registry.Register<ecs::ZombieVariant>(
+            kSaveComponentZombieVariant, "ZombieVariant",
+            [](const ecs::ZombieVariant& variant, BinaryWriter& writer) {
+                return WriteZombieVariant(variant, writer);
+            },
+            [](BinaryReader& reader, ecs::ZombieVariant* variant) {
+                return ReadZombieVariant(reader, variant);
+            },
+            kSaveComponentVersion, error)) {
+        return false;
+    }
+
     if (!registry.Register<ecs::ItemInstance>(
             kSaveComponentItem, "ItemInstance",
             [](const ecs::ItemInstance& item, BinaryWriter& writer) {
@@ -489,6 +579,18 @@ bool RegisterBuiltinComponents(ComponentRegistry& registry, std::string* error) 
             },
             [](BinaryReader& reader, ecs::Container* container) {
                 return ReadContainer(reader, container);
+            },
+            kSaveComponentVersion, error)) {
+        return false;
+    }
+
+    if (!registry.Register<ecs::LootContainer>(
+            kSaveComponentLootContainer, "LootContainer",
+            [](const ecs::LootContainer& loot, BinaryWriter& writer) {
+                return WriteLootContainer(loot, writer);
+            },
+            [](BinaryReader& reader, ecs::LootContainer* loot) {
+                return ReadLootContainer(reader, loot);
             },
             kSaveComponentVersion, error)) {
         return false;

@@ -223,6 +223,7 @@ TEST_CASE("RenderCollectSystem::FillEntityDrawItem：锚点/分层/透明/决胜
     CHECK(item.layer == zl::game::RenderCollectSystem::kEntityLayerBase + 2);
     CHECK(item.layer > zl::world::kSquareLayerCount - 1);  // 排在同格世界层之后
     CHECK(item.tieBreaker == 777u);
+    CHECK(item.roomId == -1);  // 实体默认不参与房间剖切
     CHECK(item.color == 0xFFFFFFFFu);  // z=0 原样
 
     // z≥1：整体压到 35% 不透明（与世界对象一致）
@@ -235,6 +236,65 @@ TEST_CASE("RenderCollectSystem::FillEntityDrawItem：锚点/分层/透明/决胜
                                                       BGFX_INVALID_HANDLE, 0, &item);
     CHECK(item.gx == -1);
     CHECK(item.diag == -1 + -1);
+}
+
+TEST_CASE("M14-T1 FadeOccludingWalls：只淡出玩家前方且屏幕相交的 z=0 墙") {
+    auto Make = [](int diag, int stage, int z, int layer, std::uint32_t color,
+                   zl::render::SpriteRect rect) {
+        zl::render::DrawItem item;
+        item.diag = diag;
+        item.stage = stage;
+        item.z = z;
+        item.layer = layer;
+        item.color = color;
+        item.rect = rect;
+        return item;
+    };
+    constexpr int kWall = static_cast<int>(zl::world::SquareLayer::Wall);
+    constexpr int kFloor = static_cast<int>(zl::world::SquareLayer::Floor);
+    const zl::render::SpriteRect player{0.0f, 0.0f, 20.0f, 40.0f};
+
+    std::vector<zl::render::DrawItem> items = {
+        Make(9, 1, 0, kWall, 0xFFFFFFFFu, {10.0f, 10.0f, 64.0f, 112.0f}),   // 玩家之前
+        Make(10, 1, 0, 5, 0xFFFFFFFFu, player),                              // 玩家
+        Make(11, 1, 0, kWall, 0xFFFFFFFFu, {10.0f, 10.0f, 64.0f, 112.0f}),  // 玩家之后遮挡
+        Make(11, 1, 0, kFloor, 0xFFFFFFFFu, {10.0f, 10.0f, 64.0f, 112.0f}), // 非墙
+        Make(11, 1, 0, kWall, 0x20FFFFFFu, {10.0f, 10.0f, 64.0f, 112.0f}),  // 已更透明
+        Make(11, 1, 1, kWall, 0xFFFFFFFFu, {10.0f, 10.0f, 64.0f, 112.0f}),  // 楼上
+        Make(11, 1, 0, kWall, 0xFFFFFFFFu, {100.0f, 100.0f, 64.0f, 112.0f}),  // 不相交
+    };
+
+    CHECK(zl::game::RenderCollectSystem::FadeOccludingWalls(player, 1, 0x59u, items) == 1u);
+    CHECK(items[0].color == 0xFFFFFFFFu);
+    CHECK(items[2].color == 0x59FFFFFFu);
+    CHECK(items[3].color == 0xFFFFFFFFu);
+    CHECK(items[4].color == 0x20FFFFFFu);
+    CHECK(items[5].color == 0xFFFFFFFFu);
+    CHECK(items[6].color == 0xFFFFFFFFu);
+}
+
+TEST_CASE("M14-T10 CutawayUpperLayersInRoom：只隐藏当前房间上方楼层") {
+    auto Make = [](int z, int roomId, std::uint32_t color) {
+        zl::render::DrawItem item;
+        item.stage = z == 0 ? 0 : 1;
+        item.z = z;
+        item.roomId = roomId;
+        item.color = color;
+        return item;
+    };
+    std::vector<zl::render::DrawItem> items = {
+        Make(1, 7, 0x59AABBCCu),  // 当前房间楼上：隐藏
+        Make(1, 8, 0x59AABBCCu),  // 相邻房间楼上：保留
+        Make(0, 7, 0xFFFFFFFFu),  // 地面层：保留
+        Make(1, -1, 0x59AABBCCu), // 无房间信息：保留
+    };
+
+    CHECK(zl::game::RenderCollectSystem::CutawayUpperLayersInRoom(7, items) == 1u);
+    CHECK(items[0].color == 0x00AABBCCu);
+    CHECK(items[1].color == 0x59AABBCCu);
+    CHECK(items[2].color == 0xFFFFFFFFu);
+    CHECK(items[3].color == 0x59AABBCCu);
+    CHECK(zl::game::RenderCollectSystem::CutawayUpperLayersInRoom(-1, items) == 0u);
 }
 
 TEST_CASE("RenderCollectSystem：ViewRect 包含性（含格边界余量）") {

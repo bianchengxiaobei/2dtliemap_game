@@ -1,5 +1,6 @@
 #include "ai/systems/AiSystem.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -253,6 +254,11 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                                     attack->dirY = ddy / dlen;
                                 }
                                 attack->damage = m_attack.damage;
+                                if (const auto* variant = registry.try_get<ecs::ZombieVariant>(e);
+                                    variant != nullptr) {
+                                    attack->damage *=
+                                        std::clamp(variant->damageScale, 0.25f, 3.0f);
+                                }
                                 attack->knockback = m_attack.knockback;
                                 attack->staggerSeconds = m_attack.staggerSeconds;
                                 attack->range = m_attack.range;

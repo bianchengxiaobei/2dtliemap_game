@@ -598,7 +598,7 @@ TEST_CASE("仓库内置配方文件与物品定义一致") {
     std::string error;
     const std::string itemsPath = std::string(ZL_SOURCE_DIR) + "/assets/items.json";
     REQUIRE(items.LoadFile(itemsPath, &error));
-    CHECK(items.Size() == 19);
+    CHECK(items.Size() == 20);
     const items::ItemDef* magazine = items.Find("magazine_cooking");
     REQUIRE(magazine != nullptr);
     REQUIRE(magazine->unlocksRecipes.size() == 1u);

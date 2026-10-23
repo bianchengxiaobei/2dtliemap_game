@@ -40,6 +40,13 @@
   {
    "x": 2,
    "y": 0,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.radio"
+  },
+  {
+   "x": 2,
+   "y": 0,
    "z": 1,
    "layer": "floor",
    "sprite": "tile.floor.wood"
@@ -314,16 +321,14 @@
    "y": 4,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.door",
-   "solid": true
+   "sprite": "wall.door"
   },
   {
    "x": 3,
    "y": 4,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.door",
-   "solid": true
+   "sprite": "wall.door"
   },
   {
    "x": 4,

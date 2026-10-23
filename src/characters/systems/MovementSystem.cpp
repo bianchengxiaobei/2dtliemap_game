@@ -1,5 +1,7 @@
 #include "characters/systems/MovementSystem.h"
 
+#include <algorithm>
+
 #include <btBulletDynamicsCommon.h>
 
 #include "characters/components/CharacterComponents.h"
@@ -17,6 +19,13 @@ void MovementSystem::Update(ecs::EcsWorld& world, float dt) {
             if (const auto* intent = registry.try_get<ecs::MoveIntent>(e); intent != nullptr) {
                 velocity.x = intent->x;
                 velocity.y = intent->y;
+            }
+            if (registry.all_of<ecs::PlayerTag>(e)) {
+                if (const auto* needs = registry.try_get<ecs::Needs>(e); needs != nullptr) {
+                    const float scale = std::clamp(needs->moveScale, 0.05f, 1.0f);
+                    velocity.x *= scale;
+                    velocity.y *= scale;
+                }
             }
             const auto* rigid = registry.try_get<ecs::RigidBody>(e);
             if (rigid != nullptr && rigid->body != nullptr) {

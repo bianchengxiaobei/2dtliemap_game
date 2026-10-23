@@ -25,6 +25,7 @@ class CombatSystem;
 namespace zl::core {
 class Config;
 class EventBus;
+class GameTime;
 class TaskScheduler;
 }  // namespace zl::core
 
@@ -59,6 +60,7 @@ public:
     struct Options {
         core::Config* config = nullptr;
         core::EventBus* events = nullptr;
+        core::GameTime* gameTime = nullptr;
         core::TaskScheduler* tasks = nullptr;
         save::SaveManager* saveManager = nullptr;
         save::ComponentRegistry* saveComponents = nullptr;
@@ -114,7 +116,7 @@ public:
     // 服务器会话清理：销毁玩家/任意实体及物理体；会延迟到下一次 Flush 回收。
     void DespawnEntity(ecs::Entity entity);
 
-    // 演示人口：40 个实体僵尸 + 200 只虚拟群落；读档时不要调用。
+    // 演示人口：实体僵尸 + 虚拟群落，数量由 spawner.demo* 配置；读档时不要调用。
     void SpawnDemoPopulation();
 
     // 清空实体并读取存档实体快照；要求 SaveManager/ComponentRegistry 已初始化。

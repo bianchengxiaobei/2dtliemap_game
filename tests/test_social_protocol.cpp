@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "core/GameTime.h"
 #include "net/SocialProtocol.h"
 
 namespace {
@@ -50,6 +51,7 @@ TEST_CASE("M13-T9 社交协议：玩家列表/聊天记录往返与严格校验"
     zl::net::SocialState state;
     state.serverTick = 120;
     state.sequence = 7;
+    state.gameMinutes = 123.5;
     state.players.push_back({1, "Alice"});
     state.players.push_back({2, "小明"});
     state.chat.push_back({118, "Alice", "hello"});
@@ -64,6 +66,7 @@ TEST_CASE("M13-T9 社交协议：玩家列表/聊天记录往返与严格校验"
     REQUIRE(zl::net::DecodeSocialState(bytes, &decoded, &error));
     CHECK(decoded.serverTick == 120);
     CHECK(decoded.sequence == 7);
+    CHECK(decoded.gameMinutes == 123.5);
     REQUIRE(decoded.players.size() == 2);
     CHECK(decoded.players[0].stableId == 1);
     CHECK(decoded.players[0].name == "Alice");
@@ -92,7 +95,7 @@ TEST_CASE("M13-T9 社交协议：玩家列表/聊天记录往返与严格校验"
     CHECK_FALSE(zl::net::DecodeSocialState(truncated, &decoded, &error));
 
     auto version = bytes;
-    version[4] = 2;
+    version[4] = 3;
     CHECK_FALSE(zl::net::DecodeSocialState(version, &decoded, &error));
 
     auto extra = bytes;
@@ -117,4 +120,22 @@ TEST_CASE("M13-T9 社交协议：玩家/聊天数量与字节上限") {
     state.chat.clear();
     state.chat.push_back({0, "P", std::string(zl::net::kMaxChatBytes, 'x')});
     CHECK(!zl::net::EncodeSocialState(state, &error).empty());
+}
+
+TEST_CASE("M14-T9 联机时间：按服务器总游戏分钟重建日期") {
+    zl::core::GameTime time;
+    time.Configure(0.4, zl::core::DateTime{2000, 7, 9, 0, 0});
+    time.SetTotalGameMinutes(1950.0);
+    CHECK(time.Now().year == 2000);
+    CHECK(time.Now().month == 7);
+    CHECK(time.Now().day == 10);
+    CHECK(time.Now().hour == 8);
+    CHECK(time.Now().minute == 30);
+    CHECK(time.TotalGameMinutes() == 1950.0);
+
+    time.Configure(0.4, zl::core::DateTime{2000, 7, 9, 23, 30});
+    time.SetTotalGameMinutes(60.0);
+    CHECK(time.Now().day == 10);
+    CHECK(time.Now().hour == 0);
+    CHECK(time.Now().minute == 30);
 }

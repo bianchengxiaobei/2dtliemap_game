@@ -23,7 +23,9 @@ const char* kItemsJson = R"({
     { "id": "axe", "name": "斧", "icon": "i", "weight": 3.0, "maxStack": 1, "type": "weapon" },
     { "id": "jacket", "name": "夹克", "icon": "i", "weight": 1.2, "maxStack": 1, "type": "clothing" },
     { "id": "hammer", "name": "锤子", "icon": "i", "weight": 2.0, "maxStack": 1, "type": "weapon" },
-    { "id": "repair_kit", "name": "维修包", "icon": "i", "weight": 0.3, "maxStack": 5, "type": "generic" }
+    { "id": "repair_kit", "name": "维修包", "icon": "i", "weight": 0.3, "maxStack": 5, "type": "generic" },
+    { "id": "canned_beans", "name": "罐头豆子", "icon": "i", "weight": 0.8, "maxStack": 3, "type": "consumable", "use": { "hunger": 0.35 } },
+    { "id": "water_bottle", "name": "瓶装水", "icon": "i", "weight": 0.5, "maxStack": 2, "type": "consumable", "use": { "thirst": 0.4 } }
   ]
 })";
 
@@ -112,6 +114,31 @@ TEST_CASE("M13-T7 服务器背包动作：拾取/使用/装备/丢弃") {
         world, fixture.items, ecs::ItemInstance{"rag", 1, 1.0f}, 30.0f, 30.0f);
     REQUIRE(static_cast<bool>(far != entt::null));
     CHECK_FALSE(service.Pickup(player, world.IdOf(far).id).ok);
+}
+
+TEST_CASE("M14-T4 食物/饮水通过服务器背包动作恢复 Needs") {
+    Fixture fixture;
+    ecs::EcsWorld world;
+    const ecs::Entity player = MakePlayer(world);
+    game::PlayerInventoryService service(world, fixture.items, fixture.recipes,
+                                         nullptr, nullptr);
+    entt::registry& registry = world.Registry();
+    auto& bag = registry.get<ecs::Container>(player);
+    auto& needs = registry.get<ecs::Needs>(player);
+    needs.hunger = 0.80f;
+    needs.thirst = 0.80f;
+    bag.items.push_back(ecs::ItemInstance{"canned_beans", 1, 1.0f});
+    bag.items.push_back(ecs::ItemInstance{"water_bottle", 1, 1.0f});
+
+    const game::InventoryResult ate = service.UseBag(player, 0);
+    CHECK(ate.ok);
+    CHECK(needs.hunger == doctest::Approx(0.45f));
+    CHECK(needs.thirst == doctest::Approx(0.80f));
+
+    const game::InventoryResult drank = service.UseBag(player, 0);
+    CHECK(drank.ok);
+    CHECK(needs.thirst == doctest::Approx(0.40f));
+    CHECK(bag.items.empty());
 }
 
 TEST_CASE("M13-T7 服务器背包动作：维修") {

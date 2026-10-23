@@ -13,6 +13,12 @@
         </div>
     </div>
 
+    <div id="hud-objective" class="hud-box">
+        <div class="objective-label">目标</div>
+        <div id="objective-text" class="objective-text">目标：--</div>
+        <div id="objective-hint" class="objective-hint"></div>
+    </div>
+
     <div id="hud-vitals" class="hud-box">
         <div class="vital-row">
             <span class="vital-label">生命</span>
@@ -24,6 +30,7 @@
             <div class="vital-track"><div id="stamina-fill" class="vital-fill stamina"></div></div>
             <span id="stamina-text" class="vital-value">100</span>
         </div>
+        <div id="needs-status" class="needs-status"></div>
     </div>
 
     <div id="hotbar">

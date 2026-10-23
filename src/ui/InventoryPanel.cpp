@@ -79,6 +79,7 @@ bool InventoryPanel::Init(Rml::Context& context, const std::string& path) {
     m_menu = m_document->GetElementById("context-menu");
     m_weight = m_document->GetElementById("inv-weight");
     m_bagStacks = m_document->GetElementById("bag-stack-count");
+    m_lootTitle = m_document->GetElementById("loot-title");
     m_lootStacks = m_document->GetElementById("loot-stack-count");
     m_status = m_document->GetElementById("inv-status");
     m_contextButtons[0] = m_document->GetElementById("ctx-use");
@@ -194,6 +195,7 @@ void InventoryPanel::Shutdown() {
     m_menu = nullptr;
     m_weight = nullptr;
     m_bagStacks = nullptr;
+    m_lootTitle = nullptr;
     m_lootStacks = nullptr;
     m_status = nullptr;
     m_bagSlots.fill(nullptr);
@@ -276,7 +278,8 @@ void InventoryPanel::SetState(const InventoryState& state) {
 
     if (first || state.playerValid != previous.playerValid || state.weight != previous.weight ||
         state.capacity != previous.capacity || state.bagStacks != previous.bagStacks ||
-        state.lootStacks != previous.lootStacks || state.status != previous.status ||
+        state.lootStacks != previous.lootStacks || state.lootTitle != previous.lootTitle ||
+        state.status != previous.status ||
         state.statusTone != previous.statusTone) {
         RefreshStaticText(state);
     }
@@ -350,6 +353,7 @@ void InventoryPanel::RefreshStaticText(const InventoryState& state) {
     std::snprintf(weight, sizeof(weight), "%.1f / %.1f kg", state.weight, state.capacity);
     SetText(m_weight, state.playerValid ? weight : "无玩家");
     SetText(m_bagStacks, std::to_string(state.bagStacks) + " 堆");
+    SetText(m_lootTitle, state.lootTitle);
     SetText(m_lootStacks, std::to_string(state.lootStacks) + " 堆");
     SetText(m_status, state.status);
     if (m_status != nullptr) {

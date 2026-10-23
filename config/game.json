@@ -24,7 +24,6 @@
     "ambientVolume": 55,
     "referenceDistance": 2.0,
     "maxDistance": 48.0,
-    "footstepStride": 0.9,
     "growlRadius": 24.0,
     "growlMinInterval": 1.1,
     "growlMaxInterval": 4.2,
@@ -40,6 +39,18 @@
   },
   "recipes": {
     "file": "assets/recipes.json"
+  },
+  "loot": {
+    "file": "assets/loot.json"
+  },
+  "objective": {
+    "radioPart": "radio_part",
+    "radioX": 72.5,
+    "radioY": 20.5,
+    "extractionX": 66.5,
+    "extractionY": 28.5,
+    "extractionRadius": 1.5,
+    "interactRange": 2.2
   },
   "crafting": {
     "stationRange": 2.5,
@@ -72,6 +83,24 @@
     "playerMaxHp": 100.0,
     "playerStartHp": 100.0
   },
+  "needs": {
+    "hungerPerDay": 1.4,
+    "thirstPerDay": 1.8,
+    "fatiguePerDay": 1.2,
+    "hungerDamageThreshold": 0.70,
+    "hungerDamagePenalty": 0.35,
+    "fatigueDamageThreshold": 0.80,
+    "fatigueDamagePenalty": 0.20,
+    "thirstMoveThreshold": 0.65,
+    "thirstMovePenalty": 0.30,
+    "fatigueMoveThreshold": 0.70,
+    "fatigueMovePenalty": 0.30,
+    "minMoveScale": 0.35,
+    "hungerCritical": 0.90,
+    "thirstCritical": 0.90,
+    "starvationHpPerSecond": 0.35,
+    "dehydrationHpPerSecond": 0.60
+  },
   "world": {
     "mapDir": "assets/maps/village_demo",
     "loadRadius": 3,
@@ -89,6 +118,10 @@
     "mapSize": 32,
     "seed": 42,
     "decorations": true
+  },
+  "render": {
+    "wallOcclusionAlpha": 0.35,
+    "roomCutaway": true
   },
   "task": {
     "threads": 0
@@ -134,17 +167,21 @@
     "deathFallSeconds": 0.5
   },
   "spawner": {
-    "populationTarget": 240,
-    "maxLive": 320,
+    "populationTarget": 80,
+    "maxLive": 120,
     "materializeRadius": 32.0,
-    "materializePerSecond": 16.0,
+    "materializePerSecond": 10.0,
     "minSpawnDistance": 30.0,
     "virtualizeRadius": 48.0,
     "virtualizePerSecond": 12.0,
-    "refillPerSecond": 2.0,
+    "refillPerSecond": 0.8,
     "refillRadius": 40.0,
     "refillBandWidth": 20.0,
-    "mergeRadius": 15.0
+    "mergeRadius": 15.0,
+    "demoZombies": 16,
+    "demoHordes": 3,
+    "demoZombiesPerHorde": 20,
+    "demoSafeRadius": 14.0
   },
   "server": {
     "network": false,

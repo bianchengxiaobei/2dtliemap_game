@@ -19,6 +19,7 @@
     { "id": "padded_jacket", "name": "加固夹克", "icon": "item.padded_jacket", "weight": 1.4, "maxStack": 1, "type": "clothing" },
     { "id": "cooked_beans", "name": "烤豆子", "icon": "item.cooked_beans", "weight": 0.6, "maxStack": 3, "type": "consumable", "use": { "hunger": 0.5 } },
     { "id": "magazine_cooking", "name": "烹饪杂志", "icon": "item.magazine_cooking", "weight": 0.2, "maxStack": 1, "type": "generic", "unlocksRecipes": ["campfire_beans"] },
-    { "id": "repair_kit", "name": "维修包", "icon": "item.repair_kit", "weight": 0.3, "maxStack": 3, "type": "generic" }
+    { "id": "repair_kit", "name": "维修包", "icon": "item.repair_kit", "weight": 0.3, "maxStack": 3, "type": "generic" },
+    { "id": "radio_part", "name": "无线电零件", "icon": "item.radio_part", "weight": 0.2, "maxStack": 1, "type": "generic" }
   ]
 }

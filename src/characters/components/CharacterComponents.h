@@ -80,14 +80,53 @@ struct Facing {
     Direction dir = Direction::Down;
 };
 
-// 占位动画（M4-T4：4 向 × 2 帧，站立用 frame 0）。
-// 帧序约定：图集/清单必须按 index = dir * framesPerDir + frame 列出帧
-// （own 图集：character_down_0/1, left_0/1, right_0/1, up_0/1）。
+// M14-T2：角色动画片段。Legacy 保持旧 8 帧资源可用；v2 由 AnimationSystem
+// 按移动/攻击/受击/死亡切换。片段名是 manifest 的稳定键，禁止靠文件名拼接。
+enum class AnimClip : std::uint8_t {
+    Legacy = 0,
+    Idle = 1,
+    Walk = 2,
+    Attack = 3,
+    Hit = 4,
+    Death = 5,
+    Count = 6,
+};
+
+// 动画事件：由片段事件帧触发。网络复制不传事件，远端从复制的 ActionState/
+// 速度重新推导；事件只用于本地表现（脚步/武器命中音效）。
+enum class AnimEvent : std::uint8_t {
+    None = 0,
+    Footstep = 1,
+    Hit = 2,
+};
+
+// 动画状态（M4-T4，M14-T3 扩展）。
+// 帧序约定：v2 片段 index = dir * framesPerDir + frame；旧资源按 4 向 × 2 帧回退。
+// clip/lastEvent/eventSerial/eventMaskDone 是运行时字段：不进入存档，也不进
+// M13 复制负载，保证旧快照仍能按 frame/framesPerDir/fps/time 解码。
 struct AnimState {
     std::uint8_t frame = 0;         // [0, framesPerDir)
     std::uint8_t framesPerDir = 2;  // 每方向帧数
-    float fps = 8.0f;               // 行走帧率
+    float fps = 8.0f;               // 当前片段帧率
     float time = 0.0f;              // 帧计时累加器（循环取模，不无界增长）
+
+    AnimClip clip = AnimClip::Legacy;
+    AnimEvent lastEvent = AnimEvent::None;
+    std::uint32_t eventSerial = 0;  // 每次事件帧自增；表现层比较后消费
+    std::uint8_t eventMaskDone = 0; // 当前片段已触发的事件帧位（循环时清零）
+};
+
+enum class ZombieVariantKind : std::uint8_t {
+    Normal = 0,
+    Fast = 1,
+    Strong = 2,
+};
+
+struct ZombieVariant {
+    ZombieVariantKind kind = ZombieVariantKind::Normal;
+    float speedScale = 1.0f;
+    float damageScale = 1.0f;
+    float visualScale = 1.0f;
 };
 
 enum class ActorAction : std::uint8_t {
@@ -118,6 +157,11 @@ struct Needs {
     float hunger = 0.0f;   // 饥饿
     float thirst = 0.0f;   // 口渴
     float fatigue = 0.0f;  // 疲劳
+
+    float moveScale = 1.0f;
+    float damageScale = 1.0f;
+    float healthDrainPerSecond = 0.0f;
+    std::uint8_t warning = 0;
 };
 
 // M5-T1：尸体（DeathSystem 在死者位置生成：Position + SpriteRef("corpse.placeholder")

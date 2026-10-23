@@ -79,16 +79,14 @@
    "y": 1,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.door",
-   "solid": true
+   "sprite": "wall.door"
   },
   {
    "x": 1,
    "y": 1,
    "z": 1,
    "layer": "wall",
-   "sprite": "wall.door",
-   "solid": true
+   "sprite": "wall.door"
   },
   {
    "x": 2,

@@ -97,6 +97,8 @@ TEST_CASE("M13-T9 联机社交：玩家列表与聊天广播") {
     CHECK(HasPlayer(alice.SocialState(), "Bob"));
     CHECK(alice.SocialState().players[0].stableId !=
           alice.SocialState().players[1].stableId);
+    CHECK(alice.SocialState().gameMinutes > 0.0);
+    CHECK(alice.SocialState().gameMinutes == bob.SocialState().gameMinutes);
 
     REQUIRE(alice.SendChat("集合点在北边", &error));
     REQUIRE(PumpUntil(host, alice, bob, 4000, [&] {

@@ -64,11 +64,12 @@ net::ReplicationRegistry MakeRegistry() {
 TEST_CASE("M13 Replication：全量快照、组件注册表与客户端副本") {
     net::ReplicationRegistry registry;
     REQUIRE(game::RegisterEntityReplicationComponents(registry));
-    CHECK(registry.Size() == 9);
+    CHECK(registry.Size() == 10);
     CHECK(registry.Find(game::kReplicationPosition) != nullptr);
     CHECK(registry.Find(game::kReplicationHealth) != nullptr);
     CHECK(registry.Find(game::kReplicationEquipment) != nullptr);
     CHECK(registry.Find(game::kReplicationAction) != nullptr);
+    CHECK(registry.Find(game::kReplicationVariant) != nullptr);
     CHECK_FALSE(registry.Register(game::kReplicationPosition, "duplicate", 4));
 
     ecs::EcsWorld world;
@@ -228,7 +229,7 @@ TEST_CASE("M13 Replication：增量只发变化组件，AOI 离开发移除，�
     CHECK(client.Find(actors.zombieId) == nullptr);
 }
 
-TEST_CASE("M13 Replication：错误基线、损坏负载与非法协议被拒绝") {
+TEST_CASE("M13 Replication：错误基线、损坏负载与非法协议被拒") {
     const net::ReplicationRegistry registry = MakeRegistry();
     ecs::EcsWorld world;
     const TestActors actors = MakeActors(world);
@@ -361,7 +362,7 @@ TEST_CASE("M13 Replication：空 AOI 与无变化增量保持可用") {
     CHECK(client.LastAppliedTick() == 2);
 }
 
-TEST_CASE("M13-T7 Replication：地面物品 ItemInstance 与拾取移除") {
+TEST_CASE("M13-T7 Replication：地面物ItemInstance 与拾取移") {
     const net::ReplicationRegistry registry = MakeRegistry();
     ecs::EcsWorld world;
     entt::registry& ecsRegistry = world.Registry();
@@ -410,7 +411,7 @@ TEST_CASE("M13-T7 Replication：地面物品 ItemInstance 与拾取移除") {
     REQUIRE(client.Apply(decoded, &error));
     CHECK(client.Find(300) == nullptr);
 }
-TEST_CASE("M13-T10 Replication：装备、动作、投射物与瞬时特效") {
+TEST_CASE("M13-T10 Replication：装备、动作、投射物与瞬时特") {
     const net::ReplicationRegistry registry = MakeRegistry();
     ecs::EcsWorld world;
     const TestActors actors = MakeActors(world);
@@ -457,6 +458,7 @@ TEST_CASE("M13-T10 Replication：装备、动作、投射物与瞬时特效") {
     CHECK(player->equipment[0]->condition == doctest::Approx(0.25f));
     REQUIRE(player->hasAction);
     CHECK(player->action.action == ecs::ActorAction::Attacking);
+    CHECK(player->anim.clip == ecs::AnimClip::Attack);  // clip 不进协议，客户端按动作推
     const game::ReplicatedActor* effectActor = client.Find(300);
     REQUIRE(effectActor != nullptr);
     CHECK(effectActor->archetype == game::kReplicationArchetypeEffect);
@@ -503,5 +505,6 @@ TEST_CASE("M13-T10 Replication：装备、动作、投射物与瞬时特效") {
     REQUIRE(player->equipment[1].has_value());
     CHECK(player->equipment[1]->defId == "jacket");
     CHECK(player->action.action == ecs::ActorAction::Hit);
+    CHECK(player->anim.clip == ecs::AnimClip::Hit);
     CHECK(client.Find(300) == nullptr);
 }

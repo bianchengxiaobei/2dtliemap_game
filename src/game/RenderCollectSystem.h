@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -40,7 +41,7 @@ public:
     // 实体锚点 = 脚下格中心（SpriteDrawRect 的 (px, py, z)），与 IsoMath 约定一致。
     static void FillEntityDrawItem(float px, float py, int z, uint32_t tint, uint64_t stableId,
                                    const render::AtlasFrame& frame, bgfx::TextureHandle texture,
-                                   int subLayer, render::DrawItem* out) {
+                                   int subLayer, render::DrawItem* out, int roomId = -1) {
         render::DrawItem item;
         item.texture = texture;
         item.rect = render::SpriteDrawRect(px, py, z, frame.fx, frame.fy, frame.ox, frame.oy,
@@ -61,10 +62,96 @@ public:
         item.gx = static_cast<int>(std::floor(px));
         item.layer = kEntityLayerBase + subLayer;
         item.tieBreaker = stableId;
+        item.roomId = roomId;
         *out = item;
     }
 
-    // 帧选择（纯函数，可单测）：
+    // M14-T1：把画家序在玩家之后（会被玩家遮挡/遮挡玩家）、且屏幕矩形与
+    // 玩家相交的 z=0 墙/门降到 alpha（0..255）；返回被修改的项数。
+    // playerIndex 必须是 items 中玩家 DrawItem 的下标（调用前已按 DrawItemLess 排序）。
+    // 只改颜色，不改排序/碰撞/存档；纯函数内联，测试目标无需额外链接 cpp。
+    static std::size_t FadeOccludingWalls(const render::SpriteRect& playerRect,
+                                          std::size_t playerIndex, std::uint32_t alpha,
+                                          std::vector<render::DrawItem>& items) {
+        if (alpha >= 0xFFu || playerRect.w <= 0.0f || playerRect.h <= 0.0f ||
+            playerIndex >= items.size()) {
+            return 0;
+        }
+        const std::uint32_t targetAlpha = alpha & 0xFFu;
+        std::size_t faded = 0;
+        for (std::size_t i = playerIndex + 1; i < items.size(); ++i) {
+            render::DrawItem& item = items[i];
+            if (item.stage != 1 || item.z != 0 ||
+                item.layer != static_cast<int>(world::SquareLayer::Wall)) {
+                continue;
+            }
+            const bool overlaps = item.rect.x < playerRect.x + playerRect.w &&
+                                  item.rect.x + item.rect.w > playerRect.x &&
+                                  item.rect.y < playerRect.y + playerRect.h &&
+                                  item.rect.y + item.rect.h > playerRect.y;
+            if (!overlaps) {
+                continue;
+            }
+            const std::uint32_t currentAlpha = item.color >> 24;
+            const std::uint32_t nextAlpha = std::min(currentAlpha, targetAlpha);
+            if (nextAlpha >= currentAlpha) {
+                continue;
+            }
+            item.color = (nextAlpha << 24) | (item.color & 0x00FFFFFFu);
+            ++faded;
+        }
+        return faded;
+    }
+
+    // M14-T10：玩家进入房间后把该房间上方（z≥1）的楼板/墙全部剖掉。
+    // 匹配键是 z=0 地面格的房间 ID，因此不会误伤相邻房屋的上层；只改本帧颜色。
+    static std::size_t CutawayUpperLayersInRoom(int roomId,
+                                                std::vector<render::DrawItem>& items) {
+        if (roomId < 0) {
+            return 0;
+        }
+        std::size_t hidden = 0;
+        for (render::DrawItem& item : items) {
+            if (item.z >= 1 && item.roomId == roomId && (item.color >> 24) != 0u) {
+                item.color &= 0x00FFFFFFu;
+                ++hidden;
+            }
+        }
+        return hidden;
+    }
+
+    // M14-T2/T3：动画 v2 片段选帧；帧表由 manifest 的 animations 段提供。
+    static std::size_t PickClipFrameIndex(const AssetProvider::AnimationClip* clip,
+                                          const ecs::AnimState* anim,
+                                          const ecs::Facing* facing) {
+        if (clip == nullptr || anim == nullptr || facing == nullptr ||
+            clip->framesPerDir == 0 || clip->frames.empty()) {
+            return 0;
+        }
+        const std::size_t perDir = static_cast<std::size_t>(clip->framesPerDir);
+        const std::size_t frame =
+            std::min<std::size_t>(anim->frame, perDir - 1);
+        const std::size_t index =
+            static_cast<std::size_t>(facing->dir) * perDir + frame;
+        return index < clip->frames.size() ? index : 0;
+    }
+
+    // 旧 8 帧回退（纯函数，可单测）：v2 的 3/4 帧索引不能直接套到旧资源，
+    // 统一夹到每向 0/1 帧；无 AnimState/Facing 时仍走 HashPick。
+    static std::size_t PickLegacyFrameIndex(const ecs::AnimState* anim,
+                                            const ecs::Facing* facing,
+                                            std::uint64_t stableId,
+                                            std::size_t frameCount) {
+        if (anim != nullptr && anim->clip != ecs::AnimClip::Legacy) {
+            ecs::AnimState fallback = *anim;
+            fallback.frame = std::min<std::uint8_t>(anim->frame, 1);
+            fallback.framesPerDir = 2;
+            return PickFrameIndex(&fallback, facing, stableId, frameCount);
+        }
+        return PickFrameIndex(anim, facing, stableId, frameCount);
+    }
+
+    // 旧 8 帧回退（纯函数，可单测）：
     //   有 AnimState + Facing（动画实体）→ index = dir * framesPerDir + frame（帧序约定）；
     //   否则（世界对象式静态变体）→ HashPick(stableId) 确定性伪随机。
     static std::size_t PickFrameIndex(const ecs::AnimState* anim, const ecs::Facing* facing,

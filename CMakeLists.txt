@@ -65,6 +65,7 @@ add_executable(ZomboidLike
     src/characters/systems/DeathSystem.cpp
     src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp
+    src/characters/systems/NeedsSystem.cpp
     src/core/AppState.cpp
     src/core/Config.cpp
     src/core/EventBus.cpp
@@ -77,12 +78,14 @@ add_executable(ZomboidLike
     src/ecs/EcsWorld.cpp
     src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
+    src/game/AnimationManifest.cpp
     src/game/AssetProvider.cpp
     src/game/EmbeddedServer.cpp
     src/game/EventProbe.cpp
     src/game/EntityReplication.cpp
     src/game/GameApp.cpp
     src/game/GroundItems.cpp
+    src/game/LootContainers.cpp
     src/game/NetworkClient.cpp
     src/game/PlayerInventoryService.cpp
     src/game/ServerList.cpp
@@ -97,6 +100,7 @@ add_executable(ZomboidLike
     src/items/ItemDef.cpp
     src/items/ItemRegistry.cpp
     src/items/InventoryOps.cpp
+    src/items/LootTable.cpp
     src/items/RecipeRegistry.cpp
     src/items/Repair.cpp
     src/net/Command.cpp
@@ -209,6 +213,8 @@ add_executable(ZomboidLikeTests
     tests/test_spatialindex.cpp
     tests/test_physics.cpp
     tests/test_player_control.cpp
+    tests/test_needs.cpp
+    tests/test_animation_v2.cpp
     tests/test_camera_follow.cpp
     tests/test_pathfinding.cpp
     tests/test_death.cpp
@@ -221,6 +227,9 @@ add_executable(ZomboidLikeTests
     tests/test_inventory.cpp
     tests/test_recipes.cpp
     tests/test_ground_items.cpp
+    tests/test_loot.cpp
+    tests/test_objective.cpp
+    tests/test_zombie_variants.cpp
     tests/test_script.cpp
     tests/test_lua_runtime.cpp
     tests/test_script_api.cpp
@@ -276,6 +285,7 @@ add_executable(ZomboidLikeTests
     src/characters/systems/DeathSystem.cpp
     src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp
+    src/characters/systems/NeedsSystem.cpp
     src/core/EventBus.cpp
     src/core/GameLoop.cpp
     src/core/GameTime.cpp
@@ -286,8 +296,10 @@ add_executable(ZomboidLikeTests
     src/ecs/EcsWorld.cpp
     src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
+    src/game/AnimationManifest.cpp
     src/game/EntityReplication.cpp
     src/game/GroundItems.cpp
+    src/game/LootContainers.cpp
     src/game/EmbeddedServer.cpp
     src/game/NetworkClient.cpp
     src/game/PlayerInventoryService.cpp
@@ -298,6 +310,7 @@ add_executable(ZomboidLikeTests
     src/items/ItemDef.cpp
     src/items/ItemRegistry.cpp
     src/items/InventoryOps.cpp
+    src/items/LootTable.cpp
     src/items/RecipeRegistry.cpp
     src/items/Repair.cpp
     src/net/Command.cpp

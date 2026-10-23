@@ -5,7 +5,12 @@
     "tile.floor.grass": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["floor_grass_1", "floor_grass_2", "floor_grass_3", "floor_grass_4"]
+        "frames": [
+          "floor_grass_1",
+          "floor_grass_2",
+          "floor_grass_3",
+          "floor_grass_4"
+        ]
       },
       "placeholder_pz": {
         "atlas": "assets_placeholder_pz/texturepacks/Tiles1x.floor/Tiles1x0.atlas.json",
@@ -25,31 +30,48 @@
     "tile.floor.dirt": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["floor_dirt_1", "floor_dirt_2"]
+        "frames": [
+          "floor_dirt_1",
+          "floor_dirt_2"
+        ]
       }
     },
     "tile.floor.wood": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["floor_wood_1", "floor_wood_2"]
+        "frames": [
+          "floor_wood_1",
+          "floor_wood_2"
+        ]
       }
     },
     "wall.brick": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["wall_brick_1", "wall_brick_2", "wall_brick_3"]
+        "frames": [
+          "wall_brick_1",
+          "wall_brick_2",
+          "wall_brick_3"
+        ]
       }
     },
     "wall.door": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["wall_door_1", "wall_door_2"]
+        "frames": [
+          "wall_door_1",
+          "wall_door_2"
+        ]
       }
     },
     "decor.grass_tuft": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["decor_tuft_1", "decor_tuft_2", "decor_tuft_3"]
+        "frames": [
+          "decor_tuft_1",
+          "decor_tuft_2",
+          "decor_tuft_3"
+        ]
       },
       "placeholder_pz": {
         "atlas": "assets_placeholder_pz/texturepacks/Erosion/Erosion2.atlas.json",
@@ -64,7 +86,11 @@
     "object.tree": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["tree_1", "tree_2", "tree_3"]
+        "frames": [
+          "tree_1",
+          "tree_2",
+          "tree_3"
+        ]
       },
       "placeholder_pz": {
         "atlas": "assets_placeholder_pz/texturepacks/JumboTrees1x/JumboTrees1x0.atlas.json",
@@ -79,13 +105,49 @@
     "object.workbench": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["workbench_1"]
+        "frames": [
+          "workbench_1"
+        ]
       }
     },
     "object.campfire": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["campfire_1"]
+        "frames": [
+          "campfire_1"
+        ]
+      }
+    },
+    "object.crate": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "crate_1"
+        ]
+      }
+    },
+    "object.locker": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "locker_1"
+        ]
+      }
+    },
+    "object.radio": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "radio_1"
+        ]
+      }
+    },
+    "object.extraction": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "extraction_1"
+        ]
       }
     },
     "character.placeholder": {
@@ -101,7 +163,99 @@
           "character_right_1",
           "character_up_0",
           "character_up_1"
-        ]
+        ],
+        "animations": {
+          "idle": {
+            "framesPerDir": 2,
+            "fps": 3,
+            "loop": true,
+            "events": [],
+            "frames": [
+              "character_idle_down_0",
+              "character_idle_down_1",
+              "character_idle_left_0",
+              "character_idle_left_1",
+              "character_idle_right_0",
+              "character_idle_right_1",
+              "character_idle_up_0",
+              "character_idle_up_1"
+            ]
+          },
+          "walk": {
+            "framesPerDir": 2,
+            "fps": 5,
+            "loop": true,
+            "events": [
+              {
+                "frame": 1,
+                "type": "footstep"
+              }
+            ],
+            "frames": [
+              "character_down_0",
+              "character_down_1",
+              "character_left_0",
+              "character_left_1",
+              "character_right_0",
+              "character_right_1",
+              "character_up_0",
+              "character_up_1"
+            ]
+          },
+          "attack": {
+            "framesPerDir": 3,
+            "fps": 10,
+            "loop": false,
+            "events": [
+              {
+                "frame": 1,
+                "type": "hit"
+              }
+            ],
+            "frames": [
+              "character_attack_down_0",
+              "character_attack_down_1",
+              "character_attack_down_2",
+              "character_attack_left_0",
+              "character_attack_left_1",
+              "character_attack_left_2",
+              "character_attack_right_0",
+              "character_attack_right_1",
+              "character_attack_right_2",
+              "character_attack_up_0",
+              "character_attack_up_1",
+              "character_attack_up_2"
+            ]
+          },
+          "hit": {
+            "framesPerDir": 1,
+            "fps": 8,
+            "loop": false,
+            "events": [],
+            "frames": [
+              "character_hit_down_0",
+              "character_hit_left_0",
+              "character_hit_right_0",
+              "character_hit_up_0"
+            ]
+          },
+          "death": {
+            "framesPerDir": 2,
+            "fps": 6,
+            "loop": false,
+            "events": [],
+            "frames": [
+              "character_death_down_0",
+              "character_death_down_1",
+              "character_death_left_0",
+              "character_death_left_1",
+              "character_death_right_0",
+              "character_death_right_1",
+              "character_death_up_0",
+              "character_death_up_1"
+            ]
+          }
+        }
       }
     },
     "character.zombie": {
@@ -117,146 +271,293 @@
           "character_zombie_right_1",
           "character_zombie_up_0",
           "character_zombie_up_1"
-        ]
+        ],
+        "animations": {
+          "idle": {
+            "framesPerDir": 2,
+            "fps": 3,
+            "loop": true,
+            "events": [],
+            "frames": [
+              "character_zombie_idle_down_0",
+              "character_zombie_idle_down_1",
+              "character_zombie_idle_left_0",
+              "character_zombie_idle_left_1",
+              "character_zombie_idle_right_0",
+              "character_zombie_idle_right_1",
+              "character_zombie_idle_up_0",
+              "character_zombie_idle_up_1"
+            ]
+          },
+          "walk": {
+            "framesPerDir": 2,
+            "fps": 5,
+            "loop": true,
+            "events": [
+              {
+                "frame": 1,
+                "type": "footstep"
+              }
+            ],
+            "frames": [
+              "character_zombie_down_0",
+              "character_zombie_down_1",
+              "character_zombie_left_0",
+              "character_zombie_left_1",
+              "character_zombie_right_0",
+              "character_zombie_right_1",
+              "character_zombie_up_0",
+              "character_zombie_up_1"
+            ]
+          },
+          "attack": {
+            "framesPerDir": 3,
+            "fps": 10,
+            "loop": false,
+            "events": [
+              {
+                "frame": 1,
+                "type": "hit"
+              }
+            ],
+            "frames": [
+              "character_zombie_attack_down_0",
+              "character_zombie_attack_down_1",
+              "character_zombie_attack_down_2",
+              "character_zombie_attack_left_0",
+              "character_zombie_attack_left_1",
+              "character_zombie_attack_left_2",
+              "character_zombie_attack_right_0",
+              "character_zombie_attack_right_1",
+              "character_zombie_attack_right_2",
+              "character_zombie_attack_up_0",
+              "character_zombie_attack_up_1",
+              "character_zombie_attack_up_2"
+            ]
+          },
+          "hit": {
+            "framesPerDir": 1,
+            "fps": 8,
+            "loop": false,
+            "events": [],
+            "frames": [
+              "character_zombie_hit_down_0",
+              "character_zombie_hit_left_0",
+              "character_zombie_hit_right_0",
+              "character_zombie_hit_up_0"
+            ]
+          },
+          "death": {
+            "framesPerDir": 2,
+            "fps": 6,
+            "loop": false,
+            "events": [],
+            "frames": [
+              "character_zombie_death_down_0",
+              "character_zombie_death_down_1",
+              "character_zombie_death_left_0",
+              "character_zombie_death_left_1",
+              "character_zombie_death_right_0",
+              "character_zombie_death_right_1",
+              "character_zombie_death_up_0",
+              "character_zombie_death_up_1"
+            ]
+          }
+        }
       }
     },
     "corpse.placeholder": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
         "comment": "M5-T1 尸体：帧选择走 HashPick(stableId)（尸体实体无 AnimState/Facing）",
-        "frames": ["corpse_1", "corpse_2"]
+        "frames": [
+          "corpse_1",
+          "corpse_2"
+        ]
       }
     },
     "item.bandage": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_bandage"]
+        "frames": [
+          "item_bandage"
+        ]
       }
     },
     "item.canned_beans": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_canned_beans"]
+        "frames": [
+          "item_canned_beans"
+        ]
       }
     },
     "item.axe": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_axe"]
+        "frames": [
+          "item_axe"
+        ]
       }
     },
     "item.kitchen_knife": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_kitchen_knife"]
+        "frames": [
+          "item_kitchen_knife"
+        ]
       }
     },
     "item.rag": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_rag"]
+        "frames": [
+          "item_rag"
+        ]
       }
     },
     "item.jacket": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_jacket"]
+        "frames": [
+          "item_jacket"
+        ]
       }
     },
     "item.tote_bag": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_tote_bag"]
+        "frames": [
+          "item_tote_bag"
+        ]
       }
     },
     "item.water_bottle": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_water_bottle"]
+        "frames": [
+          "item_water_bottle"
+        ]
       }
     },
     "item.painkillers": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_painkillers"]
+        "frames": [
+          "item_painkillers"
+        ]
       }
     },
     "item.hammer": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_hammer"]
+        "frames": [
+          "item_hammer"
+        ]
       }
     },
     "item.screwdriver": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_screwdriver"]
+        "frames": [
+          "item_screwdriver"
+        ]
       }
     },
     "item.energy_bar": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_energy_bar"]
+        "frames": [
+          "item_energy_bar"
+        ]
       }
     },
     "item.hiking_boots": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_hiking_boots"]
+        "frames": [
+          "item_hiking_boots"
+        ]
       }
     },
     "item.backpack": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_backpack"]
+        "frames": [
+          "item_backpack"
+        ]
       }
     },
     "item.makeshift_spear": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_makeshift_spear"]
+        "frames": [
+          "item_makeshift_spear"
+        ]
       }
     },
     "item.padded_jacket": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_padded_jacket"]
+        "frames": [
+          "item_padded_jacket"
+        ]
       }
     },
     "item.cooked_beans": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_cooked_beans"]
+        "frames": [
+          "item_cooked_beans"
+        ]
       }
     },
     "item.magazine_cooking": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_magazine_cooking"]
+        "frames": [
+          "item_magazine_cooking"
+        ]
       }
     },
     "item.repair_kit": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["item_repair_kit"]
+        "frames": [
+          "item_repair_kit"
+        ]
+      }
+    },
+    "item.radio_part": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "item_radio_part"
+        ]
       }
     },
     "projectile.bullet": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["projectile_bullet"]
+        "frames": [
+          "projectile_bullet"
+        ]
       }
     },
     "effect.impact": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["effect_impact"]
+        "frames": [
+          "effect_impact"
+        ]
       }
     },
     "ui.pixel": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
-        "frames": ["white"]
+        "frames": [
+          "white"
+        ]
       }
     }
   }

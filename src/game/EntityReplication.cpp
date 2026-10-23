@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "characters/systems/AnimationSystem.h"
 #include "core/Constants.h"
 
 namespace zl::game {
@@ -261,6 +262,26 @@ bool CaptureComponents(entt::registry& registry, entt::entity entity,
         components->push_back(MakeComponent(kReplicationAction, std::move(bytes)));
     }
 
+    if (const auto* variant = registry.try_get<ecs::ZombieVariant>(entity);
+        variant != nullptr) {
+        if (static_cast<std::uint8_t>(variant->kind) >
+                static_cast<std::uint8_t>(ecs::ZombieVariantKind::Strong) ||
+            !Finite(variant->speedScale) || variant->speedScale < 0.25f ||
+            variant->speedScale > 4.0f || !Finite(variant->damageScale) ||
+            variant->damageScale < 0.25f || variant->damageScale > 4.0f ||
+            !Finite(variant->visualScale) || variant->visualScale < 0.25f ||
+            variant->visualScale > 4.0f) {
+            SetError(error, "澶嶅埗 ZombieVariant 璐熻浇闈炴硶");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU8(bytes, static_cast<std::uint8_t>(variant->kind));
+        PutF32(bytes, variant->speedScale);
+        PutF32(bytes, variant->damageScale);
+        PutF32(bytes, variant->visualScale);
+        components->push_back(MakeComponent(kReplicationVariant, std::move(bytes)));
+    }
+
     std::sort(components->begin(), components->end(),
               [](const net::ReplicatedComponent& lhs,
                  const net::ReplicatedComponent& rhs) {
@@ -342,7 +363,11 @@ bool RegisterEntityReplicationComponents(net::ReplicationRegistry& registry,
                            kReplicationComponentVersion, error)) {
         return false;
     }
-    return registry.Register(kReplicationAction, "ActionState", 9,
+    if (!registry.Register(kReplicationAction, "ActionState", 9,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    return registry.Register(kReplicationVariant, "ZombieVariant", 13,
                              kReplicationComponentVersion, error);
 }
 
@@ -741,6 +766,26 @@ bool EntityReplicationClient::DecodePatch(const net::ReplicatedEntity& entity,
             }
             decoded.action.action = static_cast<ecs::ActorAction>(action);
             decoded.hasAction = true;
+        } else if (component.type == kReplicationVariant) {
+            std::uint8_t kind = 0;
+            if (!reader.U8(&kind) || !reader.F32(&decoded.variant.speedScale) ||
+                !reader.F32(&decoded.variant.damageScale) ||
+                !reader.F32(&decoded.variant.visualScale) || !reader.AtEnd() ||
+                kind > static_cast<std::uint8_t>(ecs::ZombieVariantKind::Strong) ||
+                !Finite(decoded.variant.speedScale) ||
+                decoded.variant.speedScale < 0.25f ||
+                decoded.variant.speedScale > 4.0f ||
+                !Finite(decoded.variant.damageScale) ||
+                decoded.variant.damageScale < 0.25f ||
+                decoded.variant.damageScale > 4.0f ||
+                !Finite(decoded.variant.visualScale) ||
+                decoded.variant.visualScale < 0.25f ||
+                decoded.variant.visualScale > 4.0f) {
+                SetError(error, "复制 ZombieVariant 负载非法");
+                return false;
+            }
+            decoded.variant.kind = static_cast<ecs::ZombieVariantKind>(kind);
+            decoded.hasVariant = true;
         } else {
             SetError(error, "复制实体包含未知组件类型");
             return false;
@@ -798,6 +843,17 @@ void EntityReplicationClient::ApplyPatch(const ActorPatch& patch) {
     if (patch.hasAction) {
         actor.action = patch.action;
         actor.hasAction = true;
+    }
+    if (patch.hasVariant) {
+        actor.variant = patch.variant;
+        actor.hasVariant = true;
+    }
+    if (actor.hasAnim) {
+        // M14-T3：clip 不进入复制协议；远端用已复制的速度/动作/生命重新推导。
+        actor.anim.clip = characters::AnimationSystem::SelectClip(
+            actor.hasVelocity ? &actor.velocity : nullptr,
+            actor.hasAction ? &actor.action : nullptr,
+            actor.hasHealth ? &actor.health : nullptr);
     }
 }
 

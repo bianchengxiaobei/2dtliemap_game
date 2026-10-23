@@ -61,6 +61,40 @@ body {
     color: #ff9a8a;
 }
 
+#hud-objective {
+    top: 12px;
+    right: 16px;
+    width: 310px;
+    padding: 8px 10px;
+}
+
+.objective-label {
+    font-size: 11px;
+    color: #9fb3c8;
+}
+
+.objective-text {
+    margin-top: 3px;
+    font-size: 13px;
+    line-height: 18px;
+    color: #ffd479;
+}
+
+.objective-text.objective-warn {
+    color: #ffb86b;
+}
+
+.objective-text.objective-ok {
+    color: #7fe08a;
+}
+
+.objective-hint {
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: 16px;
+    color: #9fb3c8;
+}
+
 #hud-vitals {
     left: 16px;
     bottom: 16px;
@@ -106,6 +140,21 @@ body {
 .stamina {
     width: 100%;
     background-color: #d4b24a;
+}
+
+.needs-status {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 15px;
+    color: #9fb3c8;
+}
+
+.needs-status.status-warn {
+    color: #ffd479;
+}
+
+.needs-status.status-fail {
+    color: #ff8a7a;
 }
 
 .vital-fill.low {

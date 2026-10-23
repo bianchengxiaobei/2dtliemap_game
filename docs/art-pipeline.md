@@ -84,7 +84,7 @@
   `character.zombie`（僵尸）；
 - 尸体：`corpse.placeholder`；
 - 场景：`object.tree` / `object.workbench` / `object.campfire` /
-  `decor.grass_tuft`；
+  `object.crate` / `object.locker` / `decor.grass_tuft`；
 - 物品：`item.<id>`，id 与 `assets/items.json` 一致；
 - 投射物/特效：`projectile.bullet` / `effect.impact`。
 
@@ -110,22 +110,28 @@
 
 ## 5. 动画契约
 
-当前运行时只有一种角色动画：
+当前运行时使用动画 v2（M14-T2/T3），manifest 的每个角色 provider 可带 `animations`：
 
-- 4 方向 × 2 帧；`fps=8`；站立固定 `frame=0`；
-- 帧序由 `AnimState.framesPerDir` 和 `Facing.dir` 决定，禁止在渲染侧另写顺序；
-- 移动/待机共用同一组 8 帧；攻击、受击、制作、死亡目前由 `ActionState` 和
-  代码绘制的临时表现承担，不是正式动画帧。
+| 片段 | 每向帧数 | fps | 循环 | 事件帧 | 资源 |
+| --- | --- | --- | --- | --- | --- |
+| `idle` | 2 | 3 | 是 | 无 | `character_idle_<dir>_<frame>` |
+| `walk` | 2 | 5 | 是 | 1（footstep） | 复用旧 `character_<dir>_<frame>` |
+| `attack` | 3 | 10 | 否 | 1（hit） | `character_attack_<dir>_<frame>` |
+| `hit` | 1 | 8 | 否 | 无 | `character_hit_<dir>_<frame>` |
+| `death` | 2 | 6 | 否 | 无 | `character_death_<dir>_<frame>` |
 
-正式角色动画 v2 需要单独设计，至少包含：
+- 4 方向起步：`dir: down=0, left=1, right=2, up=3`；帧序固定
+  `index = dir * framesPerDir + frame`，禁止在渲染侧另写顺序；
+- `animations` 出现时必须完整包含五项；每片段 `frames` 数量 = `framesPerDir × 4`；
+  `AnimationManifest` 会校验帧数/fps/循环/事件帧与 `AnimationSystem::Spec` 一致；
+- `AnimState.clip/lastEvent/eventSerial/eventMaskDone` 是运行时字段，不进入存档或
+  M13 复制负载；旧快照仍按 `frame/framesPerDir/fps/time` 解码，远端从复制的速度/
+  动作/生命推导片段；
+- 缺少 v2 片段或旧 provider 时，渲染回退旧 4 向 × 2 帧（攻击/受击帧索引夹到 0/1）；
+- 武器/衣物挂点、阴影/遮挡层仍为后续项；当前主手武器是随朝向/动作/帧变化的图标叠加。
 
-- `idle/walk/attack/hit/death` 片段，每片段有帧数、fps、循环/一次性标记；
-- 4 方向起步，八方向作为可选扩展；片段选择不依赖文件名字符串拼接；
-- 武器/衣物挂点、阴影/遮挡层、事件帧（命中/脚步声）；
-- 旧 8 帧资源仍可回退，避免存档和联机协议同时改动。
-
-在没有 v2 之前，本切片只画 8 帧走路，不把攻击/死亡画进 `character.placeholder` 的
-帧表，避免运行时索引错位。
+`zombie` 使用相同片段表，资源前缀为 `character_zombie_`；死亡第 2 帧直接复用尸体
+画布，保证倒地窗口与之后生成的 corpse 实体视觉连续。
 
 ## 6. 垂直切片范围
 
@@ -133,8 +139,8 @@
 
 - 地面：4 个草地变体、2 个泥土、2 个木地板；
 - 墙：3 个砖墙变体、2 个门变体；
-- 玩家：4 向 × 2 帧；僵尸：4 向 × 2 帧（独立逻辑名）；
-- 尸体 2 变体；树 3 变体；草丛 3 变体；工作台/篝火各 1；
+- 玩家/僵尸：旧 4 向 × 2 帧 + v2 的 idle/attack/hit/death 新帧（walk 复用旧帧）；图集共 130 帧（含 M14-T5 木箱/储物柜、M14-T6 电台/撤离信标/无线电零件图标）；`wall.door` 为可通行 open-door 占位；
+- 尸体 2 变体；树 3 变体；草丛 3 变体；工作台/篝火/木箱/储物柜各 1；僵尸变体复用同一套角色帧，通过 `ZombieVariant` 的色调与脚底锚点缩放区分，不新增帧；
 - 物品图标：代表性 9 个（斧、绷带、罐头、水、背包、锤、长矛、加固夹克、维修包）；
 - 投射物和命中特效各 1 个独立帧；
 - 其余图标/UI/音频暂保留占位，后续逐项替换。
@@ -157,14 +163,15 @@ py -3 tools/tests/test_art_slice.py -v
 - [x] 图集/清单加载无缺失帧、无 0 尺寸帧、无越界矩形；
 - [x] 所有地面块在 1x/2x 下无缝，角色脚底落在格中心；
 - [x] 玩家/僵尸/尸体在四种朝向下可区分；
+- [x] 五态动画片段可由 manifest 加载，帧序/事件帧通过 Python 与 C++ 校验；
 - [x] 墙体不穿透地面，树/墙遮挡顺序正确；
 - [x] 门、工作台、篝火在 1x 缩放可辨认；
-- [ ] 资源全部来自 `assets/own`，不包含 PZ 贴图/地图/音效；
-- [ ] 实机截图记录到 `build/art-slice.png`（不提交构建产物）。
+- [x] 资源全部来自 `assets/own`，不包含 PZ 贴图/地图/音效；
+- [x] 实机截图记录到 `build/art-slice.png`、`build/m14-v2-idle.png`（不提交构建产物）。
 
 ## 8. 后续顺序
 
-1. 角色动画 v2（片段 + 挂点 + 阴影）；
+1. ~~角色动画 v2（片段 + 挂点 + 阴影）~~ — M14-T2/T3 已完成基础片段/事件/主手挂点，骨骼蒙皮与阴影待正式美术；
 2. 生存内容垂直切片（需求衰减、loot、僵尸变体、POI）；
 3. 全量物品图标与 UI 皮肤；
 4. 正式音频；

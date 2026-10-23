@@ -71,6 +71,7 @@ private:
     Rml::Element* m_menu = nullptr;
     Rml::Element* m_weight = nullptr;
     Rml::Element* m_bagStacks = nullptr;
+    Rml::Element* m_lootTitle = nullptr;
     Rml::Element* m_lootStacks = nullptr;
     Rml::Element* m_status = nullptr;
     std::array<Rml::Element*, kInventoryBagSlots> m_bagSlots{};

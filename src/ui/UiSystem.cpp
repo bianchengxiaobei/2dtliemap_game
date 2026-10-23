@@ -203,6 +203,10 @@ bool UiSystem::EnsureHudDocument() {
     m_hpTextElement = m_hudDocument->GetElementById("hp-text");
     m_staminaFillElement = m_hudDocument->GetElementById("stamina-fill");
     m_staminaTextElement = m_hudDocument->GetElementById("stamina-text");
+    m_needsStatusElement = m_hudDocument->GetElementById("needs-status");
+    m_objectivePanelElement = m_hudDocument->GetElementById("hud-objective");
+    m_objectiveElement = m_hudDocument->GetElementById("objective-text");
+    m_objectiveHintElement = m_hudDocument->GetElementById("objective-hint");
     m_noticeElement = m_hudDocument->GetElementById("notice");
     for (int i = 0; i < 5; ++i) {
         const std::string suffix = std::to_string(i);
@@ -429,6 +433,10 @@ void UiSystem::Shutdown() {
     m_hpTextElement = nullptr;
     m_staminaFillElement = nullptr;
     m_staminaTextElement = nullptr;
+    m_needsStatusElement = nullptr;
+    m_objectivePanelElement = nullptr;
+    m_objectiveElement = nullptr;
+    m_objectiveHintElement = nullptr;
     m_noticeElement = nullptr;
     m_hotbarSlots.fill(nullptr);
     m_hotbarNames.fill(nullptr);
@@ -811,6 +819,34 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
         setBar(m_staminaFillElement, m_staminaTextElement, state.stamina, state.staminaMax,
                state.playerValid);
     }
+    if (first || state.needsStatus != m_hudCache.needsStatus ||
+        state.needsTone != m_hudCache.needsTone) {
+        setText(m_needsStatusElement, state.needsStatus);
+        if (m_needsStatusElement != nullptr) {
+            m_needsStatusElement->SetProperty(
+                "display", state.needsStatus.empty() ? "none" : "block");
+            m_needsStatusElement->SetClass("status-warn", state.needsTone == "warn");
+            m_needsStatusElement->SetClass("status-fail", state.needsTone == "fail");
+        }
+    }
+    if (first || state.objective != m_hudCache.objective ||
+        state.objectiveTone != m_hudCache.objectiveTone ||
+        state.objectiveHint != m_hudCache.objectiveHint) {
+        setText(m_objectiveElement, state.objective);
+        setText(m_objectiveHintElement, state.objectiveHint);
+        if (m_objectivePanelElement != nullptr) {
+            m_objectivePanelElement->SetProperty(
+                "display", state.objective.empty() ? "none" : "block");
+        }
+        if (m_objectiveElement != nullptr) {
+            m_objectiveElement->SetClass("objective-warn", state.objectiveTone == "warn");
+            m_objectiveElement->SetClass("objective-ok", state.objectiveTone == "ok");
+        }
+        if (m_objectiveHintElement != nullptr) {
+            m_objectiveHintElement->SetProperty(
+                "display", state.objectiveHint.empty() ? "none" : "block");
+        }
+    }
     if (first || state.selectedSlot != m_hudCache.selectedSlot) {
         for (int i = 0; i < 5; ++i) {
             if (m_hotbarSlots[i] != nullptr) {
@@ -1075,6 +1111,29 @@ void UiSystem::ShowPauseMenu() {
         return;
     }
     m_menu->ShowPauseMenu();
+    if (!m_menu->IsOpen()) {
+        return;
+    }
+    SyncMenuChrome(true);
+    m_menuWasOpen = true;
+}
+
+void UiSystem::ShowEndScreen(bool victory, const std::string& title,
+                             const std::string& subtitle, const std::string& stats) {
+    CloseInventory();
+    if (IsMultiplayerOpen()) {
+        HideMultiplayerMenu();
+    }
+    if (m_scriptMenuOpen) {
+        m_scriptMenuOpen = false;
+        m_scriptMenuPauseMode = false;
+        NotifyMenuChanged();
+    }
+    if (!EnsureMenuPanel()) {
+        ZL_ERROR("ui", "结算页不可用：assets/ui/menu.rml");
+        return;
+    }
+    m_menu->ShowEndScreen(victory, title, subtitle, stats);
     if (!m_menu->IsOpen()) {
         return;
     }

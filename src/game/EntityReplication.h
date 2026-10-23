@@ -46,6 +46,8 @@ inline constexpr std::uint32_t kReplicationEquipment =
     net::MakeReplicationComponentId('E', 'Q', 'I', 'P');
 inline constexpr std::uint32_t kReplicationAction =
     net::MakeReplicationComponentId('A', 'C', 'T', 'N');
+inline constexpr std::uint32_t kReplicationVariant =
+    net::MakeReplicationComponentId('Z', 'V', 'A', 'R');
 
 bool RegisterEntityReplicationComponents(net::ReplicationRegistry& registry,
                                          std::string* error = nullptr);
@@ -66,6 +68,7 @@ struct ReplicatedActor {
     ecs::ItemInstance item;
     std::array<std::optional<ecs::ItemInstance>, ecs::kEquipSlotCount> equipment;
     ecs::ActionState action;
+    ecs::ZombieVariant variant;
 
     bool hasPosition = false;
     bool hasVelocity = false;
@@ -76,6 +79,7 @@ struct ReplicatedActor {
     bool hasItem = false;
     bool hasEquipment = false;
     bool hasAction = false;
+    bool hasVariant = false;
 };
 
 class EntityReplicationProducer {
@@ -193,6 +197,7 @@ private:
         ecs::ItemInstance item;
         std::array<std::optional<ecs::ItemInstance>, ecs::kEquipSlotCount> equipment;
         ecs::ActionState action;
+        ecs::ZombieVariant variant;
         bool hasPosition = false;
         bool hasVelocity = false;
         bool hasHealth = false;
@@ -202,6 +207,7 @@ private:
         bool hasItem = false;
         bool hasEquipment = false;
         bool hasAction = false;
+        bool hasVariant = false;
     };
 
     bool DecodePatch(const net::ReplicatedEntity& entity, ActorPatch* patch,

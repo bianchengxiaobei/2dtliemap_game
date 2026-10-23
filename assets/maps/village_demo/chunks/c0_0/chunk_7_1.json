@@ -107,8 +107,7 @@
    "y": 7,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.door",
-   "solid": true
+   "sprite": "wall.door"
   },
   {
    "x": 5,

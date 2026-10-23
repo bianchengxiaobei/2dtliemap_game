@@ -1,5 +1,8 @@
 #include "game/RenderCollectSystem.h"
 
+#include <algorithm>
+
+#include "characters/components/CharacterComponents.h"
 #include "core/Constants.h"
 #include "ecs/components/CommonComponents.h"
 #include "world/WorldCoords.h"
@@ -25,17 +28,45 @@ void RenderCollectSystem::Collect(ecs::EcsWorld& world, const ecs::SpatialIndex&
         if (frames == nullptr || frames->empty()) {
             return;
         }
-        const std::uint64_t stableId = world.IdOf(e).id;
-        const std::size_t frameIndex =
-            PickFrameIndex(registry.try_get<ecs::AnimState>(e), registry.try_get<ecs::Facing>(e),
-                           stableId, frames->size());
-        const AssetProvider::Entry& entry = (*frames)[frameIndex];
-        if (entry.atlas == nullptr || entry.frame == nullptr) {
+
+        const auto* anim = registry.try_get<ecs::AnimState>(e);
+        const auto* facing = registry.try_get<ecs::Facing>(e);
+        const AssetProvider::Entry* selected = nullptr;
+        if (anim != nullptr && facing != nullptr) {
+            const AssetProvider::AnimationSet* set =
+                assets.AnimationsByHash(sprite->sprite);
+            const AssetProvider::AnimationClip* clip =
+                set != nullptr ? set->Find(anim->clip) : nullptr;
+            if (clip != nullptr && !clip->frames.empty()) {
+                const std::size_t index = PickClipFrameIndex(clip, anim, facing);
+                selected = &clip->frames[index];
+            }
+        }
+
+        if (selected == nullptr) {
+            const std::size_t frameIndex =
+                PickLegacyFrameIndex(anim, facing, world.IdOf(e).id, frames->size());
+            selected = &(*frames)[frameIndex];
+        }
+        if (selected->atlas == nullptr || selected->frame == nullptr) {
             return;
         }
         render::DrawItem item;
-        FillEntityDrawItem(pos->x, pos->y, pos->z, sprite->tint, stableId, *entry.frame,
-                           entry.atlas->Texture(), sprite->layer, &item);
+        FillEntityDrawItem(pos->x, pos->y, pos->z, sprite->tint, world.IdOf(e).id,
+                           *selected->frame, selected->atlas->Texture(), sprite->layer,
+                           &item);
+        if (const auto* variant = registry.try_get<ecs::ZombieVariant>(e);
+            variant != nullptr) {
+            const float scale = std::clamp(variant->visualScale, 0.5f, 2.0f);
+            if (scale != 1.0f) {
+                const float centerX = item.rect.x + item.rect.w * 0.5f;
+                const float bottom = item.rect.y + item.rect.h;
+                item.rect.w *= scale;
+                item.rect.h *= scale;
+                item.rect.x = centerX - item.rect.w * 0.5f;
+                item.rect.y = bottom - item.rect.h;
+            }
+        }
         items.push_back(item);
     });
 }

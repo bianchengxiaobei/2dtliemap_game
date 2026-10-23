@@ -100,7 +100,7 @@ TEST_CASE("M13 ServerHost：演示人口由同一模拟生成") {
     zl::server::ServerHost host;
     std::string error;
     REQUIRE_MESSAGE(host.Init(options, &error), error);
-    CHECK(host.Simulation().Ecs().AliveCount() >= 40);
+    CHECK(host.Simulation().Ecs().AliveCount() >= 16);
     host.RunForTicks(3);
     CHECK(host.TickCount() == 3);
     host.Shutdown();

@@ -36,6 +36,19 @@
             <div class="menu-hint">按 Esc 继续游戏</div>
         </div>
 
+        <div id="end-menu" class="menu-view menu-end">
+            <div id="end-kicker" class="menu-kicker">RUN COMPLETE</div>
+            <div id="end-title" class="menu-title">成功撤离</div>
+            <div id="end-subtitle" class="menu-subtitle">你带着无线电零件抵达了撤离点。</div>
+            <div class="menu-accent"></div>
+            <div id="end-stats" class="end-stats">第 1 天 00:00<br/>击杀 0 只僵尸</div>
+            <div class="menu-actions">
+                <div id="end-restart" class="menu-btn primary">重新开始</div>
+                <div id="end-main-menu" class="menu-btn">返回主菜单</div>
+            </div>
+            <div class="menu-hint">本局已结束 · 重新开始会生成新的世界</div>
+        </div>
+
         <div id="settings-menu" class="menu-view menu-settings">
             <div class="menu-kicker">OPTIONS</div>
             <div class="settings-title">设置</div>

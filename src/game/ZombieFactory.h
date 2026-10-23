@@ -1,5 +1,6 @@
 #pragma once
 
+#include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
 
 namespace zl::core {
@@ -16,6 +17,7 @@ namespace zl::game {
 // （组件构成单一出处：AI 状态机/感知/寻路/战斗/LOD 全套齐备，与演示僵尸完全一致）。
 // M7-T4：events 非空时发 OnZombieSpawn（排队派发；脚本/HUD 等消费）。
 ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, float px, float py,
-                        core::EventBus* events = nullptr);
+                        core::EventBus* events = nullptr,
+                        ecs::ZombieVariantKind variant = ecs::ZombieVariantKind::Normal);
 
 }  // namespace zl::game

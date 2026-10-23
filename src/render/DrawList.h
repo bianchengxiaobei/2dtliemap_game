@@ -26,6 +26,9 @@ struct DrawItem {
     int gx = 0;
     int layer = 0;            // 同格绘制层序（世界层 0..kSquareLayerCount-1，实体在更上层）
     uint64_t tieBreaker = 0;  // 同格同层决胜（实体用 StableId，保证确定性；世界对象为 0）
+    // M14-T10：该对象所属地面格（z=0）的房间 ID；室内剖切只用它匹配当前房间，
+    // 不参与排序，也不写入存档/复制负载。
+    int roomId = -1;
 };
 
 // 全局画家序（唯一排序入口）：stage → z → diag → gx → layer → tieBreaker

@@ -46,9 +46,12 @@ void DeathSystem::Update(ecs::EcsWorld& world, float dt) {
                 velocity->x = 0.0f;
                 velocity->y = 0.0f;
             }
-            // 表现：换成尸体帧（"倒下"）；闪烁 tint 由 CombatSystem 在硬直结束时恢复
-            if (auto* sprite = registry.try_get<ecs::SpriteRef>(e); sprite != nullptr) {
-                sprite->sprite = ecs::HashName(kCorpseSpriteName);
+            // M14-T3：倒地窗口保留角色资源，由动画片段播放 death；窗口结束才生成
+            // corpse 实体。这样本地/远程/读档都能看到倒地过程，而不是瞬间换尸体帧。
+            if (auto* action = registry.try_get<ecs::ActionState>(e); action != nullptr) {
+                action->action = ecs::ActorAction::Dead;
+                action->elapsed = 0.0f;
+                action->duration = m_fallSeconds;
             }
             ZL_INFO(kLogModule, "倒地：稳定 ID {}（{:.1f}s 后转尸体）", world.IdOf(e).id,
                     m_fallSeconds);

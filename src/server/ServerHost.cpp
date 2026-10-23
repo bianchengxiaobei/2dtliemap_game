@@ -1127,6 +1127,7 @@ void ServerHost::FillSocialState(net::SocialState* state) const {
     }
     state->serverTick = m_ticks;
     state->sequence = m_socialSequence;
+    state->gameMinutes = m_gameTime != nullptr ? m_gameTime->TotalGameMinutes() : 0.0;
     state->players.clear();
     state->players.reserve(m_sessions.size());
     for (const auto& [sessionId, session] : m_sessions) {

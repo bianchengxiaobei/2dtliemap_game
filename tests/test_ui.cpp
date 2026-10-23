@@ -341,6 +341,10 @@ TEST_CASE("M9-T4 HUD 文档与游戏输入阻断") {
     CHECK(document->GetElementById("hud-speed") != nullptr);
     CHECK(document->GetElementById("hp-fill") != nullptr);
     CHECK(document->GetElementById("stamina-fill") != nullptr);
+    CHECK(document->GetElementById("needs-status") != nullptr);
+    CHECK(document->GetElementById("hud-objective") != nullptr);
+    CHECK(document->GetElementById("objective-text") != nullptr);
+    CHECK(document->GetElementById("objective-hint") != nullptr);
     CHECK(document->GetElementById("notice") != nullptr);
     Rml::Element* firstSlot = document->GetElementById("slot-0");
     REQUIRE(firstSlot != nullptr);
@@ -463,6 +467,7 @@ TEST_CASE("M9-T5 背包状态渲染与右键菜单") {
     state.equipment[0] = zl::ui::InventorySlot{true, "消防斧", 1, false, false, 0};
     state.loot[0] = zl::ui::InventorySlot{true, "破布", 2, false, false, 9001};
     state.lootStacks = 1;
+    state.lootTitle = "容器：木箱";
     panel.SetState(state);
     panel.Show();
     context->Update();
@@ -485,6 +490,7 @@ TEST_CASE("M9-T5 背包状态渲染与右键菜单") {
     CHECK(document->GetElementById("loot-slot-0")->IsClassSet("filled"));
     CHECK(document->GetElementById("loot-slot-0")->GetAttribute<Rml::String>("data-entity", "") ==
           "9001");
+    CHECK(document->GetElementById("loot-title")->GetInnerRML() == "容器：木箱");
     CHECK(document->GetElementById("inv-weight")->GetInnerRML().find("4.2 / 20.0") !=
           std::string::npos);
     CHECK(bag0->GetComputedValues().drag() == Rml::Style::Drag::Clone);
@@ -654,7 +660,7 @@ TEST_CASE("M9-T5 背包 1280x720 与 1920x1080 布局") {
     }
     Rml::Shutdown();
 }
-TEST_CASE("M9-T6 主菜单、暂停菜单与设置页") {
+TEST_CASE("M9-T6/M14-T8 主菜单、暂停菜单、设置页与结算页") {
     NullRenderInterface renderInterface;
     NullSystemInterface systemInterface;
     Rml::SetRenderInterface(&renderInterface);
@@ -801,6 +807,29 @@ TEST_CASE("M9-T6 主菜单、暂停菜单与设置页") {
     clickElement("menu-multiplayer");
     REQUIRE(actions.size() == 5);
     CHECK(actions[4] == zl::ui::MenuActionType::Multiplayer);
+
+    panel.ShowEndScreen(false, "你死了", "你倒在了尸潮中。", "第 2 天 03:15<br/>击杀 7 只僵尸");
+    context->Update();
+    REQUIRE(panel.IsOpen());
+    CHECK(document->GetElementById("end-menu")->IsVisible());
+    CHECK(document->GetElementById("end-menu")->IsClassSet("death"));
+    CHECK(document->GetElementById("end-title")->GetInnerRML() == "你死了");
+    CHECK(document->GetElementById("end-stats")->GetInnerRML().find("击杀 7") !=
+          std::string::npos);
+    const std::size_t beforeEndEscape = actions.size();
+    CHECK(panel.OnEscape());  // 结算页 ESC 不绕过
+    CHECK(actions.size() == beforeEndEscape);
+    clickElement("end-restart");
+    REQUIRE(actions.size() == 6);
+    CHECK(actions[5] == zl::ui::MenuActionType::NewGame);
+
+    panel.ShowEndScreen(true, "成功撤离", "无线电已修复。", "第 1 天 08:00");
+    context->Update();
+    CHECK(document->GetElementById("end-menu")->IsClassSet("victory"));
+    CHECK(document->GetElementById("end-title")->GetInnerRML() == "成功撤离");
+    clickElement("end-main-menu");
+    REQUIRE(actions.size() == 7);
+    CHECK(actions[6] == zl::ui::MenuActionType::ReturnToMainMenu);
 
     panel.Hide();
     CHECK(!panel.IsOpen());

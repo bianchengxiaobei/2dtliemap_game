@@ -26,6 +26,9 @@ public:
 
     void Tick();  // 推进一个固定 tick
 
+    // 联机时间同步：用服务器从开局起经过的游戏分钟数重建日期/时间。
+    void SetTotalGameMinutes(double totalMinutes);
+
     const DateTime& Now() const { return m_now; }
     double TotalGameMinutes() const { return m_totalMinutes; }
     float DayFraction() const;               // 当天 0..1
@@ -40,6 +43,7 @@ public:
 private:
     void AdvanceMinute();
 
+    DateTime m_start;
     DateTime m_now;
     double m_totalMinutes = 0.0;
     double m_minutesPerTick = 0.0;

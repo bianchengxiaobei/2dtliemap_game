@@ -16,9 +16,12 @@ void ActionPresentationSystem::Update(ecs::EcsWorld& world, float dt) const {
             const auto* health = registry.try_get<ecs::Health>(entity);
             if ((health != nullptr && health->current <= 0.0f) ||
                 registry.all_of<ecs::Dying>(entity)) {
-                action.action = ecs::ActorAction::Dead;
-                action.elapsed = 0.0f;
-                action.duration = 0.0f;
+                // M14-T3：死亡片段需要自己的计时；不要每 tick 把 Dead 归零。
+                if (action.action != ecs::ActorAction::Dead) {
+                    action.action = ecs::ActorAction::Dead;
+                    action.elapsed = 0.0f;
+                    action.duration = 0.0f;
+                }
                 return;
             }
 

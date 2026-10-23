@@ -20,6 +20,12 @@ struct HudState {
     float healthMax = 100.0f;
     float stamina = 0.0f;
     float staminaMax = 100.0f;
+    bool needsValid = false;
+    std::string needsStatus;
+    std::string needsTone = "info";
+    std::string objective;
+    std::string objectiveTone = "info";
+    std::string objectiveHint;
     std::array<HudSlot, 5> slots{};
     int selectedSlot = 0;
     std::string notice;

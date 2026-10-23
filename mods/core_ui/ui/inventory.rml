@@ -57,7 +57,7 @@
                     </div>
                 </div>
                 <div class="inv-column-right">
-                    <div class="inv-section-title">附近地面 <span id="loot-stack-count" class="inv-count-label">0 堆</span></div>
+                    <div class="inv-section-title"><span id="loot-title">附近地面</span> <span id="loot-stack-count" class="inv-count-label">0 堆</span></div>
                     <div id="loot-grid" class="inv-grid loot-grid">
                         <div id="loot-slot-0" class="inv-slot loot-slot" data-area="loot" data-index="0"><div id="loot-name-0" class="inv-name">无</div><div id="loot-count-0" class="inv-count"></div></div>
                         <div id="loot-slot-1" class="inv-slot loot-slot" data-area="loot" data-index="1"><div id="loot-name-1" class="inv-name">无</div><div id="loot-count-1" class="inv-count"></div></div>

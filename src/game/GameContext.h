@@ -42,6 +42,7 @@ class CombatSystem;
 namespace zl::items {
 class ItemRegistry;
 class RecipeRegistry;
+class LootTableRegistry;
 }  // namespace zl::items
 
 namespace zl::save {
@@ -181,6 +182,8 @@ struct GameContext {    core::Config* config = nullptr;
     items::ItemRegistry* items = nullptr;
     // 配方定义（后续扩展）：与 items 同期加载，配方 UI/制作逻辑只读查询。
     items::RecipeRegistry* recipes = nullptr;
+    // M14-T5：战利品表（assets/loot.json），容器首次搜索时只读查询。
+    items::LootTableRegistry* lootTables = nullptr;
 
     // 存档管理（M10-T4/T5 起）：元数据 + 后台写入；组件表只在主线程生成快照时使用
     save::SaveManager* saveManager = nullptr;

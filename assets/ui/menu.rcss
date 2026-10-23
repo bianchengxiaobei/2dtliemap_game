@@ -41,6 +41,13 @@ body {
     margin-top: -215px;
 }
 
+.menu-end {
+    width: 468px;
+    height: 484px;
+    margin-left: -234px;
+    margin-top: -242px;
+}
+
 .menu-settings {
     width: 760px;
     height: 590px;
@@ -68,6 +75,27 @@ body {
     line-height: 52px;
     color: #ffd479;
     font-weight: bold;
+}
+
+.menu-end.victory .menu-title {
+    color: #7fe08a;
+}
+
+.menu-end.death .menu-title {
+    color: #ff8a7a;
+}
+
+.end-stats {
+    min-height: 62px;
+    margin-bottom: 18px;
+    padding: 12px 16px;
+    background-color: #0b1117;
+    border-width: 1px;
+    border-color: #263440;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 24px;
+    color: #d7e2ec;
 }
 
 .menu-subtitle {
