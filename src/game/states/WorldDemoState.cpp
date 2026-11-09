@@ -122,15 +122,15 @@ constexpr float kStatsLogInterval = 3.0f;
 constexpr float kPerfLogInterval = 5.0f;
 constexpr uint32_t kGridColor = 0x30ffffff;   // 白色低透明（ABGR: A=0x30）
 constexpr uint32_t kHoverColor = 0xff30e0ff;  // 黄色高亮
-constexpr uint32_t kAxisXColor = 0xc04040ff;  // ??
-constexpr uint32_t kAxisYColor = 0xc040ff40;  // ??
+constexpr uint32_t kAxisXColor = 0xc04040ff;  // 红
+constexpr uint32_t kAxisYColor = 0xc040ff40;  // 绿
 // 上层（z≥1）透明度策略（M3-T6 临时方案）：楼上整体 35% 不透明，看得到室内
 constexpr uint32_t kUpperZColor = 0x59ffffff;
 // M4-T7：寻路目标标记（SpriteBatch 色，格式同 kHoverColor）
-constexpr uint32_t kMarkerActiveColor = 0xff40e0ff;  // 黄：寻路??跟随中（常显??
+constexpr uint32_t kMarkerActiveColor = 0xff40e0ff;  // 黄：寻路中/跟随中（常显）
 constexpr uint32_t kMarkerArriveColor = 0xff50ff60;  // 绿：到达（限时）
-constexpr uint32_t kMarkerFailColor = 0xff3030ff;    // 红：不可达（限时??
-constexpr uint32_t kPoiMarkerCompletedColor = 0xff808080;  // 灰：POI 已完??
+constexpr uint32_t kMarkerFailColor = 0xff3030ff;    // 红：不可达（限时）
+constexpr uint32_t kPoiMarkerCompletedColor = 0xff808080;  // 灰：POI 已完成
 constexpr uint32_t kForageReadyColor = 0xff60e070;
 constexpr uint32_t kForageEmptyColor = 0xff606060;
 constexpr uint32_t kForageTargetColor = 0xff40d0ff;
@@ -138,12 +138,12 @@ constexpr uint32_t kFishingReadyColor = 0xff50c8ff;
 constexpr uint32_t kFishingTargetColor = 0xffffd040;
 // M21-F1c：守夜破口地图标记（ABGR；黄=预计破口，红=已破口）。
 constexpr uint32_t kSiegeTargetMarkerColor = 0xff30b0ff;  // 橙黄
-constexpr uint32_t kSiegeBreachMarkerColor = 0xff3030ff;  // ??
+constexpr uint32_t kSiegeBreachMarkerColor = 0xff3030ff;  // 红
 // M4-T7：提示色调（映射到 RmlUi HUD 的 notice 颜色类）。
 // bgfx debug 字体只支持 ASCII；中文提示统一走 RmlUi HUD/背包状态行。
-constexpr uint32_t kNoticeInfoColor = 0x0E;  // ??
-constexpr uint32_t kNoticeOkColor = 0x0A;    // ??
-constexpr uint32_t kNoticeFailColor = 0x0C;  // ??
+constexpr uint32_t kNoticeInfoColor = 0x0E;  // 黄
+constexpr uint32_t kNoticeOkColor = 0x0A;    // 绿
+constexpr uint32_t kNoticeFailColor = 0x0C;  // 红
 constexpr float kThreatFeedbackSeconds = 1.0f;
 constexpr float kBaseHudRadius = 16.0f;
 constexpr float kBaseHudRefreshSeconds = 0.25f;
@@ -320,7 +320,7 @@ void WorldDemoState::OnEnter() {
     m_rangedWeapon = {};
     m_rangedReloadHitSerial = 0;
     m_rangedShotSerial = 0;
-    ZL_INFO("render", "进入 WorldDemo（{}??",
+    ZL_INFO("render", "进入 WorldDemo（{}）",
             m_networkMode ? "M13 网络客户端" : "M3 单机世界");
     m_autoSaveOnExit =
         !m_networkMode && config.Get<bool>("save.autoSaveOnExit", true);
@@ -963,7 +963,7 @@ void WorldDemoState::OnEnter() {
     }
     ConsumeSaveWarning();
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 轻击 | LSHIFT 重击 | LCTRL 格挡 | Z 闪避 | F 拾取 | E 使用/修理电台/床边睡觉/觅食 | R 装备/换弹（建造模式旋转优先） | G 丢弃 | C 角色 | I 背包（或右下角按钮） | Enter 上下??| Y 聊天（联机） | F6 演示击杀 | F7 调试枪声（声音引怪） | V 远程开??联机投射??| F4 自由相机 | 方向??右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格??| F10 物理线框 | F1 暂停 | F2 倍??| F5 热重??| F12 快速存??| ESC 暂停菜单");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 轻击 | LSHIFT 重击 | LCTRL 格挡 | Z 闪避 | F 拾取 | E 使用/修理电台/床边睡觉/觅食 | R 装备/换弹（建造模式旋转优先） | G 丢弃 | C 角色 | I 背包（或右下角按钮） | Enter 上下车 | Y 聊天（联机） | F6 演示击杀 | F7 调试枪声（声音引怪） | V 远程开火/联机投射物 | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | F12 快速存档 | ESC 暂停菜单");
 }
 
 bool WorldDemoState::LoadFromSave() {
@@ -996,7 +996,7 @@ bool WorldDemoState::LoadFromSave() {
     if (!metadata.mapId.empty() && !currentMap.empty() &&
         metadata.mapId != currentMap) {
         m_ctx.saveWarning = "存档地图不匹配：" + metadata.mapId + "（当前 " +
-                            currentMap + "??";
+                            currentMap + "）";
         ZL_ERROR("save", "{}", m_ctx.saveWarning);
         m_loadSaveId.clear();
         return false;
@@ -1086,7 +1086,7 @@ bool WorldDemoState::LoadFromSave() {
         ZL_INFO("animals", "读档动物尸体：{} 具（已剥取 {}），战利品 {} 件{}",
                 corpseCount, harvestedCount, corpseItems,
                 corpseItemIds.empty() ? std::string()
-                                      : "??" + corpseItemIds + "）；");
+                                      : "（" + corpseItemIds + "）；");
         if (m_player != entt::null) {
             const auto* bag = registry.try_get<ecs::Container>(m_player);
             ZL_INFO("save", "读档玩家背包：{} 件",
@@ -1128,7 +1128,7 @@ bool WorldDemoState::LoadFromSave() {
     m_baseSiege.Reset();
     ZL_INFO("save", "已读取存档 '{}'：实体 {}，玩家 {}，缩略图 {}", m_saveId,
             loaded.size(), m_player != entt::null ? 1 : 0,
-            metadata.thumbnail.empty() ? "??" : metadata.thumbnail);
+            metadata.thumbnail.empty() ? "无" : metadata.thumbnail);
     return true;
 }
 
@@ -1368,14 +1368,14 @@ void WorldDemoState::RequestQuickSave(bool withThumbnail) {
     }
     std::vector<save::ChunkDiff> chunks;
     if (!CaptureSaveChunks(&chunks, &error)) {
-        SetNotice("保存 chunk 失败??" + error, kNoticeFailColor, 3.5f);
+        SetNotice("保存 chunk 失败：" + error, kNoticeFailColor, 3.5f);
         ZL_ERROR("save", "保存 chunk 快照失败：{}", error);
         return;
     }
 
     m_pendingSave = save::SaveRequest{};
     m_pendingSave.id = m_saveId;
-    m_pendingSave.name = "快速存??";
+    m_pendingSave.name = "快速存档";
     m_pendingSave.mapId =
         m_ctx.chunkManager != nullptr ? m_ctx.chunkManager->Map().name : std::string();
     m_pendingSave.gameVersion =
@@ -1406,7 +1406,7 @@ void WorldDemoState::RequestQuickSave(bool withThumbnail) {
     if (!rootReady || m_ctx.renderer == nullptr ||
         !m_ctx.renderer->RequestScreenshot(shotPath.string())) {
         ZL_WARN("save", "缩略图请求失败，改为无缩略图保存：{}",
-                rootReady ? "renderer 不可??" : rootError);
+                rootReady ? "renderer 不可用" : rootError);
         SubmitPendingSave();
         return;
     }
@@ -1516,7 +1516,7 @@ void WorldDemoState::ApplyCameraMode() {
         camera.SetBounds(minPx, maxPx);
         m_followSnapped = false;  // 下次跟随直接落位（不做缓动）
     } else {
-        camera.ClearBounds();  // 自由相机/巡航：无边界（开发漫??压测??
+        camera.ClearBounds();  // 自由相机/巡航：无边界（开发漫游/压测）
     }
 }
 
@@ -1875,7 +1875,7 @@ void WorldDemoState::SyncNetworkVehicleBinding() {
                               ecs::kColliderAll});
         }
     } else if (m_vehicle != entt::null) {
-        ZL_INFO("vehicle", "联机载具离开视野：清除绑??");
+        ZL_INFO("vehicle", "联机载具离开视野：清除绑定");
         m_vehicle = entt::null;
         m_vehicleMotion = {};
         m_vehicleFuelWarned = false;
@@ -1942,7 +1942,7 @@ void WorldDemoState::UpdateNetworkVehiclePrediction(float frameDt) {
         m_vehiclePredictionTick = tick;
         if (snapped) {
             ZL_DEBUG("vehicle",
-                     "驾驶预测吸附：serverTick={} 距离={:.2f} ??", tick,
+                     "驾驶预测吸附：serverTick={} 距离={:.2f} 格", tick,
                      distance);
         }
     }
@@ -2244,12 +2244,12 @@ void WorldDemoState::ApplyNetworkWorldSounds() {
         } else if (remote.clip == audio::kVehicleHit) {
             SpawnVehicleHitFeedback(0.03f, remote.x, remote.y, remote.z,
                                     localShake);
-            ZL_INFO("net", "网络载具受击：来??{} 位置 ({:.1f}, {:.1f}, {})",
+            ZL_INFO("net", "网络载具受击：来自 {} 位置 ({:.1f}, {:.1f}, {})",
                     remote.sourcePlayerStableId, remote.x, remote.y, remote.z);
         } else if (remote.clip == audio::kVehicleRam) {
             SpawnVehicleHitFeedback(0.04f, remote.x, remote.y, remote.z,
                                     localShake);
-            ZL_INFO("net", "网络载具撞击：来??{} 位置 ({:.1f}, {:.1f}, {})",
+            ZL_INFO("net", "网络载具撞击：来自 {} 位置 ({:.1f}, {:.1f}, {})",
                     remote.sourcePlayerStableId, remote.x, remote.y, remote.z);
         }
     }
@@ -2813,7 +2813,7 @@ ecs::Entity WorldDemoState::SpawnLocalVehicle(int cellX, int cellY) {
         entity, ecs::Container{{}, m_vehicleTuning.trunkCapacityKg});
     registry.emplace<ecs::PlayerStorage>(
         entity, ecs::PlayerStorage{m_vehicleTuning.trunkStacks});
-    ZL_INFO("vehicle", "载具生成：stableId={}，{}（{:.0f}kg），??({}, {})，燃??100%",
+    ZL_INFO("vehicle", "载具生成：stableId={}，{}（{:.0f}kg），格 ({}, {})，燃料 100%",
             stableId, VehicleTypeName(type), profile.curbMassKg, cellX, cellY);
     return entity;
 }
@@ -2837,7 +2837,7 @@ void WorldDemoState::BindNearestLocalVehicle() {
     }
     AdoptVehicleEntity(target);
     ZL_INFO("vehicle",
-            "单机载具绑定：stableId={}，载??({:.1f}, {:.1f})",
+            "单机载具绑定：stableId={}，载具 ({:.1f}, {:.1f})",
             m_ctx.ecs->IdOf(target).id, m_vehicleMotion.x, m_vehicleMotion.y);
 }
 
@@ -2905,8 +2905,8 @@ void WorldDemoState::AdoptVehicleEntity(ecs::Entity entity) {
     m_vehicleFuelWarned = m_vehicleMotion.fuel <= 0.0f;
     const auto* container = registry.try_get<ecs::Container>(entity);
     ZL_INFO("vehicle",
-            "载具恢复：stableId={}，格 ({:.1f}, {:.1f})，燃??{:.0f}%??"
-            "车况 {:.0f}%，后备箱 {} ??",
+            "载具恢复：stableId={}，格 ({:.1f}, {:.1f})，燃料 {:.0f}%，"
+            "车况 {:.0f}%，后备箱 {} 件",
             m_ctx.ecs->IdOf(entity).id, m_vehicleMotion.x, m_vehicleMotion.y,
             m_vehicleMotion.fuel * 100.0f, m_vehicleMotion.condition * 100.0f,
             container != nullptr ? container->items.size() : 0);
@@ -3043,9 +3043,9 @@ void WorldDemoState::ApplyLocalVehicleVehicleCollision(
             m_localParkedVehicleMotions[targetId] = targetMotion;
             if (hasDamage) {
                 ZL_INFO("vehicle",
-                        "单机载具冲量：目??stableId={}，质??{:.2f}/{:.2f}??"
+                        "单机载具冲量：目标 stableId={}，质量 {:.2f}/{:.2f}，"
                         "接近速度 {:.1f}，速度 {:.2f}/{:.2f}，角速度 "
-                        "{:.2f}/{:.2f}，目标位??({:.2f}, {:.2f})",
+                        "{:.2f}/{:.2f}，目标位置 ({:.2f}, {:.2f})",
                         targetId, activeMass, targetMass,
                         impulse.closingSpeed,
                         VehicleSpeed(m_vehicleMotion),
@@ -3055,8 +3055,8 @@ void WorldDemoState::ApplyLocalVehicleVehicleCollision(
                         targetPosition->y);
             } else {
                 ZL_DEBUG("vehicle",
-                         "单机载具接触：目??stableId={}，接近速度 {:.1f}??"
-                         "速度 {:.2f}/{:.2f}，目标位??({:.2f}, {:.2f})",
+                         "单机载具接触：目标 stableId={}，接近速度 {:.1f}，"
+                         "速度 {:.2f}/{:.2f}，目标位置 ({:.2f}, {:.2f})",
                          targetId, impulse.closingSpeed,
                          VehicleSpeed(m_vehicleMotion),
                          VehicleSpeed(targetMotion), targetPosition->x,
@@ -3098,20 +3098,20 @@ void WorldDemoState::ApplyLocalVehicleVehicleCollision(
             if (m_ctx.combat->ApplyDamage(*m_ctx.ecs, m_player, event)) {
                 const float applied =
                     std::max(0.0f, healthBefore - health->current);
-                SetNotice("碰撞受伤??" +
+                SetNotice("碰撞受伤：-" +
                               std::to_string(static_cast<int>(
                                   std::lround(applied))) +
                               " HP",
                           kNoticeFailColor, 2.0f);
                 ZL_INFO("vehicle",
-                        "单机载具碰撞乘员伤害：伤??{:.1f}，剩??{:.0f} HP",
+                        "单机载具碰撞乘员伤害：伤害 {:.1f}，剩余 {:.0f} HP",
                         applied, health->current);
             }
         }
     }
     ZL_INFO("vehicle",
-            "载具间碰撞：速度 {:.1f}，本车扣车况 {:.1f}%，目??"
-            "stableId={} 扣车??{:.1f}%，推??{:.2f} ??",
+            "载具间碰撞：速度 {:.1f}，本车扣车况 {:.1f}%，目标 "
+            "stableId={} 扣车况 {:.1f}%，推挤 {:.2f} 格",
             impactSpeed, activeDamage * 100.0f, targetId,
             otherDamage * 100.0f, pushedDistance);
     SpawnVehicleHitFeedback(std::max(activeDamage, otherDamage),
@@ -3223,7 +3223,7 @@ void WorldDemoState::UpdateLocalParkedVehicleMotions(float tickDt) {
             velocity->x = 0.0f;
             velocity->y = 0.0f;
             ZL_INFO("vehicle",
-                    "单机停放车滑行停止：stableId={}，位??({:.2f}, {:.2f})",
+                    "单机停放车滑行停止：stableId={}，位置 ({:.2f}, {:.2f})",
                     stableId, motion.x, motion.y);
             it = m_localParkedVehicleMotions.erase(it);
         } else {
@@ -3299,7 +3299,7 @@ float WorldDemoState::PushLocalVehicleOnCollision(ecs::Entity target,
     targetPosition->y = push.y;
     if (push.distance > 0.0f) {
         ZL_INFO("vehicle",
-                "单机载具推挤：目??stableId={}，推??{:.2f} 格，"
+                "单机载具推挤：目标 stableId={}，推挤 {:.2f} 格，"
                 "位置 ({:.2f}, {:.2f})",
                 m_ctx.ecs->IdOf(target).id, push.distance,
                 targetPosition->x, targetPosition->y);
@@ -3380,20 +3380,20 @@ void WorldDemoState::ApplyLocalVehicleRam(
             const std::string species =
                 def != nullptr ? def->name : animal->speciesId;
             ZL_INFO("vehicle",
-                    "载具撞动物：载具 stableId={}，目??{}，物??{}，伤??"
+                    "载具撞动物：载具 stableId={}，目标 {}，物种 {}，伤害 "
                     "{:.0f}，速度 {:.1f}",
                     vehicleId, static_cast<unsigned long long>(targetId),
                     species, event.amount, speed);
             if (lethal) {
                 ZL_INFO("vehicle",
-                        "载具撞杀动物：载??stableId={}，目??{}，物??{}",
+                        "载具撞杀动物：载具 stableId={}，目标 {}，物种 {}",
                         vehicleId, static_cast<unsigned long long>(targetId),
                         species);
             }
             return;
         }
         ZL_INFO("vehicle",
-                "载具撞僵尸：载具 stableId={}，目??{}，伤??{:.0f}，速度 {:.1f}",
+                "载具撞僵尸：载具 stableId={}，目标 {}，伤害 {:.0f}，速度 {:.1f}",
                 vehicleId, static_cast<unsigned long long>(targetId),
                 event.amount, speed);
         if (lethal && !m_networkMode && m_progressionConfig.enabled &&
@@ -3402,7 +3402,7 @@ void WorldDemoState::ApplyLocalVehicleRam(
                                m_progressionConfig.meleeXpPerKill,
                                "载具撞击");
             ZL_INFO("vehicle",
-                    "载具撞杀：载??stableId={}，目??{}??{:.0f} 近战经验",
+                    "载具撞杀：载具 stableId={}，目标 {}，+{:.0f} 近战经验",
                     vehicleId, static_cast<unsigned long long>(targetId),
                     m_progressionConfig.meleeXpPerKill);
         }
@@ -3438,13 +3438,13 @@ void WorldDemoState::ApplyLocalVehicleRam(
             if (wear > 0.0f) {
                 m_vehicleRamWearCooldown =
                     m_vehicleTuning.ramCooldownSeconds;
-                SetNotice("载具撞击：车??" +
+                SetNotice("载具撞击：车况 " +
                               std::to_string(static_cast<int>(std::floor(
                                   m_vehicleMotion.condition * 100.0f))) +
                               "%",
                           kNoticeInfoColor, 2.0f);
                 ZL_INFO("vehicle",
-                        "撞击车况：速度 {:.1f}，扣车况 {:.1f}%，剩??{:.0f}%",
+                        "撞击车况：速度 {:.1f}，扣车况 {:.1f}%，剩余 {:.0f}%",
                         speed, wear * 100.0f,
                         m_vehicleMotion.condition * 100.0f);
                 SpawnVehicleHitFeedback(wear, m_vehicleMotion.x,
@@ -3536,7 +3536,7 @@ void WorldDemoState::ApplyLocalVehicleAttacks() {
     SpawnVehicleHitFeedback(wear, m_vehicleMotion.x, m_vehicleMotion.y,
                             m_vehicleMotion.z);
     PlayVehicleHitSound(m_vehicleMotion.x, m_vehicleMotion.y);
-    SetNotice("载具受击：车??" +
+    SetNotice("载具受击：车况 " +
                   std::to_string(static_cast<int>(std::floor(
                       m_vehicleMotion.condition * 100.0f))) +
                   "%",
@@ -3549,14 +3549,14 @@ void WorldDemoState::ApplyLocalVehicleAttacks() {
         const std::string species =
             def != nullptr ? def->name : attackerSpecies;
         ZL_INFO("vehicle",
-                "载具受动物攻击：stableId={}，物??{}，扣车况 {:.1f}%??"
+                "载具受动物攻击：stableId={}，物种 {}，扣车况 {:.1f}%，"
                 "剩余 {:.0f}%",
                 m_ctx.ecs->IdOf(m_vehicle).id, species, wear * 100.0f,
                 m_vehicleMotion.condition * 100.0f);
         return;
     }
     ZL_INFO("vehicle",
-            "载具受僵尸攻击：stableId={}，扣车况 {:.1f}%，剩??{:.0f}%",
+            "载具受僵尸攻击：stableId={}，扣车况 {:.1f}%，剩余 {:.0f}%",
             m_ctx.ecs->IdOf(m_vehicle).id, wear * 100.0f,
             m_vehicleMotion.condition * 100.0f);
 }
@@ -3597,7 +3597,7 @@ void WorldDemoState::SpawnVehicleHitFeedback(float wear, float x, float y,
         TriggerVehicleScreenShake(strength);
     }
     ZL_INFO("vehicle",
-            "载具受击火花：磨??{:.1f}%，sparks={}，寿??{:.2f}s",
+            "载具受击火花：磨损 {:.1f}%，sparks={}，寿命 {:.2f}s",
             wear * 100.0f, count, lifetime);
 }
 
@@ -3692,7 +3692,7 @@ void WorldDemoState::SpawnVehicleMetalDebris(float strength, float x,
         m_vehicleMetalDebris.push_back(debris);
     }
     ZL_INFO("vehicle",
-            "载具金属碎片：强??{:.2f}，pieces={}，寿??{:.2f}s",
+            "载具金属碎片：强度 {:.2f}，pieces={}，寿命 {:.2f}s",
             strength, count, lifetime);
 }
 
@@ -3754,7 +3754,7 @@ void WorldDemoState::TriggerVehicleScreenShake(float strength) {
     m_vehicleShakeStrength = clamped;
     m_vehicleShakeAge = 0.0f;
     m_vehicleShakeDuration = VehicleShakeDuration(clamped);
-    ZL_INFO("vehicle", "载具镜头震动：强??{:.2f}，时??{:.2f}s",
+    ZL_INFO("vehicle", "载具镜头震动：强度 {:.2f}，时长 {:.2f}s",
             m_vehicleShakeStrength, m_vehicleShakeDuration);
 }
 
@@ -3845,7 +3845,7 @@ void WorldDemoState::TakeDriverSeat() {
         MakePlayerCommand(net::CommandType::TakeDriverSeat);
     std::string error;
     if (!SubmitPlayerCommand(command)) {
-        SetNotice(error.empty() ? "接管驾驶位请求发送失??" : error,
+        SetNotice(error.empty() ? "接管驾驶位请求发送失败" : error,
                   kNoticeFailColor, 1.8f);
     }
 }
@@ -3859,7 +3859,7 @@ void WorldDemoState::GiveDriverSeat() {
         MakePlayerCommand(net::CommandType::GiveDriverSeat);
     std::string error;
     if (!SubmitPlayerCommand(command)) {
-        SetNotice(error.empty() ? "让座请求发送失??" : error,
+        SetNotice(error.empty() ? "让座请求发送失败" : error,
                   kNoticeFailColor, 1.8f);
     }
 }
@@ -3968,8 +3968,7 @@ void WorldDemoState::UpdateVehicleAudio() {
             existing.soundId = handle.id;
             engine.SetPitch(handle, tone.pitch);
             ZL_INFO("vehicle",
-                    "引擎音效启动（{}，占位循环，载具 stableId={}??"
-                    "音量/音高随速度??",
+                    "引擎音效启动（{}，占位循环，载具 stableId={}，音量/音高随速度）",
                     voice.local ? "本地" : "远端", voice.stableId);
             continue;
         }
@@ -3987,7 +3986,7 @@ void WorldDemoState::UpdateVehicleAudio() {
         const audio::AudioHandle handle{it->second.soundId};
         if (handle.Valid()) {
             engine.Stop(handle);
-            ZL_INFO("vehicle", "引擎音效停止（载??stableId={}??", it->first);
+            ZL_INFO("vehicle", "引擎音效停止（载具 stableId={}）", it->first);
         }
         it = m_vehicleEngineVoices.erase(it);
     }
@@ -4003,7 +4002,7 @@ void WorldDemoState::StopVehicleAudio() {
             const audio::AudioHandle handle{voice.soundId};
             if (handle.Valid()) {
                 engine.Stop(handle);
-                ZL_INFO("vehicle", "引擎音效停止（载??stableId={}??",
+                ZL_INFO("vehicle", "引擎音效停止（载具 stableId={}）",
                         stableId);
             }
         }
@@ -4030,19 +4029,19 @@ void WorldDemoState::HonkVehicleHorn() {
                           m_vehicleHornCooldown)) {
         if (m_vehicleMotion.condition <= 0.0f ||
             !std::isfinite(m_vehicleMotion.condition)) {
-            SetNotice("车辆损坏，无法鸣??", kNoticeFailColor, 1.5f);
+            SetNotice("车辆损坏，无法鸣笛", kNoticeFailColor, 1.5f);
         }
         return;
     }
     if (m_networkMode) {
         net::Command command = MakePlayerCommand(net::CommandType::HonkHorn);
         if (!SubmitPlayerCommand(command)) {
-            SetNotice("喇叭请求发送失??", kNoticeFailColor, 1.5f);
+            SetNotice("喇叭请求发送失败", kNoticeFailColor, 1.5f);
             return;
         }
         m_vehicleHornCooldown = m_vehicleTuning.hornCooldownSeconds;
-        SetNotice("喇叭：鸣笛请求已发??", kNoticeOkColor, 1.2f);
-        ZL_INFO("vehicle", "载具喇叭请求：吸引半??{:.0f} ??",
+        SetNotice("喇叭：鸣笛请求已发送", kNoticeOkColor, 1.2f);
+        ZL_INFO("vehicle", "载具喇叭请求：吸引半径 {:.0f} 格",
                 m_vehicleTuning.hornNoiseRadius);
         return;
     }
@@ -4062,7 +4061,7 @@ void WorldDemoState::HonkVehicleHorn() {
                       m_vehicleTuning.hornNoiseRadius))) +
                   " 格）",
               kNoticeOkColor, 1.2f);
-    ZL_INFO("vehicle", "载具喇叭：吸引半??{:.0f} ??",
+    ZL_INFO("vehicle", "载具喇叭：吸引半径 {:.0f} 格",
             m_vehicleTuning.hornNoiseRadius);
 }
 
@@ -4079,16 +4078,16 @@ void WorldDemoState::ToggleVehicleHeadlights() {
             MakePlayerCommand(net::CommandType::ToggleHeadlights);
         std::string error;
         if (!SubmitPlayerCommand(command)) {
-            SetNotice(error.empty() ? "车灯请求发送失??" : error,
+            SetNotice(error.empty() ? "车灯请求发送失败" : error,
                       kNoticeFailColor, 1.8f);
         }
         return;
     }
     m_vehicleMotion.headlights = !m_vehicleMotion.headlights;
     SyncVehicleStateToEcs();
-    SetNotice(m_vehicleMotion.headlights ? "车灯已开??" : "车灯已关??",
+    SetNotice(m_vehicleMotion.headlights ? "车灯已开启" : "车灯已关闭",
               kNoticeInfoColor, 1.5f);
-    ZL_INFO("vehicle", "车灯：{}", m_vehicleMotion.headlights ? "开" : "??");
+    ZL_INFO("vehicle", "车灯：{}", m_vehicleMotion.headlights ? "开" : "关");
 }
 
 VehicleSurface WorldDemoState::VehicleSurfaceAt(float x, float y, int z) const {
@@ -4194,7 +4193,7 @@ void WorldDemoState::UpdateVehicle(float tickDt) {
     if (m_vehicleSurface != m_lastVehicleSurface) {
         const VehicleSurfaceProfile profile =
             VehicleSurfaceProfileFor(m_vehicleSurface, activeTuning);
-        ZL_INFO("vehicle", "路面：{}（极??x{:.2f}，加??x{:.2f}，制??x{:.2f}??",
+        ZL_INFO("vehicle", "路面：{}（极速 x{:.2f}，加速 x{:.2f}，制动 x{:.2f}）",
                 VehicleSurfaceLabel(m_vehicleSurface), profile.maxSpeedScale,
                 profile.accelerationScale, profile.brakingScale);
         m_lastVehicleSurface = m_vehicleSurface;
@@ -4215,7 +4214,7 @@ void WorldDemoState::UpdateVehicle(float tickDt) {
         if (!m_vehicleLowConditionWarned) {
             m_vehicleLowConditionWarned = true;
             SetNotice("车况低：动力下降", kNoticeInfoColor, 2.0f);
-            ZL_INFO("vehicle", "车况低：动力 x{:.2f}（车??{:.0f}%??",
+            ZL_INFO("vehicle", "车况低：动力 x{:.2f}（车况 {:.0f}%）",
                     conditionScale, m_vehicleMotion.condition * 100.0f);
         }
     } else if (conditionScale >= 1.0f) {
@@ -4227,7 +4226,7 @@ void WorldDemoState::UpdateVehicle(float tickDt) {
                           std::floor(m_vehicleMotion.condition * 100.0f))) +
                       "%",
                   kNoticeFailColor, 2.0f);
-        ZL_INFO("vehicle", "碰撞：速度 {:.1f}，扣车况 {:.1f}%，剩??{:.0f}%",
+        ZL_INFO("vehicle", "碰撞：速度 {:.1f}，扣车况 {:.1f}%，剩余 {:.0f}%",
                 vehicleStep.impactSpeed, vehicleStep.damage * 100.0f,
                 m_vehicleMotion.condition * 100.0f);
         SpawnVehicleHitFeedback(vehicleStep.damage, m_vehicleMotion.x,
@@ -4434,8 +4433,8 @@ void WorldDemoState::UpdateVehicleDamageSmoke(float frameDt) {
                 if (level != VehicleDamageSmokeLevel::None ||
                     runtime.level != VehicleDamageSmokeLevel::None) {
                     ZL_INFO("vehicle",
-                            "载具烟雾：stableId={}，车??{:.0f}%，等??{}"
-                            "（smoke level={}??",
+                            "载具烟雾：stableId={}，车况 {:.0f}%，等级 {}"
+                            "（smoke level={}）",
                             stableId,
                             std::clamp(state.condition, 0.0f, 1.0f) * 100.0f,
                             VehicleDamageSmokeLabel(level),
@@ -4511,7 +4510,7 @@ void WorldDemoState::DrawVehicleDamageSmoke(render::SpriteBatch& batch) {
         if (!m_vehicleSmokeSoftLogged) {
             m_vehicleSmokeSoftLogged = true;
             ZL_INFO("vehicle",
-                    "载具烟雾：软粒子（程序纹理，puffs={}??",
+                    "载具烟雾：软粒子（程序纹理，puffs={}）",
                     m_vehicleSmokePuffs.size());
         }
         for (const VehicleSmokePuff& puff : m_vehicleSmokePuffs) {
@@ -4617,8 +4616,8 @@ void WorldDemoState::UpdateVehicleDamageVisual() {
                 return;
             }
             ZL_INFO("vehicle",
-                    "载具破损外观：stableId={}，车??{:.0f}%，等??{}"
-                    "（marks={}??",
+                    "载具破损外观：stableId={}，车况 {:.0f}%，等级 {}"
+                    "（marks={}）",
                     stableId,
                     std::clamp(state.condition, 0.0f, 1.0f) * 100.0f,
                     VehicleDamageVisualLabel(level),
@@ -4746,7 +4745,7 @@ bool WorldDemoState::ToggleVehicle() {
         }
         std::string error;
         if (!SubmitPlayerCommand(command)) {
-            SetNotice(error.empty() ? "载具命令发送失??" : error,
+            SetNotice(error.empty() ? "载具命令发送失败" : error,
                       kNoticeFailColor, 1.8f);
         }
         return true;
@@ -4830,7 +4829,7 @@ void WorldDemoState::EnterVehicle() {
     SyncPlayerToVehicle();
     SetNotice("已上车：WASD 驾驶 · Enter 下车", kNoticeOkColor, 2.0f);
     ZL_INFO("vehicle",
-            "上车：stableId={}，燃??{:.0f}%，驾驶员防护 {:.0f}%",
+            "上车：stableId={}，燃料 {:.0f}%，驾驶员防护 {:.0f}%",
             m_ctx.ecs->IdOf(m_vehicle).id, m_vehicleMotion.fuel * 100.0f,
             m_vehicleTuning.driverDamageReduction * 100.0f);
 }
@@ -4912,9 +4911,9 @@ void WorldDemoState::ExitVehicle() {
     m_lastMoveCommand = glm::vec2(0.0f, 0.0f);
     m_moveCommandValid = false;
     m_followSnapped = false;
-    SetNotice("已下??", kNoticeInfoColor, 1.2f);
+    SetNotice("已下车", kNoticeInfoColor, 1.2f);
     ZL_INFO("vehicle",
-            "下车：stableId={}，格 ({:.1f}, {:.1f})，车??({:.1f}, {:.1f})??"
+            "下车：stableId={}，格 ({:.1f}, {:.1f})，车辆 ({:.1f}, {:.1f})，"
             "燃料 {:.1f}%",
             m_ctx.ecs != nullptr ? m_ctx.ecs->IdOf(m_vehicle).id : 0, exitX,
             exitY, m_vehicleMotion.x, m_vehicleMotion.y,
@@ -5051,7 +5050,7 @@ std::string WorldDemoState::VehicleHint() const {
         if (NetworkVehicleDriverSeatOpen()) {
             text += "F 接管驾驶 · ";
         }
-        text += "E 使用 · R 装备 · 1-5 快捷??· Enter 下车 · I 背包/后备??· 质量 " +
+        text += "E 使用 · R 装备 · 1-5 快捷栏 · Enter 下车 · I 背包/后备箱 · 质量 " +
                 massLabel + " · 燃料 " +
                 std::to_string(fuelPercent) + "% · 车况 " +
                 std::to_string(conditionPercent) + "%";
@@ -5089,7 +5088,7 @@ std::string WorldDemoState::VehicleHint() const {
         return "车辆损坏：按 E 维修（维修包） · I 后备箱";
     }
     std::string text =
-        "皮卡??" + massLabel + "）：燃料 " + std::to_string(fuelPercent) +
+        "皮卡（" + massLabel + "）：燃料 " + std::to_string(fuelPercent) +
         "% · 车况 " + std::to_string(conditionPercent) + "% · ";
     bool driverOccupied = false;
     bool passengerSeatsFull = false;
@@ -5119,7 +5118,7 @@ std::string WorldDemoState::VehicleHint() const {
     } else {
         text += "E 维修/加油";
     }
-    text += " · I 后备??";
+    text += " · I 后备箱";
     return text;
 }
 
@@ -5139,7 +5138,7 @@ bool WorldDemoState::TryServiceVehicle() {
         command.payload.entityId = m_ctx.ecs->IdOf(vehicle).id;
         std::string error;
         if (!SubmitPlayerCommand(command)) {
-            SetNotice(error.empty() ? "维修/加油请求发送失??" : error,
+            SetNotice(error.empty() ? "维修/加油请求发送失败" : error,
                       kNoticeFailColor, 1.8f);
         }
         return true;
@@ -5206,7 +5205,7 @@ bool WorldDemoState::TryServiceVehicle() {
         const int after = percent(m_vehicleMotion.condition);
         SetNotice("已维修：车况 " + std::to_string(after) + "%",
                   kNoticeOkColor, 2.0f);
-        ZL_INFO("vehicle", "维修：车??{}% ??{}%，消??{} x1", before, after,
+        ZL_INFO("vehicle", "维修：车况 {}% → {}%，消耗 {} x1", before, after,
                 itemName(m_vehicleRepairItem));
         return true;
     }
@@ -5223,7 +5222,7 @@ bool WorldDemoState::TryServiceVehicle() {
     const int after = percent(m_vehicleMotion.fuel);
     SetNotice("已加油：燃料 " + std::to_string(after) + "%",
               kNoticeOkColor, 2.0f);
-    ZL_INFO("vehicle", "加油：燃??{}% ??{}%，消??{} x1", before, after,
+    ZL_INFO("vehicle", "加油：燃料 {}% → {}%，消耗 {} x1", before, after,
             itemName(m_vehicleFuelItem));
     return true;
 }
@@ -5305,7 +5304,7 @@ void WorldDemoState::RefreshHud() {
         return;
     }
     if (m_runOutcome != RunOutcome::None) {
-        return;  // 结算页已接管；避免旧 HUD 状态覆??闪烁
+        return;  // 结算页已接管；避免旧 HUD 状态覆盖/闪烁
     }
     UpdatePoiTasks();
     UpdateMissions();
@@ -5416,7 +5415,7 @@ void WorldDemoState::RefreshHud() {
                 statusText += "  食物中毒 " +
                               std::to_string(static_cast<int>(
                                   std::ceil(foodPoisonRemaining))) +
-                              "??";
+                              " 秒";
             } else if (foodNutrition > 0.01f) {
                 statusText += "  营养 " +
                               std::to_string(static_cast<int>(std::lround(
@@ -5438,7 +5437,7 @@ void WorldDemoState::RefreshHud() {
                           ? "warn"
                           : "info";
         } else {
-            hud.needsStatus = "状??--";
+            hud.needsStatus = "状态--";
         }
         if (const auto* wounds = registry.try_get<ecs::Wounds>(m_player);
             wounds != nullptr && wounds->count > 0) {
@@ -5863,14 +5862,14 @@ void WorldDemoState::RefreshHud() {
                         } else if (pending) {
                             hud.actionHint +=
                                 " · X 再次确认拆除 " + demolishTarget.def->name +
-                                "?? 秒内??" + suffix;
+                                "（3 秒内）" + suffix;
                         } else {
                             const int refund = BuildWoodRefund(
                                 demolishTarget.def->woodCost,
                                 m_demolishRefundRatio);
                             hud.actionHint +=
-                                " · X 拆除（返??" + std::to_string(refund) +
-                                " 木材??" + suffix;
+                                " · X 拆除（返还 " + std::to_string(refund) +
+                                " 木材）" + suffix;
                         }
                     } else if (const ecs::Entity storage = FindNearbyStorage(false);
                                storage != entt::null) {
@@ -5913,7 +5912,7 @@ void WorldDemoState::RefreshHud() {
                                     m_demolishRefundRatio);
                                 hud.actionHint +=
                                     " · X 拆除仓库（返还 " +
-                                    std::to_string(refund) + " 木材??" +
+                                    std::to_string(refund) + " 木材）" +
                                     suffix;
                             }
                         }
@@ -5945,10 +5944,10 @@ void WorldDemoState::RefreshHud() {
                                     ? "农田"
                                     : facility.kind ==
                                               HomesteadTargetKind::Generator
-                                          ? "发电??"
+                                          ? "发电机"
                                           : facility.kind ==
                                                     HomesteadTargetKind::Floodlight
-                                                ? "泛光??"
+                                                ? "泛光灯"
                                                 : "陷阱";
                             if (!CanEditLocalStructure(owner)) {
                                 hud.actionHint +=
@@ -5957,7 +5956,7 @@ void WorldDemoState::RefreshHud() {
                             } else if (pending) {
                                 hud.actionHint +=
                                     " · X 再次确认拆除 " + label +
-                                    "?? 秒内??" + suffix;
+                                    "（3 秒内）" + suffix;
                             } else {
                                 hud.actionHint +=
                                     " · X 拆除" + label + suffix;
@@ -6174,7 +6173,7 @@ void WorldDemoState::RefreshHud() {
             hud.stamina = 100.0f;
             hud.staminaMax = 100.0f;
         }
-        hud.needsStatus = "状??--";
+        hud.needsStatus = "状态--";
         hud.infectionStatus =
             game::InfectionStatusText(m_networkInfection, &hud.infectionTone);
         const game::WeatherState weather =
@@ -6219,7 +6218,7 @@ void WorldDemoState::RefreshHud() {
             }
         }
         if (progression->perkPoints > 0) {
-            hud.perkPrompt = "可分??Perk ×" +
+            hud.perkPrompt = "可分配 Perk ×" +
                              std::to_string(progression->perkPoints) +
                              " · 按 1/2/3 选择 · C 查看角色";
         }
@@ -6493,13 +6492,13 @@ void WorldDemoState::RefreshInventory() {
                     storageContainer->capacityKg));
                 if (vehicleStorage) {
                     state.lootTitle =
-                        "后备箱：皮卡??" + std::to_string(storageWeight) +
-                        "/" + std::to_string(storageCapacity) + " kg??";
+                        "后备箱：皮卡（" + std::to_string(storageWeight) +
+                        "/" + std::to_string(storageCapacity) + " kg）";
                 } else {
                     state.lootTitle =
-                        "仓库??" + StorageName(storage) + "??" +
+                        "仓库：" + StorageName(storage) + "（" +
                         std::to_string(storageWeight) + "/" +
-                        std::to_string(storageCapacity) + " kg??";
+                        std::to_string(storageCapacity) + " kg）";
                 }
                 const std::uint64_t storageOwner =
                     EntityOwnerStableId(storage);
@@ -6587,13 +6586,13 @@ void WorldDemoState::RefreshInventory() {
                                 ? m_ctx.animals->Find(animalCorpse->speciesId)
                                 : nullptr;
                         state.lootTitle =
-                            "尸体??" +
+                            "尸体：" +
                             (animal != nullptr
                                  ? animal->name
                                  : animalCorpse->speciesId);
                     } else {
                         state.lootTitle =
-                            "容器??" +
+                            "容器：" +
                             (table != nullptr ? table->name
                                               : std::string("未知容器"));
                     }
@@ -6727,7 +6726,7 @@ void WorldDemoState::EquipBagItem(int index, ecs::EquipSlot slot) {
     if (swapped.Valid()) {
         ReturnOrDropItem(swapped);
     }
-    SetNotice("装备??" + def->name, kNoticeOkColor, 1.5f);
+    SetNotice("装备：" + def->name, kNoticeOkColor, 1.5f);
     ZL_INFO("items", "装备（背包槽 {}）：{}", index, def->name);
 }
 
@@ -6791,7 +6790,7 @@ void WorldDemoState::EquipLootItem(std::uint64_t stableId, ecs::EquipSlot slot,
         if (swapped.Valid()) {
             ReturnOrDropItem(swapped);
         }
-        SetNotice("装备??" + def->name, kNoticeOkColor, 1.5f);
+        SetNotice("装备：" + def->name, kNoticeOkColor, 1.5f);
         ZL_INFO("items", "装备（容器）：{}", def->name);
         return;
     }
@@ -6826,7 +6825,7 @@ void WorldDemoState::EquipLootItem(std::uint64_t stableId, ecs::EquipSlot slot,
     if (swapped.Valid()) {
         ReturnOrDropItem(swapped);
     }
-    SetNotice("装备??" + def->name, kNoticeOkColor, 1.5f);
+    SetNotice("装备：" + def->name, kNoticeOkColor, 1.5f);
     ZL_INFO("items", "装备（地面）：{}", def->name);
 }
 
@@ -6849,7 +6848,7 @@ void WorldDemoState::UnequipEquipment(int index) {
     }
     const items::ItemDef* def = m_ctx.items->Find(removed.defId);
     ReturnOrDropItem(removed);
-    SetNotice("卸下??" + (def != nullptr ? def->name : removed.defId), kNoticeInfoColor,
+    SetNotice("卸下：" + (def != nullptr ? def->name : removed.defId), kNoticeInfoColor,
               1.5f);
     ZL_INFO("items", "卸下：{}", def != nullptr ? def->name : removed.defId);
 }
@@ -6966,10 +6965,10 @@ void WorldDemoState::UseBagItem(int index) {
         return;
     }
     if (treatment.wounds > 0) {
-        std::string text = "使用??" + name + "：止血 " +
-                           std::to_string(treatment.wounds) + " 处伤??";
+        std::string text = "使用：" + name + "，止血 " +
+                           std::to_string(treatment.wounds) + " 处伤口";
         if (healed > 0.0f) {
-            text += "??" + std::to_string(static_cast<int>(healed)) + " HP";
+            text += "，+" + std::to_string(static_cast<int>(healed)) + " HP";
         }
         if (infectionTreatment.applied) {
             text += infectionTreatment.cured ? "，感染已清除" : "，感染延缓";
@@ -6983,30 +6982,30 @@ void WorldDemoState::UseBagItem(int index) {
             std::snprintf(progress, sizeof(progress), "感染病程 -%.0f%%",
                           static_cast<double>(infectionTreatment.progressReduced *
                                               100.0f));
-            SetNotice("使用??" + name + "??" + progress, kNoticeOkColor, 1.8f);
+            SetNotice("使用：" + name + "，" + progress, kNoticeOkColor, 1.8f);
         }
     } else if (painRelieved) {
-        SetNotice("使用??" + name + "：止??" +
+        SetNotice("使用：" + name + "，止痛 " +
                       std::to_string(static_cast<int>(use.effect.painReliefSeconds)) +
-                      " ??",
+                      " 秒",
                   kNoticeOkColor, 1.8f);
     } else if (use.effect.heal > 0.0f) {
-        SetNotice("使用??" + name + "??" + std::to_string(static_cast<int>(healed)) +
-                      " HP??",
+        SetNotice("使用：" + name + "，" + std::to_string(static_cast<int>(healed)) +
+                      " HP",
                   kNoticeOkColor, 1.8f);
     } else if (totalDamage > 0.0f) {
         const char* reason = use.spoiled ? "食物已变质" : "水不干净";
-        SetNotice("使用??" + name + "??" + reason + "??" +
+        SetNotice("使用：" + name + "，" + reason + "，" +
                       std::to_string(static_cast<int>(std::lround(totalDamage))) +
                       " HP",
                   kNoticeInfoColor, 2.0f);
     } else {
-        SetNotice("使用??" + name, kNoticeOkColor, 1.8f);
+        SetNotice("使用：" + name, kNoticeOkColor, 1.8f);
     }
-    ZL_INFO("items", "使用（背包槽 {}）：{}（回血 {:.0f}，伤??{:.0f}，止血 {} 处，"
-                     "止痛 {}，剩??{}??",
+    ZL_INFO("items", "使用（背包槽 {}）：{}（回血 {:.0f}，伤害 {:.0f}，止血 {} 处，"
+                     "止痛 {}，剩余 {}）",
             index, name, healed, totalDamage, treatment.wounds,
-            painRelieved ? "??" : "??", use.remaining);
+            painRelieved ? "止痛" : "未止痛", use.remaining);
 }
 
 bool WorldDemoState::UseBlueprintItem(int index, const items::ItemDef& def) {
@@ -7046,7 +7045,7 @@ bool WorldDemoState::UseBlueprintItem(int index, const items::ItemDef& def) {
         known->recipeIds.push_back(recipeId);
         const items::RecipeDef* recipe = m_ctx.recipes->Find(recipeId);
         if (!labels.empty()) {
-            labels += "??";
+            labels += "、";
         }
         labels += recipe != nullptr ? recipe->name : recipeId;
     }
@@ -7087,8 +7086,8 @@ void WorldDemoState::RepairBagItem(int index) {
     const int afterPct =
         static_cast<int>(std::lround(result.after * 100.0f));
     SetNotice("维修成功：" + name + " " + std::to_string(beforePct) + "% → " +
-                  std::to_string(afterPct) + "%（消??" + materialName + " ×" +
-                  std::to_string(result.materialCount) + "??",
+                  std::to_string(afterPct) + "%（消耗 " + materialName + " ×" +
+                  std::to_string(result.materialCount) + "）",
               kNoticeOkColor, 2.5f);
     ZL_INFO("items", "维修成功（背包槽 {}）：{} {}% → {}%，消耗 {} ×{}", index,
             name, beforePct, afterPct, materialName, result.materialCount);
@@ -7155,7 +7154,7 @@ void WorldDemoState::DropBagItem(int index) {
             core::kOnItemDrop,
             core::ItemEvent{m_ctx.ecs->IdOf(ground).id, removed.defId, removed.count});
     }
-    SetNotice("丢弃??" + (def != nullptr ? def->name : removed.defId) + " ×" +
+    SetNotice("丢弃：" + (def != nullptr ? def->name : removed.defId) + " ×" +
                   std::to_string(removed.count),
               kNoticeInfoColor, 1.5f);
     ZL_INFO("items", "丢弃（背包槽 {}）：{} x{}", index,
@@ -7188,7 +7187,7 @@ void WorldDemoState::DropEquipmentItem(int index) {
             core::ItemEvent{m_ctx.ecs->IdOf(ground).id, removed.defId, removed.count});
     }
     const items::ItemDef* def = m_ctx.items->Find(removed.defId);
-    SetNotice("丢弃??" + (def != nullptr ? def->name : removed.defId), kNoticeInfoColor,
+    SetNotice("丢弃：" + (def != nullptr ? def->name : removed.defId), kNoticeInfoColor,
               1.5f);
     ZL_INFO("items", "丢弃装备槽 {}：{}", index,
             def != nullptr ? def->name : removed.defId);
@@ -7228,11 +7227,11 @@ void WorldDemoState::PickupLootItem(std::uint64_t stableId, int index) {
         const std::string name = def != nullptr ? def->name : result.defId;
         if (result.taken > 0) {
             if (result.remaining > 0) {
-                SetNotice("取出??" + name + " ×" + std::to_string(result.taken) +
-                              "（容器剩 " + std::to_string(result.remaining) + "??",
+                SetNotice("取出 " + name + " ×" + std::to_string(result.taken) +
+                              "（容器剩 " + std::to_string(result.remaining) + " 件）",
                           kNoticeOkColor, 2.0f);
             } else {
-                SetNotice("取出??" + name + " ×" + std::to_string(result.taken),
+                SetNotice("取出 " + name + " ×" + std::to_string(result.taken),
                           kNoticeOkColor, 2.0f);
             }
             if (m_ctx.events != nullptr) {
@@ -7241,7 +7240,7 @@ void WorldDemoState::PickupLootItem(std::uint64_t stableId, int index) {
                     core::ItemEvent{m_ctx.ecs->IdOf(entity).id, result.defId,
                                     result.taken});
             }
-            ZL_INFO("items", "拾取（容器）：{} x{}（容器剩??{}??", name, result.taken,
+            ZL_INFO("items", "拾取（容器）：{} x{}（容器剩余 {}）", name, result.taken,
                     result.remaining);
         } else {
             SetNotice("背包已满", kNoticeFailColor, 1.5f);
@@ -7258,11 +7257,11 @@ void WorldDemoState::PickupLootItem(std::uint64_t stableId, int index) {
     const std::string name = def != nullptr ? def->name : result.defId;
     if (result.picked > 0) {
         if (result.groundRemaining > 0) {
-            SetNotice("拾取??" + name + " ×" + std::to_string(result.picked) + "（地上剩 " +
-                          std::to_string(result.groundRemaining) + "??",
+            SetNotice("拾取：" + name + " ×" + std::to_string(result.picked) + "（地上剩 " +
+                          std::to_string(result.groundRemaining) + " 件）",
                       kNoticeOkColor, 2.0f);
         } else {
-            SetNotice("拾取??" + name + " ×" + std::to_string(result.picked),
+            SetNotice("拾取：" + name + " ×" + std::to_string(result.picked),
                       kNoticeOkColor, 2.0f);
         }
         if (m_ctx.events != nullptr) {
@@ -7270,7 +7269,7 @@ void WorldDemoState::PickupLootItem(std::uint64_t stableId, int index) {
                 core::kOnItemPickup,
                 core::ItemEvent{result.entityId, result.defId, result.picked});
         }
-        ZL_INFO("items", "拾取（地面）：{} x{}（剩??{}??", name, result.picked,
+        ZL_INFO("items", "拾取（地面）：{} x{}（剩余 {}）", name, result.picked,
                 result.groundRemaining);
     } else {
         SetNotice("背包已满", kNoticeFailColor, 1.5f);
@@ -7407,7 +7406,7 @@ bool WorldDemoState::ExecutePlayerCommand(const net::Command& command, std::stri
     const std::uint64_t playerId = m_ctx.ecs->IdOf(m_player).id;
     if (command.playerStableId != playerId) {
         error = "playerStableId 不匹配（命令 " + std::to_string(command.playerStableId) +
-                "，本??" + std::to_string(playerId) + "??";
+                "，本地 " + std::to_string(playerId) + "）";
         return false;
     }
     if (!std::isfinite(command.payload.x) || !std::isfinite(command.payload.y)) {
@@ -7635,13 +7634,13 @@ bool WorldDemoState::StartNextQueuedCraft(std::string_view prefix) {
         output != nullptr ? output->name : recipe->outputDefId;
     std::string notice(prefix);
     notice += "开始队列下一项：" + label + " ×" +
-              std::to_string(recipe->outputCount) + "??" +
-              std::to_string(actual) + " ??";
+              std::to_string(recipe->outputCount) + "（" +
+              std::to_string(actual) + " 件";
     if (actual < entry.count) {
-        notice += "；请??" + std::to_string(entry.count) +
+        notice += "；请求 " + std::to_string(entry.count) +
                   " 件，已按材料/空间截断";
     }
-    notice += "??";
+    notice += "）";
     SetNotice(notice, kNoticeInfoColor, 2.5f);
     ZL_INFO("items",
             "开始队列下一项：{} ×{}（配方 {}，请求 {} 件，实际 {} 件，剩余 {} 项）",
@@ -7688,7 +7687,7 @@ void WorldDemoState::RestoreCraftingJobFromEcs() {
         if (m_ctx.saveWarning.empty()) {
             m_ctx.saveWarning = std::move(warning);
         } else {
-            m_ctx.saveWarning += "??" + warning;
+            m_ctx.saveWarning += "；" + warning;
         }
     };
     const auto cancelRestore = [&](const std::string& reason) {
@@ -7746,7 +7745,7 @@ void WorldDemoState::RestoreCraftingJobFromEcs() {
     const std::string label = QueuedCraftLabel(recipe->id);
     SetNotice("已恢复制作：" + label + "（" +
                   std::to_string(m_craftBatchCompleted) + "/" +
-                  std::to_string(m_craftBatchTotal) + "，队??" +
+                  std::to_string(m_craftBatchTotal) + "，队列 " +
                   std::to_string(m_craftQueue.size()) + " 项）",
               kNoticeInfoColor, 2.5f);
     ZL_INFO("items",
@@ -7828,7 +7827,7 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
             } else if (def->type == items::ItemType::Clothing) {
                 EquipBagItem(action.fromIndex, ecs::EquipSlot::Body);
             } else {
-                SetNotice("该物品不能装??", kNoticeFailColor, 1.5f);
+                SetNotice("该物品不能装备", kNoticeFailColor, 1.5f);
             }
             break;
         }
@@ -7874,7 +7873,7 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
                 (position == nullptr ||
                  !StationNearby(recipe->station, position->x, position->y,
                                 position->z))) {
-                SetNotice("需要附??" + StationLabel(recipe->station),
+                SetNotice("需要附近" + StationLabel(recipe->station),
                           kNoticeFailColor, 2.5f);
                 ZL_INFO("items", "制作被拒绝（配方 {}）：需要附近{}", recipe->id,
                         StationLabel(recipe->station));
@@ -7892,10 +7891,10 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
                     break;
                 }
                 m_craftQueue.push_back(ecs::CraftQueueItem{recipe->id, requested});
-                SetNotice("已加入制作队列（??" +
-                              std::to_string(m_craftQueue.size()) + " 项）??" +
+                SetNotice("已加入制作队列（第 " +
+                              std::to_string(m_craftQueue.size()) + " 项）：" +
                               label + " ×" +
-                              std::to_string(recipe->outputCount) + "（请??" +
+                              std::to_string(recipe->outputCount) + "（请求 " +
                               std::to_string(requested) + " 件）",
                           kNoticeInfoColor, 2.5f);
                 ZL_INFO("items",
@@ -7918,12 +7917,12 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
                 std::string notice =
                     (actual > 1 ? "开始批量制作：" : "开始制作：") + label + " ×" +
                     std::to_string(recipe->outputCount) + "（共 " +
-                    std::to_string(actual) + " ??";
+                    std::to_string(actual) + " 件";
                 if (actual < requested) {
-                    notice += "；请??" + std::to_string(requested) +
+                    notice += "；请求 " + std::to_string(requested) +
                               " 件，已按材料/空间截断";
                 }
-                notice += "??";
+                notice += "）";
                 SetNotice(notice, kNoticeInfoColor, 2.5f);
             } else {
                 SetNotice("开始制作：" + label + " ×" +
@@ -7952,9 +7951,9 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
             m_craftQueue.clear();
             if (queued > 0) {
                 if (completed > 0) {
-                    SetNotice("已取消制作队列（当前已完??" +
+                    SetNotice("已取消制作队列（当前已完成 " +
                                   std::to_string(completed) + "/" +
-                                  std::to_string(total) + "，队??" +
+                                  std::to_string(total) + "，队列 " +
                                   std::to_string(queued) + " 项已清空）",
                               kNoticeInfoColor, 2.8f);
                 } else {
@@ -7998,7 +7997,7 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
             std::swap(m_craftQueue[static_cast<std::size_t>(action.fromIndex)],
                       m_craftQueue[static_cast<std::size_t>(target)]);
             const std::string direction = moveUp ? "上移" : "下移";
-            SetNotice("??" + direction + "队列??" +
+            SetNotice("已" + direction + "队列：" +
                           std::to_string(action.fromIndex + 1) + " 项：" + label +
                           "（现为第 " + std::to_string(target + 1) + " 项）",
                       kNoticeInfoColor, 2.0f);
@@ -8018,7 +8017,7 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
             const std::string label = QueuedCraftLabel(removed.recipeId);
             m_craftQueue.erase(m_craftQueue.begin() + action.fromIndex);
             SetNotice("已移除队列第 " + std::to_string(action.fromIndex + 1) +
-                          " 项：" + label + "（请??" +
+                          " 项：" + label + "（请求 " +
                           std::to_string(removed.count) + " 件）",
                       kNoticeInfoColor, 2.0f);
             ZL_INFO("items", "移除制作队列第 {} 项：{}（请求 {} 件，剩余 {} 项）",
@@ -8041,9 +8040,9 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
             const int previous = entry.count;
             entry.count = count;
             const std::string label = QueuedCraftLabel(entry.recipeId);
-            SetNotice("队列??" + std::to_string(action.fromIndex + 1) +
-                          " 项数量：" + std::to_string(previous) + " ??" +
-                          std::to_string(count) + " 件（" + label + "??",
+            SetNotice("队列第 " + std::to_string(action.fromIndex + 1) +
+                          " 项数量：" + std::to_string(previous) + " → " +
+                          std::to_string(count) + " 件（" + label + "）",
                       kNoticeInfoColor, 2.0f);
             ZL_INFO("items",
                     "调整制作队列第 {} 项数量：{} 请求 {} -> {} 件（队列 {} 项）",
@@ -8082,7 +8081,7 @@ void WorldDemoState::UpdateCrafting(float tickDt) {
                        : std::string();
         if (completed > 0) {
             SetNotice("批量制作中断：已完成 " + std::to_string(completed) + "/" +
-                          std::to_string(total) + "??" + reason + "??" +
+                          std::to_string(total) + "（" + reason + "）" +
                           queueSuffix,
                       kNoticeFailColor, 3.0f);
             ZL_INFO("items",
@@ -8135,12 +8134,12 @@ void WorldDemoState::UpdateCrafting(float tickDt) {
     for (const std::string& defId : result.brokenToolDefIds) {
         const items::ItemDef* def = m_ctx.items->Find(defId);
         if (!brokenTools.empty()) {
-            brokenTools += "??";
+            brokenTools += "、";
         }
         brokenTools += def != nullptr ? def->name : defId;
     }
     const std::string brokenSuffix =
-        brokenTools.empty() ? std::string() : "??" + brokenTools + "已损??";
+        brokenTools.empty() ? std::string() : "（" + brokenTools + "已损坏）";
     GrantProgressionXp(
         ecs::SkillKind::Crafting,
         m_progressionConfig.craftXpPerItem *
@@ -8165,8 +8164,8 @@ void WorldDemoState::UpdateCrafting(float tickDt) {
         const float efficiency = items::ToolEfficiency(*container, *recipe);
         const float seconds = CraftSecondsForPlayer(*recipe, efficiency);
         m_crafting.Start(recipe->id, seconds, efficiency);
-        SetNotice("制作中：" + label + "??" + std::to_string(completed + 1) + "/" +
-                      std::to_string(total) + "??" + brokenSuffix,
+        SetNotice("制作中：" + label + "（" + std::to_string(completed + 1) + "/" +
+                      std::to_string(total) + "）" + brokenSuffix,
                   kNoticeInfoColor, 1.5f);
         ZL_INFO("items", "批量制作继续：{}（已完成 {}/{}，耗时 {:.2f}s，效率 {:.0f}%）",
                 label, completed, total, seconds, efficiency * 100.0f);
@@ -8190,7 +8189,7 @@ void WorldDemoState::UpdateCrafting(float tickDt) {
                 label, result.outputCount, recipe->id, completed, total, brokenTools);
     }
     if (!m_craftQueue.empty()) {
-        StartNextQueuedCraft(completion + "??");
+        StartNextQueuedCraft(completion + "；");
         return;
     }
     SetNotice(completion, kNoticeOkColor, total > 1 ? 3.0f : 2.5f);
@@ -8198,7 +8197,7 @@ void WorldDemoState::UpdateCrafting(float tickDt) {
 
 void WorldDemoState::HandleClickToMove(const render::GridPick& pick) {
     if (m_ctx.ecs == nullptr || m_player == entt::null || !pick.hit) {
-        return;  // 玩家未生??/ 拾取无效
+        return;  // 玩家未生成 / 拾取无效
     }
     if (m_networkMode) {
         net::Command command = MakePlayerCommand(net::CommandType::MoveTo);
@@ -8280,7 +8279,7 @@ void WorldDemoState::HandleClickToMove(const render::GridPick& pick) {
     request->newRequest = true;
     SetNotice(adjusted ? "adjusted target; pathfinding..." : "pathfinding...", kNoticeInfoColor,
               1.2f);
-    ZL_INFO("game", "点击移动：玩????目标??({}, {})", targetX, targetY);
+    ZL_INFO("game", "点击移动：玩家 → 目标格 ({}, {})", targetX, targetY);
 }
 
 void WorldDemoState::UpdatePathFeedback(double frameDt) {
@@ -8327,7 +8326,7 @@ void WorldDemoState::UpdatePathFeedback(double frameDt) {
         m_lastPlayerPathState = state;
     }
     if (state == ecs::PathStatus::Pending || state == ecs::PathStatus::Following) {
-        m_markerX = request->goalX;  // 寻路??跟随中：黄色目标标记常显
+        m_markerX = request->goalX;  // 寻路中/跟随中：黄色目标标记常显
         m_markerY = request->goalY;
         m_markerPathActive = true;
         m_markerColor = kMarkerActiveColor;
@@ -8541,7 +8540,7 @@ void WorldDemoState::PlayerAttack(std::uint64_t targetStableId, bool heavy) {
     }
 
     // M12-T1：命令可携带目标 StableId；缺省仍自动瞄准最近僵尸。
-    // M30-T3：无目标时按玩家朝向空挥，仍扣体??冷却并完成挥击动作??
+    // M30-T3：无目标时按玩家朝向空挥，仍扣体力/冷却并完成挥击动作。
     constexpr float kAutoAimRange = 3.0f;
     ecs::Entity best = entt::null;
     float bestDistSq = kAutoAimRange * kAutoAimRange;
@@ -8632,7 +8631,7 @@ void WorldDemoState::PlayerAttack(std::uint64_t targetStableId, bool heavy) {
     attack->windupLeft = attack->windupSeconds;
     attack->poiseDamage = std::max(0.0f, params.poiseDamage);
     attack->staminaCost = std::max(0.0f, params.staminaCost);
-    attack->pending = true;  // 下一 tick CombatSystem 推进前摇并结??
+    attack->pending = true;  // 下一 tick CombatSystem 推进前摇并结算
     float cooldownSeconds = std::max(0.0f, params.cooldownSeconds);
     if (const auto* pain = registry.try_get<ecs::Pain>(m_player); pain != nullptr) {
         cooldownSeconds *= std::clamp(pain->attackCooldownScale, 1.0f, 3.0f);
@@ -8656,8 +8655,8 @@ void WorldDemoState::PlayerAttack(std::uint64_t targetStableId, bool heavy) {
     }
     SetNotice(notice, kNoticeInfoColor, 1.2f);
     ZL_INFO("characters",
-            "玩家挥击（{}）：武器 {}（耐久 {:.0f}%），目标 {}，距??{:.2f} 格，"
-            "伤害 {:.0f}，范??{:.2f}，前??{:.2f}s，体??{:.0f}/{:.0f}，冷??{:.2f}s",
+            "玩家挥击（{}）：武器 {}（耐久 {:.0f}%），目标 {}，距离 {:.2f} 格，"
+            "伤害 {:.0f}，范围 {:.2f}，前摇 {:.2f}s，体力 {:.0f}/{:.0f}，冷却 {:.2f}s",
             heavy ? "LSHIFT 重击" : "SPACE 轻击", weaponName,
             weapon != nullptr ? weapon->condition * 100.0f : 100.0f,
             best != entt::null ? std::to_string(attack->targetId) : std::string("空挥"),
@@ -8684,7 +8683,7 @@ void WorldDemoState::PlayerBlock(bool down, bool announce) {
     }
     if (m_driving || registry.all_of<ecs::VehicleOccupant>(m_player)) {
         if (announce) {
-            SetNotice("格挡：驾驶中不可??", kNoticeFailColor, 1.0f);
+            SetNotice("格挡：驾驶中不可用", kNoticeFailColor, 1.0f);
         }
         return;
     }
@@ -8735,7 +8734,7 @@ void WorldDemoState::PlayerBlock(bool down, bool announce) {
     if (stamina->exhausted > 0.0f ||
         characters::StaminaExhausted(stamina->current, rules)) {
         if (announce) {
-            SetNotice("格挡：体力不??", kNoticeFailColor, 1.2f);
+            SetNotice("格挡：体力不足", kNoticeFailColor, 1.2f);
         }
         return;
     }
@@ -8761,7 +8760,7 @@ void WorldDemoState::PlayerBlock(bool down, bool announce) {
     if (announce) {
         SetNotice("格挡", kNoticeOkColor, 0.8f);
     }
-    ZL_INFO("characters", "玩家格挡：武??{}，伤害倍率 {:.0f}%，体力消??{}",
+    ZL_INFO("characters", "玩家格挡：武器 {}，伤害倍率 {:.0f}%，体力消耗 {}",
             weaponDef != nullptr ? weaponDef->name : std::string("fists"),
             static_cast<double>(
                 characters::BlockDamageScale(
@@ -8781,7 +8780,7 @@ void WorldDemoState::PlayerDodge(float screenX, float screenY) {
     }
     entt::registry& registry = m_ctx.ecs->Registry();
     if (m_driving || registry.all_of<ecs::VehicleOccupant>(m_player)) {
-        SetNotice("闪避：驾驶中不可??", kNoticeFailColor, 1.0f);
+        SetNotice("闪避：驾驶中不可用", kNoticeFailColor, 1.0f);
         return;
     }
     if (m_sleep.Active() || m_sleepSelecting || m_forageAction.active ||
@@ -8829,12 +8828,12 @@ void WorldDemoState::PlayerDodge(float screenX, float screenY) {
     const characters::CombatRuleConfig& rules = m_ctx.combat->GetCombatRules();
     if (stamina->exhausted > 0.0f ||
         characters::StaminaExhausted(stamina->current, rules)) {
-        SetNotice("闪避：体力不??", kNoticeFailColor, 1.2f);
+        SetNotice("闪避：体力不足", kNoticeFailColor, 1.2f);
         return;
     }
     const float cost = characters::DodgeStaminaCost(rules);
     if (!(stamina->current >= cost)) {
-        SetNotice("闪避：体力不??", kNoticeFailColor, 1.2f);
+        SetNotice("闪避：体力不足", kNoticeFailColor, 1.2f);
         return;
     }
 
@@ -8856,11 +8855,11 @@ void WorldDemoState::PlayerDodge(float screenX, float screenY) {
     const game::PlayerDodgePlan plan =
         game::ResolvePlayerDodge(worldX, worldY, facing, rules);
     if (!(plan.speed > 0.0f)) {
-        SetNotice("闪避：位移配置无??", kNoticeFailColor, 1.2f);
+        SetNotice("闪避：位移配置无效", kNoticeFailColor, 1.2f);
         return;
     }
     if (!m_ctx.combat->TrySpendStamina(*m_ctx.ecs, m_player, cost)) {
-        SetNotice("闪避：体力不??", kNoticeFailColor, 1.2f);
+        SetNotice("闪避：体力不足", kNoticeFailColor, 1.2f);
         return;
     }
 
@@ -8885,7 +8884,7 @@ void WorldDemoState::PlayerDodge(float screenX, float screenY) {
     }
     SetNotice("闪避", kNoticeOkColor, 0.8f);
     ZL_INFO("characters",
-            "玩家闪避：方??({:.2f}, {:.2f})，速度 {:.2f} ??s，无??{:.2f}s??"
+            "玩家闪避：方向 ({:.2f}, {:.2f})，速度 {:.2f} 格/s，无敌 {:.2f}s，"
             "体力 {:.0f}/{:.0f}",
             static_cast<double>(plan.dirX), static_cast<double>(plan.dirY),
             static_cast<double>(plan.speed), static_cast<double>(invuln),
@@ -9035,11 +9034,11 @@ void WorldDemoState::PlayerRangedAttack(const glm::vec2& mousePx) {
     SetNotice(std::move(text), broken ? kNoticeFailColor : kNoticeInfoColor, 1.5f);
     ZL_INFO("items",
             "远程开火：{} 弹药 {}/{}，弹丸 {}，方向 ({:.2f}, {:.2f})，伤害 {:.0f}，"
-            "射程 {:.1f}，弹??{:.1f}，噪声半??{:.0f}，冷??{:.2f}s，耐久 {:.0f}%{}",
+            "射程 {:.1f}，弹速 {:.1f}，噪声半径 {:.0f}，冷却 {:.2f}s，耐久 {:.0f}%{}",
             def->name, ammoLeft, ranged.magazine, ranged.pellets, dx, dy,
             ranged.damage, ranged.range, ranged.projectileSpeed,
             ranged.noiseRadius, ranged.cooldownSeconds,
-            weapon->condition * 100.0f, broken ? "（已损坏??" : "");
+            weapon->condition * 100.0f, broken ? "（已损坏）" : "");
 }
 
 void WorldDemoState::SpawnRangedProjectile(float startX, float startY, int z,
@@ -9494,7 +9493,7 @@ void WorldDemoState::EnsurePoiContent() {
                            static_cast<int>(std::floor(poi.markerY)));
         const world::Chunk* chunk = FindChunk(coord.cx, coord.cy);
         if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
-            continue;  // 流式加载??POI 附近后再生成
+            continue;  // 流式加载到 POI 附近后再生成
         }
         PoiRuntime& runtime = m_poiRuntime[poi.id];
         if (!runtime.containersSpawned) {
@@ -9672,7 +9671,7 @@ void WorldDemoState::UpdatePoiTasks() {
         }
         SetNotice("POI 任务完成：" + poi.name + "（" +
                       std::to_string(static_cast<int>(poi.task.rewardXp)) +
-                      " 经验??" +
+                      " 经验）" +
                       (rewardDropped ? "（背包已满，奖励掉落脚下）" : ""),
                   kNoticeOkColor, 5.0f);
         ZL_INFO("poi", "任务完成：{}（{}），剩余守军 0，目标 {}", poi.name,
@@ -9768,7 +9767,7 @@ void WorldDemoState::RefreshPoiGuide(ui::HudState& hud) {
     }
     const float distance = std::sqrt(nearestDistSq);
     if (distance > m_poiConfig.guideRange) {
-        return;  // 远处只保留世??边缘标记，避??HUD 常驻噪声
+        return;  // 远处只保留世界/边缘标记，避免 HUD 常驻噪声
     }
     hud.poiGuide = game::PoiGuideText(*nearest, nearestDx, nearestDy, distance,
                                       nearestSearched, nearestGuards);
@@ -9776,7 +9775,7 @@ void WorldDemoState::RefreshPoiGuide(ui::HudState& hud) {
         game::PoiGuideTone(*nearest, nearestSearched, nearestGuards);
     if (distance <= 12.0f && m_poiNearId != nearest->id) {
         m_poiNearId = nearest->id;
-        ZL_INFO("poi", "进入 POI：{}（威??{}，任务：{}??", nearest->name,
+        ZL_INFO("poi", "进入 POI：{}（威胁 {}，任务：{}）", nearest->name,
                 game::PoiThreatLabel(nearest->threat),
                 game::PoiTaskText(*nearest, nearestSearched, nearestGuards));
     }
@@ -10043,7 +10042,7 @@ void WorldDemoState::EnsureRandomEventContentForActiveMissions(
                        std::to_string(static_cast<int>(std::lround(
                            std::hypot(result.siteX - position->x,
                                       result.siteY - position->y)))) +
-                       " ??";
+                       " 格";
         }
         SetNotice(trigger, kNoticeInfoColor, 5.0f);
         ZL_INFO("events", "事件触发：{}（{}，站点 ({:.1f},{:.1f})）",
@@ -10376,7 +10375,7 @@ void WorldDemoState::AbandonFocusedMission() {
                 m_missionFocusId.clear();
                 SetNotice("已发送放弃任务请求", kNoticeInfoColor, 1.5f);
             } else {
-                SetNotice("放弃任务请求发送失??", kNoticeFailColor, 1.5f);
+                SetNotice("放弃任务请求发送失败", kNoticeFailColor, 1.5f);
             }
             return;
         }
@@ -10551,7 +10550,7 @@ void WorldDemoState::RefreshMissionGuide(ui::HudState& hud) {
         } else {
             std::ostringstream hint;
             hint << "目标" << game::PoiDirectionLabel(dx, dy) << ' '
-                 << std::fixed << std::setprecision(0) << distance << " ??";
+                 << std::fixed << std::setprecision(0) << distance << " 格";
             directionHint = hint.str();
         }
     }
@@ -10617,7 +10616,7 @@ void WorldDemoState::RefreshEventGuide(ui::HudState& hud) {
         } else {
             std::ostringstream hint;
             hint << "目标" << game::PoiDirectionLabel(dx, dy) << ' '
-                 << std::fixed << std::setprecision(0) << bestDistance << " ??";
+                 << std::fixed << std::setprecision(0) << bestDistance << " 格";
             directionHint = hint.str();
         }
     }
@@ -10673,18 +10672,18 @@ void WorldDemoState::SearchNearbyLootContainer() {
         const std::string detail = result.totalItems > 0
                                        ? "发现 " +
                                              std::to_string(result.totalItems) +
-                                             " 件物??"
+                                             " 件物品"
                                        : "为空";
         SetNotice("发现事件箱：" + std::string(eventBox) + " · " + detail,
                   kNoticeOkColor, 3.5f);
         ZL_INFO("events", "事件箱发现：{}（{}），{}", eventBox,
                 result.tableId, detail);
     } else if (result.totalItems > 0) {
-        SetNotice("搜索??" + name + "：发??" + std::to_string(result.totalItems) +
-                      " 件物??",
+        SetNotice("搜索了" + name + "：发现 " + std::to_string(result.totalItems) +
+                      " 件物品",
                   kNoticeOkColor, 2.5f);
     } else {
-        SetNotice("搜索??" + name + "：空??", kNoticeInfoColor, 2.0f);
+        SetNotice("搜索了" + name + "：空", kNoticeInfoColor, 2.0f);
     }
 }
 
@@ -10890,14 +10889,14 @@ bool WorldDemoState::TryStartForageSearch() {
         const int minutes = std::max(
             1, static_cast<int>(std::ceil(ForageRespawnRemainingMinutes(
                    *state, *node, m_ctx.gameTime->TotalGameMinutes()))));
-        SetNotice("已耗尽??" + zone->name + "（约 " + std::to_string(minutes) +
+        SetNotice("已耗尽：" + zone->name + "（约 " + std::to_string(minutes) +
                       " 分钟后刷新）",
                   kNoticeInfoColor, 2.0f);
         return true;
     }
     std::string toolName;
     if (!HasForageTool(*zone, &toolName)) {
-        SetNotice("需??" +
+        SetNotice("需要" +
                       (toolName.empty() ? std::string("工具") : toolName) +
                       "才能采集" + zone->name,
                   kNoticeFailColor, 2.0f);
@@ -11011,7 +11010,7 @@ void WorldDemoState::CompleteForageSearch() {
     for (const ecs::ItemInstance& item : rolled.items) {
         const items::ItemDef* def = m_ctx.items->Find(item.defId);
         if (!found.empty()) {
-            found += "??";
+            found += "、";
         }
         found += (def != nullptr ? def->name : item.defId) + "×" +
                  std::to_string(item.count);
@@ -11045,7 +11044,7 @@ void WorldDemoState::CompleteForageSearch() {
         SetNotice("采集了" + zone->name + "：什么也没找到", kNoticeInfoColor,
                   2.0f);
     } else {
-        std::string text = "采集??" + zone->name + "??" + found;
+        std::string text = "采集了" + zone->name + "：" + found;
         if (dropped) {
             text += "（背包已满，部分掉落脚下）";
         }
@@ -11064,9 +11063,9 @@ void WorldDemoState::CancelForageSearch(std::string_view reason, bool notice) {
     if (notice) {
         std::string text = "觅食中断：" + zoneName;
         if (!reason.empty()) {
-            text += "??";
+            text += "（";
             text += reason;
-            text += "??";
+            text += "）";
         }
         SetNotice(std::move(text), kNoticeInfoColor, 1.8f);
     }
@@ -11174,7 +11173,7 @@ bool WorldDemoState::TryStartAnimalHarvest() {
         }
         std::string toolName;
         if (!HasAnimalHarvestTool(*def, &toolName)) {
-            SetNotice("需??" +
+            SetNotice("需要" +
                           (toolName.empty() ? std::string("工具") : toolName) +
                           "才能剥取" + AnimalCorpseName(*def),
                       kNoticeFailColor, 2.0f);
@@ -11211,7 +11210,7 @@ bool WorldDemoState::TryStartAnimalHarvest() {
     }
     std::string toolName;
     if (!HasAnimalHarvestTool(*def, &toolName)) {
-        SetNotice("需??" +
+        SetNotice("需要" +
                       (toolName.empty() ? std::string("工具") : toolName) +
                       "才能剥取" + AnimalCorpseName(*def),
                   kNoticeFailColor, 2.0f);
@@ -11326,7 +11325,7 @@ void WorldDemoState::CompleteAnimalHarvest() {
                 toolName = item->name;
             }
         }
-        SetNotice("需??" +
+        SetNotice("需要" +
                       (toolName.empty() ? std::string("工具") : toolName) +
                       "才能剥取" + action.corpseName,
                   kNoticeFailColor, 2.0f);
@@ -11343,14 +11342,14 @@ void WorldDemoState::CompleteAnimalHarvest() {
         for (const ecs::ItemInstance& item : container->items) {
             const items::ItemDef* def = m_ctx.items->Find(item.defId);
             if (!found.empty()) {
-                found += "??";
+                found += "、";
             }
             found += (def != nullptr ? def->name : item.defId) + "×" +
                      std::to_string(item.count);
         }
     }
     if (result.harvested) {
-        std::string text = "剥取??" + action.corpseName + "??" +
+        std::string text = "剥取了" + action.corpseName + "：" +
                            (found.empty() ? std::string("没有可用材料") : found);
         if (!found.empty()) {
             text += "（战利品在尸体中，按 I 取走）";
@@ -11377,9 +11376,9 @@ void WorldDemoState::CancelAnimalHarvest(std::string_view reason,
     if (notice) {
         std::string text = "剥取中断：" + corpseName;
         if (!reason.empty()) {
-            text += "??";
+            text += "（";
             text += reason;
-            text += "??";
+            text += "）";
         }
         SetNotice(std::move(text), kNoticeInfoColor, 1.8f);
     }
@@ -11568,7 +11567,7 @@ bool WorldDemoState::TryStartFishing() {
         return false;
     }
     if (!HasFishingRod(*def)) {
-        SetNotice("需??" +
+        SetNotice("需要" +
                       (def->rodDefId.empty()
                            ? std::string("鱼竿")
                            : FishingItemName(def->rodDefId)) +
@@ -11577,7 +11576,7 @@ bool WorldDemoState::TryStartFishing() {
         return true;
     }
     if (def->baitCost > 0 && FishingBaitCount(*def) < def->baitCost) {
-        SetNotice("需??" +
+        SetNotice("需要" +
                       (def->baitDefId.empty()
                            ? std::string("鱼饵")
                            : FishingItemName(def->baitDefId)) +
@@ -11682,7 +11681,7 @@ void WorldDemoState::UpdateFishingSearch(float tickDt) {
         if (m_fishingAction.elapsed >= m_fishingAction.waitDuration) {
             m_fishingAction.biting = true;
             m_fishingAction.biteElapsed = 0.0f;
-            SetNotice("咬钩了！??E 收杆??" + m_fishingAction.spotName,
+            SetNotice("咬钩了！按 E 收杆：" + m_fishingAction.spotName,
                       kNoticeInfoColor, 2.0f);
             ZL_INFO("fishing", "咬钩：{}", m_fishingAction.spotId);
         }
@@ -11729,7 +11728,7 @@ void WorldDemoState::ResolveFishing(bool caught) {
     for (const ecs::ItemInstance& item : rolled.items) {
         const items::ItemDef* itemDef = m_ctx.items->Find(item.defId);
         if (!found.empty()) {
-            found += "??";
+            found += "、";
         }
         found += (itemDef != nullptr ? itemDef->name : item.defId) + "×" +
                  std::to_string(item.count);
@@ -11764,7 +11763,7 @@ void WorldDemoState::ResolveFishing(bool caught) {
     } else if (rolled.items.empty()) {
         SetNotice("钓到鱼了，但鱼篓是空的", kNoticeInfoColor, 2.0f);
     } else {
-        std::string text = "钓到??" + found;
+        std::string text = "钓到：" + found;
         if (dropped) {
             text += "（背包已满，部分掉落脚下）";
         }
@@ -11783,9 +11782,9 @@ void WorldDemoState::CancelFishing(std::string_view reason, bool notice) {
     if (notice) {
         std::string text = "钓鱼中断：" + name;
         if (!reason.empty()) {
-            text += "??";
+            text += "（";
             text += reason;
-            text += "??";
+            text += "）";
         }
         SetNotice(std::move(text), kNoticeInfoColor, 1.8f);
     }
@@ -11991,12 +11990,12 @@ void WorldDemoState::GrantProgressionXp(ecs::SkillKind kind, float baseAmount,
         game::AwardXp(*progression, kind, baseAmount, m_progressionConfig);
     ApplyProgressionRuntime();
     const game::SkillRules* skill = game::FindSkill(m_progressionConfig, kind);
-    const std::string skillName = skill != nullptr ? skill->name : "技??";
+    const std::string skillName = skill != nullptr ? skill->name : "技能";
     if (award.characterLevels > 0) {
         SetNotice("升级！Lv." + std::to_string(progression->level) +
                       "（可分配 Perk ×" +
                       std::to_string(progression->perkPoints) +
-                      "，按 1/2/3 选择??",
+                      "，按 1/2/3 选择）",
                   kNoticeOkColor, 3.0f);
     } else if (progression->level > oldLevel) {
         SetNotice("升级！Lv." + std::to_string(progression->level),
@@ -12041,7 +12040,7 @@ void WorldDemoState::UpdateProgression(float tickDt) {
                 SetNotice("升级！Lv." + std::to_string(progression.level) +
                               "（可分配 Perk ×" +
                               std::to_string(progression.perkPoints) +
-                              "，按 1/2/3 选择??",
+                              "，按 1/2/3 选择）",
                           kNoticeOkColor, 3.0f);
             } else if (ecs::SkillLevel(progression, ecs::SkillKind::Melee) >
                        oldMelee) {
@@ -12103,8 +12102,8 @@ bool WorldDemoState::SelectPerk(int index) {
         perk != nullptr) {
         name = perk->name;
     }
-    SetNotice("已选择??" + name + "（剩??Perk ×" +
-                  std::to_string(progression->perkPoints) + "??",
+    SetNotice("已选择：" + name + "（剩余 Perk ×" +
+                  std::to_string(progression->perkPoints) + "）",
               kNoticeOkColor, 2.5f);
     return true;
 }
@@ -12215,7 +12214,7 @@ std::string WorldDemoState::BuildMenuText() const {
     if (def == nullptr) {
         return {};
     }
-    std::string text = "建??[" +
+    std::string text = "建造[" +
                        std::string(BuildCategoryLabel(def->category)) + "] " +
                        def->name + " (" +
                        std::to_string(m_buildIndex + 1) + "/" +
@@ -12232,7 +12231,7 @@ std::string WorldDemoState::BuildMenuText() const {
             state->status != ecs::MissionRunStatus::Completed) {
             const MissionDef* mission =
                 m_missionConfig.Find(def->requiresMission);
-            text += " · 需任务??" +
+            text += " · 需任务：" +
                     (mission != nullptr ? mission->name : def->requiresMission);
         }
     }
@@ -12291,7 +12290,7 @@ bool WorldDemoState::CanPlaceBuild(const BuildableDef& def, int wx, int wy,
     };
     if (m_ctx.ecs == nullptr || m_ctx.world == nullptr || m_ctx.items == nullptr ||
         m_player == entt::null) {
-        return fail("无法建??");
+        return fail("无法建造");
     }
     if (def.id == "farm_plot" && !m_homesteadConfig.farm.enabled) {
         return fail("农业系统已关闭");
@@ -12323,7 +12322,7 @@ bool WorldDemoState::CanPlaceBuild(const BuildableDef& def, int wx, int wy,
     const auto* container = registry.try_get<ecs::Container>(m_player);
     if (position == nullptr || health == nullptr || health->current <= 0.0f ||
         container == nullptr) {
-        return fail("无法建??");
+        return fail("无法建造");
     }
     const float distance = std::hypot(
         position->x - (static_cast<float>(wx) + 0.5f),
@@ -12561,7 +12560,7 @@ bool WorldDemoState::TryRepairNearestBarricade() {
             command.payload.y = static_cast<float>(
                 static_cast<int>(std::floor(position->y)));
             if (!SubmitPlayerCommand(command)) {
-                SetNotice("维修请求发送失??", kNoticeFailColor, 1.5f);
+                SetNotice("维修请求发送失败", kNoticeFailColor, 1.5f);
                 return false;
             }
             m_buildActionCooldown = m_buildActionCooldownSeconds;
@@ -12575,7 +12574,7 @@ bool WorldDemoState::TryRepairNearestBarricade() {
             registry.try_get<ecs::Container>(m_player);
         if (container == nullptr ||
             items::CountOf(*container, m_buildWoodItem) < m_repairWoodCost) {
-            SetNotice("维修需??" + std::to_string(m_repairWoodCost) +
+            SetNotice("维修需要" + std::to_string(m_repairWoodCost) +
                           " 木材",
                       kNoticeFailColor, 1.8f);
             return false;
@@ -12589,7 +12588,7 @@ bool WorldDemoState::TryRepairNearestBarricade() {
         }
         if (items::RemoveItem(*container, m_buildWoodItem, m_repairWoodCost) !=
             m_repairWoodCost) {
-            SetNotice("维修失败：木材不??", kNoticeFailColor, 1.8f);
+            SetNotice("维修失败：木材不足", kNoticeFailColor, 1.8f);
             return false;
         }
         health->current = newHp;
@@ -12599,7 +12598,7 @@ bool WorldDemoState::TryRepairNearestBarricade() {
                       "/" +
                       std::to_string(static_cast<int>(
                           std::lround(health->max))) +
-                      "??" + std::to_string(m_repairWoodCost) + " 木材??",
+                      "（消耗 " + std::to_string(m_repairWoodCost) + " 木材）",
                   kNoticeOkColor, 2.0f);
         ZL_INFO("homestead", "维修泛光灯：({}, {}) HP {:.0f}/{:.0f}，剩余木材 {}",
                 position->x, position->y, newHp, health->max,
@@ -12619,7 +12618,7 @@ bool WorldDemoState::TryRepairNearestBarricade() {
         command.payload.x = static_cast<float>(target.wx);
         command.payload.y = static_cast<float>(target.wy);
         if (!SubmitPlayerCommand(command)) {
-            SetNotice("维修请求发送失??", kNoticeFailColor, 1.5f);
+            SetNotice("维修请求发送失败", kNoticeFailColor, 1.5f);
             return false;
         }
         m_buildActionCooldown = m_buildActionCooldownSeconds;
@@ -12634,7 +12633,7 @@ bool WorldDemoState::TryRepairNearestBarricade() {
         m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
     if (container == nullptr ||
         items::CountOf(*container, m_buildWoodItem) < m_repairWoodCost) {
-        SetNotice("维修需??" + std::to_string(m_repairWoodCost) + " 木材",
+        SetNotice("维修需要" + std::to_string(m_repairWoodCost) + " 木材",
                   kNoticeFailColor, 1.8f);
         return false;
     }
@@ -12668,7 +12667,7 @@ bool WorldDemoState::TryRepairNearestBarricade() {
     }
     if (items::RemoveItem(*container, m_buildWoodItem, m_repairWoodCost) !=
         m_repairWoodCost) {
-        SetNotice("维修失败：木材不??", kNoticeFailColor, 1.8f);
+        SetNotice("维修失败：木材不足", kNoticeFailColor, 1.8f);
         return false;
     }
 
@@ -12682,9 +12681,9 @@ bool WorldDemoState::TryRepairNearestBarricade() {
                   std::to_string(static_cast<int>(std::lround(newHp))) + "/" +
                   std::to_string(
                       static_cast<int>(std::lround(target.def->maxHp))) +
-                  "??" + std::to_string(m_repairWoodCost) + " 木材??",
+                  "（消耗 " + std::to_string(m_repairWoodCost) + " 木材）",
               kNoticeOkColor, 2.0f);
-    ZL_INFO("building", "维修 {}??{}, {}) HP {:.0f}/{:.0f}，剩余木??{}",
+    ZL_INFO("building", "维修 {}：({}, {}) HP {:.0f}/{:.0f}，剩余木材 {}",
             target.def->id, target.wx, target.wy, newHp,
             target.def->maxHp,
             items::CountOf(*container, m_buildWoodItem));
@@ -12828,13 +12827,13 @@ bool WorldDemoState::TryRepairAllStructures() {
     if (container == nullptr ||
         items::CountOf(*container, m_buildWoodItem) < totalWood) {
         SetNotice("维修全部需要 " + std::to_string(totalWood) +
-                      " 木材??" + std::to_string(candidates.size()) + " 个结构）",
+                      " 木材（" + std::to_string(candidates.size()) + " 个结构）",
                   kNoticeFailColor, 2.0f);
         return false;
     }
     if (totalWood > 0 &&
         items::RemoveItem(*container, m_buildWoodItem, totalWood) != totalWood) {
-        SetNotice("维修失败：木材不??", kNoticeFailColor, 1.8f);
+        SetNotice("维修失败：木材不足", kNoticeFailColor, 1.8f);
         return false;
     }
     int repaired = 0;
@@ -12868,7 +12867,7 @@ bool WorldDemoState::TryRepairAllStructures() {
     }
     m_buildActionCooldown = m_buildActionCooldownSeconds;
     SetNotice("维修全部：" + std::to_string(repaired) + " 个结构（-" +
-                  std::to_string(totalWood) + " 木材??",
+                  std::to_string(totalWood) + " 木材）",
               kNoticeOkColor, 2.2f);
     ZL_INFO("building", "批量维修 {} 个结构，消耗 {} 木材", repaired,
             totalWood);
@@ -12924,14 +12923,14 @@ bool WorldDemoState::TryToggleNearestDoor() {
         if (FindNearbyDoor(&target)) {
             SetNotice("该门属于 " +
                           StructureOwnerLabel(target.ownerStableId) +
-                          "，只有所有者可开??",
+                          "，只有所有者可开关",
                       kNoticeFailColor, 1.8f);
         }
         return false;
     }
     if (!CanEditLocalStructure(target.ownerStableId)) {
         SetNotice("该门属于 " + StructureOwnerLabel(target.ownerStableId) +
-                      "，只有所有者可开??",
+                      "，只有所有者可开关",
                   kNoticeFailColor, 1.8f);
         return false;
     }
@@ -12940,7 +12939,7 @@ bool WorldDemoState::TryToggleNearestDoor() {
         command.payload.x = static_cast<float>(target.wx);
         command.payload.y = static_cast<float>(target.wy);
         if (!SubmitPlayerCommand(command)) {
-            SetNotice("开关门请求发送失??", kNoticeFailColor, 1.5f);
+            SetNotice("开关门请求发送失败", kNoticeFailColor, 1.5f);
             return false;
         }
         m_buildActionCooldown = 0.25f;
@@ -12984,9 +12983,9 @@ bool WorldDemoState::TryToggleNearestDoor() {
     }
     RebuildChunkCollision(coord.cx, coord.cy);
     m_buildActionCooldown = 0.25f;
-    SetNotice(std::string(open ? "关门??" : "开门：") + target.def->name,
+    SetNotice(std::string(open ? "关门：" : "开门：") + target.def->name,
               kNoticeOkColor, 1.4f);
-    ZL_INFO("building", "{} {}??{}, {})", open ? "关门" : "开??",
+    ZL_INFO("building", "{} {}（{}, {}）", open ? "关门" : "开门",
             target.def->id, target.wx, target.wy);
     return true;
 }
@@ -13086,7 +13085,7 @@ bool WorldDemoState::TryDemolishNearestStructure() {
         command.payload.y = static_cast<float>(wy);
         command.payload.flags = net::kDemolishConfirmAcceptFlag;
         if (!SubmitPlayerCommand(command)) {
-            SetNotice("拆除请求发送失??", kNoticeFailColor, 1.5f);
+            SetNotice("拆除请求发送失败", kNoticeFailColor, 1.5f);
             return false;
         }
         m_buildActionCooldown = m_buildActionCooldownSeconds;
@@ -13193,10 +13192,10 @@ bool WorldDemoState::TryDemolishNearestStructure() {
     m_buildActionCooldown = m_buildActionCooldownSeconds;
     std::string notice = "拆除 " + name;
     if (refund > 0) {
-        notice += "（返??" + std::to_string(refund) + " 木材??";
+        notice += "（返还 " + std::to_string(refund) + " 木材）";
     }
     SetNotice(std::move(notice), kNoticeOkColor, 2.0f);
-    ZL_INFO("building", "拆除 {}??{}, {})，返??{} 木材", target.def->id,
+    ZL_INFO("building", "拆除 {}：({}, {})，返还 {} 木材", target.def->id,
             target.wx, target.wy, refund);
     return true;
 }
@@ -13353,13 +13352,13 @@ void WorldDemoState::StoreAllBagInStorage() {
     const game::StorageTransferResult result =
         game::StoreAllInPlayerStorage(*m_ctx.ecs, *m_ctx.items, storage, *container);
     if (result.moved > 0) {
-        std::string text = "已存??" + std::to_string(result.moved) + " 件物??";
+        std::string text = "已存入 " + std::to_string(result.moved) + " 件物品";
         if (!container->items.empty()) {
-            text += "，背包剩??" + std::to_string(container->items.size()) +
+            text += "，背包剩余 " + std::to_string(container->items.size()) +
                     " 堆（仓库已满）";
         }
         SetNotice(std::move(text), kNoticeOkColor, 1.8f);
-        ZL_INFO("items", "仓库全部存入：{} ??/ {} ??", result.moved,
+        ZL_INFO("items", "仓库全部存入：{} 件 / {} 堆", result.moved,
                 result.stacksMoved);
     } else {
         SetNotice("仓库已满或背包为空", kNoticeInfoColor, 1.8f);
@@ -13395,11 +13394,11 @@ void WorldDemoState::TakeAllFromStorage(std::uint64_t fromEntityId) {
     const game::StorageTransferResult result =
         game::TakeAllFromPlayerStorage(*m_ctx.ecs, *m_ctx.items, storage, *container);
     if (result.moved > 0) {
-        std::string text = "已取??" + std::to_string(result.moved) + " 件物??";
+        std::string text = "已取出 " + std::to_string(result.moved) + " 件物品";
         if (const auto* storageContainer =
                 m_ctx.ecs->Registry().try_get<ecs::Container>(storage);
             storageContainer != nullptr && !storageContainer->items.empty()) {
-            text += "，仓库剩??" +
+            text += "，仓库剩余 " +
                     std::to_string(storageContainer->items.size()) +
                     " 堆（背包已满）";
         }
@@ -13423,16 +13422,16 @@ void WorldDemoState::TakeAllFromLootContainer(ecs::Entity containerEntity) {
     const game::LootTakeAllResult result = game::TakeAllLootContainerItems(
         *m_ctx.ecs, *m_ctx.items, containerEntity, *bag);
     if (result.moved > 0) {
-        std::string text = "已取??" + std::to_string(result.moved) + " 件物??";
+        std::string text = "已取出 " + std::to_string(result.moved) + " 件物品";
         if (result.remainingStacks > 0) {
-            text += "，容器剩??" + std::to_string(result.remainingStacks) +
+            text += "，容器剩余 " + std::to_string(result.remainingStacks) +
                     " 堆（背包已满）";
         }
         SetNotice(std::move(text), kNoticeOkColor, 1.8f);
         ZL_INFO("items", "容器全部取出：{} 件，剩余 {} 堆", result.moved,
                 result.remainingStacks);
     } else {
-        SetNotice("容器为空或背包已??", kNoticeInfoColor, 1.8f);
+        SetNotice("容器为空或背包已满", kNoticeInfoColor, 1.8f);
     }
 }
 
@@ -13515,7 +13514,7 @@ bool WorldDemoState::TryDemolishStorage(ecs::Entity storage) {
     m_buildActionCooldown = m_buildActionCooldownSeconds;
     std::string notice = "拆除 " + name;
     if (refund > 0) {
-        notice += "（返??" + std::to_string(refund) + " 木材??";
+        notice += "（返还 " + std::to_string(refund) + " 木材）";
     }
     SetNotice(std::move(notice), kNoticeOkColor, 2.0f);
     ZL_INFO("building", "拆除仓库：({}, {})，返还 {} 木材，掉落 {} 堆",
@@ -13546,7 +13545,7 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
         command.payload.flags =
             m_buildOrientationVertical ? std::uint16_t{1} : std::uint16_t{0};
         if (!SubmitPlayerCommand(command)) {
-            SetNotice("建造请求发送失??", kNoticeFailColor, 1.5f);
+            SetNotice("建造请求发送失败", kNoticeFailColor, 1.5f);
             return false;
         }
         m_buildActionCooldown = m_buildActionCooldownSeconds;
@@ -13569,12 +13568,12 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
     };
     const auto finishFacility = [&](const char* logLabel) {
         m_buildActionCooldown = m_buildActionCooldownSeconds;
-        SetNotice("建造了 " + def->name + "??" +
-                      std::to_string(def->woodCost) + " 木材??",
+        SetNotice("建造了 " + def->name + "（消耗 " +
+                      std::to_string(def->woodCost) + " 木材）",
                   kNoticeOkColor, 2.0f);
         GrantProgressionXp(ecs::SkillKind::Building,
-                           m_progressionConfig.buildXpPerStructure, "建??");
-        ZL_INFO("homestead", "建造{} {}??{}, {})", logLabel, def->id, wx, wy);
+                           m_progressionConfig.buildXpPerStructure, "建造");
+        ZL_INFO("homestead", "建造{} {}：({}, {})", logLabel, def->id, wx, wy);
         return true;
     };
     if (def->id == "farm_plot") {
@@ -13602,10 +13601,10 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
                            static_cast<float>(wy) + 0.5f, 0,
                            m_homesteadConfig.power) == entt::null) {
             refundWood();
-            SetNotice("无法建造：发电机创建失??", kNoticeFailColor, 2.0f);
+            SetNotice("无法建造：发电机创建失败", kNoticeFailColor, 2.0f);
             return false;
         }
-        return finishFacility("发电??");
+        return finishFacility("发电机");
     }
     if (def->id == "floodlight") {
         if (!m_homesteadConfig.power.enabled) {
@@ -13617,10 +13616,10 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
                             static_cast<float>(wy) + 0.5f, 0,
                             def->maxHp) == entt::null) {
             refundWood();
-            SetNotice("无法建造：泛光灯创建失??", kNoticeFailColor, 2.0f);
+            SetNotice("无法建造：泛光灯创建失败", kNoticeFailColor, 2.0f);
             return false;
         }
-        return finishFacility("泛光??");
+        return finishFacility("泛光灯");
     }
     if (def->id == "fridge") {
         if (!m_homesteadConfig.power.enabled) {
@@ -13632,10 +13631,10 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
                              static_cast<float>(wy) + 0.5f, 0, def->sprite,
                              def->storageKg, def->storageSlots) == entt::null) {
             refundWood();
-            SetNotice("无法建造：冷藏柜创建失??", kNoticeFailColor, 2.0f);
+            SetNotice("无法建造：冷藏柜创建失败", kNoticeFailColor, 2.0f);
             return false;
         }
-        return finishFacility("冷藏??");
+        return finishFacility("冷藏柜");
     }
     if (def->id == "spike_trap") {
         if (!m_homesteadConfig.trap.enabled) {
@@ -13666,19 +13665,19 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
             return false;
         }
         m_buildActionCooldown = m_buildActionCooldownSeconds;
-        SetNotice("建造了 " + def->name + "??" +
-                      std::to_string(def->woodCost) + " 木材??",
+        SetNotice("建造了 " + def->name + "（消耗 " +
+                      std::to_string(def->woodCost) + " 木材）",
                   kNoticeOkColor, 2.0f);
         GrantProgressionXp(ecs::SkillKind::Building,
-                           m_progressionConfig.buildXpPerStructure, "建??");
-        ZL_INFO("building", "建造仓??{}??{}, {})，容??{:.1f}kg/{} ??",
+                           m_progressionConfig.buildXpPerStructure, "建造");
+        ZL_INFO("building", "建造仓库 {}：({}, {})，容量 {:.1f}kg/{} 堆",
                 def->id, wx, wy, def->storageKg, def->storageSlots);
         return true;
     }
     const world::ChunkCoord coord = world::ChunkOf(wx, wy);
     world::Chunk* chunk = FindChunk(coord.cx, coord.cy);
     if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
-        SetNotice("无法建造：目标区域未加??", kNoticeFailColor, 2.0f);
+        SetNotice("无法建造：目标区域未加载", kNoticeFailColor, 2.0f);
         return false;
     }
     const world::SquareLocal local = world::SquareLocalOf(wx, wy);
@@ -13704,12 +13703,12 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
     if (placed.blocksMovement) {
         RebuildChunkCollision(coord.cx, coord.cy);
     }
-    SetNotice("建造了 " + def->name + "??" + std::to_string(def->woodCost) +
-                  " 木材??",
+    SetNotice("建造了 " + def->name + "（消耗 " + std::to_string(def->woodCost) +
+                  " 木材）",
               kNoticeOkColor, 2.0f);
     GrantProgressionXp(ecs::SkillKind::Building,
-                       m_progressionConfig.buildXpPerStructure, "建??");
-    ZL_INFO("building", "建??{}??{}, {})，剩余木??{}", def->id, wx, wy,
+                       m_progressionConfig.buildXpPerStructure, "建造");
+    ZL_INFO("building", "建造 {}：({}, {})，剩余木材 {}", def->id, wx, wy,
             items::CountOf(*container, m_buildWoodItem));
     return true;
 }
@@ -14245,7 +14244,7 @@ void WorldDemoState::UpdateTraps(float tickDt) {
             } else if (m_ctx.events != nullptr) {
                 m_ctx.events->EmitQueued(core::kOnSound, std::move(impact));
             }
-            ZL_INFO("homestead", "陷阱 {} 命中，剩??{} ??",
+            ZL_INFO("homestead", "陷阱 {} 命中，剩余 {} 次",
                     m_ctx.ecs->IdOf(trapEntity).id, trap.uses);
         });
 }
@@ -14473,10 +14472,10 @@ void WorldDemoState::InitializeHomestead() {
     m_farmSeedCropId.clear();
     ZL_INFO("homestead",
             "生存设施配置：农业={} 电力={} 陷阱={} 交易={}（商人 {:g},{:g}）",
-            m_homesteadConfig.farm.enabled ? "开" : "??",
-            m_homesteadConfig.power.enabled ? "开" : "??",
-            m_homesteadConfig.trap.enabled ? "开" : "??",
-            m_homesteadConfig.trade.enabled ? "开" : "??",
+            m_homesteadConfig.farm.enabled ? "开" : "关",
+            m_homesteadConfig.power.enabled ? "开" : "关",
+            m_homesteadConfig.trap.enabled ? "开" : "关",
+            m_homesteadConfig.trade.enabled ? "开" : "关",
             m_homesteadConfig.trade.merchantX,
             m_homesteadConfig.trade.merchantY);
 }
@@ -14616,7 +14615,7 @@ void WorldDemoState::EnsureSettlementNpcs() {
                 system->ApplyGuardHealth(*m_ctx.ecs, npc, settlement->id);
             }
         }
-        ZL_INFO("settlement", "聚落 NPC 已就位：{}（{}，格 {},{}??",
+        ZL_INFO("settlement", "聚落 NPC 已就位：{}（{}，格 {},{}）",
                 SettlementNpcKindName(kind), settlement->id, wx, wy);
         return true;
     };
@@ -15165,7 +15164,7 @@ bool WorldDemoState::TryInteractHomestead() {
                                         : m_homesteadConfig.farm.seedItem;
                 if (items::CountOf(*container, seedItem) < 1 ||
                     items::RemoveItem(*container, seedItem, 1) != 1) {
-                    SetNotice("农田需??" + itemName(seedItem),
+                    SetNotice("农田需要" + itemName(seedItem),
                               kNoticeFailColor, 1.8f);
                     return true;
                 }
@@ -15205,7 +15204,7 @@ bool WorldDemoState::TryInteractHomestead() {
                     crop != nullptr ? crop->maxWaterMinutes
                                     : m_homesteadConfig.farm.maxWaterMinutes;
                 if (items::CountOf(*container, m_homesteadConfig.farm.waterItem) < 1) {
-                    SetNotice("浇水需??" + itemName(m_homesteadConfig.farm.waterItem),
+                    SetNotice("浇水需要" + itemName(m_homesteadConfig.farm.waterItem),
                               kNoticeFailColor, 1.8f);
                     return true;
                 }
@@ -15244,7 +15243,7 @@ bool WorldDemoState::TryInteractHomestead() {
                                           std::max(1, plot->harvestYield), 1.0f};
                 const int allowed = items::AddItem(probe, *m_ctx.items, produce);
                 if (allowed <= 0) {
-                    SetNotice("背包空间不足，无法收??", kNoticeFailColor, 1.8f);
+                    SetNotice("背包空间不足，无法收获", kNoticeFailColor, 1.8f);
                     return true;
                 }
                 if (!HarvestFarmPlot(*plot, &harvested)) {
@@ -15436,7 +15435,7 @@ void WorldDemoState::CycleFarmSeed() {
             continue;
         }
         m_farmSeedCropId = crop.id;
-        SetNotice("已选择" + crop.name + "种子（E 种植??",
+        SetNotice("已选择" + crop.name + "种子（E 种植）",
                   kNoticeInfoColor, 1.5f);
         return;
     }
@@ -15485,13 +15484,13 @@ bool WorldDemoState::TryFarmCare() {
     }
     if (plot->diseased) {
         if (items::CountOf(*container, config.fungicideItem) < 1) {
-            SetNotice("杀菌需??" + itemName(config.fungicideItem),
+            SetNotice("杀菌需要" + itemName(config.fungicideItem),
                       kNoticeFailColor, 1.8f);
             return true;
         }
         if (items::RemoveItem(*container, config.fungicideItem, 1) != 1 ||
             !CureFarmDisease(*plot)) {
-            SetNotice("杀菌失??", kNoticeFailColor, 1.5f);
+            SetNotice("杀菌失败", kNoticeFailColor, 1.5f);
             return true;
         }
         SetNotice("已杀菌：" + FarmStatusText(
@@ -15507,7 +15506,7 @@ bool WorldDemoState::TryFarmCare() {
         return true;
     }
     if (items::CountOf(*container, config.fertilizerItem) < 1) {
-        SetNotice("施肥需??" + itemName(config.fertilizerItem),
+        SetNotice("施肥需要" + itemName(config.fertilizerItem),
                   kNoticeFailColor, 1.8f);
         return true;
     }
@@ -15750,7 +15749,7 @@ void WorldDemoState::OpenSettlementDialogue(ecs::Entity npc) {
     if (m_ctx.ui != nullptr) {
         m_ctx.ui->CloseInventory();
     }
-    SetNotice("交谈??" + std::string(DialogueSpeakerLabel(component->kind)) +
+    SetNotice("交谈：" + std::string(DialogueSpeakerLabel(component->kind)) +
                   " · " + settlement->name,
               kNoticeInfoColor, 1.5f);
     ZL_INFO("dialogue", "打开对话：{}（{}）", settlement->id,
@@ -16025,14 +16024,14 @@ std::string WorldDemoState::SettlementNpcHint() const {
     if (fallen) {
         return settlement != nullptr
                    ? settlement->name + "已失守 · 交易与委托暂停"
-                   : "聚落已失??· 交易与委托暂??";
+                   : "聚落已失守 · 交易与委托暂停";
     }
     if (raidActive) {
         return settlement != nullptr
                    ? settlement->name + "夜袭中 · 守卫正在迎战"
-                   : "夜袭??· 守卫正在迎战";
+                   : "夜袭中 · 守卫正在迎战";
     }
-    std::string hint = "??E 交谈??" +
+    std::string hint = "按 E 交谈：" +
                        std::string(DialogueSpeakerLabel(component->kind));
     if (settlement != nullptr) {
         hint += " · " + settlement->name;
@@ -16042,7 +16041,7 @@ std::string WorldDemoState::SettlementNpcHint() const {
     } else if (component->kind == SettlementNpcKind::Requester) {
         hint += " · 委托";
     } else {
-        hint += " · 营地状??";
+        hint += " · 营地状态";
     }
     return hint;
 }
@@ -16223,7 +16222,7 @@ bool WorldDemoState::TryDemolishHomestead() {
     m_buildActionCooldown = m_buildActionCooldownSeconds;
     std::string notice = "拆除 " + (def != nullptr ? def->name : best.id);
     if (refund > 0) {
-        notice += "（返??" + std::to_string(refund) + " 木材??";
+        notice += "（返还 " + std::to_string(refund) + " 木材）";
     }
     SetNotice(std::move(notice), kNoticeOkColor, 2.0f);
     ZL_INFO("homestead", "拆除设施 {}", best.id);
@@ -16268,7 +16267,7 @@ bool WorldDemoState::BeginOrConfirmDemolish(PendingDemolishKind kind, int wx,
         command.payload.flags = net::kDemolishConfirmRequestFlag;
         if (!SubmitPlayerCommand(command)) {
             m_pendingDemolish = {};
-            SetNotice("拆除确认请求发送失??", kNoticeFailColor, 1.5f);
+            SetNotice("拆除确认请求发送失败", kNoticeFailColor, 1.5f);
             return false;
         }
     }
@@ -16307,7 +16306,7 @@ std::string WorldDemoState::StructureOwnerLabel(
         return "无主";
     }
     if (ownerStableId == LocalPlayerStableId()) {
-        return "??";
+        return "你";
     }
     if (m_ctx.networkClient != nullptr &&
         m_ctx.networkClient->HasSocialState()) {
@@ -16326,7 +16325,7 @@ std::string WorldDemoState::StructureOwnerSuffix(
     if (ownerStableId == 0 && !m_networkMode) {
         return {};
     }
-    return " · 归属??" + StructureOwnerLabel(ownerStableId);
+    return " · 归属：" + StructureOwnerLabel(ownerStableId);
 }
 
 std::string WorldDemoState::HomesteadHint() const {
@@ -16366,7 +16365,7 @@ std::string WorldDemoState::HomesteadHint() const {
                         selected != nullptr) {
                         hint += " · 当前种子：" + selected->name;
                     } else {
-                        hint += " · 需要种??";
+                        hint += " · 需要种子";
                     }
                 }
                 if (canEdit) {
@@ -16388,7 +16387,7 @@ std::string WorldDemoState::HomesteadHint() const {
                 const bool canEdit = CanEditLocalStructure(owner);
                 return GeneratorStatusText(*generator,
                                            m_homesteadConfig.power.baseLoad) +
-                       (canEdit ? " · E 开??加燃??" : " · 仅所有者可操作") +
+                       (canEdit ? " · E 开关/加燃料" : " · 仅所有者可操作") +
                        StructureOwnerSuffix(owner);
             }
         }
@@ -16421,7 +16420,7 @@ std::string WorldDemoState::HomesteadHint() const {
                 text += " · 照明 " +
                         std::to_string(static_cast<int>(std::lround(
                             m_homesteadConfig.power.floodlightRadius))) +
-                        " ??" +
+                        " 格" +
                         (canEdit ? " · E 开关" : " · 仅所有者可操作");
                 if (health != nullptr &&
                     health->current < health->max - 0.01f) {
@@ -16458,7 +16457,7 @@ std::string WorldDemoState::HomesteadHint() const {
                 const std::uint64_t owner = fence.ownerStableId;
                 const bool canEdit = CanEditLocalStructure(owner);
                 std::string text =
-                    "电网??" + std::string(powered ? "供电??" : "断电") +
+                    "电网：" + std::string(powered ? "供电中" : "断电") +
                     " · HP " + std::to_string(static_cast<int>(
                                       std::lround(fence.hp))) +
                     "/" + std::to_string(static_cast<int>(
@@ -16589,18 +16588,18 @@ bool WorldDemoState::TryExtinguishNearbyFire(const FireTarget& target) {
     if (success) {
         (void)fire->ExtinguishAt(*m_ctx.ecs, target.x, target.y, target.z);
         std::string message =
-            plan.bareHands ? "扑灭??" : "使用 " + plan.name + " 扑灭??";
+            plan.bareHands ? "扑灭：" : "使用 " + plan.name + " 扑灭：";
         message += fireName;
         SetNotice(message, kNoticeOkColor, 2.0f);
         return true;
     }
     if (plan.bareHands) {
         SetNotice("徒手拍打失败，被火焰灼伤（成功率 " +
-                      std::to_string(chance) + "%??",
+                      std::to_string(chance) + "%）",
                   kNoticeFailColor, 2.2f);
     } else {
-        SetNotice("使用 " + plan.name + " 灭火失败（成功率 " +
-                      std::to_string(chance) + "%??",
+        SetNotice("使用：" + plan.name + " 灭火失败（成功率 " +
+                      std::to_string(chance) + "%）",
                   kNoticeFailColor, 2.2f);
     }
     return true;
@@ -16715,7 +16714,7 @@ std::string WorldDemoState::SleepStatusText() const {
             std::to_string(m_sleepConfig.minHours) + "~" +
             std::to_string(m_sleepConfig.maxHours);
         return "睡眠：" + duration + " ｜ 滚轮选择 " + hoursRange +
-               " 小时/天亮 ??E 开????ESC 取消";
+               " 小时/天亮 ｜ E 开始 ｜ ESC 取消";
     }
     if (!m_sleep.Active()) {
         return {};
@@ -16733,12 +16732,12 @@ std::string WorldDemoState::SleepStatusText() const {
     }
     if (fatigue >= 0.0f) {
         std::snprintf(text, sizeof(text),
-                      "睡眠??%s ??%.1f/%.1f 小时 ??疲劳 %d%% ??ESC 取消",
+                      "睡眠中 %s ｜ %.1f/%.1f 小时 ｜ 疲劳 %d%% ｜ ESC 取消",
                       SleepClockText().c_str(), elapsedHours, totalHours,
                       static_cast<int>(std::lround(
                           std::clamp(fatigue, 0.0f, 1.0f) * 100.0f)));
     } else {
-        std::snprintf(text, sizeof(text), "睡眠??%s ??%.1f/%.1f 小时 ??ESC 取消",
+        std::snprintf(text, sizeof(text), "睡眠中：%s · %.1f/%.1f 小时 · ESC 取消",
                       SleepClockText().c_str(), elapsedHours, totalHours);
     }
     return text;
@@ -16967,20 +16966,20 @@ void WorldDemoState::FinishSleep(SleepStopReason reason, float damage) {
     std::string text = reason == SleepStopReason::Completed ? "睡眠结束：" : "睡眠中断：";
     text += SleepClockText();
     char hoursText[48];
-    std::snprintf(hoursText, sizeof(hoursText), "，已??%.1f/%.1f 小时",
+    std::snprintf(hoursText, sizeof(hoursText), "，已睡 %.1f/%.1f 小时",
                   elapsed / 60.0, duration / 60.0);
     text += hoursText;
     if (fatigue >= 0.0f) {
-        text += "，疲??" +
+        text += "，疲劳 " +
                 std::to_string(static_cast<int>(
                     std::lround(std::clamp(fatigue, 0.0f, 1.0f) * 100.0f))) +
                 "%";
     }
     if (reason != SleepStopReason::Completed) {
-        text += "??" + std::string(SleepStopText(reason)) + "??";
+        text += "，" + std::string(SleepStopText(reason)) + "。";
     }
     if (damage > 0.01f) {
-        text += "，失??" +
+        text += "，损失 " +
                 std::to_string(static_cast<int>(std::lround(damage))) + " HP";
     }
     const uint32_t color =
@@ -17208,15 +17207,15 @@ std::string WorldDemoState::GrantBaseSiegeReward(
         ReturnOrDropItem(ecs::ItemInstance{defId, count, 1.0f}, &dropped);
         rewardDropped = rewardDropped || dropped;
         if (!text.empty()) {
-            text += "??";
+            text += "、";
         }
         text += def->name + "×" + std::to_string(count);
     }
     if (rewardDropped) {
-        text += "（背包已满，奖励掉落脚下??";
+        text += "（背包已满，奖励掉落脚下）";
     }
     ZL_INFO("siege", "守夜评级 {}，奖励：{}", result.rating,
-            text.empty() ? "??" : text);
+            text.empty() ? "无" : text);
     return text;
 }
 
@@ -17636,7 +17635,7 @@ void WorldDemoState::FinishRun(bool victory) {
         ZL_INFO("game", "{}结束：撤离成功（第 {} 天 {:02d}:{:02d}）", mode, day,
                 hour, minute);
     } else {
-        ZL_INFO("game", "{}结束：死亡（死因：{}；第 {} ??{:02d}:{:02d}??", mode,
+        ZL_INFO("game", "{}结束：死亡（死因：{}；第 {} 天 {:02d}:{:02d}）", mode,
                 game::DeathCauseLabel(m_runDeathCause), day, hour, minute);
     }
 }
@@ -17770,11 +17769,11 @@ void WorldDemoState::PickupNearestItem() {
     const std::string name = def != nullptr ? def->name : result.defId;
     if (result.picked > 0) {
         if (result.groundRemaining > 0) {
-            SetNotice("拾取??" + name + " ×" + std::to_string(result.picked) + "（地上剩 " +
-                          std::to_string(result.groundRemaining) + "??",
+            SetNotice("拾取：" + name + " ×" + std::to_string(result.picked) + "（地上剩 " +
+                          std::to_string(result.groundRemaining) + " 件）",
                       kNoticeOkColor, 2.0f);
         } else {
-            SetNotice("拾取??" + name + " ×" + std::to_string(result.picked),
+            SetNotice("拾取：" + name + " ×" + std::to_string(result.picked),
                       kNoticeOkColor, 2.0f);
         }
         ZL_INFO("items", "拾取：{} x{}（地面剩 {} 件；背包 {} 件）", name, result.picked,
@@ -17894,8 +17893,8 @@ void WorldDemoState::UseConsumableItem() {
     } else {
         SetNotice("Used " + use.defId, kNoticeOkColor, 1.5f);
     }
-    ZL_INFO("items", "使用：{}（回血 {:.0f}，伤??{:.0f}，止血 {} 处，HP "
-                     "{:.0f}/{:.0f}；剩??{} 件）",
+    ZL_INFO("items", "使用：{}（回血 {:.0f}，伤害 {:.0f}，止血 {} 处，HP "
+                     "{:.0f}/{:.0f}；剩余 {} 件）",
             name, healed, totalDamage, treatment.wounds, health->current, health->max,
             use.remaining);
 }
@@ -17915,7 +17914,7 @@ void WorldDemoState::ToggleEquipWeapon() {
     constexpr std::size_t kPrimary = static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand);
     const items::ItemRegistry& reg = *m_ctx.items;
 
-    // 已装????卸下（回背包；放不下则落地面??
+    // 已装备则卸下（回背包；放不下则落地面）。
     if (equipment->slots[kPrimary].has_value()) {
         ecs::ItemInstance out;
         items::Unequip(*equipment, ecs::EquipSlot::PrimaryHand, &out);
@@ -17923,7 +17922,7 @@ void WorldDemoState::ToggleEquipWeapon() {
         const std::string name = def != nullptr ? def->name : out.defId;
         if (items::AddItem(*container, reg, out) > 0) {
             SetNotice("Unequipped " + out.defId, kNoticeInfoColor, 1.5f);
-            ZL_INFO("items", "卸下：{}（回背包??", name);
+            ZL_INFO("items", "卸下：{}（回背包）", name);
         } else {
             game::SpawnGroundItem(*m_ctx.ecs, reg, out, pos->x, pos->y, pos->z);
             SetNotice("Unequipped " + out.defId + " (dropped)", kNoticeInfoColor, 1.5f);
@@ -17950,7 +17949,7 @@ void WorldDemoState::ToggleEquipWeapon() {
             }
         }
         SetNotice("Equipped " + entry.defId, kNoticeOkColor, 1.5f);
-        ZL_INFO("items", "装备：{} ??主手（背包剩 {} 件）", def->name,
+        ZL_INFO("items", "装备：{} → 主手（背包剩 {} 件）", def->name,
                 items::CountOf(*container, entry.defId));
         return;
     }
@@ -17986,7 +17985,7 @@ void WorldDemoState::DropFirstItem() {
     const items::ItemDef* def = m_ctx.items->Find(stack.defId);
     SetNotice("Dropped " + stack.defId + " x" + std::to_string(removed), kNoticeInfoColor,
               1.5f);
-    ZL_INFO("items", "丢弃：{} x{}（地面物??{} 件）", def != nullptr ? def->name : stack.defId,
+    ZL_INFO("items", "丢弃：{} x{}（地面物品 {} 件）", def != nullptr ? def->name : stack.defId,
             removed, game::CountGroundItems(*m_ctx.ecs));
 }
 
@@ -18245,7 +18244,7 @@ void WorldDemoState::HandleMenuAction(ui::MenuActionType action) {
             m_baseSiege.Abort({}, false);
             if (m_ctx.ui != nullptr) {
                 m_ctx.ui->ShowMainMenu(true);
-                ZL_INFO("ui", "返回主菜单（当前世界保留，可继续??");
+                ZL_INFO("ui", "返回主菜单（当前世界保留，可继续）");
             }
             break;
         case ui::MenuActionType::Multiplayer:
@@ -18488,7 +18487,7 @@ void WorldDemoState::UpdateCombatFeedback(double frameDt) {
     }
     entt::registry& registry = m_ctx.ecs->Registry();
 
-    // M30-T4：格??弹反/破防/闪避反馈。回调在固定 tick 内累积，这里按帧消费??
+    // M30-T4：格挡/弹反/破防/闪避反馈。回调在固定 tick 内累积，这里按帧消费。
     bool playerDefenseFeedback = false;
     if (m_ctx.simulation != nullptr) {
         const auto feedbacks = m_ctx.simulation->TakeBlockFeedbacks();
@@ -18521,8 +18520,8 @@ void WorldDemoState::UpdateCombatFeedback(double frameDt) {
                 case characters::CombatSystem::BlockOutcome::Parried:
                     text = defending
                                ? std::string("弹反！攻击者硬直（") +
-                                     DamageTypeLabel(feedback.type) + "??"
-                               : "攻击被弹??";
+                                     DamageTypeLabel(feedback.type) + "）"
+                               : "攻击被弹反";
                     tone = defending ? "ok" : "fail";
                     break;
                 case characters::CombatSystem::BlockOutcome::GuardBroken:
@@ -18574,7 +18573,7 @@ void WorldDemoState::UpdateCombatFeedback(double frameDt) {
         }
     }
 
-    // M30-T5：玩家真实近战命????火花/音效；破防额外提示??
+    // M30-T5：玩家真实近战命中火花/音效；破防额外提示。
     if (m_ctx.simulation != nullptr) {
         const auto hits = m_ctx.simulation->TakeHitFeedbacks();
         bool playedHitSound = false;
@@ -18586,7 +18585,7 @@ void WorldDemoState::UpdateCombatFeedback(double frameDt) {
             }
             SpawnMeleeHitSparks(hit.target, hit.poiseBroken);
             if (hit.poiseBroken) {
-                SetNotice("破防！目标硬??", kNoticeOkColor, 1.2f);
+                SetNotice("破防！目标硬直", kNoticeOkColor, 1.2f);
             }
             if (!playedHitSound) {
                 if (const auto* position =
@@ -18605,7 +18604,7 @@ void WorldDemoState::UpdateCombatFeedback(double frameDt) {
     }
     m_lastPlayerHitSerial = hit->hitSerial;
     if (playerDefenseFeedback) {
-        return;  // 普通格挡仍会扣血：用格挡反馈替代同帧“受击”提??
+        return;  // 普通格挡仍会扣血：用格挡反馈替代同帧“受击”提示
     }
     std::string direction;
     std::string label;
@@ -18797,7 +18796,7 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
                 m_ctx.networkClient->HasPlayerState()) {
                 m_networkWasDisconnected = false;
                 SetNotice(m_networkDisconnectWasDriving
-                              ? "已重新连接：载具座位已释放，请重新上??"
+                              ? "已重新连接：载具座位已释放，请重新上车"
                               : "已重新连接服务器",
                           kNoticeOkColor, 2.5f);
                 m_networkDisconnectWasDriving = false;
@@ -18809,7 +18808,7 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
                     ? m_ctx.networkClient->LastError()
                     : std::string();
             SetNotice(reason.empty() ? "连接断开，等待服务器重连"
-                                     : "连接断开??" + reason,
+                                     : "连接断开：" + reason,
                       kNoticeFailColor, 2.5f);
         }
     }
@@ -18856,7 +18855,7 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
         EnsureHouseLootContainers();
         EnsurePoiContent();
     }
-    // M25-T4 V4：驾驶时更新引擎循环音的音量/音高与位置??
+    // M25-T4 V4：驾驶时更新引擎循环音的音量/音高与位置。
     UpdateVehicleAudio();
     // M11-T3：脚步/地面材质 → OnSound（音频 + AI 听觉）
     UpdateAudio(frameDt);
@@ -18913,9 +18912,9 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
         ZL_INFO("render",
                 "世界统计: FPS={:.0f} | 实例={} | 四边形={} | 批次={} | drawcall={} | zoom={:.2f} | "
                 "chunk 驻留={} 加载中={} | 相机格=({:.0f},{:.0f}) | 累计加载={} 卸载={} 取消={} 失败={} "
-                "挂接={:.2f}ms/{}??| "
-                "ECS={} 索引={} | 物理: 静??{} 动??{} step={:.2f}ms | 寻路: 查询={} 完成={} 平均={:.2f}ms | "
-                "感知: ??{} ??{} ??{} | "
+                "挂接={:.2f}ms/{}次 | "
+                "ECS={} 索引={} | 物理: 静态={} 动态={} step={:.2f}ms | 寻路: 查询={} 完成={} 平均={:.2f}ms | "
+                "感知: 见={} 警={} 听={} | "
                 "音频: 活动={} 播放={} 脚步={} 枪声={} 低吼={} 环境={}",
                 stats.fps, m_items.size(), m_ctx.sprites->QuadsThisFrame(),
                 m_ctx.sprites->DrawCallsThisFrame(), stats.drawCalls, m_ctx.camera->Zoom(),
@@ -18972,7 +18971,7 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
             const std::uint64_t nowTick =
                 m_ctx.loop != nullptr ? m_ctx.loop->TotalTicks() : 0;
             ZL_INFO("net",
-                    "命令: 模式={} | 提交={} 执行={} 拒绝={} | ??????{}/{} | "
+                    "命令: 模式={} | 提交={} 执行={} 拒绝={} | 包 发/收={}/{} | "
                     "队列={} 快照={} | 环回 tick 延迟={}",
                     net::TransportModeName(commandStats.mode),
                     static_cast<unsigned long long>(commandStats.commandsSubmitted),
@@ -18987,8 +18986,8 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
         if (m_ctx.networkClient != nullptr) {
             const NetworkClient::Stats netStats = m_ctx.networkClient->GetStats();
             ZL_INFO("net",
-                    "客户?? 连接={} 玩家={} | 分配={} 快照={} 状??{} | 命令包发/??{}/{} | "
-                    "会话 ????{}/{} 数据 ????{}/{} | 实体副本={}",
+                    "客户端: 连接={} 玩家={} | 分配={} 快照={} 状态={} | 命令包发/拒={}/{} | "
+                    "会话 发/收={}/{} 数据 发/收={}/{} | 实体副本={}",
                     m_ctx.networkClient->IsConnected() ? "yes" : "no",
                     static_cast<unsigned long long>(m_ctx.networkClient->PlayerStableId()),
                     static_cast<unsigned long long>(netStats.assignments),
@@ -19048,9 +19047,9 @@ void WorldDemoState::LogPerfSample(const char* tag) {
     const double p95 = m_ctx.chunkManager->LoadMsPercentile(0.95);
     const double maxMs = m_ctx.chunkManager->LoadMsPercentile(1.0);
     ZL_INFO("perf",
-            "[{}] t={:.0f}s | FPS={:.0f} | 实例={} 四边??{} | drawcall={} | chunk 驻留={} 加载??{} | "
+            "[{}] t={:.0f}s | FPS={:.0f} | 实例={} 四边形={} | drawcall={} | chunk 驻留={} 加载中={} | "
             "单块解析 P50={:.2f}ms P95={:.2f}ms max={:.2f}ms（样本 {}）| 累计加载={} | "
-            "物理 静??{} 动??{} step={:.2f}ms | 工作??{:.1f}MB",
+            "物理 静态={} 动态={} step={:.2f}ms | 工作集={:.1f}MB",
             tag, m_cruiseElapsed, stats.fps, m_items.size(), m_ctx.sprites->QuadsThisFrame(),
             stats.drawCalls, chunkStats.loadedChunks, chunkStats.loadingChunks, p50, p95, maxMs,
             m_ctx.chunkManager->RecentLoadMs().size(),
@@ -19100,7 +19099,7 @@ void WorldDemoState::HandleSleepInput(core::Input& input) {
             m_sleepSelectedHours = m_sleepConfig.minHours + index;
         }
         m_scrollAccum = 0.0f;
-        SetNotice("睡眠??" +
+        SetNotice("睡眠态" +
                       (m_sleepSelectUntilDawn
                            ? std::string("睡到天亮")
                            : std::to_string(m_sleepSelectedHours) + " 小时"),
@@ -19367,14 +19366,14 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     if (input.IsActionPressed("CycleSpeed")) {
         events.Emit(EventProbe::kInputActionEvent, std::string("CycleSpeed"));
         m_ctx.gameTime->CycleSpeed();
-        ZL_INFO("render", "F2 倍速循????当前 {}",
+        ZL_INFO("render", "F2 倍速循环 → 当前 {}",
                 core::GameTime::SpeedName(m_ctx.gameTime->GetSpeed()));
         events.Emit(EventProbe::kSpeedChangedEvent, m_ctx.gameTime->SpeedScale());
     }
     if (input.IsActionPressed("DemoKill")) {
-        KillNearestDemoEntity();  // M5-T1：演示击杀（HP 归零 ??尸体??
+        KillNearestDemoEntity();  // M5-T1：演示击杀（HP 归零 → 尸体）
     }
-    // M30-T4：格挡按??松开；闪避按一次。M30-T6 网络模式走服务器命令??
+    // M30-T4：格挡按一次松开；闪避按一次。M30-T6 网络模式走服务器命令。
     const bool blockDown = input.IsActionDown("Block");
     const bool blockChanged = blockDown != m_blockInputDown;
     m_blockInputDown = blockDown;
@@ -19556,7 +19555,7 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
         SubmitPlayerCommand(command);
     }
     if (input.IsActionPressed("QuickSave")) {
-        RequestQuickSave(true);  // M10-T5：F12 快照 ??截图 ??后台原子写盘
+        RequestQuickSave(true);  // M10-T5：F12 快照 → 截图 → 后台原子写盘
     }
     if (input.IsActionPressed("DemoGunshot")) {
         SubmitPlayerCommand(MakePlayerCommand(net::CommandType::Gunshot));
@@ -19616,9 +19615,9 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
             m_cruiseCenterX = camGrid.x;
             m_cruiseCenterY = camGrid.y;
         }
-        ApplyCameraMode();  // 巡航=无边界；结束回跟??恢复地图边界
+        ApplyCameraMode();  // 巡航=无边界；结束回跟随=恢复地图边界
         ZL_INFO("perf", "F8 自动巡航: {}（{:.1f} 分钟，速度 {:.0f} 格/s，半径 {:.0f}）",
-                m_cruiseEnabled ? "开" : "??", m_cruiseMinutes, m_cruiseSpeed, m_cruiseRadius);
+                m_cruiseEnabled ? "开" : "关", m_cruiseMinutes, m_cruiseSpeed, m_cruiseRadius);
     }
 
     // 平移：方向键（仅自由相机模式；M4-T5 跟随模式下由 UpdateCameraFollow 接管）
@@ -19659,8 +19658,8 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
             m_buildIndex = (m_buildIndex + (m_scrollAccum > 0.0f ? 1 : count - 1)) % count;
             const BuildableDef* def = SelectedBuildable();
             ZL_INFO("building", "建造项切换：{}（{} 木材）", def->id, def->woodCost);
-            SetNotice(BuildMenuText() + "??" +
-                          std::to_string(def->woodCost) + " 木材??",
+            SetNotice(BuildMenuText() + "（" +
+                          std::to_string(def->woodCost) + " 木材）",
                       kNoticeInfoColor, 1.5f);
             m_scrollAccum = 0.0f;
         }
@@ -19754,7 +19753,7 @@ void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int w
     item.diag = wx + wy;
     item.gx = wx;
     item.layer = static_cast<int>(layer);
-    item.tieBreaker = 0;  // 世界对象同格同层视为无序????
+    item.tieBreaker = 0;  // 世界对象同格同层视为无序（0）
     item.roomId = roomId;
     m_items.push_back(item);
 }
@@ -21012,7 +21011,7 @@ void WorldDemoState::DrawDebugOverlay() {
         DrawPowerOverlay(batch);
         DrawForageOverlay(batch);
         DrawSiegeOverlay(batch);
-        // M4-T7：寻路目标标记（??进行中常显；????到达/不可??限时??
+        // M4-T7：寻路目标标记（黄=进行中常显；绿/红=到达/不可达 限时）
         if (m_markerPathActive || m_markerTimer > 0.0f) {
             const glm::vec2 center =
                 render::ToScreen(static_cast<float>(m_markerX), static_cast<float>(m_markerY));
@@ -21437,7 +21436,7 @@ void WorldDemoState::DrawDebugText() {
                                 itemCount, items::TotalWeight(*container, *m_ctx.items),
                                 container->capacityKg, game::CountGroundItems(*m_ctx.ecs));
         }
-        // M6-T5：装备槽（装??动作??AppendActorPresentation 落世界；此处 HUD 展示??
+        // M6-T5：装备槽（装备/动作由 AppendActorPresentation 落世界；此处 HUD 展示）
         const auto* equipment = m_ctx.ecs->Registry().try_get<ecs::Equipment>(m_player);
         if (equipment != nullptr) {
             const auto& primary =
