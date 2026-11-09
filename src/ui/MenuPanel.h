@@ -22,7 +22,7 @@ namespace zl::ui {
 // 面板只负责展示与键位采集；新游戏/继续/退出等动作通过回调交给游戏状态处理。
 class MenuPanel {
 public:
-    static constexpr int kKeyBindingCount = 10;
+    static constexpr int kKeyBindingCount = 13;
 
     MenuPanel();
     ~MenuPanel();
@@ -43,7 +43,8 @@ public:
     void ShowPauseMenu();
     // M14-T8：单机局结束（撤离成功/死亡）结算页；不复用主菜单/暂停的返回语义。
     void ShowEndScreen(bool victory, const std::string& title,
-                       const std::string& subtitle, const std::string& stats);
+                       const std::string& subtitle, const std::string& stats,
+                       bool showRestart = true);
     void Hide();
     bool IsOpen() const { return m_open; }
     bool IsSettingsOpen() const { return m_settingsOpen; }
@@ -86,6 +87,7 @@ private:
     Rml::Element* m_endTitle = nullptr;
     Rml::Element* m_endSubtitle = nullptr;
     Rml::Element* m_endStats = nullptr;
+    Rml::Element* m_endHint = nullptr;
     Rml::Element* m_continueButton = nullptr;
     Rml::Element* m_volumeElement = nullptr;
     Rml::Element* m_volumeValueElement = nullptr;

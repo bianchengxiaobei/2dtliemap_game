@@ -1,4 +1,4 @@
-#include <cstdint>
+﻿#include <cstdint>
 #include <cstddef>
 #include <limits>
 #include <string>
@@ -7,9 +7,22 @@
 
 #include <doctest/doctest.h>
 
+#include "core/Config.h"
+#include "ai/components/AiComponents.h"
+#include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
+#include "characters/components/ProgressionComponents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
+#include "game/FireComponents.h"
+#include "game/ForageComponents.h"
+#include "game/HomesteadComponents.h"
+#include "game/MissionComponents.h"
+#include "game/Missions.h"
+#include "game/PoiComponents.h"
+#include "game/StructureComponents.h"
+#include "game/VehicleComponents.h"
 #include "items/ItemComponents.h"
 #include "save/BinaryReader.h"
 #include "save/BinaryWriter.h"
@@ -25,7 +38,7 @@ save::ComponentRegistry MakeRegistry() {
     std::string error;
     REQUIRE(save::RegisterBuiltinComponents(registry, &error));
     CHECK(error.empty());
-    CHECK(registry.Size() == 16u);
+    CHECK(registry.Size() == 45u);
     return registry;
 }
 
@@ -39,6 +52,8 @@ void AddPlayerComponents(ecs::EcsWorld& world, ecs::Entity entity) {
     registry.emplace<ecs::Facing>(entity, ecs::Facing{ecs::Direction::Right});
     registry.emplace<ecs::Health>(entity, ecs::Health{82.5f, 100.0f});
     registry.emplace<ecs::Needs>(entity, ecs::Needs{0.1f, 0.2f, 0.3f});
+    registry.emplace<ecs::FoodState>(
+        entity, ecs::FoodState{0.55f, 20.0f, 0.1f, 45.0f});
     registry.emplace<ecs::PlayerTag>(entity);
     registry.emplace<ecs::KnownRecipes>(
         entity, ecs::KnownRecipes{{"campfire_beans", "field_bandage"}});
@@ -54,6 +69,25 @@ void AddPlayerComponents(ecs::EcsWorld& world, ecs::Entity entity) {
                  ecs::CraftQueueItem{"campfire_beans", 1}};
     registry.emplace<ecs::CraftingJob>(entity, std::move(job));
 
+    ecs::Progression progression;
+    progression.level = 3;
+    progression.xp = 12.5f;
+    progression.perkPoints = 1;
+    progression.skills[0] = ecs::SkillProgress{2, 8.0f};
+    progression.skills[3] = ecs::SkillProgress{1, 4.0f};
+    progression.perks = {"bruiser", "fleet"};
+    registry.emplace<ecs::Progression>(entity, std::move(progression));
+    registry.emplace<ecs::PoiTasks>(entity,
+                                    ecs::PoiTasks{{"gas_station", "clinic"}});
+    ecs::MissionLog missions;
+    missions.lastDay = 4;
+    missions.randomDay = 4;
+    missions.missions.push_back(ecs::MissionRunState{
+        "radio_signal", {1}, ecs::MissionRunStatus::Completed, 3, true});
+    missions.missions.push_back(ecs::MissionRunState{
+        "daily_patrol", {2, 3}, ecs::MissionRunStatus::Active, 4, false});
+    registry.emplace<ecs::MissionLog>(entity, std::move(missions));
+
     ecs::Container bag;
     bag.capacityKg = 15.0f;
     bag.items.push_back(ecs::ItemInstance{"bandage", 3, 0.75f});
@@ -66,6 +100,10 @@ void AddPlayerComponents(ecs::EcsWorld& world, ecs::Entity entity) {
     equipment.slots[static_cast<std::size_t>(ecs::EquipSlot::Body)] =
         ecs::ItemInstance{"jacket", 1, 1.0f};
     registry.emplace<ecs::Equipment>(entity, std::move(equipment));
+    ecs::Climate climate;
+    climate.bodyC = 36.4f;
+    climate.wetness = 0.3f;
+    registry.emplace<ecs::Climate>(entity, climate);
 }
 
 const save::SavedComponent* FindComponent(const save::SavedEntity& entity,
@@ -123,7 +161,7 @@ TEST_CASE("M10-T3 玩家与物品栏StableId 往") {
     REQUIRE(save::CapturePlayer(source, components, &saved, &error));
     CHECK(error.empty());
     CHECK(saved.stableId == source.IdOf(player).id);
-    CHECK(saved.components.size() == 11u);
+    CHECK(saved.components.size() == 16u);
     CHECK(FindComponent(saved, save::kSaveComponentItem) == nullptr);
     const save::SavedComponent* knownComponent =
         FindComponent(saved, save::kSaveComponentKnownRecipes);
@@ -181,9 +219,19 @@ TEST_CASE("M10-T3 玩家与物品栏StableId 往") {
     CHECK(needs->hunger == doctest::Approx(0.1f));
     CHECK(needs->thirst == doctest::Approx(0.2f));
     CHECK(needs->fatigue == doctest::Approx(0.3f));
+    const auto* food = registry.try_get<ecs::FoodState>(loaded);
+    REQUIRE(food != nullptr);
+    CHECK(food->nutrition == doctest::Approx(0.55f));
+    CHECK(food->poisonRemaining == doctest::Approx(20.0f));
+    CHECK(food->poisonDamagePerSecond == doctest::Approx(0.1f));
+    CHECK(food->poisonTotal == doctest::Approx(45.0f));
     const auto* facing = registry.try_get<ecs::Facing>(loaded);
     REQUIRE(facing != nullptr);
     CHECK(facing->dir == ecs::Direction::Right);
+    const auto* climate = registry.try_get<ecs::Climate>(loaded);
+    REQUIRE(climate != nullptr);
+    CHECK(climate->bodyC == doctest::Approx(36.4f));
+    CHECK(climate->wetness == doctest::Approx(0.3f));
     const auto* known = registry.try_get<ecs::KnownRecipes>(loaded);
     REQUIRE(known != nullptr);
     REQUIRE(known->recipeIds.size() == 2u);
@@ -204,6 +252,42 @@ TEST_CASE("M10-T3 玩家与物品栏StableId 往") {
     CHECK(job->queue[0].count == 2);
     CHECK(job->queue[1].recipeId == "campfire_beans");
     CHECK(job->queue[1].count == 1);
+
+    const auto* progression = registry.try_get<ecs::Progression>(loaded);
+    REQUIRE(progression != nullptr);
+    CHECK(progression->level == 3);
+    CHECK(progression->xp == doctest::Approx(12.5f));
+    CHECK(progression->perkPoints == 1);
+    CHECK(progression->skills[0].level == 2);
+    CHECK(progression->skills[0].xp == doctest::Approx(8.0f));
+    CHECK(progression->skills[3].level == 1);
+    REQUIRE(progression->perks.size() == 2u);
+    CHECK(progression->perks[0] == "bruiser");
+    CHECK(progression->perks[1] == "fleet");
+
+    const auto* poiTasks = registry.try_get<ecs::PoiTasks>(loaded);
+    REQUIRE(poiTasks != nullptr);
+    REQUIRE(poiTasks->completed.size() == 2u);
+    CHECK(poiTasks->completed[0] == "clinic");
+    CHECK(poiTasks->completed[1] == "gas_station");
+
+    const auto* missionLog = registry.try_get<ecs::MissionLog>(loaded);
+    REQUIRE(missionLog != nullptr);
+    CHECK(missionLog->lastDay == 4);
+    CHECK(missionLog->randomDay == 4);
+    REQUIRE(missionLog->missions.size() == 2u);
+    const auto* daily = game::FindMissionState(*missionLog, "daily_patrol");
+    REQUIRE(daily != nullptr);
+    CHECK(daily->status == ecs::MissionRunStatus::Active);
+    CHECK(daily->day == 4);
+    CHECK_FALSE(daily->rewardClaimed);
+    REQUIRE(daily->progress.size() == 2u);
+    CHECK(daily->progress[0] == 2);
+    CHECK(daily->progress[1] == 3);
+    const auto* radio = game::FindMissionState(*missionLog, "radio_signal");
+    REQUIRE(radio != nullptr);
+    CHECK(radio->status == ecs::MissionRunStatus::Completed);
+    CHECK(radio->rewardClaimed);
 
     const auto* bag = registry.try_get<ecs::Container>(loaded);
     REQUIRE(bag != nullptr);
@@ -227,6 +311,110 @@ TEST_CASE("M10-T3 玩家与物品栏StableId 往") {
     CHECK(primary->defId == "axe");
     CHECK(primary->condition == doctest::Approx(0.8f));
     CHECK(body->defId == "jacket");
+}
+
+TEST_CASE("M23-F1-T2：弹匣状态在玩家背包/主手/地面存档往返") {
+    const save::ComponentRegistry components = MakeRegistry();
+
+    ecs::EcsWorld source;
+    const ecs::Entity player = source.Create();
+    AddPlayerComponents(source, player);
+    auto& bag = source.Registry().get<ecs::Container>(player);
+    bag.items.push_back(ecs::ItemInstance{"pistol", 1, 0.8f, 6});
+    auto& equipment = source.Registry().get<ecs::Equipment>(player);
+    equipment.slots[static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand)] =
+        ecs::ItemInstance{"pistol", 1, 0.9f, 4};
+
+    const ecs::Entity ground = source.Create();
+    source.Registry().emplace<ecs::Position>(
+        ground, ecs::Position{73.0f, 27.0f, 0});
+    source.Registry().emplace<ecs::ItemInstance>(
+        ground, ecs::ItemInstance{"pistol", 1, 0.7f, 2});
+    const std::uint64_t playerId = source.IdOf(player).id;
+    const std::uint64_t groundId = source.IdOf(ground).id;
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    const auto bytes = save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+
+    ecs::EcsWorld target;
+    std::vector<ecs::Entity> loaded;
+    REQUIRE(save::LoadEntities(decoded, target, components, &loaded, &error));
+    const ecs::Entity loadedPlayer = target.FindById(playerId);
+    const ecs::Entity loadedGround = target.FindById(groundId);
+    REQUIRE(loadedPlayer != ecs::EcsWorld::kNull);
+    REQUIRE(loadedGround != ecs::EcsWorld::kNull);
+
+    const auto* loadedBag = target.Registry().try_get<ecs::Container>(loadedPlayer);
+    REQUIRE(loadedBag != nullptr);
+    REQUIRE(loadedBag->items.size() == 3u);
+    CHECK(loadedBag->items.back().defId == "pistol");
+    CHECK(loadedBag->items.back().loadedAmmo == 6);
+
+    const auto* loadedEquipment =
+        target.Registry().try_get<ecs::Equipment>(loadedPlayer);
+    REQUIRE(loadedEquipment != nullptr);
+    const auto& primary = loadedEquipment->slots[static_cast<std::size_t>(
+        ecs::EquipSlot::PrimaryHand)];
+    REQUIRE(primary.has_value());
+    CHECK(primary->defId == "pistol");
+    CHECK(primary->loadedAmmo == 4);
+
+    const auto* loadedGroundItem =
+        target.Registry().try_get<ecs::ItemInstance>(loadedGround);
+    REQUIRE(loadedGroundItem != nullptr);
+    CHECK(loadedGroundItem->defId == "pistol");
+    CHECK(loadedGroundItem->loadedAmmo == 2);
+}
+
+TEST_CASE("M23-F1-T2：旧 v1 物品/容器/装备默认空弹匣") {
+    const save::ComponentRegistry components = MakeRegistry();
+
+    const auto legacyItem = [](save::BinaryWriter& writer) {
+        return writer.WriteString("pistol") &&
+               writer.Write(std::int32_t{1}) && writer.Write(0.5f);
+    };
+
+    save::SavedEntity saved;
+    saved.stableId = 77;
+    saved.components.push_back(MakeComponent(
+        save::kSaveComponentItem, save::kSaveComponentVersion,
+        legacyItem));
+    saved.components.push_back(MakeComponent(
+        save::kSaveComponentContainer, save::kSaveComponentVersion,
+        [legacyItem](save::BinaryWriter& writer) {
+            return writer.Write(10.0f) && writer.Write(std::uint32_t{1}) &&
+                   legacyItem(writer);
+        }));
+    saved.components.push_back(MakeComponent(
+        save::kSaveComponentEquipment, save::kSaveComponentVersion,
+        [legacyItem](save::BinaryWriter& writer) {
+            return writer.Write(true) && legacyItem(writer) &&
+                   writer.Write(false);
+        }));
+
+    ecs::EcsWorld world;
+    const ecs::Entity entity = world.CreateWithStableId(saved.stableId);
+    REQUIRE(entity != ecs::EcsWorld::kNull);
+    std::string error;
+    REQUIRE(save::ApplyEntity(saved, world, entity, components, &error));
+    CHECK(error.empty());
+
+    const auto* item = world.Registry().try_get<ecs::ItemInstance>(entity);
+    REQUIRE(item != nullptr);
+    CHECK(item->loadedAmmo == 0);
+    const auto* bag = world.Registry().try_get<ecs::Container>(entity);
+    REQUIRE(bag != nullptr);
+    REQUIRE(bag->items.size() == 1u);
+    CHECK(bag->items[0].loadedAmmo == 0);
+    const auto* equipment = world.Registry().try_get<ecs::Equipment>(entity);
+    REQUIRE(equipment != nullptr);
+    REQUIRE(equipment->slots[0].has_value());
+    CHECK(equipment->slots[0]->loadedAmmo == 0);
 }
 
 TEST_CASE("M10-T3 CraftingJob 拒绝非法批次与队") {
@@ -294,7 +482,7 @@ TEST_CASE("M10-T3 全量快照保留 StableId、排序与 Corpse 引用") {
     CHECK(FindEntity(snapshot, playerId) != nullptr);
     const save::SavedEntity* savedPlayer = FindEntity(snapshot, playerId);
     REQUIRE(savedPlayer != nullptr);
-    CHECK(savedPlayer->components.size() == 11u);
+    CHECK(savedPlayer->components.size() == 16u);
     CHECK(FindComponent(*savedPlayer, save::kSaveComponentContainer) != nullptr);
 
     save::EntitySnapshot filtered;
@@ -526,4 +714,847 @@ TEST_CASE("M10-T3 组件注册表拒绝非法或重复注册") {
     invalid.read = codec.read;
     CHECK_FALSE(registry.Register(invalid, &error));
     CHECK(error.find("类型") != std::string::npos);
+}
+
+TEST_CASE("M15-T2 Wounds 存档往返；旧档无伤口组件保持兼容") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity player = source.Create();
+    AddPlayerComponents(source, player);
+    auto& wounds = source.Registry().emplace<ecs::Wounds>(player);
+    wounds.count = 2;
+    wounds.entries[0] = ecs::WoundEntry{ecs::DamageType::Bite, 0.4f, 1.2f, 12.5f,
+                                        30.0f, false};
+    wounds.entries[1] = ecs::WoundEntry{ecs::DamageType::Claw, 0.2f, 0.0f, 0.0f,
+                                        18.0f, true};
+
+    std::string error;
+    save::SavedEntity saved;
+    REQUIRE(save::CapturePlayer(source, components, &saved, &error));
+    CHECK(error.empty());
+    const save::SavedComponent* woundComponent =
+        FindComponent(saved, save::kSaveComponentWounds);
+    REQUIRE(woundComponent != nullptr);
+
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(SnapshotOf(saved), &error);
+    REQUIRE_FALSE(bytes.empty());
+    CHECK(error.empty());
+
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    CHECK(error.empty());
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(loaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+    CHECK(error.empty());
+    const auto* loadedWounds = target.Registry().try_get<ecs::Wounds>(loaded);
+    REQUIRE(loadedWounds != nullptr);
+    REQUIRE(loadedWounds->count == 2);
+    CHECK(loadedWounds->entries[0].source == ecs::DamageType::Bite);
+    CHECK(loadedWounds->entries[0].severity == doctest::Approx(0.4f));
+    CHECK(loadedWounds->entries[0].bleedRate == doctest::Approx(1.2f));
+    CHECK(loadedWounds->entries[0].bleedRemaining == doctest::Approx(12.5f));
+    CHECK(loadedWounds->entries[0].bleedDuration == doctest::Approx(30.0f));
+    CHECK_FALSE(loadedWounds->entries[0].bandaged);
+    CHECK(loadedWounds->entries[1].source == ecs::DamageType::Claw);
+    CHECK(loadedWounds->entries[1].bandaged);
+    CHECK(loadedWounds->entries[1].bleedRemaining == doctest::Approx(0.0f));
+
+    source.Registry().remove<ecs::Wounds>(player);
+    save::SavedEntity legacy;
+    REQUIRE(save::CapturePlayer(source, components, &legacy, &error));
+    CHECK(FindComponent(legacy, save::kSaveComponentWounds) == nullptr);
+    ecs::EcsWorld legacyTarget;
+    const ecs::Entity legacyLoaded =
+        legacyTarget.CreateWithStableId(legacy.stableId);
+    REQUIRE(legacyLoaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(legacy, legacyTarget, legacyLoaded, components,
+                              &error));
+    CHECK_FALSE(legacyTarget.Registry().all_of<ecs::Wounds>(legacyLoaded));
+}
+
+TEST_CASE("M15-T4 Pain 存档往返：保存基础疼痛与剩余止痛时间") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity player = source.Create();
+    AddPlayerComponents(source, player);
+    ecs::Pain pain;
+    pain.baseLevel = 0.4f;
+    pain.reliefStrength = 0.65f;
+    pain.reliefRemaining = 5.0f;
+    pain.reliefDuration = 10.0f;
+    source.Registry().emplace<ecs::Pain>(player, pain);
+
+    std::string error;
+    save::SavedEntity saved;
+    REQUIRE(save::CapturePlayer(source, components, &saved, &error));
+    CHECK(FindComponent(saved, save::kSaveComponentPain) != nullptr);
+
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(SnapshotOf(saved), &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+
+    const auto* loadedPain = target.Registry().try_get<ecs::Pain>(loaded);
+    REQUIRE(loadedPain != nullptr);
+    CHECK(loadedPain->baseLevel == doctest::Approx(0.4f));
+    CHECK(loadedPain->reliefStrength == doctest::Approx(0.65f));
+    CHECK(loadedPain->reliefRemaining == doctest::Approx(5.0f));
+    CHECK(loadedPain->reliefDuration == doctest::Approx(10.0f));
+
+    source.Registry().remove<ecs::Pain>(player);
+    save::SavedEntity legacy;
+    REQUIRE(save::CapturePlayer(source, components, &legacy, &error));
+    CHECK(FindComponent(legacy, save::kSaveComponentPain) == nullptr);
+}
+
+TEST_CASE("M19-F2 POI 守军标记存档往返") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity zombie = source.Create();
+    entt::registry& registry = source.Registry();
+    registry.emplace<ecs::Position>(zombie, ecs::Position{86.5f, 62.5f, 0});
+    registry.emplace<ecs::PoiGuard>(zombie, ecs::PoiGuard{"farm_barn"});
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    REQUIRE(snapshot.entities.size() == 1u);
+    const save::SavedEntity& saved = snapshot.entities[0];
+    REQUIRE(FindComponent(saved, save::kSaveComponentPoiGuard) != nullptr);
+
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded = target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components, &error));
+    const auto* guard = target.Registry().try_get<ecs::PoiGuard>(loaded);
+    REQUIRE(guard != nullptr);
+    CHECK(guard->poiId == "farm_barn");
+}
+
+TEST_CASE("M20-F2 Climate 存档往返与旧档缺省") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity player = source.Create();
+    AddPlayerComponents(source, player);
+    auto& climate = source.Registry().get<ecs::Climate>(player);
+    climate.bodyC = 35.7f;
+    climate.wetness = 0.64f;
+
+    std::string error;
+    save::SavedEntity saved;
+    REQUIRE(save::CapturePlayer(source, components, &saved, &error));
+    REQUIRE(FindComponent(saved, save::kSaveComponentClimate) != nullptr);
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(SnapshotOf(saved), &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+    const auto* loadedClimate = target.Registry().try_get<ecs::Climate>(loaded);
+    REQUIRE(loadedClimate != nullptr);
+    CHECK(loadedClimate->bodyC == doctest::Approx(35.7f));
+    CHECK(loadedClimate->wetness == doctest::Approx(0.64f));
+
+    source.Registry().remove<ecs::Climate>(player);
+    save::SavedEntity legacy;
+    REQUIRE(save::CapturePlayer(source, components, &legacy, &error));
+    CHECK(FindComponent(legacy, save::kSaveComponentClimate) == nullptr);
+}
+
+TEST_CASE("M20-F1 Infection 存档往返与旧档缺省") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity player = source.Create();
+    AddPlayerComponents(source, player);
+    ecs::Infection infection;
+    infection.stage = ecs::InfectionStage::Fever;
+    infection.progress = 0.52f;
+    infection.slowStrength = 0.5f;
+    infection.slowRemaining = 45.0f;
+    infection.slowDuration = 180.0f;
+    infection.timeToNextStage = 120.0f;
+    source.Registry().emplace_or_replace<ecs::Infection>(player, infection);
+
+    std::string error;
+    save::SavedEntity saved;
+    REQUIRE(save::CapturePlayer(source, components, &saved, &error));
+    CHECK(error.empty());
+    CHECK(saved.components.size() == 17u);
+    REQUIRE(FindComponent(saved, save::kSaveComponentInfection) != nullptr);
+
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(SnapshotOf(saved), &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(loaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+    const auto* loadedInfection =
+        target.Registry().try_get<ecs::Infection>(loaded);
+    REQUIRE(loadedInfection != nullptr);
+    CHECK(loadedInfection->stage == ecs::InfectionStage::Fever);
+    CHECK(loadedInfection->progress == doctest::Approx(0.52f));
+    CHECK(loadedInfection->slowStrength == doctest::Approx(0.5f));
+    CHECK(loadedInfection->slowRemaining == doctest::Approx(45.0f));
+    CHECK(loadedInfection->slowDuration == doctest::Approx(180.0f));
+    CHECK(loadedInfection->timeToNextStage == doctest::Approx(120.0f));
+
+    source.Registry().remove<ecs::Infection>(player);
+    save::SavedEntity legacy;
+    REQUIRE(save::CapturePlayer(source, components, &legacy, &error));
+    CHECK(FindComponent(legacy, save::kSaveComponentInfection) == nullptr);
+}
+
+TEST_CASE("M20-F3 ZombieSpecial 存档往返与旧档缺省") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity zombie = source.Create();
+    entt::registry& registry = source.Registry();
+    registry.emplace<ecs::Position>(zombie, ecs::Position{70.5f, 24.5f, 0});
+    ecs::ZombieSpecial special;
+    special.kind = ecs::ZombieSpecialKind::Howler;
+    special.cooldown = 7.5f;
+    special.windup = 0.4f;
+    special.windupDuration = 1.2f;
+    special.serial = 3;
+    registry.emplace<ecs::ZombieSpecial>(zombie, special);
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    REQUIRE(snapshot.entities.size() == 1u);
+    REQUIRE(FindComponent(snapshot.entities[0],
+                          save::kSaveComponentZombieSpecial) != nullptr);
+    const auto bytes = save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(loaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+    const auto* loadedSpecial =
+        target.Registry().try_get<ecs::ZombieSpecial>(loaded);
+    REQUIRE(loadedSpecial != nullptr);
+    CHECK(loadedSpecial->kind == ecs::ZombieSpecialKind::Howler);
+    CHECK(loadedSpecial->cooldown == doctest::Approx(7.5f));
+    CHECK(loadedSpecial->windup == doctest::Approx(0.4f));
+    CHECK(loadedSpecial->windupDuration == doctest::Approx(1.2f));
+    CHECK(loadedSpecial->serial == 3u);
+}
+TEST_CASE("M20-F4 Homestead facility state save roundtrip") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity facility = source.Create();
+    entt::registry& registry = source.Registry();
+    registry.emplace<ecs::Position>(facility, ecs::Position{64.5f, 24.5f, 0});
+    registry.emplace<ecs::SpriteRef>(
+        facility, ecs::SpriteRef{ecs::HashName("object.farm_plot"), 0,
+                                 0xFFFFFFFFu});
+    registry.emplace<ecs::StructureOwner>(facility,
+                                           ecs::StructureOwner{0x123456789ull});
+
+    ecs::FarmPlot plot;
+    plot.cropId = "cabbage";
+    plot.growthMinutes = 120.0f;
+    plot.waterMinutes = 45.0f;
+    plot.dryMinutes = 3.0f;
+    plot.growMinutes = 240.0f;
+    plot.stage = ecs::CropStage::Growing;
+    plot.harvestYield = 2;
+    plot.diseased = true;
+    plot.fertilized = true;
+    registry.emplace<ecs::FarmPlot>(facility, plot);
+
+    ecs::Generator generator;
+    generator.fuelMinutes = 300.0f;
+    generator.radius = 8.0f;
+    generator.running = true;
+    registry.emplace<ecs::Generator>(facility, generator);
+    registry.emplace<ecs::ColdStorage>(facility, ecs::ColdStorage{true});
+    ecs::Floodlight floodlight;
+    floodlight.on = false;
+    floodlight.powered = false;
+    registry.emplace<ecs::Floodlight>(facility, floodlight);
+    registry.emplace<ecs::Health>(facility, ecs::Health{37.0f, 80.0f});
+
+    ecs::SpikeTrap trap;
+    trap.armed = true;
+    trap.cooldown = 0.2f;
+    trap.cooldownSeconds = 1.5f;
+    trap.damage = 45.0f;
+    trap.radius = 1.0f;
+    trap.staggerSeconds = 0.35f;
+    trap.uses = 4;
+    registry.emplace<ecs::SpikeTrap>(facility, trap);
+
+    ecs::MerchantStock stock;
+    stock.stock = {3, 1, 0, 2, 1};
+    stock.restockDay = 6;
+    registry.emplace<ecs::MerchantStock>(facility, stock);
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    REQUIRE(snapshot.entities.size() == 1u);
+    for (const std::uint32_t type :
+          {save::kSaveComponentFarmPlot, save::kSaveComponentGenerator,
+           save::kSaveComponentColdStorage, save::kSaveComponentFloodlight,
+           save::kSaveComponentHealth, save::kSaveComponentSpikeTrap,
+           save::kSaveComponentMerchantStock,
+           save::kSaveComponentStructureOwner}) {
+        CHECK(FindComponent(snapshot.entities[0], type) != nullptr);
+    }
+    const auto bytes = save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(loaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+
+    const auto* loadedPlot = target.Registry().try_get<ecs::FarmPlot>(loaded);
+    REQUIRE(loadedPlot != nullptr);
+    CHECK(loadedPlot->cropId == "cabbage");
+    CHECK(loadedPlot->growthMinutes == doctest::Approx(120.0f));
+    CHECK(loadedPlot->waterMinutes == doctest::Approx(45.0f));
+    CHECK(loadedPlot->stage == ecs::CropStage::Growing);
+    CHECK(loadedPlot->diseased);
+    CHECK(loadedPlot->fertilized);
+    const auto* loadedGenerator =
+        target.Registry().try_get<ecs::Generator>(loaded);
+    REQUIRE(loadedGenerator != nullptr);
+    CHECK(loadedGenerator->fuelMinutes == doctest::Approx(300.0f));
+    CHECK(loadedGenerator->running);
+    const auto* loadedCold =
+        target.Registry().try_get<ecs::ColdStorage>(loaded);
+    REQUIRE(loadedCold != nullptr);
+    CHECK(loadedCold->powered);
+    const auto* loadedFloodlight =
+        target.Registry().try_get<ecs::Floodlight>(loaded);
+    REQUIRE(loadedFloodlight != nullptr);
+    CHECK_FALSE(loadedFloodlight->on);
+    CHECK_FALSE(loadedFloodlight->powered);
+    const auto* loadedHealth =
+        target.Registry().try_get<ecs::Health>(loaded);
+    REQUIRE(loadedHealth != nullptr);
+    CHECK(loadedHealth->current == doctest::Approx(37.0f));
+    CHECK(loadedHealth->max == doctest::Approx(80.0f));
+    const auto* loadedTrap =
+        target.Registry().try_get<ecs::SpikeTrap>(loaded);
+    REQUIRE(loadedTrap != nullptr);
+    CHECK(loadedTrap->uses == 4);
+    CHECK(loadedTrap->cooldown == doctest::Approx(0.2f));
+    const auto* loadedStock =
+        target.Registry().try_get<ecs::MerchantStock>(loaded);
+    REQUIRE(loadedStock != nullptr);
+    CHECK((loadedStock->stock == std::array<int, 5>{3, 1, 0, 2, 1}));
+    CHECK(loadedStock->restockDay == 6);
+    const auto* loadedOwner =
+        target.Registry().try_get<ecs::StructureOwner>(loaded);
+    REQUIRE(loadedOwner != nullptr);
+    CHECK(loadedOwner->ownerStableId == 0x123456789ull);
+}
+
+TEST_CASE("M23-F2a-T2 ForageState save roundtrip") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity player = source.Create();
+    ecs::ForageState forage;
+    forage.harvested.push_back(
+        ecs::ForageHarvest{"forest", 12, 34, 0, 340.5});
+    forage.harvested.push_back(
+        ecs::ForageHarvest{"meadow", 56, 78, 0, 180.0});
+    source.Registry().emplace<ecs::ForageState>(player, forage);
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    REQUIRE(snapshot.entities.size() == 1u);
+    REQUIRE(FindComponent(snapshot.entities[0],
+                          save::kSaveComponentForage) != nullptr);
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(loaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+    const auto* loadedForage =
+        target.Registry().try_get<ecs::ForageState>(loaded);
+    REQUIRE(loadedForage != nullptr);
+    REQUIRE(loadedForage->harvested.size() == 2u);
+    CHECK(loadedForage->harvested[0].zoneId == "forest");
+    CHECK(loadedForage->harvested[0].x == 12);
+    CHECK(loadedForage->harvested[0].y == 34);
+    CHECK(loadedForage->harvested[0].availableAtMinutes ==
+          doctest::Approx(340.5));
+    CHECK(loadedForage->harvested[1].zoneId == "meadow");
+}
+
+
+TEST_CASE("M23-F3-T6 FireAnchor/FireSource/BurningZombie save roundtrip") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity fire = source.Create();
+    entt::registry& sourceRegistry = source.Registry();
+    sourceRegistry.emplace<ecs::Position>(fire, ecs::Position{10.5f, 11.5f, 0});
+    sourceRegistry.emplace<ecs::FireAnchor>(fire, ecs::FireAnchor{10, 11, 0});
+    ecs::FireSource fireSource;
+    fireSource.materialId = "wood_floor";
+    fireSource.phase = ecs::FirePhase::Burning;
+    fireSource.ignitionProgress = 1.25f;
+    fireSource.ignitionDuration = 1.5f;
+    fireSource.burnRemaining = 32.5f;
+    fireSource.burnDuration = 45.0f;
+    fireSource.smokePerSecond = 0.6f;
+    fireSource.heatRadius = 2.0f;
+    fireSource.smolderElapsed = 0.0f;
+    fireSource.spreadAccumulator = 2.5f;
+    sourceRegistry.emplace<ecs::FireSource>(fire, fireSource);
+
+    const ecs::Entity zombie = source.Create();
+    sourceRegistry.emplace<ecs::Position>(zombie, ecs::Position{11.5f, 11.5f, 0});
+    ecs::BurningZombie burning;
+    burning.remaining = 6.5f;
+    burning.damageAccumulator = 0.4f;
+    burning.spreadAccumulator = 0.2f;
+    burning.panicRemaining = 3.0f;
+    burning.panicSpeedScale = 1.25f;
+    burning.panicChaseRadius = 12.0f;
+    sourceRegistry.emplace<ecs::BurningZombie>(zombie, burning);
+
+    const ecs::Entity burned = source.Create();
+    sourceRegistry.emplace<ecs::Position>(burned,
+                                          ecs::Position{12.5f, 11.5f, 0});
+    sourceRegistry.emplace<ecs::FireAnchor>(burned, ecs::FireAnchor{12, 11, 0});
+    ecs::FireSource burnedSource;
+    burnedSource.materialId = "wood_wall";
+    burnedSource.phase = ecs::FirePhase::Extinguished;
+    burnedSource.ignitionDuration = 1.5f;
+    burnedSource.burnDuration = 90.0f;
+    burnedSource.heatRadius = 2.5f;
+    sourceRegistry.emplace<ecs::FireSource>(burned, burnedSource);
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    REQUIRE(snapshot.entities.size() == 3u);
+    const save::SavedEntity* savedFire = nullptr;
+    const save::SavedEntity* savedZombie = nullptr;
+    const save::SavedEntity* savedBurned = nullptr;
+    for (const save::SavedEntity& entity : snapshot.entities) {
+        if (entity.stableId == source.IdOf(fire).id) {
+            savedFire = &entity;
+        } else if (entity.stableId == source.IdOf(zombie).id) {
+            savedZombie = &entity;
+        } else if (entity.stableId == source.IdOf(burned).id) {
+            savedBurned = &entity;
+        }
+    }
+    REQUIRE(savedFire != nullptr);
+    REQUIRE(savedZombie != nullptr);
+    REQUIRE(savedBurned != nullptr);
+    CHECK(FindComponent(*savedFire, save::kSaveComponentFireAnchor) != nullptr);
+    CHECK(FindComponent(*savedFire, save::kSaveComponentFireSource) != nullptr);
+    CHECK(FindComponent(*savedZombie, save::kSaveComponentBurningZombie) !=
+          nullptr);
+    CHECK(FindComponent(*savedBurned, save::kSaveComponentFireSource) !=
+          nullptr);
+
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    std::vector<ecs::Entity> loaded;
+    REQUIRE(save::LoadEntities(decoded, target, components, &loaded, &error));
+    REQUIRE(loaded.size() == 3u);
+    const ecs::Entity loadedFire = target.FindById(source.IdOf(fire).id);
+    const ecs::Entity loadedZombie = target.FindById(source.IdOf(zombie).id);
+    const ecs::Entity loadedBurned = target.FindById(source.IdOf(burned).id);
+    REQUIRE(loadedFire != ecs::EcsWorld::kNull);
+    REQUIRE(loadedZombie != ecs::EcsWorld::kNull);
+    REQUIRE(loadedBurned != ecs::EcsWorld::kNull);
+    const auto* anchor = target.Registry().try_get<ecs::FireAnchor>(loadedFire);
+    REQUIRE(anchor != nullptr);
+    CHECK(anchor->x == 10);
+    CHECK(anchor->y == 11);
+    CHECK(anchor->z == 0);
+    const auto* loadedSource =
+        target.Registry().try_get<ecs::FireSource>(loadedFire);
+    REQUIRE(loadedSource != nullptr);
+    CHECK(loadedSource->materialId == "wood_floor");
+    CHECK(loadedSource->phase == ecs::FirePhase::Burning);
+    CHECK(loadedSource->burnRemaining == doctest::Approx(32.5f));
+    CHECK(loadedSource->spreadAccumulator == doctest::Approx(2.5f));
+    const auto* loadedBurning =
+        target.Registry().try_get<ecs::BurningZombie>(loadedZombie);
+    REQUIRE(loadedBurning != nullptr);
+    CHECK(loadedBurning->remaining == doctest::Approx(6.5f));
+    CHECK(loadedBurning->panicRemaining == doctest::Approx(3.0f));
+    CHECK(loadedBurning->panicChaseRadius == doctest::Approx(12.0f));
+    const auto* loadedBurnedSource =
+        target.Registry().try_get<ecs::FireSource>(loadedBurned);
+    REQUIRE(loadedBurnedSource != nullptr);
+    CHECK(loadedBurnedSource->materialId == "wood_wall");
+    CHECK(loadedBurnedSource->phase == ecs::FirePhase::Extinguished);
+    CHECK(loadedBurnedSource->burnRemaining == doctest::Approx(0.0f));
+}
+
+TEST_CASE("M23-F6-T5 旧档 MissionLog 短进度与未知任务可读取") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity player = source.Create();
+    AddPlayerComponents(source, player);
+    auto& log = source.Registry().get<ecs::MissionLog>(player);
+    log.lastDay = 3;
+    log.randomDay = 2;
+    log.missions.clear();
+    log.missions.push_back(ecs::MissionRunState{
+        "clinic_supply", {}, ecs::MissionRunStatus::Active, 3, false});
+    log.missions.push_back(ecs::MissionRunState{
+        "hospital_quarantine", {1}, ecs::MissionRunStatus::Active, 3, false});
+    log.missions.push_back(ecs::MissionRunState{
+        "legacy_removed", {5}, ecs::MissionRunStatus::Completed, 2, true});
+
+    std::string error;
+    save::SavedEntity saved;
+    REQUIRE(save::CapturePlayer(source, components, &saved, &error));
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(SnapshotOf(saved), &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(loaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+
+    const auto* missionLog = target.Registry().try_get<ecs::MissionLog>(loaded);
+    REQUIRE(missionLog != nullptr);
+    REQUIRE(missionLog->missions.size() == 3u);
+    const auto* clinic = game::FindMissionState(*missionLog, "clinic_supply");
+    REQUIRE(clinic != nullptr);
+    CHECK(clinic->progress.empty());
+    const auto* hospital =
+        game::FindMissionState(*missionLog, "hospital_quarantine");
+    REQUIRE(hospital != nullptr);
+    REQUIRE(hospital->progress.size() == 1u);
+    CHECK(hospital->progress[0] == 1);
+    const auto* legacy = game::FindMissionState(*missionLog, "legacy_removed");
+    REQUIRE(legacy != nullptr);
+    CHECK(legacy->status == ecs::MissionRunStatus::Completed);
+    CHECK(legacy->rewardClaimed);
+}
+
+TEST_CASE("M24-T3 旧档 radio_repair 状态决定中继链可用性") {
+    core::Config config;
+    REQUIRE(config.LoadFile(std::string(ZL_SOURCE_DIR) + "/config/game.json"));
+    game::MissionConfig missions;
+    std::string error;
+    REQUIRE(game::LoadMissionConfig(config, &missions, &error));
+    const game::MissionDef* recover = missions.Find("relay_recover");
+    REQUIRE(recover != nullptr);
+
+    const save::ComponentRegistry components = MakeRegistry();
+    auto reloadedCanActivate = [&](ecs::MissionRunStatus status) {
+        ecs::EcsWorld source;
+        const ecs::Entity player = source.Create();
+        AddPlayerComponents(source, player);
+        auto& log = source.Registry().get<ecs::MissionLog>(player);
+        log.missions.push_back(ecs::MissionRunState{
+            "radio_repair", {1}, status, 2, false});
+        save::SavedEntity saved;
+        REQUIRE(save::CapturePlayer(source, components, &saved, &error));
+        const std::vector<std::uint8_t> bytes =
+            save::EncodeEntitySnapshot(SnapshotOf(saved), &error);
+        REQUIRE_FALSE(bytes.empty());
+        save::EntitySnapshot decoded;
+        REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+        ecs::EcsWorld target;
+        const ecs::Entity loaded =
+            target.CreateWithStableId(decoded.entities[0].stableId);
+        REQUIRE(loaded != ecs::EcsWorld::kNull);
+        REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded,
+                                  components, &error));
+        const auto* loadedLog =
+            target.Registry().try_get<ecs::MissionLog>(loaded);
+        REQUIRE(loadedLog != nullptr);
+        return game::MissionCanActivate(*recover, *loadedLog, 4);
+    };
+    CHECK_FALSE(reloadedCanActivate(ecs::MissionRunStatus::Active));
+    CHECK(reloadedCanActivate(ecs::MissionRunStatus::Completed));
+}
+
+TEST_CASE("M23-F2b 动物尸体容器与已剥取状态存档往返") {
+    const save::ComponentRegistry components = MakeRegistry();
+
+    ecs::EcsWorld source;
+    const ecs::Entity player = source.Create();
+    AddPlayerComponents(source, player);
+    auto& bag = source.Registry().get<ecs::Container>(player);
+    bag.items.push_back(ecs::ItemInstance{"raw_boar_meat", 3, 0.8f});
+
+    const ecs::Entity corpse = source.Create();
+    const std::uint64_t corpseId = source.IdOf(corpse).id;
+    entt::registry& sourceRegistry = source.Registry();
+    sourceRegistry.emplace<ecs::Position>(corpse, ecs::Position{12.5f, 8.25f, 0});
+    sourceRegistry.emplace<ecs::Corpse>(corpse, ecs::Corpse{999});
+    sourceRegistry.emplace<ecs::AnimalCorpse>(
+        corpse, ecs::AnimalCorpse{"boar", true});
+    sourceRegistry.emplace<ecs::SpriteRef>(
+        corpse, ecs::SpriteRef{ecs::HashName("corpse.placeholder"), 0,
+                               0xFFFFFFFFu});
+    ecs::Container loot;
+    loot.capacityKg = 18.0f;
+    loot.items.push_back(ecs::ItemInstance{"animal_hide", 2, 1.0f});
+    loot.items.push_back(ecs::ItemInstance{"bone", 1, 1.0f});
+    sourceRegistry.emplace<ecs::Container>(corpse, loot);
+    sourceRegistry.emplace<ecs::LootContainer>(
+        corpse, ecs::LootContainer{"animal_boar", 42, true});
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+
+    ecs::EcsWorld target;
+    std::vector<ecs::Entity> loaded;
+    REQUIRE(save::LoadEntities(decoded, target, components, &loaded, &error));
+
+    const ecs::Entity loadedCorpse = target.FindById(corpseId);
+    REQUIRE(loadedCorpse != ecs::EcsWorld::kNull);
+    const auto* corpseState =
+        target.Registry().try_get<ecs::AnimalCorpse>(loadedCorpse);
+    REQUIRE(corpseState != nullptr);
+    CHECK(corpseState->speciesId == "boar");
+    CHECK(corpseState->harvested);
+    const auto* corpseContainer =
+        target.Registry().try_get<ecs::Container>(loadedCorpse);
+    REQUIRE(corpseContainer != nullptr);
+    REQUIRE(corpseContainer->items.size() == 2u);
+    CHECK(corpseContainer->items[0].defId == "animal_hide");
+    CHECK(corpseContainer->items[0].count == 2);
+    CHECK(corpseContainer->items[1].defId == "bone");
+
+    const auto* loadedBag =
+        target.Registry().try_get<ecs::Container>(target.FindById(
+            source.IdOf(player).id));
+    REQUIRE(loadedBag != nullptr);
+    bool foundMeat = false;
+    for (const ecs::ItemInstance& item : loadedBag->items) {
+        if (item.defId == "raw_boar_meat" && item.count == 3) {
+            foundMeat = true;
+        }
+    }
+    CHECK(foundMeat);
+}
+TEST_CASE("M24-T4 随机事件敌人标记随存档恢复") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity actor = source.CreateWithStableId(9001);
+    REQUIRE(actor != ecs::EcsWorld::kNull);
+    source.Registry().emplace<ecs::Position>(
+        actor, ecs::Position{70.5f, 33.5f, 0});
+    source.Registry().emplace<ecs::Health>(
+        actor, ecs::Health{100.0f, 100.0f});
+    source.Registry().emplace<ecs::RandomEventActor>(
+        actor, ecs::RandomEventActor{"event_wandering_horde", 3});
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    const auto bytes = save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+
+    ecs::EcsWorld target;
+    std::vector<ecs::Entity> loaded;
+    REQUIRE(save::LoadEntities(decoded, target, components, &loaded, &error));
+    const ecs::Entity restored = target.FindById(9001);
+    REQUIRE(restored != ecs::EcsWorld::kNull);
+    const auto* tag = target.Registry().try_get<ecs::RandomEventActor>(restored);
+    REQUIRE(tag != nullptr);
+    CHECK(tag->eventId == "event_wandering_horde");
+    CHECK(tag->index == 3);
+}
+
+
+TEST_CASE("M25-T2 Vehicle state and trunk save roundtrip") {
+    const save::ComponentRegistry components = MakeRegistry();
+
+    ecs::EcsWorld source;
+    const ecs::Entity vehicle = source.Create();
+    const std::uint64_t vehicleId = source.IdOf(vehicle).id;
+    entt::registry& registry = source.Registry();
+    registry.emplace<ecs::Position>(vehicle, ecs::Position{80.5f, 30.5f, 0});
+    registry.emplace<ecs::SpriteRef>(
+        vehicle, ecs::SpriteRef{ecs::HashName("object.vehicle"), 0,
+                                0xFFFFFFFFu});
+    ecs::Vehicle savedVehicle{0.35f, 0.72f, true};
+    savedVehicle.type = ecs::VehicleType::HeavyPickup;
+    savedVehicle.heading = 1.0f;
+    registry.emplace<ecs::Vehicle>(vehicle, savedVehicle);
+    ecs::Container trunk;
+    trunk.capacityKg = 40.0f;
+    trunk.items.push_back(ecs::ItemInstance{"repair_kit", 2, 1.0f});
+    trunk.items.push_back(ecs::ItemInstance{"fuel_can", 1, 1.0f});
+    registry.emplace<ecs::Container>(vehicle, trunk);
+    registry.emplace<ecs::PlayerStorage>(vehicle, ecs::PlayerStorage{6});
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+
+    ecs::EcsWorld target;
+    std::vector<ecs::Entity> loaded;
+    REQUIRE(save::LoadEntities(decoded, target, components, &loaded, &error));
+    const ecs::Entity restored = target.FindById(vehicleId);
+    REQUIRE(restored != ecs::EcsWorld::kNull);
+
+    const auto* state = target.Registry().try_get<ecs::Vehicle>(restored);
+    REQUIRE(state != nullptr);
+    CHECK(state->condition == doctest::Approx(0.35f));
+    CHECK(state->fuel == doctest::Approx(0.72f));
+    CHECK(state->headlights);
+    CHECK(state->type == ecs::VehicleType::HeavyPickup);
+    CHECK(state->heading == doctest::Approx(1.0f));
+
+    const auto* position = target.Registry().try_get<ecs::Position>(restored);
+    REQUIRE(position != nullptr);
+    CHECK(position->x == doctest::Approx(80.5f));
+    CHECK(position->y == doctest::Approx(30.5f));
+
+    const auto* storage = target.Registry().try_get<ecs::PlayerStorage>(restored);
+    REQUIRE(storage != nullptr);
+    CHECK(storage->maxStacks == 6);
+    const auto* container = target.Registry().try_get<ecs::Container>(restored);
+    REQUIRE(container != nullptr);
+    CHECK(container->capacityKg == doctest::Approx(40.0f));
+    REQUIRE(container->items.size() == 2u);
+    CHECK(container->items[0].defId == "repair_kit");
+    CHECK(container->items[0].count == 2);
+    CHECK(container->items[1].defId == "fuel_can");
+    CHECK(container->items[1].count == 1);
+}
+
+TEST_CASE("M26-V5 单机多车载具存档保留全部车辆") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    std::uint64_t ids[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        const ecs::Entity vehicle = source.Create();
+        ids[i] = source.IdOf(vehicle).id;
+        entt::registry& registry = source.Registry();
+        registry.emplace<ecs::Position>(
+            vehicle,
+            ecs::Position{70.5f + static_cast<float>(i) * 3.0f, 30.5f, 0});
+        registry.emplace<ecs::SpriteRef>(
+            vehicle, ecs::SpriteRef{ecs::HashName("object.vehicle_south"), 0,
+                                    0xFFFFFFFFu});
+        registry.emplace<ecs::Vehicle>(
+            vehicle, ecs::Vehicle{0.9f - static_cast<float>(i) * 0.2f,
+                                  0.8f - static_cast<float>(i) * 0.1f, i == 2});
+    }
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+
+    ecs::EcsWorld target;
+    std::vector<ecs::Entity> loaded;
+    REQUIRE(save::LoadEntities(decoded, target, components, &loaded, &error));
+    CHECK(loaded.size() == 3u);
+    for (int i = 0; i < 3; ++i) {
+        const ecs::Entity restored = target.FindById(ids[i]);
+        REQUIRE(restored != ecs::EcsWorld::kNull);
+        const auto* state = target.Registry().try_get<ecs::Vehicle>(restored);
+        REQUIRE(state != nullptr);
+        CHECK(state->condition ==
+              doctest::Approx(0.9f - static_cast<float>(i) * 0.2f));
+        CHECK(state->fuel ==
+              doctest::Approx(0.8f - static_cast<float>(i) * 0.1f));
+        CHECK(state->headlights == (i == 2));
+        const auto* position =
+            target.Registry().try_get<ecs::Position>(restored);
+        REQUIRE(position != nullptr);
+        CHECK(position->x ==
+              doctest::Approx(70.5f + static_cast<float>(i) * 3.0f));
+        CHECK(position->y == doctest::Approx(30.5f));
+    }
+}
+
+TEST_CASE("M25-T4-V2 旧 v1 车辆存档默认关闭车灯") {
+    const save::ComponentRegistry components = MakeRegistry();
+    save::SavedEntity saved;
+    saved.stableId = 951;
+    saved.components.push_back(MakeComponent(
+        save::kSaveComponentVehicle, save::kSaveComponentVersion,
+        [](save::BinaryWriter& writer) {
+            return writer.Write(0.35f) && writer.Write(0.72f);
+        }));
+
+    ecs::EcsWorld world;
+    const ecs::Entity entity = world.CreateWithStableId(saved.stableId);
+    REQUIRE(entity != ecs::EcsWorld::kNull);
+    std::string error;
+    REQUIRE(save::ApplyEntity(saved, world, entity, components, &error));
+    CHECK(error.empty());
+    const auto* state = world.Registry().try_get<ecs::Vehicle>(entity);
+    REQUIRE(state != nullptr);
+    CHECK(state->condition == doctest::Approx(0.35f));
+    CHECK(state->fuel == doctest::Approx(0.72f));
+    CHECK_FALSE(state->headlights);
 }

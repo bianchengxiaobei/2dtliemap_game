@@ -13,7 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (MSVC)
-    add_compile_options(/utf-8 /W4 /permissive- /Zc:preprocessor /Zc:__cplusplus)
+    add_compile_options(/utf-8 /W4 /permissive- /Zc:preprocessor /Zc:__cplusplus /bigobj)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 endif()
 
@@ -57,11 +57,16 @@ add_executable(ZomboidLike
     src/ai/systems/PathFollowSystem.cpp
     src/ai/systems/PerceptionSystem.cpp
     src/ai/systems/SpawnLodSystem.cpp
+    src/ai/systems/ZombieSpecialSystem.cpp
     src/audio/AudioEngine.cpp
     src/audio/SoundManager.cpp
     src/characters/systems/ActionPresentationSystem.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/CombatSystem.cpp
+    src/characters/systems/CombatRules.cpp
+    src/characters/systems/WoundSystem.cpp
+    src/characters/systems/PainSystem.cpp
+    src/characters/systems/InfectionSystem.cpp
     src/characters/systems/DeathSystem.cpp
     src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp
@@ -79,16 +84,44 @@ add_executable(ZomboidLike
     src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
     src/game/AnimationManifest.cpp
+    src/game/Animals.cpp
+    src/game/AnimalSystem.cpp
+    src/game/AnimalHarvest.cpp
+    src/game/AssetManifest.cpp
+    src/game/BuildingRules.cpp
+    src/game/Climate.cpp
+    src/game/ContentHash.cpp
+    src/game/ContentReload.cpp
+    src/game/Dialogue.cpp
+    src/game/Crops.cpp
+    src/game/Fire.cpp
+    src/game/FireSystem.cpp
+    src/game/ModContent.cpp
     src/game/AssetProvider.cpp
     src/game/EmbeddedServer.cpp
     src/game/EventProbe.cpp
+    src/game/Forage.cpp
+    src/game/ForageRuntime.cpp
+    src/game/FishingRuntime.cpp
+    src/game/FoodSafety.cpp
     src/game/EntityReplication.cpp
     src/game/GameApp.cpp
     src/game/GroundItems.cpp
     src/game/LootContainers.cpp
+    src/game/Missions.cpp
+    src/game/Homestead.cpp
+    src/game/PlayerStorage.cpp
+    src/game/Poi.cpp
+    src/game/Sleeping.cpp
+    src/game/Settlement.cpp
+    src/game/SettlementNpc.cpp
     src/game/NetworkClient.cpp
+    src/game/PlayerCombat.cpp
     src/game/PlayerInventoryService.cpp
+    src/game/ProgressionRules.cpp
+    src/game/RandomEvents.cpp
     src/game/ServerList.cpp
+    src/game/Weather.cpp
     src/game/RenderCollectSystem.cpp
     src/game/WorldSimulation.cpp
     src/game/ZombieFactory.cpp
@@ -103,6 +136,8 @@ add_executable(ZomboidLike
     src/items/LootTable.cpp
     src/items/RecipeRegistry.cpp
     src/items/Repair.cpp
+    src/items/RangedWeapon.cpp
+    src/items/Spoilage.cpp
     src/net/Command.cpp
     src/net/CommandCodec.cpp
     src/net/CommandPipeline.cpp
@@ -115,6 +150,7 @@ add_executable(ZomboidLike
     src/net/PlayerIdentity.cpp
     src/net/PlayerState.cpp
     src/net/SocialProtocol.cpp
+    src/net/WorldSound.cpp
     src/net/Replication.cpp
     src/platform/KeyNames.cpp
     src/platform/Window.cpp
@@ -216,15 +252,24 @@ add_executable(ZomboidLikeTests
     tests/test_needs.cpp
     tests/test_animation_v2.cpp
     tests/test_camera_follow.cpp
+    tests/test_vehicle.cpp
     tests/test_pathfinding.cpp
     tests/test_death.cpp
     tests/test_zombie_ai.cpp
     tests/test_perception.cpp
     tests/test_boids.cpp
     tests/test_combat.cpp
+    tests/test_combat_rules.cpp
+    tests/test_combat_m30.cpp
+    tests/test_combat_presentation.cpp
+    tests/test_player_combat.cpp
+    tests/test_animals.cpp
+    tests/test_animal_spawn.cpp
+    tests/test_animal_harvest.cpp
     tests/test_spawn_lod.cpp
     tests/test_items.cpp
     tests/test_inventory.cpp
+    tests/test_ranged_weapon.cpp
     tests/test_recipes.cpp
     tests/test_ground_items.cpp
     tests/test_loot.cpp
@@ -235,6 +280,11 @@ add_executable(ZomboidLikeTests
     tests/test_script_api.cpp
     tests/test_event_bridge.cpp
     tests/test_mod_loader.cpp
+    tests/test_mod_content.cpp
+    tests/test_content_reload.cpp
+    tests/test_mod_assets.cpp
+    tests/test_content_hash.cpp
+    tests/test_crops.cpp
     tests/test_hot_reload.cpp
     tests/test_python_backend.cpp
     tests/test_python_runtime.cpp
@@ -265,7 +315,31 @@ add_executable(ZomboidLikeTests
     tests/test_inventory_service.cpp
     tests/test_network_inventory.cpp
     tests/test_network_persistence.cpp
+    tests/test_network_world_persistence.cpp
     tests/test_embedded_server.cpp
+    tests/test_special_zombies.cpp
+    tests/test_armor.cpp
+    tests/test_infection.cpp
+    tests/test_weather.cpp
+    tests/test_progression.cpp
+    tests/test_poi.cpp
+    tests/test_settlements.cpp
+    tests/test_settlement_npc.cpp
+    tests/test_settlement_defense.cpp
+    tests/test_settlement_network.cpp
+    tests/test_settlement_integration.cpp
+    tests/test_dialogue.cpp
+    tests/test_forage.cpp
+    tests/test_fire.cpp
+    tests/test_missions.cpp
+    tests/test_random_events.cpp
+    tests/test_storage.cpp
+    tests/test_food.cpp
+    tests/test_sleep.cpp
+    tests/test_building.cpp
+    tests/test_base_siege.cpp
+    tests/test_base_hud.cpp
+    tests/test_homestead.cpp
     src/core/Config.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -277,11 +351,16 @@ add_executable(ZomboidLikeTests
     src/ai/systems/PathFollowSystem.cpp
     src/ai/systems/PerceptionSystem.cpp
     src/ai/systems/SpawnLodSystem.cpp
+    src/ai/systems/ZombieSpecialSystem.cpp
     src/audio/AudioEngine.cpp
     src/audio/SoundManager.cpp
     src/characters/systems/ActionPresentationSystem.cpp
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/CombatSystem.cpp
+    src/characters/systems/CombatRules.cpp
+    src/characters/systems/WoundSystem.cpp
+    src/characters/systems/PainSystem.cpp
+    src/characters/systems/InfectionSystem.cpp
     src/characters/systems/DeathSystem.cpp
     src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp
@@ -297,13 +376,41 @@ add_executable(ZomboidLikeTests
     src/ecs/SpatialIndex.cpp
     src/ecs/SystemScheduler.cpp
     src/game/AnimationManifest.cpp
+    src/game/Animals.cpp
+    src/game/AnimalSystem.cpp
+    src/game/AnimalHarvest.cpp
+    src/game/AssetManifest.cpp
+    src/game/BuildingRules.cpp
+    src/game/Climate.cpp
+    src/game/ContentHash.cpp
+    src/game/ContentReload.cpp
+    src/game/Crops.cpp
+    src/game/Fire.cpp
+    src/game/FireSystem.cpp
+    src/game/Forage.cpp
+    src/game/ForageRuntime.cpp
+    src/game/FishingRuntime.cpp
+    src/game/FoodSafety.cpp
+    src/game/ModContent.cpp
     src/game/EntityReplication.cpp
     src/game/GroundItems.cpp
     src/game/LootContainers.cpp
+    src/game/Missions.cpp
+    src/game/Homestead.cpp
+    src/game/PlayerStorage.cpp
+    src/game/Poi.cpp
+    src/game/Sleeping.cpp
+    src/game/Settlement.cpp
+    src/game/SettlementNpc.cpp
+    src/game/Dialogue.cpp
     src/game/EmbeddedServer.cpp
     src/game/NetworkClient.cpp
+    src/game/PlayerCombat.cpp
     src/game/PlayerInventoryService.cpp
+    src/game/ProgressionRules.cpp
+    src/game/RandomEvents.cpp
     src/game/ServerList.cpp
+    src/game/Weather.cpp
     src/game/WorldSimulation.cpp
     src/game/ZombieFactory.cpp
     src/items/Crafting.cpp
@@ -313,6 +420,8 @@ add_executable(ZomboidLikeTests
     src/items/LootTable.cpp
     src/items/RecipeRegistry.cpp
     src/items/Repair.cpp
+    src/items/RangedWeapon.cpp
+    src/items/Spoilage.cpp
     src/net/Command.cpp
     src/net/CommandCodec.cpp
     src/net/CommandPipeline.cpp
@@ -325,6 +434,7 @@ add_executable(ZomboidLikeTests
     src/net/PlayerIdentity.cpp
     src/net/PlayerState.cpp
     src/net/SocialProtocol.cpp
+    src/net/WorldSound.cpp
     src/net/Replication.cpp
     src/platform/KeyNames.cpp
     src/physics/PhysicsSyncSystem.cpp

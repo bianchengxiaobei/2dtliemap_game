@@ -17,6 +17,8 @@ const char* kItemsJson = R"({
     { "id": "rag", "name": "破布", "icon": "i", "weight": 0.1, "maxStack": 10, "type": "generic" },
     { "id": "axe", "name": "斧", "icon": "i", "weight": 3.0, "maxStack": 1, "type": "weapon" },
     { "id": "knife", "name": "刀", "icon": "i", "weight": 0.6, "maxStack": 1, "type": "weapon" },
+    { "id": "ammo_9mm", "name": "9mm 弹药", "icon": "i", "weight": 0.01, "maxStack": 60, "type": "generic" },
+    { "id": "pistol", "name": "手枪", "icon": "i", "weight": 1.1, "maxStack": 1, "type": "weapon", "ranged": { "damage": 18, "range": 18, "spreadDegrees": 3, "pellets": 1, "cooldownSeconds": 0.45, "magazine": 8, "reloadSeconds": 2.0, "ammoDefId": "ammo_9mm", "noiseRadius": 28, "wearPerShot": 0.01, "projectileSpeed": 20, "falloffStart": 8, "falloffEnd": 18, "falloffScale": 0.55 } },
     { "id": "jacket", "name": "夹克", "icon": "i", "weight": 1.2, "maxStack": 1, "type": "clothing" }
   ]
 })";
@@ -195,6 +197,36 @@ TEST_CASE("M6-T2：装备槽规则与换装/卸下") {
     swapped2 = Make("dummy_placeholder", 1);  // 先填充，确认被覆盖
     CHECK(items::Equip(equipment, registry, ecs::EquipSlot::Body, Make("jacket", 1), &swapped2));
     CHECK_FALSE(swapped2.Valid());
+}
+
+TEST_CASE("M23-F1-T2：弹匣状态随背包/装备复制") {
+    const items::ItemRegistry registry = MakeRegistry();
+    ecs::Container bag;
+    bag.capacityKg = 100.0f;
+
+    CHECK(items::AddItem(
+              bag, registry, ecs::ItemInstance{"pistol", 1, 0.8f, 6}) == 1);
+    REQUIRE(bag.items.size() == 1u);
+    CHECK(bag.items[0].loadedAmmo == 6);
+
+    ecs::ItemInstance taken;
+    REQUIRE(items::TakeAt(bag, 0, 1, &taken));
+    CHECK(taken.defId == "pistol");
+    CHECK(taken.loadedAmmo == 6);
+    CHECK(bag.items.empty());
+
+    ecs::Equipment equipment;
+    REQUIRE(items::Equip(equipment, registry, ecs::EquipSlot::PrimaryHand,
+                         taken, nullptr));
+    REQUIRE(equipment.slots[0].has_value());
+    CHECK(equipment.slots[0]->loadedAmmo == 6);
+
+    ecs::ItemInstance removed;
+    REQUIRE(items::Unequip(equipment, ecs::EquipSlot::PrimaryHand, &removed));
+    CHECK(removed.loadedAmmo == 6);
+    CHECK(items::AddItem(bag, registry, removed) == 1);
+    REQUIRE(bag.items.size() == 1u);
+    CHECK(bag.items[0].loadedAmmo == 6);
 }
 
 TEST_CASE("M6-T5：使用第一个可用物品（消耗与效果返回）") {

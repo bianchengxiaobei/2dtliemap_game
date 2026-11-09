@@ -1,7 +1,7 @@
 # ZomboidLike Mod 开发指南（Lua / Python 可选，API v1）
 
-> 适用版本：M7/M8 脚本系统 v1 · 参考示例：`mods/example_hello`、`mods/example_reactive`、`mods/example_ui`
-> （两个示例目录都同时带 `scripts/main.lua` 与 `scripts/main.py`，用 `script.backend` 切换）
+> 适用版本：M7/M8 脚本系统 v1 + X-F2a 内容文件 / X-F2b-1 内容指纹 / X-F2b-2a 图集资源 / X-F2b-2b 搜刮表与 POI / X-F2b-2c 任务与事件 / X-F2b-2d HUD 字段 / X-F2b-2e 动态内容（物品、配方、建造、POI、任务） / M23-F5 作物、烹饪、食物状态与存档联机 / M23-F2b 动物与狩猎 / M23-F4 聚落 / X-F3-T1~T6 内容文件监听、事务热重载、指纹/联机策略、仅单机动态内容边界、测试与文档收口 · 参考示例：`mods/example_hello`、`mods/example_reactive`、`mods/example_ui`、`mods/example_content`
+> （示例目录都同时带 `scripts/main.lua` 与 `scripts/main.py`，用 `script.backend` 切换；`example_content` 另带物品/配方/建造/搜刮表/POI/任务数据与图集）
 > 设计稿（内部实现说明）：`docs/03-脚本系统设计.md`
 
 ---
@@ -124,7 +124,10 @@ end)
 | 接口 | 返回 | 说明 |
 |---|---|---|
 | `World.IsPassable(x, y)` | bool | 格 (x, y) 是否可通行（未加载区域 = 不可通行） |
+| `World.GetSquare(x, y, z?)` | table 或 nil | 读取已加载格的只读分层快照；未加载返回 nil。字段见下 |
 | `World.SpawnItem(defId, x, y, z?)` | bool | 在格坐标生成地面物品（defId 必须先注册，见 `assets/items.json`） |
+
+`World.GetSquare` 返回 `{loaded, hasFloor, floor, wall, furniture, item}`：`floor` 为单个对象，`wall/furniture/item` 为数组。对象字段为 `{sprite, hp, playerBuilt, blocksMovement}`；无耐久对象的 `hp=-1`。
 
 ### 3.5 `Zombies`
 
@@ -141,12 +144,472 @@ end)
 | `Items.Exists(defId)` | bool | 物品定义是否已注册 |
 | `Items.GetName(defId)` | string | 显示名（未注册 → 空串） |
 
-内置物品 id（`assets/items.json`）：`bandage` / `canned_beans` / `axe` / `kitchen_knife` / `rag` / `jacket` / `tote_bag` / `water_bottle` / `painkillers` / `energy_bar` / `hammer` / `screwdriver` / `hiking_boots` / `backpack` / `makeshift_spear` / `padded_jacket` / `cooked_beans` / `magazine_cooking` / `repair_kit`。
+内置物品 id（`assets/items.json`）：`bandage` / `canned_beans` / `axe` / `kitchen_knife` / `machete` / `baseball_bat` / `crowbar` / `rag` / `jacket` / `leather_jacket` / `raincoat` / `tote_bag` / `water_bottle` / `painkillers` / `antibiotics` / `disinfectant` / `energy_bar` / `hammer` / `screwdriver` / `hiking_boots` / `backpack` / `makeshift_spear` / `padded_jacket` / `riot_vest` / `cooked_beans` / `magazine_cooking` / `repair_kit` / `dirty_water` / `empty_bottle` / `wood` / `radio_part` / `forage_stick` / `forage_stone` / `wild_berries` / `wild_mushroom` / `medicinal_herb` / `small_fish` / `cooked_small_fish` / `cooked_wild_berries` / `cooked_wild_mushroom` / `herbal_tea` / `fish_bait` / `fishing_rod` / `river_trash` / `fertilizer` / `fungicide` / `cabbage_seeds` / `fresh_cabbage` / `potato_seeds` / `fresh_potato` / `tomato_seeds` / `fresh_tomato` / `corn_seeds` / `fresh_corn`。
 
-### 3.7 `Hud`（只读 HUD 快照）
+M18-F2 可选物品字段：`spoilDays`（>0 表示可腐败天数，`condition` 作为新鲜度）；`use.healthPenalty`（使用后立即扣血）；`use.replaceWith`（使用后原位替换为另一个已注册物品 id，雨水瓶回收空瓶用）。M23-F5-T3 起 `use.nutrition`（0~1 营养）与 `use.foodPoisonChance`（0~1 食物中毒概率）可用；腐败食物按 `food.spoiledPoisonChance` 提高概率，营养降低中毒概率与饥饿伤害，`FoodState` 的中毒伤害由固定 tick 结算。F5-T4 起 `FoodState` 注册 `FOOD` v1 存档组件（营养/中毒剩余/每秒伤害/总时长），单机、服务器世界与玩家档案快照都会保存；联机通过 `PlayerState v15` 的 owner-only `food` 字段同步，客户端只读显示，不本地推进中毒。F5-T5 的平衡基准把 `hearty_stew` 设为饥饿 0.85/营养 1.0/治疗 3/保鲜 2.5 天，并要求每份批量制作消耗燃料、锅具不消耗；自定义食物可参考该收益与 `food.*` 安全上界。M20-F1 新增 `use.infectionCure`（0~1，直接降低感染病程）、`use.infectionSlow`（0~1，抑制强度）与 `use.infectionSlowSeconds`（0~600 秒）；`infectionSlow > 0` 时必须提供持续时间，无感染时抗生素/消毒剂拒绝使用且不消耗。M23-F6-T2 新增 `use.infectionRisk`（0~1，有伤口时使用物品的感染风险）；概率按确定性子种子判定并受 `infection.maxChance` 约束，无伤口不触发，内置污染绷带示例为 0.35。内置雨水收集器用 `object.locker` 占位图，制作站 id 为 `locker`。
+
+M23-F3 火焰数据：`fire.file` 指向 `assets/fire.json`（`fire-v1`），每个材料含唯一 `id/name`、`sprites[]`、`flammability{ignitionThreshold,burnSeconds,smokePerSecond,heatRadius}` 与可选 `charredDrops[{item,count}]`；未知字段、重复 id/sprite、越界值整体拒绝。当前火焰文件由启动配置直接加载，不参与 `content/` 合并；需要不同火焰配置时用 `--fire.file=...` 指向另一份文件，并确保服务器/客户端一致。
+
+M18-F3 内置睡眠：`building.types` 中 id 为 `bed`、sprite 为 `object.bed` 的可建造项触发床边交互；`config/game.json` 的 `sleep.*` 控制睡眠时长/时间倍率/疲劳恢复/僵尸中断半径。当前仅单机、仅内置床，mod 自定义床位与联机睡眠未开放。
+
+M18-F4 建造项扩展字段（均为可选）：`spriteVertical`/`openSprite`/`openSpriteVertical` 提供横竖朝向和门打开时的 sprite；`door:true` 启用 E 开关门与关门碰撞（必须同时提供 `openSprite`）；`layer` 为 `wall`/`furniture`/`floor`（默认 `furniture`）；`category` 为 `defense`/`facility`/`storage`（默认 `facility`）。门状态通过 sprite + `blocksMovement` 写入 chunk diff，不新增布尔字段；木地板使用 `SquareObject.underlay` 记录覆盖前地面，chunk diff 已升 v3（兼容 v1/v2）。地图自带门/墙 `playerBuilt=false`，不会被玩家维修/拆除。
+
+M19-F2/F6-T1/T2/T3/M24-T2 POI 数据（当前内置 11 个固定区域：加油站/诊所/农场仓/圣玛丽医院/军事检查站/超市/警察局/消防站/汽车旅馆/教堂/仓库，另支持 mod 追加；联机由服务器按已加载 chunk 生成并同步）：`config/game.json` 的 `pois.defs[]` 每项包含 `id/name/threat(1..3)/markerX/markerY/containers[]/enemies/task`；`containers[]` 为 `{x,y,tableId,sprite}`，`enemies` 为 `{count,kind:"normal|fast|strong|mixed|armored",armoredCount?,radius}`，`task` 为 `{description,targetTable,rewardXp,rewardItem,rewardCount}`。`targetTable` 必须指向该 POI 自己的某个容器表；基础搜刮表在 `assets/loot.json`（`loot-v1`），mod 可在 `content/loot.json` 追加。任务完成条件为目标表首次搜索 + 该 POI 的 `PoiGuard` 全部清除；完成状态存 `PoiTasks`，奖励物品只支持已注册 id。内置地图建筑坐标在 `tools/gen_map.py` 的 `POI_SPECS`，修改后需重新生成地图并同步 `marker/containers` 配置；生成器 v5 的医院用 `interiorWalls` 生成带门洞隔墙，军事检查站复用 `object.barricade` 路障；M24-T2 的超市/警察局/消防站/汽车旅馆/教堂/仓库各自至少 3 个容器、独立掉落表与自动任务（T3 为仓库追加第 4 个中继货架 `poi_warehouse_relay`），均不新增 tile 集。F6-T2 的医院为威胁 2/7 名 mixed 守军，药房/物资箱含 `tainted_bandage`；军事检查站为威胁 3/9 名 strong 守军，军械柜保底手枪 1+9mm 16+霰弹 8，容量 24、rolls 4。M24-T2 的超市/旅馆为威胁 1，警察局/消防站/教堂为威胁 2 且各 1 名重甲，仓库为威胁 3/8 strong/2 重甲；目标表分别为 `poi_supermarket_storage`、`poi_motel_storage`、`poi_police_armory`、`poi_fire_gear`、`poi_church_supplies`、`poi_warehouse_valuables`。M24-T6 将超市食品架/仓库食品区 rolls 调为 3（仓库罐头汤保底 1）、警察局枪柜 9mm 保底 6、仓库贵重品柜霰弹单条 max 6，保持单 POI 食物 ≤1.5 日、警局 9mm 12~24、仓库霰弹 6~10 的期望区间；修改这些表后需同步 `tools/tests/test_m24_balance.py`。F6-T3 起 `enemies.armoredCount`（0~count，默认 0）把前 N 名守军替换为 `armored` 军械守卫：2.0 HP/0.62 速度/14.5 咬击，爪/咬/钝减伤 35%、击退 ×0.35，火焰/调试伤害不减；内置军事检查站 `armoredCount=2`（2 精英 + 7 strong）。`armoredCount` 与 kind 均进入内容指纹。mod POI 不生成房间，需自行保证坐标可达；新增 POI 需同时补房间、容器、搜刮表与玩家可达性测试。
+
+M19-F3/F6-T4/F4-T4/M24-T3/T4 任务数据（当前内置 31 条、10 条一次性链、8 个随机事件；联机由服务器权威推进并同步）：`config/game.json` 的 `missions.defs[]` 每项包含 `id/name/chain/order/kind/source/task?/prerequisite/minDay/chance/autoActivate?/timeLimitDays?/retryDays?/objectives/reward`。`kind` 为 `once|daily|random`；`source` 为 `radio|note|npc|base`；`task` 可选 `generic|help|escort|clear|supply`，仅用于委托类型/HUD 标签，缺省 generic。`autoActivate` 默认 true；设为 false 时不会自动接取、每日刷新或随机触发，只能由对话/脚本等显式接取（当前聚落四段链）。`timeLimitDays` 为 0 或省略表示不限时，否则在接取日 + N 天到期失败；`retryDays` 默认 1，失败/放弃后需等待该天数才可重接。`objectives[]` 每项为 `{kind,target,count,description}`，其中 `kind` 支持 `collect|interact|kill|loot|poi|reach`，`loot` 的 `target` 可为 `any` 或搜刮表 id，`poi` 指向 `pois.defs[].id`，`reach` 另需 `x/y/radius`。`reward` 支持 `xp/skill/item/itemCount/extraItem/extraItemCount/blueprint/label`；`extraItem` 为可选的第二件奖励（如伏击的止痛药），`blueprint` 为配方 id，完成后直接写入 `KnownRecipes`。`building.types[]` 的 `requiresMission` 可把设施绑定到任务完成状态（当前 `rain_collector` = `farm_tools`）。任务完成/进度写入玩家 `MissionLog` 存档组件；新增任务需同步 Python `test_mission_data.py` 的引用校验。F6-T4 新增医院/军事两条两段链（`hospital_supply→hospital_quarantine`、`military_armory→military_extract`）与两个随机击杀事件；链首用 `poi` 目标读取 `PoiTasks.completed`，链尾用特定 `loot` 表 + `reach`。F4-T4 新增四段聚落链 `settlement_help→settlement_escort→settlement_clear→settlement_supply`（求助/护送/清剿/物资），由 `assets/settlements.json` 的 `missionPool` 提供给求助者；护送当前为“医院南门接应 + 返回村庄”的路线目标，不生成跟随 NPC。F6-T5/F4-T4 起 once 任务失败后记录失败日，按 `retryDays` 重试；前置未完成不会提前解锁，已完成/进行中不会重复接取，奖励仅在 Active→Completed 时发放一次。M24-T3 追加 `super_stock→super_return`、`police_case→police_return`、`motel_guest→motel_return`、`relay_recover→relay_extract`；中继链 `relay_recover` 前置 `radio_repair`，同时要求搜索 `poi_warehouse_relay` 并持有 `relay_part`。任务叙事写入 `objectives[].description` 与 POI `task.description`；HUD 会按当前未完成目标解析 POI marker、匹配 loot 表容器、reach 坐标或电台坐标，追加“目标<方位> <距离>格”。M24-T4 追加 `event_wandering_horde`（第 3 天/0.50/8 杀）、`event_infected_house`（第 2 天/0.55/3 杀+`event_infected_cache`）、`event_survivor_ambush`（第 4 天/0.40/2 名）、`event_cold_snap`（第 2 天/0.35/到达村庄）；随机事件总数 8。空投 `event_supply_drop` 保持 `loot any×2`，由 `game/RandomEvents` 生成 2 个 `event_supply_crate`；事件箱/敌人按 `RandomEventStableId(mission,day,index)` 去重，事件敌人标签随存档保存。事件内容只由单机 `UpdateMissions` 或服务器 `TickServerMissions` 生成，网络客户端不本地生成；寒潮使用 `WeatherSystem` 临时覆盖 15 游戏分钟，不写存档字段。mod 任务若复用 `event_` 前缀并依赖事件内容，需要自行提供同 id 的 `RandomEvents` 内容计划，否则只作为普通随机任务。
+M19-F4 装备数据（武器/衣物）：weapon 继续使用 `combat`；clothing 可新增 `armor{claw,bite,blunt,wear,moveScale,insulation,waterproof}`，各字段均为 0~1（`moveScale` 0.5~1.0），`condition` 会在运行时按比例削弱减伤。weapon/clothing 可新增 `repairEfficiency`（0.1~3.0，缺省 1.0），维修包恢复量 = `inventory.repairAmount × repairEfficiency`。内置新增 `machete`/`baseball_bat`/`crowbar` 与 `leather_jacket`/`raincoat`/`riot_vest`，图标复用现有占位资源；`insulation/waterproof` 已由 M20-F2 用于体温/潮湿结算（保暖降低失温、防水减少淋湿）。护甲只读取躯干槽，减伤在 `CombatSystem` 写伤口之前生效。
+
+M30 战斗 2.0 配置（T7）：`config/game.json` 的 `combat.rules.*` 共 43 项，包括 `staminaMax/staminaRegenPerSecond/staminaRegenDelaySeconds/staminaExhaustedThreshold/staminaExhaustedSeconds/fatigueMaxPenalty/fatigueRegenPenalty`、`heavy*` 9 项、`block*` 8 项、`parry*` 5 项、`dodge*` 5 项、`poise*` 4 项、`poiseMaxNormal/Fast/Strong/Armored` 4 项与 `armoredStaggerPoiseThreshold`。缺失键使用 `CombatRuleConfig` 默认值；NaN/越界在 `SanitizeCombatRuleConfig` 回退或钳制；单机/服务器共用 `WorldSimulation::LoadCombatRuleConfig`，命令行 `--combat.rules.<key>=...` 同样生效。武器 `combat{stamina,windup,poise,blockReduction,blockStamina,heavy}` 仍按物品数据覆盖全局规则；旧扁平 `combat` 继续兼容。
+
+M23-F1 远程武器数据：weapon 可新增 `ranged{damage,range,spreadDegrees,pellets,cooldownSeconds,magazine,reloadSeconds,ammoDefId,noiseRadius,wearPerShot,projectileSpeed,falloffStart,falloffEnd,falloffScale}`，14 个字段全部必填；`pellets`/`magazine` 为整数，`falloffStart <= falloffEnd <= range`，`ammoDefId` 必须指向已注册物品。远程武器可同时保留 `combat` 作为近战备用；当前 T1–T6 已接线单机射击/换弹/投射物/枪声引怪与服务器权威扣弹/换弹，`noiseRadius` 直接作为 Gunshot 世界声音半径；联机弹匣/换弹复制与 HUD 已由 T7/T8 接线；双客户端测试见 T10，实机验收留 T11。
+
+M20-F1 感染数据：`config/game.json` 的 `infection` 段控制暴露概率、病程总秒数、阶段阈值、未包扎伤口加速、发热疲劳和重症掉血；`clawChance`/`biteChance` 是基础概率，已有未包扎伤口按 `woundRiskBonus` 增加暴露概率，最终不超过 `maxChance`。感染阶段由 `progress` 与 `incubatingEnd`/`feverEnd` 派生：潜伏→发热/疲劳→重症→死亡。绷带战利品/制作、诊所/村庄储物柜保证产出的抗生素与随机消毒剂都通过现有 `use` 字段治疗；治疗道具只在感染激活时可使用。感染状态为 `INFC` v1 存档组件，同时经 `ZLR1` 复制和 `ZLP1 v4/v5` owner 镜像；HUD 字段为 `infectionStatus`/`infectionTone`。
+
+M20-F2 天气/温湿数据：`config/game.json` 的 `weather` 段控制天气块周期、过渡时长、四类天气权重、各天气环境温度、夜间降温、僵尸视距/移速缩放与潮湿强度；`climate` 段控制淋雨/烘干速率、室内与篝火增温、衣物保暖/湿冷、失温阈值、疲劳/移速惩罚与失温伤害。天气由累计游戏时间确定性生成，不需要额外随机游标；`ecs::Climate` 的 `bodyC/wetness` 写入 `CLMT` v1，`ZLP1` v5 只读镜像。HUD 字段为 `weatherStatus`/`weatherTone`/`weatherClass`，`weatherClass` 为 `clear|rain|fog|cold`，对应 `weather-overlay` 调色。
+
+M20-F3 特殊僵尸/尸潮数据：`config/game.json` 的 `baseEvent` 段新增 `maxWaveSize`、`scalePerDay`、`scalePerStructure`、`specialStartWave`、`specialCount`、`howler*` 与 `breaker*`。`scalePerDay` 使用生存天数（第一天为 1），`scalePerStructure` 使用触发时基地半径内的玩家结构数；两者只放大每波数量，最终同时受 `maxWaveSize` 与 `maxAlive` 限制。特殊僵尸在第二波起按波次交替生成，`ZombieSpecial` 的 `kind/cooldown/windup` 进入 `ZSPC` v1 与 `ZLR1`；Mod 若读取 HUD，沿用 `siegeStatus/siegeTone` 即可看到“特殊 嚎N 破N”和蓄力文本，无需新增字段。
+
+M20-F4 基地经营数据（单机）：`config/game.json` 的 `farming` 控制 `growMinutes/waterMinutes/maxWaterMinutes/witherMinutes/harvestYield/seedYield/seedItem/produceItem/waterItem`；`power` 控制 `fuelMinutesPerCan/radius/fuelItem`；`traps` 控制 `damage/radius/cooldownSeconds/staggerSeconds/uses`；`trading` 控制 `range/merchantX/merchantY/restockDays`。建造项 `farm_plot/generator/fridge/spike_trap` 仍在 `building.types[]`，设施精灵使用 `object.farm_plot/generator/fridge/trap` 逻辑名（当前映射自有图集占位帧）；新物品 `cabbage_seeds/fresh_cabbage/fuel_can` 在 `assets/items.json`，农场/加油站掉落写入 `assets/loot.json`。`FARM` 为 v2（F5-T2 增加病害/施肥标记，旧 v1 兼容），`GENR/COLD/TRAP/MRCH` 为 v1 存档组件；`MerchantStock.stock` 固定 5 档（对应内置报价），`restockDay` 按生存日补货。HUD 新增 `baseFarms/baseFarmGrowing/baseFarmMature/baseFarmDiseased/baseFarmThirsty/baseFarmFertilized/baseGenerators/baseGeneratorsOnline/baseFridges/baseFridgesPowered/baseTraps/baseTrapsArmed` 字段（Lua/Python `Hud.GetState()` 同名）；农田/发电机/陷阱/商人提示复用 `action-hint`，交易面板无需新增 RML 元素。Mod 新增同类设施时应复用 `WorldDemoState` 的建造分支与 `Homestead` 纯规则，不能只放置世界对象而不写状态组件。F5-T1 起多作物由 `assets/crops.json` 驱动，`farming.*` 的 `growMinutes/harvestYield/seedItem/produceItem` 只在作物数据缺失时作为回退；详见 3.6.3.2。
+
+### 3.6.1 Mod 内容文件（X-F2）
+
+M7/M8 的脚本 API 负责行为，X-F2 起 mod 还可以在 `content/` 下声明**物品、配方、作物、建造项、搜刮表、觅食/钓鱼节点、POI、任务、事件和聚落**，启动时合并进基础注册表；X3-T2 起单机 content 文件变更为整批事务热重载，不需要改 C++。参考实现：`mods/example_content`。
+
+目录结构：
+
+```text
+mods/my_content_mod/
+├─ mod.json
+├─ content/
+│  ├─ items.json
+│  ├─ recipes.json
+│  ├─ crops.json
+│  ├─ buildings.json
+│  ├─ loot.json
+│  ├─ forage.json
+│  ├─ pois.json
+│  ├─ missions.json
+│  └─ settlements.json
+└─ assets/
+   ├─ asset_manifest.json
+   └─ atlas_example.atlas.json
+```
+
+全部内容文件和 `assets/` 都可省略；`mod.json` 仍然必需，内容按 `loadOrder`（缺省 100，越小越先）和目录名排序合并。合并发生在脚本加载前，因此内容对 `OnGameStart`/`OnTick` 和核心 UI 都可见。
+
+**items.json**：与 `assets/items.json` 相同，根为 `{"format":"items-v1","items":[...]}`；字段校验、`use`、`combat`、`ranged`、`armor`、`spoilDays`、`unlocksRecipes` 规则与内置物品一致。`use` 另支持 `nutrition`（0~1 营养）、`foodPoisonChance`（0~1 食物中毒概率）与 `infectionRisk`（0~1 使用感染风险）；`ranged.ammoDefId` 可引用同批或更早加载的弹药物品，不能引用更晚加载的 mod。
+
+**recipes.json**：与 `assets/recipes.json` 相同，支持 `recipes-v4`（兼容 v1/v2/v3）的 `{id,name,category,output,ingredients,tools,cookware,fuel,station,time}`。`category` 取 `general/cooking/preservation/medical/crafting`；`cookware` 为 `{item,count:1}` 的不可堆叠锅具（不消耗），`fuel` 为 `{item,count}`（每次制作消耗）；v4 才允许这三个字段。`station` 仍指向地图逻辑对象，例如 `campfire`/`workbench`/`locker`。内置烹饪示例：`cook_small_fish`/`cook_wild_berries`/`cook_wild_mushroom`/`brew_herbal_tea`/`cook_hearty_stew`（篝火），以及 `craft_fishing_rod`/`craft_fish_bait`（无站点）；`forage_meadow` 也会产出鱼饵。
+
+**buildings.json**：新增格式：
+
+```json
+{
+  "format": "buildings-v1",
+  "types": [
+    {
+      "id": "my_crate",
+      "name": "补给箱",
+      "sprite": "mod.supply_crate",
+      "woodCost": 3,
+      "maxHp": 0,
+      "blocksMovement": false,
+      "storageKg": 35,
+      "storageSlots": 4,
+      "category": "storage"
+    }
+  ]
+}
+```
+
+字段与 `config/game.json` 的 `building.types[]` 相同。`storageKg > 0` 的建造项会自动走现有仓库实体、容量/堆数、存取 UI、拆除掉落与联机复制路径；`layer/door/openSprite/owner` 等规则也复用现有实现。非存储设施若需要新的运行时行为，仍要由 C++ 提供对应组件/系统，纯数据只能放置静态对象或复用已有行为。
+
+合并语义：
+
+- 每个 mod 的 items+recipes 作为一个事务；物品/配方校验失败（重复 id、未知材料、未知 `unlocksRecipes` 等）只跳过该 mod，之前已接受的 mod 内容保留。
+- `unlocksRecipes` 可以引用同 mod 或更早 mod 的配方；不要前向引用更晚加载的 mod。
+- 建造项重复 id 会被拒绝；非存储建造项的 sprite 不能与已有项冲突；两个存储项可复用同一 sprite，但容量或堆数必须不同（客户端/服务器用容量/堆数区分）。
+- `loot.json` 在基础 `assets/loot.json` 后追加表；表 id 与已有表冲突时整份 mod 战利品文件拒绝且不改动已有表。表项可引用当前 mod 或更早 mod 已加载的物品；基础 `seed` 保持不变。格式与字段见 3.6.4。
+- `forage.json` 在基础 `assets/forage.json` 后追加觅食区域/钓鱼点；区域或钓鱼点 id 与已有/同文件重复时整份文件拒绝。`tableId`（以及钓鱼点的 `trashTableId`）必须引用最终合并后的战利品表。格式见 3.6.4。
+- `pois.json` 只追加新 POI id，重复 id 跳过；基础 `pois.enabled` 为 `false` 时不加载 mod POI，`guideRange` 仍由基础配置决定。mod POI 不创建地图房间/墙体，坐标和容器可达性由作者保证。
+- `missions.json` 只在基础 `missions.enabled=true` 时追加任务/事件；任务 id 重复、条目无效、前置缺失或成环时整份文件跳过，已有任务不变。前置可引用基础任务或同批次更早文件的任务；同一文件内可自由引用。格式见 3.6.5。
+- `settlements.json` 只在基础 `settlements.enabled=true` 时追加聚落；重复 id 跳过，条目无效跳过，格式错误/无有效定义时整份文件跳过。安全区/NPC 点位/库存/任务池格式见 3.6.3.4。
+- X3-T2 起单机（`net.mode=direct`）且没有脚本动态内容时，修改 `content/*.json` 会在防抖后重新构建独立 `ContentBundle`；items/recipes/buildings/loot/forage/animals/crops/POI/missions/settlements 全部校验通过才一次性替换，失败保留旧内容并在日志输出 `mod 内容热重载失败，保留旧内容`。成功后记录旧→新内容指纹，`WorldDemoState` 下一次 tick 重建建造目录并复制新 POI/任务/聚落配置。`assets/*.json` 仍只通知、需重启；联机/主机只告警并提示重启服务器和所有客户端后重连；X3-T4 确认动态内容仅单机，联机热重载拒绝显示 5 秒 HUD 提示，均不替换注册表/不刷新指纹。X3-T5 已用 3 用例锁定失败原子性、未变指纹、五类动态内容联机拒绝与旧档未知物品；X3-T6 完成文档收口。脚本与 `mod.json` 的现有热重载继续生效。
+- 示例 `mods/example_content` 新增 `mod_pumpkin`（南瓜作物，种子/产物）、`pumpkin_soup`（南瓜浓汤）、`cook_pumpkin_soup`（锅具+木材的南瓜汤配方）、`camp_stew`（营地炖豆）、`cook_camp_stew`（篝火配方）、`mod_supply_crate`（35kg/4 堆补给箱）、`mod_camp_cache`（补给箱搜刮表）、`mod_depot`（补给站 POI）、`mod_depot_supply`（补给站任务）和 `depot_status`（HUD 字段）；同时用 `mod.camp_stew`/`mod.supply_crate` 演示 mod 本地图集绑定，验证“无需改 C++ 新增作物→种子/产物→锅具燃料烹饪 + 可建造仓库 + 资源名 + 搜刮表/POI/任务 + HUD 字段”。
+
+当前限制：HUD 字段已支持（见 3.7），物品/配方/建造/POI/任务可用 `Content` API 在单机运行时追加（见 3.6.6）；X3-T2 的 content 事务热重载仅限单机且无脚本动态内容，X3-T3 起联机只拒绝并要求重启+重连，X3-T4 确认动态内容仅单机、联机注册/启动拒绝并显示 HUD 提示，assets 仍只通知并需重启；新增/删除整个 mod 目录仍需重启（监听器只跟踪启动时来源），已生成实体/容器/NPC 和旧档中已删除物品 id 不回溯迁移；X3-T5 锁定旧档未知 mod 物品仍保留 `defId`，但名称/重量/图标不可用，直到重新安装对应 mod 或手动清理。动态内容不写存档、禁 mod 不回滚，联机时客户端与服务器必须安装相同的物品/配方/作物/建造/搜刮表/觅食钓鱼数据/POI/任务/聚落内容；启动时会自动校验内容指纹（见 3.6.3），热重载成功后重算，但脚本/图集/地图/事件尚未纳入。启动时 POI/任务定义同时进入客户端与服务器内容指纹；服务器按已加载 chunk 生成 POI 容器/守军，并由 `TickServerMissions` 权威推进任务日志、奖励与放弃命令，联机客户端跳过本地 `UpdateMissions`。`Content` API 动态追加仍是单机能力，联机连接/主机启动会被拒绝；Mod HUD 字段只显示在客户端。
+
+### 3.6.2 Mod 图集与资源绑定（X-F2b-2a）
+
+mod 可以在 `mods/<id>/assets/asset_manifest.json` 声明新的逻辑资源名，启动时在基础 `assets/asset_manifest.json` 之后合并。格式与基础清单的 `logical` 段相同，provider 仍为 `own`/`placeholder_pz`；当前 provider 没有帧时会按基础逻辑回退 `own`。
+
+```json
+{
+  "logical": {
+    "mod.supply_crate": {
+      "own": {
+        "atlas": "atlas_example.atlas.json",
+        "frames": [ "mod_supply_crate" ]
+      }
+    }
+  }
+}
+```
+
+图集 JSON 使用 `pz-atlas-v1`，其中 `image` 相对图集 JSON 所在目录；mod 清单里的 `atlas` 相对 mod 清单所在目录解析，找不到时再按项目根目录解析（兼容基础清单写法）。内容文件的 `sprite`/`icon` 可以直接引用这些新逻辑名。
+
+```json
+{
+  "format": "pz-atlas-v1",
+  "image": "atlas_example.png",
+  "subtextures": {
+    "mod_supply_crate": {
+      "x": 0, "y": 0, "w": 64, "h": 64,
+      "ox": 0, "oy": 64, "fx": 64, "fy": 128
+    }
+  }
+}
+```
+
+合并规则：
+
+- 只允许新增逻辑名；与基础清单或更早 mod 重名时跳过并告警，不覆盖既有资源。
+- content 校验失败的 mod 不会加入资源清单；只有资源的 mod 也可以应用。
+- `mods/example_content` 新增 `mod.camp_stew`（物品图标）与 `mod.supply_crate`（建造精灵），用 mod 本地图集 JSON 复用内置 PNG 帧作为示例；实际 mod 应把 PNG 放在自己的 `assets/` 下。
+- 资源在进入世界时加载，修改后需重启；资源不参与内容指纹，服务器也不加载贴图，因此联机双方仍需安装同一份 mod 资源。
+
+### 3.6.3 内容指纹与联机握手（X-F2b-1）
+
+客户端与服务器启动时都会对**最终生效**的物品、配方、建造项、搜刮表、觅食/钓鱼数据、动物数据、作物数据、POI、任务与聚落计算 64 位内容指纹（`game::ComputeContentHash`，v13），覆盖定义顺序和全部字段（含名称、图标、重量、战斗/护甲、配方分类/材料/工具/锅具/燃料/时间、建造成本/耐久/容量、战利品权重/min/max、觅食区域/钓点密度/刷新/工具/鱼饵、动物速度/警觉/逃跑/伤害/尸体搜索/掉落表/生成权重、作物阶段/水耗/病害/产量/种子、POI 容器/守军/任务奖励、任务类型/目标/前置/自动接取/时限/重试/随机权重、聚落安全区/NPC 点位/库存/补货日/任务池/夜袭防御等），并在 KCP 握手的 `Hello/Welcome` 中比较；不一致会拒绝连接。
+
+`net.contentHash` 默认 `0`，表示自动计算；仅在需要手动覆盖时填写非 0 值，此时客户端与服务器必须一致。该指纹用于避免玩法数据顺序或数值不同造成的联机错位；脚本、图集/贴图、地图与事件内容尚未纳入，仍需双方安装同一份游戏内容。
+
+### 3.6.3.1 动物数据（M23-F2b-T1/T2/T3/T4）
+
+`assets/animals.json` 使用 `format: "animals-v1"`，`animals` 数组定义物种。必填字段：`id/name/kind/sprite/maxHealth/wanderSpeed/fleeSpeed/alertRadius/fleeRadius/hearingRadius/fleeSeconds/damage/attackRange/attackCooldown/lootTableId`；可选 `corpseSprite`（默认 `corpse.placeholder`）、`corpseSearchSeconds`、`corpseTool/corpseToolWear` 与 `spawn`。`spawn` 为 `{forest, meadow, poi, maxPerChunk, poiIds}`：`forest/meadow/poi` 是该区块类别 0~1 的命中权重，`maxPerChunk` 为 0~8，`poiIds` 只能引用 `config/game.json` 的 POI id；权重全 0 时上限必须为 0，配置 `poiIds` 时 `poi` 必须大于 0。`kind` 为 `passive` 或 `dangerous`；被动动物的伤害/攻击距离/冷却必须为 0，危险动物必须为正。`lootTableId` 必须在 `assets/loot.json` 存在，`corpseTool` 必须在 `assets/items.json` 存在。
+
+当前基础物种：`deer`（鹿，被动，森林/草地）、`rabbit`（兔子，被动，森林/草地）、`boar`（野猪，危险，森林/草地/农场仓 POI）；对应尸体表 `animal_deer/animal_rabbit/animal_boar`。该数据在客户端和服务器启动时加载并参与内容指纹；暂不接受 mod `content/` 覆盖。生成全局参数在 `config/game.json` 的 `animals.spawn`（`enabled/maxLive/minPlayerDistance/poiRadius/seed`）：单机 `AnimalSystem` 只在室外草地/泥地生成，树旁算森林、无树算草地；T6 起正式服务器/内嵌服务器通过 `ServerHost::Options::spawnAnimals` 开启权威生成与战斗，客户端只接收 `Animal/AnimalCorpse` 复制，轻量服务器单测可显式关闭。动物实体游荡使用运行时 `AnimalWander`，远端按 `LodState` 降频；chunk 卸载保存到运行时快照并在重载恢复。T7 起 `AnimalWorldState`（`AWST` v1）把未加载 chunk 的动物快照（物种/位置/生命/Flee）与已播种 chunk 标记写入世界存档，单机快速存档和服务器 `SaveWorld` 都会写入稳定状态实体 `0x4D323342414E4D53`，`WorldSimulation::LoadSave` 与单机读档恢复；上限 4096 chunk / 单 chunk 16 条 / 全局 2048 条，超出部分下次加载按种子重新播种。T3 起 `alertRadius` 是视觉发现距离（需视线），`fleeRadius` 是近距离压迫半径（不要求视线），`hearingRadius` 与 `SoundEvent.radius` 取较小值作为有效听觉半径并受墙衰减，`fleeSeconds` 同时作为逃跑/野猪威胁记忆时长，危险动物的 `damage/attackRange/attackCooldown` 用于反击；`retaliating`/攻击冷却为运行时状态。T4 起动物死亡生成 `AnimalCorpse`，`corpseTool` 必须可用且 condition>0，按 `corpseSearchSeconds` 剥取并磨损 `corpseToolWear`，掉落按 `lootTableId`/尸体稳定 ID 确定性 roll 到尸体 `Container`；已剥取标记防重复。T6 起服务器权威结算动物受伤/死亡/尸体/剥取，按会话预约防止双人重复剥取；仍不做专用动画、玩家/动物碰撞；尸体掉落不自动入包，需打开尸体容器拿取。T7 已补未加载 chunk 快照与服务器保存/读档链路；真实服务器重启和长时间双客户端狩猎仍需按 `docs/07` P1-H 做人工烟测。T8 起补充本指南、README、devlog 与狩猎平衡说明；基础物种仍使用占位角色帧，不提供专用动物动画、玩家/动物推挤或独立潜行键。H2 野猪反击/剥取/1920 容器、H3 F12 存档重载与 H4 双客户端/服务器重启已用临时探针做自动构造烟测；自然流程/低伤害平衡仍需人工验收。
+
+**狩猎操作与平衡（T8）**：`SPACE` 近战，`V` 远程（需装备枪械和弹匣），靠近尸体按 `E` 剥取（需物种指定工具；当前鹿/兔/野猪均为厨刀），剥取完成后按 `I` 打开尸体容器取物。动物视觉警觉、枪声和脚步都会触发逃跑；野猪受击会反击，接近时需保留退路。当前没有独立潜行键，利用树木阻挡视线接近，或直接远程射击。
+
+按当前 `assets/loot.json` 的 rolls/权重/min 计算期望下限（实际每具尸体随机浮动，不等于保底）：
+
+| 物种 | 尸体容量 | 生肉 | 兽皮 | 骨头 | 熟制饥饿恢复 |
+|---|---:|---:|---:|---:|---:|
+| 鹿 | 12kg / 3 rolls | 约 2.82 | 0.88 | 0.71 | 约 1.19 |
+| 兔 | 6kg / 2 rolls | 约 1.23 | 0.31 | 0.46 | 约 0.37 |
+| 野猪 | 18kg / 4 rolls | 约 3.76 | 1.18 | 0.94 | 约 2.07 |
+
+以 `needs.hungerPerDay=1.4` 计，熟制鹿肉约覆盖 0.85 个游戏日、野猪约 1.48 日、兔约 0.26 日。高收益由 36 只全局上限、每区块每物种 1 只、最小生成距离 18 格、弹药/厨刀工具和野猪反击风险约束；狩猎适合作为探索补给，不替代稳定农业/钓鱼。数值回归见 `tools/tests/test_animal_data.py`，验收矩阵见 `docs/07` P1-H。
+
+### 3.6.3.2 作物数据（M23-F5-T1–T6）
+
+`assets/crops.json` 使用 `format: "crops-v1"`，`crops` 数组定义作物。必填字段：`id/name/seedItem/produceItem/growMinutes/waterMinutes/maxWaterMinutes/witherMinutes/waterUsePerMinute/diseaseChance/harvestYield/seedYield/stages`；`seedItem`/`produceItem` 必须在 `assets/items.json` 或同批 mod 物品中存在，且不能相同；种子 id 在所有作物间唯一。`stages` 为 2~6 项 `{name,start}`，`start` 严格递增、首项 0、末项 1；当前用于状态/HUD 文案，实际结算仍由 `growMinutes` 推进。
+
+| 字段 | 约束 | 作用 |
+|---|---|---|
+| `id` / `name` | 唯一 id；显示名非空 | 存档作物 id 与 HUD 文案 |
+| `seedItem` / `produceItem` | 已注册物品，不能相同 | 播种扣除 1 个种子；收获产出与种子返还 |
+| `growMinutes` | 10~100000 | 无季节/水分限制时的成熟所需游戏分钟 |
+| `waterMinutes` / `maxWaterMinutes` | 各 ≥1，后者不小于前者 | 单次浇水补充量 / 土壤储水上限 |
+| `witherMinutes` | 1~100000 | 连续缺水达到该值后枯萎 |
+| `waterUsePerMinute` | 0.1~5.0 | 生长时每分钟耗水 |
+| `diseaseChance` | 0~1 | 缺水病害阈值调节，不是每次 tick 随机 |
+| `harvestYield` | 1~20 | 成熟时产物数量；施肥在此基础 +`fertilizerYieldBonus` |
+| `seedYield` | 0~5 | 收获时返还种子数；0 表示只收产物 |
+| `stages[]` | 2~6 项，`start` 严格递增、0→1 | HUD 阶段名与进度门槛 |
+
+生长结算：每个 `AdvanceFarmPlot(gameMinutes, season, raining)` 先按雨水补水，再按 `min(gameMinutes, water/waterUsePerMinute)` 计算有效生长，乘以季节 `seasonGrowthScale`；水量耗尽后累计 `dryMinutes`。病害阈值约为 `max(15, witherMinutes × diseaseDryFraction × (1 − 0.35 × diseaseChance) / seasonDiseaseScale)`，达到后停止生长并按 `diseaseYieldPenalty` 减产；`fungicide` 只清除病害，不恢复已损失产量。`farming` 段只在 `crops.json` 缺失时回退单作物参数；`season.{spring,summer,autumn,winter}{Growth,Disease}` 仍由基础配置控制。
+
+```json
+{
+  "format": "crops-v1",
+  "crops": [
+    {
+      "id": "mod_pumpkin",
+      "name": "南瓜",
+      "seedItem": "pumpkin_seeds",
+      "produceItem": "fresh_pumpkin",
+      "growMinutes": 600.0,
+      "waterMinutes": 300.0,
+      "maxWaterMinutes": 600.0,
+      "witherMinutes": 2880.0,
+      "waterUsePerMinute": 1.4,
+      "diseaseChance": 0.08,
+      "harvestYield": 2,
+      "seedYield": 1,
+      "stages": [
+        { "name": "幼苗", "start": 0.0 },
+        { "name": "藤蔓", "start": 0.3 },
+        { "name": "结果", "start": 0.7 },
+        { "name": "成熟", "start": 1.0 }
+      ]
+    }
+  ]
+}
+```
+
+- mod 文件放在 `mods/<id>/content/crops.json`；每个文件按事务追加，id 或种子冲突、物品引用缺失、阶段非法时整份跳过，不修改已有作物。mod 作物可以引用同 mod 或更早加载 mod 的物品。
+- `config/game.json` 的 `crops.file` 指向基础文件；未加载到时单机/服务器回退旧 `farming.*` 单作物参数。X3-T2 起单机 content 热重载会重读作物数据；文件树和 CropDef 都进入内容指纹 v13。
+- 当前种植 E 使用客户端当前选择的种子（空田 `Q` 在可用种子间循环）；`T` 使用 `fertilizer` 施肥一次或使用 `fungicide` 杀菌；E 继续浇水/收获/清理。示例见 `mods/example_content/content/crops.json`（南瓜）。
+- F5-T2 规则由 `config/game.json` 的 `farming` 段控制：`fertilizerYieldBonus`、`diseaseChance`（无作物数据时的回退）、`diseaseDryFraction`、`diseaseYieldPenalty`、`rainWaterPerMinute` 与 `season.{spring,summer,autumn,winter}{Growth,Disease}`。雨天自动补水；夏季病害风险更高、冬季生长更慢；缺水累计达到阈值后作物进入病害，施肥/杀菌状态写入 `FarmPlot` 并存档（`FARM` v2）与复制（`ZLR1` v3）。
+- HUD 的状态文本显示生长阶段、缺水/水分钟、已施肥、病害和季节；基地状态行显示农田总数及生长/成熟/缺水/病害计数。脚本字段见 §3.6.7 的 `baseFarm*`。
+
+### 3.6.3.3 烹饪与食物状态数据（M23-F5-T3–T5）
+
+`recipes-v4` 在 v3 基础上增加三个可选字段：
+
+| 字段 | 约束 | 说明 |
+|---|---|---|
+| `category` | `general/cooking/preservation/medical/crafting`，缺省 general | 背包制作面板分类筛选；只用于展示与脚本状态 |
+| `cookware` | `{item,count:1}`，物品必须 `maxStack=1` | 不消耗；必须具备且可用，锅具耐久参与实际耗时 |
+| `fuel` | `{item,count}`，count≥1 | 每个成功产物消耗一次；批量制作逐份扣除 |
+
+`cookware`/`fuel` 不能与 `ingredients`/`tools` 重复；v1/v2/v3 文件出现这三个字段会被 `RecipeRegistry` 整体拒绝。`MaxCraftCount` 在容器副本上按材料、工具、锅具、燃料和输出空间预检；`Craft` 每件原子扣料/燃料、磨损工具并产出，锅具保留。实际制作时长 = `time / toolEfficiency`，锅具和工具的最低耐久决定效率（0.5~1.0 系数，缺工具/锅具为 0）。
+
+食物 `items.json` 的可选字段：
+
+| 字段 | 约束 | 说明 |
+|---|---|---|
+| `use.nutrition` | 0~1 | 食用后写入 `FoodState.nutrition`，提高饱腹缓冲并降低中毒概率 |
+| `use.foodPoisonChance` | 0~1 | 基础中毒概率；腐败食物取 `max(基础, food.spoiledPoisonChance)` |
+| `spoilDays` | >0 | 可腐败游戏日数；`condition` 表示新鲜度；烹饪产物也按此规则腐败 |
+
+内置平衡（`farming`/`food` 配置不变时）：白菜 240 分钟/2 个、土豆 360/3、番茄 300/3 且病害最高、玉米 480/4 且返还 2 种子；丰盛炖菜消耗土豆+白菜+净水+木材并需锅具，产物饥饿 **0.85**、营养 **1.0**、治疗 **3**、保鲜 **2.5 天**；熏野猪肉消耗生肉+2 木材，饥饿 **0.6**、营养 **0.75**、保鲜 **4 天**。作物取舍、烹饪价值与安全上界由 `tools/tests/test_f5_balance.py` 回归。
+
+食物中毒：`chance = clamp(base × (1 − nutrition × food.nutritionPoisonReduction), 0, 1)`；中毒持续时间与每秒伤害取当前值与 `food.poisonDurationSeconds`/`food.poisonDamagePerSecond` 的较大值。当前默认 45 秒 × 0.12 HP/s，完整中毒最多 5.4 HP；营养还会按 `nutritionHungerRelief`/`nutritionDamageRelief` 降低饥饿增长和饥饿伤害。`FoodState` 存档为 `FOOD` v1，联机由服务器权威结算并通过 `PlayerState v15` 的 owner-only `food` 字段复制，客户端只读显示。
+
+**示例 mod（`mods/example_content`）**：`content/crops.json` 定义 `mod_pumpkin`（`pumpkin_seeds`→`fresh_pumpkin`），`content/items.json` 给南瓜和南瓜浓汤声明 `nutrition`，`content/recipes.json` 的 `cook_pumpkin_soup` 使用南瓜+净水、`cooking_pot` 锅具、1 木材燃料和篝火：
+
+```json
+{
+  "id": "cook_pumpkin_soup",
+  "name": "南瓜浓汤",
+  "category": "cooking",
+  "output": { "item": "pumpkin_soup", "count": 1 },
+  "ingredients": [
+    { "item": "fresh_pumpkin", "count": 1 },
+    { "item": "water_bottle", "count": 1 }
+  ],
+  "cookware": { "item": "cooking_pot", "count": 1 },
+  "fuel": { "item": "wood", "count": 1 },
+  "station": "campfire",
+  "time": 2.5
+}
+```
+
+- 示例的 `loot.json` 还在 `mod_camp_cache` 中放入 `pumpkin_seeds`，形成“搜刮种子→种植南瓜→锅具/燃料烹饪→营养食物”的完整链路。作物/物品/配方按 mod 文件事务合并；引用缺失、id/种子冲突、配方字段非法会整体跳过该文件。X3-T2 起单机修改农业/烹饪 content 后会事务热重载，内容进入内容指纹 v13；联机客户端与服务器必须使用相同内容。示例契约由 `test_mod_content.cpp` 与 `tools/tests/test_f5_mod_example.py` 回归。
+
+### 3.6.3.4 聚落数据（M23-F4-T1/T5/T8）
+
+完整字段、范围、默认值、运行时/存档/联机边界和 mod 检查清单见 [settlementformat.md](settlementformat.md)。本节是 mod 作者需要的最小契约。
+
+`assets/settlements.json` 使用 `format: "settlements-v1"`，根节点 `defs` 数组定义聚落；`config/game.json` 的 `settlements.enabled/file` 控制基础文件。必填字段：`id/name/centerX/centerY/safeRadius/npcPoints/merchantStock/restockDays/missionPool`。
+
+- `id` 为 1~64 字节小写 `[a-z0-9_.]`；`name` 1~128 字节；`safeRadius` 1~128 格。安全区只用于点位校验、躲避、威胁和夜袭，不是物理禁区。
+- `npcPoints[]`：`{id,kind,x,y,wanderRadius}`，`kind` 为 `merchant|guard|requester`；1~16 项，至少各 1 个，id 唯一，坐标必须满足在安全圆内；`wanderRadius` 0~16。每类当前只生成**第一个**匹配点，额外点只进入指纹。
+- `merchantStock`：固定 5 项整数（0~99），对应现有 5 档报价；运行时按每档 `maxStock` 夹紧，补货重置为 `maxStock` 而不是配置初值。`restockDays` 为 1~30 天，主聚落会覆盖 `trading.restockDays`。
+- `missionPool`：1~32 个唯一任务 id（每个 1~64 字节），按顺序选择第一个可接任务；同池同时只允许一条 Active。解析时不校验任务是否存在，运行时忽略缺失/不可激活项。推荐任务使用 `source: "npc"`、`autoActivate: false`、`kind: "once"`。
+- 可选 `defense`（M23-F4-T5，缺省关闭）：`enabled/minDay/nightStartHour/nightEndHour/activationRadius/spawnRadius/baseRaiders/raidersPerNight/maxRaiders/guardBehavior/guardHealth/guardDamage/guardRange/guardAttackSeconds/raiderHealth/raiderDamage/raiderRange/raiderAttackSeconds/raiderSpeed`。`minDay` 1~10000；小时 0~23 且起止不同，支持跨午夜；`guardBehavior` 为 `defend|retreat`；数量/血量/伤害/速度均有上限。夜袭数量为 `baseRaiders + max(0, nightKey-minDay) * raidersPerNight`，再夹紧 `maxRaiders`；守卫生命、失守与当晚标记由 `STLS` v1 保存，夜袭 active 不跨档恢复。
+
+mod 可在 `content/settlements.json` 追加同格式 `defs`，只允许新增 id；单条非法跳过，整份文件无有效定义时失败。X3-T2 起单机 content 热重载会重读聚落数据，联机/主机或存在脚本动态内容时仍需重启；聚落字段进入内容指纹 v13。联机双方必须安装相同内容；服务器权威处理 `AcceptSettlementMission=39` 和 `TradeOffer=21`，失守/夜袭时拒绝接取与交易，客户端只读 `ZLR1` NPC 与 `PlayerState v16` 聚落状态。
+
+扩展边界：
+
+- **当前只有 `defs[0]` 主聚落完整接线**：商人、守卫、求助者生成和对话/交易入口都以第一个定义为准。后续追加聚落会加载并进入指纹，若开启 `defense` 还会出现在防御状态读取中，但不会自动生成 NPC/商人，也没有独立入口；要替换主聚落需在启动配置中改 `settlements.file`，不能靠 mod 覆盖内置 id。
+- 对话树为代码内置，`settlement.name` 只进入说话人；当前没有对话 JSON，不能通过内容文件新增 NPC 类型、对话节点/选项或结果。
+- 交易报价全局固定 5 档，不能按聚落改商品/价格；守卫策略只有 `defend/retreat`。新增类型/策略需改 C++。
+- 追加聚落不会创建地图房间、墙体、床或容器；坐标、地面和可达性由地图/POI 作者保证。
+
+### 3.6.4 Mod 搜刮表、觅食/钓鱼节点与 POI（X-F2b-2b / M23-F2a-T1/T3/T6）
+
+**loot.json**：在基础 `assets/loot.json` 后追加搜刮表，格式仍为 `loot-v1`：
+
+```json
+{
+  "format": "loot-v1",
+  "tables": [
+    {
+      "id": "my_cache",
+      "name": "营地补给箱",
+      "capacityKg": 12,
+      "rolls": 2,
+      "guaranteed": [ { "defId": "bandage", "count": 1 } ],
+      "entries": [
+        { "defId": "my_food", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "rag", "weight": 2, "min": 1, "max": 3 }
+      ]
+    }
+  ]
+}
+```
+
+- 表 id 全局唯一；与基础/更早 mod 冲突时整份文件拒绝，已有表不变。
+- `defId` 可引用最终合并后的物品（启动时或 X3-T2 热重载候选构建时所有 mod 已加载）；`rolls/weight/min/max/capacityKg` 规则与基础战利品表一致。
+- mod 文件中的根 `seed` 不参与合并，随机种子仍由基础 `assets/loot.json` 决定；单机 content 热重载会重建表，联机/主机需重启。
+- 只有搜刮表的 mod 也可以单独应用。
+
+**forage.json**：在基础 `assets/forage.json` 后追加资源节点，格式为 `forage-v1`：
+
+```json
+{
+  "format": "forage-v1",
+  "forageZones": [
+    {
+      "id": "my_forest_patch",
+      "name": "模组森林",
+      "tableId": "my_forage_table",
+      "floors": ["tile.floor.grass"],
+      "requiredNearbySprites": ["object.tree"],
+      "nearbyRadius": 4,
+      "density": 0.08,
+      "spacing": 4,
+      "maxNodes": 48,
+      "respawnMinutes": 240
+    }
+  ],
+  "fishingSpots": [
+    {
+      "id": "my_pond",
+      "name": "模组池塘",
+      "tableId": "my_fish_table",
+      "trashTableId": "my_trash_table",
+      "waterFloors": ["tile.floor.water"],
+      "bankRadius": 3,
+      "density": 0.3,
+      "spacing": 4,
+      "maxSpots": 12,
+      "respawnMinutes": 360,
+      "waitSeconds": 5.0,
+      "biteWindowSeconds": 2.0,
+      "catchChance": 0.62,
+      "survivalXp": 10,
+      "rodDefId": "fishing_rod",
+      "rodWear": 0.03,
+      "baitDefId": "fish_bait",
+      "baitCost": 1
+    }
+  ]
+}
+```
+
+- `forageZones[].floors` 与 `fishingSpots[].waterFloors` 使用逻辑地块名；`requiredNearbySprites/excludedNearbySprites` 使用逻辑对象名；`poiIds/poiRadius` 可把节点限制在指定 POI 的范围内。
+- `density` 为 0~1 的命中率，`spacing` 为节点间最小格距，`maxNodes/maxSpots` 为上限；`respawnMinutes` 控制觅食节点耗尽后的刷新时间（钓鱼点刷新预留）。节点位置由基础 seed 与坐标确定性生成，不写地图母文件。
+- `searchSeconds`（0.5~30，默认 2.5）是基础搜索耗时，会再乘生存技能、天气与夜晚修正；`survivalXp`（0~200，默认 6）是完成搜索的生存经验。
+- `toolDefId` 可选，存在时采集需要背包/装备中至少一件可用工具；`toolWear`（0~1，提供 `toolDefId` 时默认 0.01）按成功搜索磨损。基础草地需要 `forage_stick`。
+- 节点耗尽按玩家存档组件 `FRGS` 保存，使用游戏分钟刷新；同一节点完成搜索后才写入，E 开始/中断不会消耗节点。
+- `fishingSpots[].tableId` 是成功鱼获表，`trashTableId` 是失败/杂物表；未写 `trashTableId` 时回退到 `tableId`。`waitSeconds`（1~60）是基础等待，`biteWindowSeconds`（0.5~10）是收杆窗口，`catchChance`（0.05~0.95）是基础成功率，`survivalXp`（0~200）是成功经验。
+- 钓鱼需要 `rodDefId` 的可用耐久和至少 `baitCost` 个 `baitDefId`；抛竿即消耗鱼饵，收杆/错过咬钩按 `rodWear` 磨损鱼竿。置空 `rodDefId` 可让点位不需要鱼竿，置空 `baitDefId` 时 `baitCost` 必须为 0。
+- `tableId/trashTableId` 必须引用最终合并后的 `loot.json` 表；内置 `tile.floor.water` 已随 T3 落在村庄南侧池塘，水面地块会阻挡移动，岸格才可生成钓鱼点。
+- 服务器加载同一份 forage 数据并独立规划附近节点/钓点；客户端通过 `PlayerState` v13 的 `forageNodes/fishingSpots/survival` 只读展示。觅食节点耗尽、产出、工具磨损与鱼饵/鱼竿消耗均由服务器决定，重复采集和超距离请求会被拒绝。钓鱼点仍未耗尽/刷新；T7 起服务器全局 `ForageState` 由保留 StableId 的世界实体随世界存档落盘，读档恢复 `gameMinutes` 并清理过期节点，旧档缺失该实体时创建空状态。
+- 基础产出率（M23-F2a-T8，期望值，不含行走/烹饪）：森林每次 2.6 秒搜索约 2.85 件、1.00 件食物，生食 0.066 饥饿、熟制 0.172；草地每次 2.0 秒约 2.92 件、1.00 件食物，生食 0.060、熟制 0.160；静水钓鱼每次尝试（5 秒等待 + 2 秒咬钩窗口）按 0.62 成功率约 0.93 条小鱼，生食 0.112、熟制 0.298，消耗 1 鱼饵。数值按 `needs.hungerPerDay=1.4` 与 60 现实分钟/游戏日计算；调整 `loot.json` 权重/rolls 时同步 `docs/05` 与 `tools/tests/test_forage_data.py`。
+
+**pois.json**：在基础 `config/game.json` 的 `pois.defs` 后追加 POI：
+
+```json
+{
+  "format": "pois-v1",
+  "defs": [
+    {
+      "id": "my_depot",
+      "name": "我的补给站",
+      "threat": 1,
+      "markerX": 54.5,
+      "markerY": 28.5,
+      "containers": [
+        { "x": 54.5, "y": 28.5, "tableId": "my_cache", "sprite": "object.crate" }
+      ],
+      "enemies": { "count": 1, "kind": "normal", "radius": 4 },
+      "task": {
+        "description": "搜索补给箱",
+        "targetTable": "my_cache",
+        "rewardXp": 20,
+        "rewardItem": "my_food",
+        "rewardCount": 1
+      }
+    }
+  ]
+}
+```
+
+- 字段与内置 POI 定义相同；`targetTable` 必须出现在自己的 `containers[]` 中，`rewardItem` 必须是已注册物品。
+- 只追加新 id；与基础/更早 mod 重复时跳过并告警。基础 `pois.enabled` 为 `false` 时不加载 mod POI，`guideRange` 仍由基础配置决定。
+- 现有实现不生成地图房间/墙体；`markerX/Y`、容器坐标和守军生成点需要作者保证可达。加载后自动复用现有 POI HUD 指引、容器生成、守军、任务奖励与 `PoiTasks`。
+- `sprite` 可引用基础或 mod 图集逻辑名；`tableId` 可引用基础或 mod 搜刮表；服务器也会按已加载 chunk 生成容器/守军并同步 POI 进度；仅运行时 `Content` API 动态追加不支持联机。
+- 示例 `mods/example_content` 的 `mod_depot` 使用 `mod_camp_cache`、`mod.supply_crate` 和 `camp_stew`，演示物品/战利品/POI/图集四类内容联动。
+
+### 3.6.5 Mod 任务与事件（X-F2b-2c）
+
+**missions.json**：在基础 `config/game.json` 的 `missions.defs` 后追加任务和随机/每日事件，格式为 `missions-v1`：
+
+```json
+{
+  "format": "missions-v1",
+  "defs": [
+    {
+      "id": "my_depot_supply",
+      "name": "我的补给站",
+      "chain": "my_depot",
+      "order": 1,
+      "kind": "once",
+      "source": "note",
+      "prerequisite": "",
+      "objectives": [
+        { "kind": "poi", "target": "my_depot", "count": 1, "description": "搜索补给站" }
+      ],
+      "reward": {
+        "xp": 30,
+        "skill": "survival",
+        "item": "my_food",
+        "itemCount": 1,
+        "label": "30 生存经验 + 食物×1"
+      }
+    }
+  ]
+}
+```
+
+- 任务字段与 `config/game.json` 的 `missions.defs[]` 相同：`kind` 为 `once`/`daily`/`random`，`source` 为 `radio`/`note`/`npc`/`base`；目标支持 `collect`/`interact`/`kill`/`loot`/`poi`/`reach`，`reward` 支持经验、技能、物品和图纸。
+- 只追加任务，不能覆盖基础任务；基础 `missions.enabled=false` 时不加载 mod 任务，`randomSeed` 仍由基础配置决定。每日/随机事件复用现有 `UpdateMissions` 的刷新和随机判定。
+- 每个 mod 的 `missions.json` 是一个事务：任意任务条目无效、id 与基础/已接受任务重复、前置不存在或前置链成环时，整份文件跳过且已有任务不变。
+- 前置可引用基础任务或同批次更早加载文件的任务；同一文件内可自由引用。不要引用更晚加载的 mod。
+- 任务 HUD、焦点切换、奖励发放、存档字段和放弃逻辑完全复用 M19-F3；单机运行 `UpdateMissions`，联机客户端跳过本地更新，由服务器 `TickServerMissions` 权威推进并同步日志/奖励。任务定义参与内容指纹。
+- 示例 `mods/example_content` 的 `mod_depot_supply` 以 `poi` 目标完成 `mod_depot`，启动后基础 31 条任务变为 32 条并自动接取。
+
+### 3.6.6 运行时动态内容（X-F2b-2e）
+
+单机脚本可以调用 `Content` 表追加物品、配方、建造项、POI 和任务。接口接收与内容文件同格式的完整 JSON 文档字符串，返回实际新增条数；失败返回 `0`，错误写入日志：
+
+| 接口 | 说明 |
+|---|---|
+| `Content.RegisterItems(json)` | `items-v1` 文档，追加物品；重复 id/非法字段会整份拒绝 |
+| `Content.RegisterRecipes(json)` | `recipes-v1/v2/v3/v4` 文档，追加配方；未知产物/材料/工具/锅具/燃料或重复 id 整份拒绝 |
+| `Content.RegisterBuildings(json)` | `buildings-v1` 文档，追加建造项；重复 id 或 sprite 冲突项跳过 |
+| `Content.RegisterPois(json)` | `pois-v1` 文档，追加 POI；重复 id/无效条目跳过，format/defs 结构错误不追加 |
+| `Content.RegisterMissions(json)` | `missions-v1` 文档，追加任务；重复 id、坏前置或成环时整份拒绝 |
+
+```lua
+local items = [[{
+  "format": "items-v1",
+  "items": [
+    { "id": "runtime_torch", "name": "临时火把", "icon": "item.rag", "weight": 0.3, "maxStack": 1, "type": "generic" }
+  ]
+}]]
+local added = Content.RegisterItems(items)
+```
+
+规则：
+
+- 注册按文档事务校验：物品/配方/任务失败时注册表保持原样；建造项和 POI 按各自合并规则逐个追加，至少成功一项才返回非 0。
+- 物品应先于引用它的配方注册；动态物品/配方/建造/POI/任务会立即刷新单机内容指纹，`WorldDemoState` 会在下一次 tick 重建建造目录并复制最新 POI/任务配置，因此运行中新增的建造项、POI 和任务也能生效。存在脚本动态内容时，磁盘 content 热重载会拒绝，避免整体替换丢失这些定义。
+- 动态内容只在 `net.mode=direct` 单机模式可用；开始主机或连接服务器后接口返回 `0` 并给出“动态内容仅支持单机；请移除动态注册后重启”，避免客户端/服务器内容指纹不一致。动态定义不写入存档，禁用 mod 也不会移除已注册定义。X3-T4 已确认不做“服务器注册、客户端校验”，联机双方必须安装相同静态内容；X3-T5 验证五类入口在联机禁用时全部拒绝且注册表/计数不变，X3-T6 完成文档收口。
+- 动态 POI 不创建地图房间，坐标/容器可达性和搜刮表存在性由作者保证；动态任务复用现有 `UpdateMissions`、任务 HUD 和奖励逻辑。动态物品引用的图标/建造 `sprite` 仍需能在基础或 mod 资源清单中解析，否则使用占位帧或不可见。
+
+### 3.7 `Hud`（HUD 快照与 Mod 字段）
 
 `Hud.GetState()` 返回当前 HUD 数据；核心 HUD 由 `mods/core_ui` 的 Lua/Python 控制器消费，
 主菜单/暂停时没有 tick，因此脚本应只在 `active=true` 时显示 HUD。
+普通 mod 还可以声明最多 8 个自己的状态字段，内置 HUD 会在右侧“模组”面板逐行显示。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -155,10 +618,78 @@ end)
 | `playerValid` | bool | 生命/体力数据是否有效 |
 | `health` / `healthMax` | number | 当前/最大生命 |
 | `stamina` / `staminaMax` | number | 当前/最大体力 |
+| `combatStatus` / `combatTone` | string | 联机服务器权威战斗姿态（格挡/弹反窗口/闪避无敌/破防恢复）与 `info`/`ok`/`warn`/`fail`（M30-T6/T7） |
+| `needsStatus` / `needsTone` | string | 饥饿/口渴/疲劳状态文本与 `info`/`warn`/`fail` |
+| `woundStatus` / `woundTone` | string | 伤口/流血状态文本与 `info`/`warn`/`fail`（M15-T2） |
+| `painStatus` / `painTone` | string | 疼痛/止痛状态文本与 `info`/`warn`/`fail`（M15-T4） |
+| `armorStatus` / `armorTone` | string | 当前躯干护甲的爪/咬/钝减伤、移速与 `info`/`warn`/`fail`（M19-F4） |
+| `infectionStatus` / `infectionTone` | string | 感染阶段、病程、下一阶段/死亡倒计时与 `info`/`warn`/`fail`（M20-F1） |
+| `weatherStatus` / `weatherTone` | string | 天气、环境温度、体温、潮湿、室内/火边与 `info`/`warn`/`fail`（M20-F2） |
+| `weatherClass` | string | `clear`/`rain`/`fog`/`cold`，用于 `weather-overlay` 调色（M20-F2） |
+| `rangedStatus` / `rangedTone` | string | 主手远程武器弹匣/备弹/换弹文案与 `info`/`warn`/`fail`（M23-F1-T8） |
+| `forageStatus` / `forageTone` | string | 可觅食/觅食中/耗尽文案与 `info`/`warn`（M23-F2a-T5） |
+| `forageValid` / `forageMissingTool` / `forageExhausted` / `forageSearching` | bool | 是否存在附近节点、缺工具、耗尽、正在搜索 |
+| `forageName` / `forageToolName` | string | 节点/区域名与所需工具名 |
+| `forageSeconds` / `forageProgress` / `forageRespawnMinutes` | number | 预计耗时、搜索进度 0~1、耗尽刷新剩余分钟 |
+| `fishingStatus` / `fishingTone` | string | 可钓鱼/钓鱼中/咬钩文案与 `info`/`warn`（M23-F2a-T5） |
+| `fishingValid` / `fishingMissingRod` / `fishingMissingBait` / `fishingWaiting` / `fishingBiting` | bool | 是否存在附近钓点、缺鱼竿/鱼饵、等待咬钩、咬钩窗口 |
+| `fishingName` / `fishingRodName` / `fishingBaitName` | string | 钓点名、所需鱼竿/鱼饵名 |
+| `fishingSeconds` / `fishingProgress` / `fishingBiteRemaining` | number | 预计等待、等待进度 0~1、咬钩剩余秒数 |
+| `threatStatus` / `threatDirection` | string | 最近受击提示文本与边缘方向 `left/right/top/bottom`（M15-T3） |
+| `threatRemaining` / `threatDuration` | number | 受击边缘提示剩余/总时长（秒，用于淡出） |
+| `objective` / `objectiveTone` / `objectiveHint` | string | 目标文本、色调与附近交互提示 |
+| `poiGuide` / `poiGuideTone` | string | 最近未完成 POI 的威胁/方向/距离/任务进度文案与 `info`/`warn`/`ok`（M19-F2） |
+| `missionGuide` / `missionTone` | string | 当前焦点任务的来源/进度/奖励文案与 `info`/`warn`/`ok`（M19-F3；`L` 切换、`K` 放弃） |
+| `eventGuide` / `eventTone` | string | 最近进行中随机事件的事件名/目标进度/方向/奖励与 `info`/`warn`/`ok`（M24-T5；不参与任务焦点切换） |
+| `siegeStatus` / `siegeTone` | string | 夜间守夜预警/波次文本与 `info`/`warn`/`fail` |
+| `siegeReportOpen` | bool | 战后独立战报面板是否打开；`ESC` 关闭（M21-F1c） |
+| `siegeReportTitle` / `siegeReportRating` / `siegeReportTone` / `siegeReportHint` | string | 战报标题、评级、`info`/`warn`/`ok`/`fail` 色调与关闭提示 |
+| `siegeReportLines` | array | 最多 8 行战报明细（波次/击杀/结构损失/破口/奖励等） |
+| `baseActive` | bool | 玩家附近 16 格内是否有玩家建造的基地 |
+| `baseStorageCount` | number | 基地内玩家仓库数量 |
+| `baseStorageWeight` / `baseStorageCapacity` | number | 基地仓库总重量/总容量（kg，M18-F5） |
+| `baseFarms` | number | 基地内农田数量 |
+| `baseFarmGrowing` / `baseFarmMature` / `baseFarmDiseased` / `baseFarmThirsty` / `baseFarmFertilized` | number | 农田生长/成熟/病害/缺水/已施肥数量（F5-T2） |
+| `baseBeds` / `baseCampfires` / `baseWorkbenches` | number | 基地内床位/篝火/工作台数量 |
+| `baseDefensesIntact` / `baseDefensesDamaged` | number | 玩家建造防御结构的完好/受损数量 |
+| `baseStatus` / `baseTone` | string | 基地汇总文案与 `info`/`warn`/`fail`（M18-F5） |
+| `progressionValid` | bool | 成长数据是否可用（M19-F1） |
+| `progressionLevel` | number | 角色等级 |
+| `progressionXp` / `progressionXpNext` | number | 当前等级经验/下一级所需；`xpNext=0` 表示满级 |
+| `progressionPerkPoints` | number | 待分配 Perk 点数 |
+| `progressionSkills` | array | 4 项技能文案：近战/建造/制作/生存（含等级、效果与 XP） |
+| `progressionPerks` | string | 已选 Perk 的展示文案（如 `猛击、疾行`） |
+| `progressionChoices` | array | 3 项升级候选文案；无待选时为空串 |
+| `progressionChoiceCount` | number | 当前有效候选数量（0~3） |
+| `perkPrompt` | string | 升级待选提示；无待选时为空串 |
+| `characterOpen` | bool | `C` 角色面板是否打开 |
+| `dialogueOpen` | bool | 聚落对话面板是否打开（M23-F4-T3） |
+| `dialogueSpeaker` / `dialogueText` / `dialogueHint` | string | 对话说话人、正文与操作提示 |
+| `dialogueOptions` | array | 最多 5 项对话选项文案（Lua 1-based，Python 0-based list） |
+| `dialogueSelected` / `dialogueOptionCount` | number | 当前选项下标（0~4）与有效选项数（0~5） |
+| `actionHint` / `actionTone` | string | 动态操作提示（流血/疼痛/搜刮/拾取/基础操作）与 `info`/`warn`/`fail`（M15-T5） |
 | `selectedSlot` | number | 选中快捷栏下标（0~4） |
 | `slots` | array | 5 项 `{label, count}`（Lua 1-based，Python 0-based list） |
+| `modFields` | array | 已注册 Mod HUD 字段，每项 `{modId, id, label, text, tone}`；空文本不显示 |
 | `notice` / `noticeTone` | string | 提示文本与 `info`/`ok`/`fail` |
 | `noticeRemaining` / `noticeDuration` | number | 提示剩余/总时长（秒） |
+
+Mod 字段接口（每个 mod 只能 Set/Clear 自己的字段；`Hud.GetState().modFields` 可读取全部字段；最多 8 个）：
+
+| 接口 | 返回 | 说明 |
+|---|---|---|
+| `Hud.RegisterField(id, label)` | bool | 声明字段；同 mod 重复调用只更新 label，满 8 个返回 false |
+| `Hud.SetField(id, text, tone?)` | bool | 更新字段文本；`tone` 为 `info`/`warn`/`ok`/`fail`，缺省 `info`；未知字段/非法 tone 返回 false |
+| `Hud.ClearField(id)` | bool | 清空文本并隐藏该行；字段仍保留 |
+
+字段只在客户端显示，不写入存档、不参与内容指纹或联机同步；`Hud.GetState().modFields` 同时可供自定义 UI 读取。示例：
+`mods/example_content/scripts/main.lua` 声明 `depot_status` 并显示“补给站 / 就绪”。空字符串会隐藏该行，但 label 保留在快照中。
+
+```lua
+Hud.RegisterField("depot_status", "补给站")
+Hud.SetField("depot_status", "就绪", "ok")
+Hud.ClearField("depot_status")
+```
 
 ### 3.8 `UI`（脚本 UI 文档）
 
@@ -208,29 +739,33 @@ native fallback，脚本只消费快照并提交动作。背包开/关或数据�
 
 | 接口 | 返回 | 说明 |
 |---|---|---|
-| `Inventory.GetState()` | table | `open, playerValid, weight, capacity, bagStacks, lootStacks, status, statusTone, bag, equipment, loot, recipes, crafting` |
+| `Inventory.GetState()` | table | `open, playerValid, weight, capacity, bagStacks, lootStacks, lootTitle, lootIsStorage, lootCanTakeAll, lootEntityId, status, statusTone, bag, equipment, loot, recipes, crafting` |
 | `Inventory.Action(action)` | bool | 提交 `{type, from, fromIndex, fromEntityId, to, toIndex, count?}`；返回动作是否已交给 C++ |
 | `Inventory.Close()` | bool | 关闭背包（打开时返回 true） |
 | `Inventory.PlayClick()` | - | 播放背包 UI 点击音效 |
 
 `bag` / `equipment` / `loot` 分别为 25 / 2 / 6 项槽位数组，每项字段：
-`{filled, label, count, usable, equippable, entityId, condition, damaged, repairAvailable}`；
+`{filled, label, count, usable, equippable, entityId, condition, damaged, repairAvailable, perishable}`；
 `condition` 为 0~1 的耐久/状态，内置 UI 在低于 100% 时于名称后显示百分比；
-`damaged` 表示耐久未满的武器，`repairAvailable` 表示当前背包内有足够维修材料。
-Lua 数组从 1 开始，Python 从 0 开始；槽位索引 `fromIndex/toIndex` 始终是 **0-based**。
+`damaged` 表示耐久未满的武器/衣物，`repairAvailable` 表示当前背包内有足够维修材料；
+`perishable` 表示可腐败食物，内置 UI 显示“新鲜 %”或“[变质]”。
+Lua 数组从 1 开始，Python 从 0 开始；槽位索引 `fromIndex/toIndex` 始终是 **0-based**。靠近玩家仓库时，`loot` 数组表示仓库内容，`lootIsStorage=true`，`lootEntityId` 为仓库实体 StableId。
 
 `recipes` 是全部已加载配方的快照（内置背包 UI 每页显示 4 条，可用 `‹` / `›` 翻页）：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `id` / `name` | string | 配方 id / 显示名 |
+| `category` / `categoryLabel` | string | recipes-v4 分类 id / 中文标签（cooking/preservation/medical/crafting/general） |
 | `outputDefId` / `outputLabel` | string | 产物物品 id / 显示名 |
 | `outputCount` | number | 每次制作产出数量 |
 | `known` | bool | 是否已学会；false 时 UI 显示“未学会”，不能制作 |
-| `canCraft` | bool | 已学会且材料、工具、背包空间与制作站范围都满足 |
+| `canCraft` | bool | 已学会且材料、工具、锅具、燃料、背包空间与制作站范围都满足 |
 | `estimatedSeconds` | number | 按当前工具状态估算的实际耗时（秒）；缺工具时为 0 |
 | `ingredients` | array | 消耗材料 `{label, required, have}`（Lua 1-based / Python 0-based list） |
 | `tools` | array | 工具 `{label, required, have}`；只要求背包内拥有，不消耗但会磨损 |
+| `cookware` | object? | 锅具 `{label, required, have}`；不消耗，需 `maxStack=1` 且可用（F5-T3） |
+| `fuel` | object? | 燃料 `{label, required, have}`；每次制作消耗（F5-T3） |
 | `station` / `stationLabel` | string | 配方要求的制作站 id / 显示名（空 = 任意地点） |
 | `stationNearby` | bool | 当前是否处于该制作站范围内 |
 
@@ -251,18 +786,21 @@ Lua 数组从 1 开始，Python 从 0 开始；槽位索引 `fromIndex/toIndex` 
 
 | type | 字段 | 语义 |
 |---|---|---|
-| `transfer` | `from/fromIndex/to/toIndex` | 背包内换位、装备/卸下、丢地面、地面拾取 |
+| `transfer` | `from/fromIndex/to/toIndex` | 背包内换位、装备/卸下、丢地面、地面拾取；靠近仓库时 `bag→loot` 存入仓库、`loot→bag` 取出 |
 | `use` | `from/fromIndex` | 使用背包物品 |
 | `equip` | `from/fromIndex` | 按物品类型自动选择主手/躯干 |
 | `unequip` | `from/fromIndex` | 卸下装备 |
 | `drop` | `from/fromIndex` | 丢弃背包/装备物品 |
-| `pickup` | `fromEntityId` | 拾取附近地面物品 |
+| `pickup` | `fromEntityId` | 拾取附近地面物品/容器/仓库物品 |
 | `craft` | `fromIndex`, `count?` | 开始制作 `recipes[fromIndex]`（0-based）；空闲时立即开始，已有任务时追加到制作队列；`count` 为请求件数（1~99，缺省 1）。追加队列只校验配方已学会、制作站范围与队列上限，材料/工具/空间在真正开始该项时再校验；工具效率决定每件实际时长 |
 | `cancel_craft` | 无 | 取消当前制作/剩余批次并清空整个制作队列；已完成件已扣除材料，当前计时件未扣材料，因此无需返还 |
 | `queue_up` / `queue_down` | `fromIndex` | 将队列第 `fromIndex` 项（0-based）上移/下移一位；越界或已到队首/队尾时拒绝并提示，不改变制作与材料 |
 | `queue_remove` | `fromIndex` | 移除队列第 `fromIndex` 项（0-based）；只移除后续队列项，不取消当前制作、不返还材料 |
 | `queue_count` | `fromIndex`, `count` | 把队列第 `fromIndex` 项的请求件数设为 `count`（1~99）；越界/队列项不存在时拒绝，不校验材料，真正开始时仍按可用材料/工具/空间截断 |
-| `repair` | `from/fromIndex` | 维修背包中耐久未满的工具；消耗 `inventory.repairKit` 指定材料，恢复 `inventory.repairAmount` 耐久 |
+| `repair` | `from/fromIndex` | 维修背包中耐久未满的武器/衣物；消耗 `inventory.repairKit` 指定材料，恢复 `inventory.repairAmount × repairEfficiency` 耐久 |
+| `store_all` | `fromEntityId` | 将背包全部可存物品存入附近仓库；仅 `lootIsStorage` 时有效 |
+| `take_all` | `fromEntityId` | 从指定尸体/世界容器的 `LootContainer` 取出全部可容纳物品（单机），或从附近仓库取出；仓库路径要求 `lootIsStorage`，尸体/世界容器要求 `lootCanTakeAll` |
+| `sort_storage` | `fromEntityId` | 按物品类型/defId/状态整理附近仓库；仅 `lootIsStorage` 时有效 |
 
 `craft` 只启动计时任务，材料在计时完成时才原子扣除/校验，工具在同一时刻按配方的 `wear` 磨损；
 `Inventory.Action` 的返回值只表示动作已进入玩家命令管线。制作进度与结果以随后
@@ -286,11 +824,12 @@ Lua 数组从 1 开始，Python 从 0 开始；槽位索引 `fromIndex/toIndex` 
 
 ```json
 {
-  "format": "recipes-v3",
+  "format": "recipes-v4",
   "recipes": [
     {
       "id": "padded_jacket",
       "name": "加固夹克",
+      "category": "crafting",
       "output": { "item": "padded_jacket", "count": 1 },
       "ingredients": [
         { "item": "jacket", "count": 1 },
@@ -311,15 +850,17 @@ Lua 数组从 1 开始，Python 从 0 开始；槽位索引 `fromIndex/toIndex` 
 工具状态会影响实际耗时：工具效率为 `0.5 + 0.5 × 最低可用工具耐久`（无工具为 1.0，缺工具
 为 0），实际耗时 = `time / 效率`，最多延长到基础耗时的 2 倍。`estimatedSeconds` 是当前工具
 状态下的预计耗时；背包 UI 在配方名后显示 `· 3.2s`，制作开始后 `crafting.duration` 为实际
-时长、`crafting.toolEfficiency` 为本次效率。`station` 为 recipes-v3 可选制作站 id：世界对象
+时长、`crafting.toolEfficiency` 为本次效率。`category` 为 recipes-v4 可选分类；`cookware`/`fuel`
+分别要求不消耗的锅具与每次消耗的燃料；`station` 为 recipes-v3+ 可选制作站 id：世界对象
 用逻辑名 `object.<station>` 标记（内置 `workbench` → `object.workbench`、`campfire` →
-`object.campfire`）；玩家需在 `crafting.stationRange`（默认 2.5 格）内才能开始/完成该配方，
+`object.campfire`、`locker` → `object.locker`，后者由可建造“雨水收集器”提供）；玩家需在
+`crafting.stationRange`（默认 2.5 格）内才能开始/完成该配方，
 离开范围后计时完成会失败且不消耗材料。显示名由 `config/game.json` 的
 `crafting.stationLabels` 映射，缺省回退为 station id；未知 station 不会被拒绝，便于 mod
 先用自定义对象扩展，示例：
 `{"id":"campfire_beans","station":"campfire","ingredients":[{"item":"canned_beans","count":1}],"output":{"item":"cooked_beans","count":1},"time":2.0}`。
 `recipes-v1` 仍兼容（无 `tools`/`time`/`station`）；要使用工具、自定义时长/磨损
-或制作站需把 `format` 升级为 `recipes-v3`（v2 仍兼容 tools/time）。
+或制作站需把 `format` 升级为 `recipes-v3`（v2 仍兼容 tools/time）；分类/锅具/燃料需 `recipes-v4`。
 
 蓝图解锁由物品的可选 `unlocksRecipes` 数组声明：
 ```json
@@ -336,12 +877,13 @@ Lua 数组从 1 开始，Python 从 0 开始；槽位索引 `fromIndex/toIndex` 
 全部成功才一次性替换容器；失败不消耗材料也不磨损工具，取消同样不扣材料。
 制作任务与制作队列写入玩家 `CraftingJob` 存档组件（活跃批次时长/进度/批次计数 + 后续队列）；退出/读档会恢复，但因计时期间未扣材料，失效任务被取消时不会损失物品。
 
-工具维修（内置 `repair` 动作）：只允许耐久在 `(0,1)` 的不可堆叠武器，消耗配置
+装备维修（内置 `repair` 动作）：只允许耐久在 `(0,1)` 的不可堆叠武器/衣物，消耗配置
 `inventory.repairKit`（默认 `repair_kit`）指定数量（`inventory.repairKitCount`，默认 1），
-恢复 `inventory.repairAmount`（默认 0.5）耐久并钳制到 1.0；缺少维修包或工具已损坏时不修改容器。
-槽位快照的 `damaged` / `repairAvailable` 可直接驱动自定义 UI 的维修按钮；内置 UI 在右键菜单
-显示“维修”，没有维修包时提示“维修（缺维修包）”。维修结果通过状态行/日志反馈前后耐久。
-维修只在背包内操作，不改变正在进行的制作任务；成功维修后工具会立即按新耐久参与后续制作效率。
+恢复 `inventory.repairAmount × repairEfficiency`（默认 0.5 × 1.0）耐久并钳制到 1.0；
+缺少维修包或装备已损坏时不修改容器。槽位快照的 `damaged` / `repairAvailable` 可直接驱动
+自定义 UI 的维修按钮；内置 UI 在背包右键菜单显示“维修”，没有维修包时提示“维修（缺维修包）”。
+维修结果通过状态行/日志反馈前后耐久。维修只在背包内操作，不改变正在进行的制作任务；
+成功维修后武器会立即按新耐久参与后续制作效率。护甲可先卸下到背包再维修。
 配方产物可以引用任意已注册物品，新增配方只需改 JSON（内置 UI 每页 4 条，超出部分用
 `‹` / `›` 翻页；自定义脚本 UI 可直接读取 `Inventory.GetState().recipes` 自行展示）。
 
@@ -493,7 +1035,7 @@ mod 不能读写任意文件、不能起进程、不能加载额外的 lua 文�
 | `mods/example_hello` | 最小结构：启动日志、等玩家生成后发开局物品、`OnTick` 周期查询玩家/僵尸 | 进游戏约 1 秒后日志 `starter items: bandage x2, axe x1`；每约 10 秒一行 `survivor at ...` |
 | `mods/example_reactive` | 事件反应：击杀奖励（5 杀送绷带）、拾取日志、枪声日志、死亡提示、`SetTimer` | 按 `F6` 演示击杀看 `zombie N down (kills=...)`；按 `F7` 看 `gunshot at ...`；按 `F` 拾取看 `picked up ...` |
 | `mods/example_ui` | 脚本 UI：懒加载 `ui/panel.rml`、文本输入/按钮事件、关闭文档、热重载重建 | 右下角 Script UI 面板；输入框按回车/失焦看 `input:`，点刷新/关闭 |
-| `mods/core_ui` | 内置 HUD、主菜单/暂停菜单与背包控制器：Lua/Python 共用 `ui/hud.rml`、`ui/menu.rml`、`ui/inventory.rml`，读取 `Hud.GetState()`/`Menu.GetState()`/`Inventory.GetState()`/`Save.List()` | 进入世界后 HUD 由脚本加载；菜单/背包由脚本打开，支持设置/改键、拖拽、右键操作（含工具维修）、定时制作/批量数量/跨配方队列/队列选中调序、数量调整与移除/进度/取消、配方每页 4 条翻页、分页读取/删除存档与暂停保存；禁用脚本后自动回退 native UI |
+| `mods/core_ui` | 内置 HUD、主菜单/暂停菜单与背包控制器：Lua/Python 共用 `ui/hud.rml`、`ui/menu.rml`、`ui/inventory.rml`，读取 `Hud.GetState()`/`Menu.GetState()`/`Inventory.GetState()`/`Save.List()` | 进入世界后 HUD 由脚本加载；菜单/背包由脚本打开，支持设置/改键、拖拽、右键操作（含武器/衣物维修）、定时制作/批量数量/跨配方队列/队列选中调序、数量调整与移除/进度/取消、配方每页 4 条翻页、分页读取/删除存档与暂停保存；禁用脚本后自动回退 native UI |
 
 这些示例都可以直接改文件保存体验热重载（例如把 `example_reactive` 里"每 5 杀"改成"每 2 杀"）。
 每个示例目录同时提供 `scripts/main.lua` 与 `scripts/main.py`（同 id、同行为）——

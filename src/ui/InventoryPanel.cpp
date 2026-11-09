@@ -81,6 +81,10 @@ bool InventoryPanel::Init(Rml::Context& context, const std::string& path) {
     m_bagStacks = m_document->GetElementById("bag-stack-count");
     m_lootTitle = m_document->GetElementById("loot-title");
     m_lootStacks = m_document->GetElementById("loot-stack-count");
+    m_storageActions = m_document->GetElementById("storage-actions");
+    m_storageStoreAll = m_document->GetElementById("storage-store-all");
+    m_storageTakeAll = m_document->GetElementById("storage-take-all");
+    m_storageSort = m_document->GetElementById("storage-sort");
     m_status = m_document->GetElementById("inv-status");
     m_contextButtons[0] = m_document->GetElementById("ctx-use");
     m_contextButtons[1] = m_document->GetElementById("ctx-equip");
@@ -127,6 +131,12 @@ bool InventoryPanel::Init(Rml::Context& context, const std::string& path) {
     }
 
     AddClickListener("inventory-close", [this] { Hide(); });
+    AddClickListener("storage-store-all",
+                     [this] { TriggerStorageAction(InventoryActionType::StoreAll); });
+    AddClickListener("storage-take-all",
+                     [this] { TriggerStorageAction(InventoryActionType::TakeAll); });
+    AddClickListener("storage-sort",
+                     [this] { TriggerStorageAction(InventoryActionType::SortStorage); });
     if (m_overlay != nullptr) {
         AddEventListener(m_overlay, "click",
                         [this](Rml::Event& event) { OnOverlayClick(event); });
@@ -197,6 +207,10 @@ void InventoryPanel::Shutdown() {
     m_bagStacks = nullptr;
     m_lootTitle = nullptr;
     m_lootStacks = nullptr;
+    m_storageActions = nullptr;
+    m_storageStoreAll = nullptr;
+    m_storageTakeAll = nullptr;
+    m_storageSort = nullptr;
     m_status = nullptr;
     m_bagSlots.fill(nullptr);
     m_bagNames.fill(nullptr);
@@ -279,6 +293,9 @@ void InventoryPanel::SetState(const InventoryState& state) {
     if (first || state.playerValid != previous.playerValid || state.weight != previous.weight ||
         state.capacity != previous.capacity || state.bagStacks != previous.bagStacks ||
         state.lootStacks != previous.lootStacks || state.lootTitle != previous.lootTitle ||
+        state.lootIsStorage != previous.lootIsStorage ||
+        state.lootCanTakeAll != previous.lootCanTakeAll ||
+        state.lootEntityId != previous.lootEntityId ||
         state.status != previous.status ||
         state.statusTone != previous.statusTone) {
         RefreshStaticText(state);
@@ -332,9 +349,12 @@ void InventoryPanel::RefreshSlot(InventoryArea area, int index, const InventoryS
     if (name != nullptr) {
         if (slot.filled) {
             std::string label = slot.label;
-            if (slot.condition < 0.999f) {
-                char suffix[24];
-                std::snprintf(suffix, sizeof(suffix), " %d%%",
+            if (slot.perishable && slot.condition <= 0.05f) {
+                label += " [变质]";
+            } else if (slot.condition < 0.999f) {
+                char suffix[32];
+                std::snprintf(suffix, sizeof(suffix),
+                              slot.perishable ? " 新鲜 %d%%" : " %d%%",
                               static_cast<int>(slot.condition * 100.0f + 0.5f));
                 label += suffix;
             }
@@ -355,6 +375,11 @@ void InventoryPanel::RefreshStaticText(const InventoryState& state) {
     SetText(m_bagStacks, std::to_string(state.bagStacks) + " 堆");
     SetText(m_lootTitle, state.lootTitle);
     SetText(m_lootStacks, std::to_string(state.lootStacks) + " 堆");
+    const bool showStorageActions = state.lootIsStorage || state.lootCanTakeAll;
+    SetDisplay(m_storageActions, showStorageActions);
+    SetDisplay(m_storageStoreAll, state.lootIsStorage);
+    SetDisplay(m_storageTakeAll, showStorageActions);
+    SetDisplay(m_storageSort, state.lootIsStorage);
     SetText(m_status, state.status);
     if (m_status != nullptr) {
         m_status->SetClassNames("inv-status status-" + state.statusTone);
@@ -617,6 +642,21 @@ void InventoryPanel::HideContextMenu() {
     m_menuOpen = false;
     m_contextIndex = -1;
     m_contextEntity = 0;
+}
+
+void InventoryPanel::TriggerStorageAction(InventoryActionType type) {
+    if (!m_actionHandler ||
+        (type != InventoryActionType::StoreAll &&
+         type != InventoryActionType::TakeAll &&
+         type != InventoryActionType::SortStorage)) {
+        return;
+    }
+    InventoryAction action;
+    action.type = type;
+    action.from = InventoryArea::Loot;
+    action.fromEntityId = m_state.lootEntityId;
+    action.to = InventoryArea::Backpack;
+    m_actionHandler(action);
 }
 
 void InventoryPanel::TriggerContextAction(InventoryActionType type) {

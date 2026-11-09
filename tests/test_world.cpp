@@ -283,10 +283,23 @@ TEST_CASE("WorldQueries：工作台范围按对象逻辑名与已加载 chunk �
     world::GridSquare& campSquare = world.GetOrCreateSquare(76, 25, 0);
     campSquare.AddObject(world::SquareLayer::Furniture,
                          {"object.campfire", 0, 0, true});
+    world::GridSquare& waterSquare = world.GetOrCreateSquare(74, 25, 0);
+    waterSquare.AddObject(world::SquareLayer::Furniture,
+                          {"object.locker", 0, 0, false});
 
+    CHECK(game::HasStationNearby(world, 74.5f, 25.5f, 0, "locker", 2.5f));
+    CHECK(game::HasStationNearby(world, 74.5f, 25.5f, 0, "workbench", 2.5f));
     CHECK(game::HasStationNearby(world, 70.6f, 25.5f, 0, "workbench", 2.5f));
     CHECK(game::HasStationNearby(world, 70.6f, 25.5f, 0, "object.workbench", 2.5f));
     CHECK(game::HasStationNearby(world, 76.5f, 25.5f, 0, "campfire", 2.5f));
+    int campfireX = -1;
+    int campfireY = -1;
+    CHECK(game::FindCampfireNearby(world, 74.5f, 25.5f, 0, 2.5f,
+                                   &campfireX, &campfireY));
+    CHECK(campfireX == 76);
+    CHECK(campfireY == 25);
+    CHECK(game::HasCampfireNearby(world, 74.5f, 25.5f, 0, 2.5f));
+    CHECK_FALSE(game::HasCampfireNearby(world, 74.5f, 25.5f, 1, 2.5f));
     CHECK_FALSE(game::HasStationNearby(world, 76.5f, 25.5f, 0, "workbench", 2.5f));
     CHECK_FALSE(game::HasStationNearby(world, 80.0f, 25.0f, 0, "workbench", 2.5f));
     CHECK_FALSE(game::HasStationNearby(world, 72.5f, 25.5f, 0, "workbench", 0.0f));

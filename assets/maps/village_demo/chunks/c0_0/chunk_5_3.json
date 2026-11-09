@@ -6,28 +6,207 @@
   "gggggggddd",
   "ggggggdddd",
   "ggggggdddd",
-  "ggggggdddd",
-  "ggggggdddd",
-  "ggggggdddd",
-  "gggggddddd",
-  "ggggggdddd",
-  "ggggggdddd"
+  "wwwwwwwwwd",
+  "wwwwwwwwwd",
+  "wwwwwwwwwd",
+  "wwwwwwwwwd",
+  "wwwwwwwwwd",
+  "wwwwwwwwwd"
  ],
  "objects": [
   {
+   "x": 0,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 3,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
    "x": 5,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 7,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
    "y": 5,
    "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 6,
+   "z": 0,
    "layer": "furniture",
-   "sprite": "object.tree",
+   "sprite": "object.workbench",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 6,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.workbench",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
    "solid": true
   },
   {
    "x": 4,
    "y": 8,
    "z": 0,
-   "layer": "furniture",
-   "sprite": "decor.grass_tuft"
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 7,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 0,
+   "y": 5,
+   "w": 8,
+   "h": 5,
+   "id": 16,
+   "name": "poi_fire_station"
   }
  ]
 }

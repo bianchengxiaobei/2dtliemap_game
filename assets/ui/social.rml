@@ -34,7 +34,7 @@
                 <input id="social-chat-input" type="text" maxlength="64"/>
                 <div id="social-chat-send" class="social-send">发送</div>
             </div>
-            <div id="social-chat-hint" class="social-hint">Enter 聊天</div>
+            <div id="social-chat-hint" class="social-hint">Y 聊天</div>
         </div>
 
         <div id="social-status" class="social-status status-info"></div>

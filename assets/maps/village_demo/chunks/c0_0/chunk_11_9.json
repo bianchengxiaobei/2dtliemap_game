@@ -2,15 +2,67 @@
  "cx": 11,
  "cy": 9,
  "floors": [
-  "gggggggggg",
-  "gggggggggg",
-  "gggggggggg",
-  "gggggggggg",
+  "wwgggggggg",
+  "wwgggggggg",
+  "wwgggggggg",
+  "wwgggggggg",
   "dddddddddd",
   "dddddddddd",
   "dddddddddd",
   "gggggggggg",
   "gggggggggg",
   "gggggggggg"
+ ],
+ "objects": [
+  {
+   "x": 1,
+   "y": 0,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 1,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 0,
+   "y": 0,
+   "w": 1,
+   "h": 3,
+   "id": 19,
+   "name": "poi_warehouse"
+  }
  ]
 }

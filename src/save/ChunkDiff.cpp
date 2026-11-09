@@ -1,6 +1,7 @@
 #include "save/ChunkDiff.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <exception>
 #include <utility>
@@ -52,6 +53,12 @@ bool ValidateSquare(const ChunkSquareDiff& square, std::size_t* totalObjects,
             if (object.sprite.size() > kMaxStringBytes) {
                 return Fail(error, "chunk diff 对象 sprite 名称过长");
             }
+            if (!std::isfinite(object.hp)) {
+                return Fail(error, "chunk diff 对象耐久不是有限数值");
+            }
+            if (object.underlay.size() > kMaxStringBytes) {
+                return Fail(error, "chunk diff 地板底层 sprite 名称过长");
+            }
         }
     }
     return true;
@@ -80,7 +87,52 @@ bool ValidateChunkDiff(const ChunkDiff& diff, std::string* error) {
     return true;
 }
 
-bool CaptureChunkDiff(const world::Chunk& chunk, ChunkDiff* out, std::string* error) {
+std::vector<ChunkDiff> SplitChunkDiffBySquare(const ChunkDiff& diff) {
+    std::vector<ChunkDiff> result;
+    result.reserve(diff.squares.size());
+    for (const ChunkSquareDiff& square : diff.squares) {
+        ChunkDiff one;
+        one.chunkX = diff.chunkX;
+        one.chunkY = diff.chunkY;
+        one.squares.push_back(square);
+        result.push_back(std::move(one));
+    }
+    return result;
+}
+
+bool CaptureChunkSquareDiff(const world::Chunk& chunk, int lx, int ly, int z,
+                            ChunkDiff* out, std::string* error) {
+    if (out == nullptr) {
+        return Fail(error, "CaptureChunkSquareDiff: 输出为空");
+    }
+    if (!ValidLocalCoords(lx, ly, z)) {
+        return Fail(error, "CaptureChunkSquareDiff: 格坐标越界");
+    }
+
+    ChunkDiff result;
+    result.chunkX = chunk.ChunkX();
+    result.chunkY = chunk.ChunkY();
+    const world::GridSquare& source = chunk.Square(lx, ly, z);
+    ChunkSquareDiff square;
+    square.lx = static_cast<std::int16_t>(lx);
+    square.ly = static_cast<std::int16_t>(ly);
+    square.z = static_cast<std::int8_t>(z);
+    square.roomId = static_cast<std::int16_t>(source.RoomId());
+    for (int layer = 0; layer < kPersistedLayers; ++layer) {
+        square.layers[static_cast<std::size_t>(layer)] =
+            source.Layer(static_cast<world::SquareLayer>(layer));
+    }
+    result.squares.push_back(std::move(square));
+    if (!ValidateChunkDiff(result, error)) {
+        return false;
+    }
+    *out = std::move(result);
+    SetError(error, {});
+    return true;
+}
+
+bool CaptureChunkDiff(const world::Chunk& chunk, ChunkDiff* out,
+                      std::string* error) {
     if (out == nullptr) {
         return Fail(error, "CaptureChunkDiff: 输出为空");
     }
@@ -171,6 +223,11 @@ std::vector<std::uint8_t> EncodeChunkDiff(const ChunkDiff& diff, std::string* er
                 writer.Write(object.offsetX);
                 writer.Write(object.offsetY);
                 writer.Write(object.blocksMovement);
+                writer.Write(object.hp);
+                writer.Write(object.playerBuilt);
+                writer.Write(object.underlay);
+                writer.Write(object.structureId);
+                writer.Write(object.ownerStableId);
             }
         }
     }
@@ -192,9 +249,13 @@ bool DecodeChunkDiff(std::span<const std::uint8_t> bytes, ChunkDiff* out,
 
     BinaryReader reader(bytes);
     SegmentHeader header;
-    if (!reader.BeginSegment(header, kMagicChunkDiff, kChunkDiffVersion)) {
+    if (!reader.BeginSegment(header, kMagicChunkDiff, kChunkDiffMinVersion,
+                             kChunkDiffVersion)) {
         return Fail(error, "读取 chunk diff 段失败: " + reader.Error());
     }
+    const bool hasDurability = header.version >= 2;
+    const bool hasUnderlay = header.version >= 3;
+    const bool hasStructureIdentity = header.version >= 4;
 
     ChunkDiff parsed;
     if (!reader.Read(parsed.chunkX) || !reader.Read(parsed.chunkY)) {
@@ -250,6 +311,26 @@ bool DecodeChunkDiff(std::span<const std::uint8_t> bytes, ChunkDiff* out,
                     if (!reader.Read(object.sprite) || !reader.Read(object.offsetX) ||
                         !reader.Read(object.offsetY) || !reader.Read(object.blocksMovement)) {
                         return Fail(error, "读取 chunk diff 对象失败: " + reader.Error());
+                    }
+                    if (hasDurability) {
+                        if (!reader.Read(object.hp) || !reader.Read(object.playerBuilt)) {
+                            return Fail(error, "读取 chunk diff 对象耐久失败: " +
+                                                  reader.Error());
+                        }
+                    } else if (layer == static_cast<int>(world::SquareLayer::Furniture)) {
+                        // v1 无法区分玩家建造/地图对象；diff 中的家具按玩家改动迁移，
+                        // 耐久在首次扫描时回填为 maxHp。
+                        object.playerBuilt = true;
+                    }
+                    if (hasUnderlay && !reader.Read(object.underlay)) {
+                        return Fail(error, "读取 chunk diff 地板底层失败: " +
+                                              reader.Error());
+                    }
+                    if (hasStructureIdentity &&
+                        (!reader.Read(object.structureId) ||
+                         !reader.Read(object.ownerStableId))) {
+                        return Fail(error, "读取 chunk diff 结构身份失败: " +
+                                              reader.Error());
                     }
                     objects.push_back(std::move(object));
                 }

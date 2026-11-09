@@ -26,6 +26,7 @@ OUT_DIR = os.path.join(ROOT, "assets", "own")
 FLOOR_CANVAS = (64, 128)
 WALL_CANVAS = (64, 224)
 TREE_CANVAS = (192, 256)
+VEHICLE_CANVAS = (160, 128)
 OUTLINE = (27, 26, 24, 255)
 
 # 色板集中在这里，正式手绘替换时按 docs/art-pipeline.md 的同一角色取色。
@@ -184,6 +185,27 @@ def _wall_shell(seed, variant):
     return canvas
 
 
+def make_water_floor(seed):
+    rng = random.Random(seed)
+    tile = Image.new("RGBA", (64, 32), (37, 80, 116, 255))
+    d = ImageDraw.Draw(tile)
+    d.rectangle([0, 0, 63, 7], fill=(44, 93, 129, 255))
+    d.rectangle([0, 8, 63, 22], fill=(39, 85, 119, 255))
+    d.rectangle([0, 23, 63, 31], fill=(31, 70, 101, 255))
+    for y in (4, 13, 20, 27):
+        for x in range(-8, 72, 18):
+            d.arc([x, y - 3, x + 14, y + 3], 200, 340,
+                  fill=(94, 151, 177, 180), width=1)
+    for _ in range(30):
+        x, y = rng.randrange(64), rng.randrange(32)
+        d.point((x, y), fill=(72, 124, 150, 150))
+    out = Image.new("RGBA", (64, 32), (0, 0, 0, 0))
+    out.paste(tile, (0, 0), base.diamond_mask(64, 32))
+    canvas = new_canvas(FLOOR_CANVAS)
+    canvas.alpha_composite(out, (0, 96))
+    return canvas
+
+
 def make_wall(seed, variant=0, door=False):
     canvas = _wall_shell(seed, variant)
     if not door:
@@ -207,9 +229,268 @@ def make_wall(seed, variant=0, door=False):
     return canvas
 
 
+def _wood_wall_shell(seed, variant=0):
+    rng = random.Random(seed)
+    canvas = new_canvas(WALL_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    x0, y0, x1, y1 = 0, 112, 63, 223
+    d.rectangle([x0, y0, x1, y1], fill=color(WOOD[2]))
+    for index, y in enumerate(range(y0 + 3, y1 - 2, 13)):
+        plank = shade(WOOD[0], (index % 3 - 1) * 6 + rng.randint(-5, 5))
+        d.rectangle([x0 + 1, y, x1 - 1, min(y + 11, y1 - 2)],
+                    fill=color(plank), outline=color(shade(WOOD[2], -8)))
+        for _ in range(5):
+            gx = rng.randrange(x0 + 3, x1 - 3)
+            gy_lo = y + 2
+            gy_hi = max(gy_lo + 1, min(y + 10, y1 - 2))
+            gy = rng.randrange(gy_lo, gy_hi)
+            d.point((gx, gy), fill=color(shade(plank, -16)))
+    d.rectangle([x0, y0, x0 + 4, y1], fill=color(shade(WOOD[0], -10)),
+                outline=OUTLINE)
+    d.rectangle([x1 - 4, y0, x1, y1], fill=color(shade(WOOD[0], -10)),
+                outline=OUTLINE)
+    d.line([(x0, y0), (x1, y0)], fill=color(WOOD[1]), width=3)
+    d.line([(x0, y1), (x1, y1)], fill=color(shade(WOOD[2], -18)), width=2)
+    if variant == 1:
+        d.line([(11, 142), (53, 202)], fill=(83, 57, 38, 255), width=2)
+        d.line([(11, 202), (53, 142)], fill=(96, 67, 44, 255), width=2)
+    return canvas
+
+
+def make_wood_wall(seed, variant=0):
+    return _wood_wall_shell(seed, variant)
+
+
+def make_built_door(seed, open_door=False):
+    canvas = _wood_wall_shell(seed, 0)
+    d = ImageDraw.Draw(canvas)
+    x0, y0, x1, y1 = 16, 132, 47, 223
+    d.rectangle([x0 - 4, y0 - 4, x1 + 4, y1], fill=(54, 35, 26, 255),
+                outline=(38, 25, 19, 255), width=2)
+    if open_door:
+        d.rectangle([x0, y0, x1, y1], fill=(16, 14, 12, 255))
+        d.polygon([(x0 - 18, y0 + 8), (x0 - 4, y0 + 16), (x0 - 4, y1 - 4),
+                   (x0 - 18, y1 - 12)], fill=color(WOOD[0]), outline=OUTLINE)
+        d.line([(x0 - 12, y0 + 22), (x0 - 7, y0 + 27)],
+               fill=color(WOOD[1]), width=2)
+        d.line([(x0 - 12, y1 - 24), (x0 - 7, y1 - 29)],
+               fill=color(WOOD[1]), width=2)
+        d.rectangle([x0 - 4, y0 - 4, x0 + 3, y1], fill=color(shade(WOOD[0], -8)),
+                    outline=OUTLINE)
+        d.rectangle([x1 - 3, y0 - 4, x1 + 4, y1], fill=color(shade(WOOD[0], -8)),
+                    outline=OUTLINE)
+        d.rectangle([x0 - 4, y0 - 4, x1 + 4, y0 + 3],
+                    fill=color(shade(WOOD[0], -8)), outline=OUTLINE)
+    else:
+        d.rectangle([x0, y0, x1, y1], fill=color(shade(WOOD[0], 5)),
+                    outline=OUTLINE)
+        d.rectangle([x0 + 3, y0 + 4, x1 - 3, y0 + 22],
+                    fill=color(shade(WOOD[0], -10)), outline=OUTLINE)
+        d.rectangle([x0 + 3, y0 + 28, x1 - 3, y1 - 4],
+                    fill=color(shade(WOOD[0], -10)), outline=OUTLINE)
+        d.line([(x0 + 3, y0 + 4), (x1 - 3, y1 - 4)],
+               fill=color(WOOD[1]), width=2)
+        d.line([(x0 + 3, y1 - 4), (x1 - 3, y0 + 4)],
+               fill=color(WOOD[1]), width=2)
+        d.ellipse([x1 - 11, y0 + 48, x1 - 6, y0 + 55],
+                  fill=(222, 190, 104, 255), outline=OUTLINE)
+    return canvas
+
+
 def _shadow(canvas, box, alpha=70):
     d = ImageDraw.Draw(canvas)
     d.ellipse(box, fill=(0, 0, 0, alpha))
+
+
+def _animal_colors(kind):
+    if kind == "deer":
+        return ((164, 116, 67), (202, 151, 91), (101, 68, 43))
+    if kind == "rabbit":
+        return ((218, 211, 191), (244, 238, 220), (151, 139, 117))
+    if kind == "chicken":
+        return ((196, 168, 118), (238, 220, 174), (120, 82, 52))
+    if kind == "goat":
+        return ((150, 143, 130), (205, 198, 184), (92, 82, 72))
+    return ((111, 73, 54), (151, 100, 69), (67, 43, 32))
+
+
+def _animal_legs(d, kind, frame, body, palette, outline):
+    bob = 1 if frame else 0
+    left, top, right, bottom = body
+    if kind == "rabbit":
+        positions = ((left + 5, bottom - 8), (right - 8, bottom - 7))
+        width = 3
+    elif kind == "chicken":
+        positions = ((left + 7, bottom - 6), (right - 10, bottom - 6))
+        width = 2
+    elif kind == "boar":
+        positions = ((left + 6, bottom - 10), (left + 13, bottom - 10),
+                     (right - 17, bottom - 10), (right - 10, bottom - 10))
+        width = 4
+    elif kind == "goat":
+        positions = ((left + 7, bottom - 11), (left + 14, bottom - 11),
+                     (right - 17, bottom - 11), (right - 9, bottom - 11))
+        width = 3
+    else:
+        positions = ((left + 6, bottom - 11), (left + 13, bottom - 11),
+                     (right - 17, bottom - 11), (right - 9, bottom - 11))
+        width = 3
+    for i, (x, y) in enumerate(positions):
+        dx = bob if (i + frame) % 2 == 0 else -bob
+        d.rectangle([x + dx, y, x + dx + width, bottom + 4],
+                    fill=color(palette[2]), outline=outline)
+
+
+def make_animal(kind, direction, frame):
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    body_color, light, dark = _animal_colors(kind)
+    outline = OUTLINE
+    if direction in ("left", "right"):
+        if kind == "rabbit":
+            _shadow(canvas, [20, 104, 46, 116], 55)
+            bob = 1 if frame else 0
+            d.ellipse([23, 88 - bob, 42, 108 - bob], fill=color(body_color), outline=outline)
+            d.ellipse([27, 78 - bob, 40, 92 - bob], fill=color(light), outline=outline)
+            d.ellipse([28, 68 - bob, 32, 84 - bob], fill=color(light), outline=outline)
+            d.ellipse([35, 69 - bob, 39, 85 - bob], fill=color(light), outline=outline)
+            d.ellipse([18, 91 - bob, 25, 99 - bob], fill=color(light), outline=outline)
+            d.ellipse([31, 82 - bob, 34, 85 - bob], fill=(34, 29, 24, 255))
+            _animal_legs(d, kind, frame, (23, 88 - bob, 42, 108 - bob), (body_color, light, dark), outline)
+        elif kind == "deer":
+            _shadow(canvas, [12, 104, 52, 118], 60)
+            bob = 1 if frame else 0
+            d.ellipse([15, 78 - bob, 42, 102 - bob], fill=color(body_color), outline=outline)
+            d.polygon([(36, 78 - bob), (42, 62 - bob), (47, 64 - bob), (42, 82 - bob)],
+                      fill=color(body_color), outline=outline)
+            d.ellipse([40, 56 - bob, 53, 70 - bob], fill=color(light), outline=outline)
+            d.ellipse([42, 60 - bob, 45, 63 - bob], fill=(31, 27, 23, 255))
+            d.line([(43, 56 - bob), (40, 44 - bob)], fill=outline, width=2)
+            d.line([(39, 47 - bob), (34, 40 - bob)], fill=outline, width=2)
+            d.line([(39, 47 - bob), (45, 38 - bob)], fill=outline, width=2)
+            d.line([(50, 57 - bob), (55, 49 - bob)], fill=outline, width=2)
+            d.ellipse([13, 86 - bob, 19, 94 - bob], fill=color(light), outline=outline)
+            _animal_legs(d, kind, frame, (15, 78 - bob, 42, 102 - bob),
+                         (body_color, light, dark), outline)
+        elif kind == "chicken":
+            _shadow(canvas, [18, 104, 47, 116], 55)
+            bob = 1 if frame else 0
+            d.ellipse([18, 84 - bob, 42, 104 - bob], fill=color(body_color), outline=outline)
+            d.ellipse([36, 74 - bob, 50, 90 - bob], fill=color(light), outline=outline)
+            d.polygon([(49, 80 - bob), (57, 83 - bob), (49, 87 - bob)],
+                      fill=(218, 155, 55, 255), outline=outline)
+            d.polygon([(36, 75 - bob), (38, 68 - bob), (41, 75 - bob)],
+                      fill=(190, 55, 50, 255), outline=outline)
+            d.polygon([(40, 75 - bob), (42, 67 - bob), (45, 75 - bob)],
+                      fill=(190, 55, 50, 255), outline=outline)
+            d.ellipse([43, 79 - bob, 45, 81 - bob], fill=(31, 27, 23, 255))
+            d.polygon([(19, 88 - bob), (10, 80 - bob), (12, 94 - bob), (18, 100 - bob)],
+                      fill=color(light), outline=outline)
+            _animal_legs(d, kind, frame, (18, 84 - bob, 42, 104 - bob),
+                         (body_color, light, dark), outline)
+        elif kind == "goat":
+            _shadow(canvas, [10, 104, 55, 118], 60)
+            bob = 1 if frame else 0
+            d.ellipse([12, 80 - bob, 44, 104 - bob], fill=color(body_color), outline=outline)
+            d.ellipse([38, 66 - bob, 53, 84 - bob], fill=color(light), outline=outline)
+            d.polygon([(49, 75 - bob), (58, 78 - bob), (51, 83 - bob)],
+                      fill=color(light), outline=outline)
+            d.line([(42, 68 - bob), (37, 54 - bob)], fill=outline, width=2)
+            d.line([(38, 56 - bob), (33, 50 - bob)], fill=outline, width=2)
+            d.line([(47, 68 - bob), (52, 54 - bob)], fill=outline, width=2)
+            d.line([(52, 56 - bob), (57, 50 - bob)], fill=outline, width=2)
+            d.ellipse([46, 72 - bob, 49, 75 - bob], fill=(31, 27, 23, 255))
+            d.line([(50, 82 - bob), (49, 90 - bob)], fill=(232, 226, 190, 255), width=2)
+            d.ellipse([11, 88 - bob, 17, 96 - bob], fill=color(light), outline=outline)
+            _animal_legs(d, kind, frame, (12, 80 - bob, 44, 104 - bob),
+                         (body_color, light, dark), outline)
+        else:
+            _shadow(canvas, [10, 104, 55, 118], 65)
+            bob = 1 if frame else 0
+            d.ellipse([11, 80 - bob, 44, 106 - bob], fill=color(body_color), outline=outline)
+            d.ellipse([38, 78 - bob, 57, 99 - bob], fill=color(light), outline=outline)
+            d.polygon([(52, 84 - bob), (61, 88 - bob), (57, 94 - bob), (50, 94 - bob)],
+                      fill=color(light), outline=outline)
+            d.ellipse([40, 82 - bob, 43, 85 - bob], fill=(31, 27, 23, 255))
+            d.line([(53, 94 - bob), (58, 101 - bob)], fill=(232, 226, 190, 255), width=2)
+            d.line([(47, 78 - bob), (52, 68 - bob)], fill=outline, width=2)
+            _animal_legs(d, kind, frame, (11, 80 - bob, 44, 106 - bob),
+                         (body_color, light, dark), outline)
+        if direction == "right":
+            canvas = ImageOps.mirror(canvas)
+        return canvas
+    if kind == "rabbit":
+        _shadow(canvas, [22, 105, 42, 116], 55)
+        d.ellipse([25, 90, 39, 108], fill=color(body_color), outline=outline)
+        d.ellipse([28, 78, 37, 91], fill=color(light), outline=outline)
+        d.ellipse([28, 68, 31, 82], fill=color(light), outline=outline)
+        d.ellipse([34, 68, 37, 82], fill=color(light), outline=outline)
+        d.ellipse([20, 91, 25, 98], fill=color(light), outline=outline)
+        if direction == "down":
+            d.ellipse([30, 84, 33, 87], fill=(34, 29, 24, 255))
+        else:
+            d.ellipse([30, 81, 33, 84], fill=(34, 29, 24, 255))
+    elif kind == "deer":
+        _shadow(canvas, [16, 105, 50, 118], 60)
+        d.ellipse([19, 82, 45, 106], fill=color(body_color), outline=outline)
+        d.ellipse([25, 72, 39, 87], fill=color(light), outline=outline)
+        d.ellipse([25, 69, 29, 80], fill=color(light), outline=outline)
+        d.ellipse([35, 69, 39, 80], fill=color(light), outline=outline)
+        d.line([(27, 71), (21, 58)], fill=outline, width=2)
+        d.line([(23, 63), (17, 57)], fill=outline, width=2)
+        d.line([(37, 71), (43, 58)], fill=outline, width=2)
+        d.ellipse([29, 78, 32, 81], fill=(31, 27, 23, 255)) if direction == "down" else d.ellipse([29, 76, 32, 79], fill=(31, 27, 23, 255))
+        d.ellipse([16, 91, 22, 99], fill=color(light), outline=outline)
+        _animal_legs(d, kind, 0, (19, 82, 45, 106), (body_color, light, dark), outline)
+    elif kind == "chicken":
+        _shadow(canvas, [20, 105, 44, 116], 55)
+        d.ellipse([20, 88, 43, 108], fill=color(body_color), outline=outline)
+        d.ellipse([27, 74, 38, 92], fill=color(light), outline=outline)
+        d.polygon([(28, 76), (30, 67), (32, 76)], fill=(190, 55, 50, 255),
+                  outline=outline)
+        d.polygon([(33, 76), (35, 67), (37, 76)], fill=(190, 55, 50, 255),
+                  outline=outline)
+        if direction == "down":
+            d.polygon([(30, 92), (35, 98), (29, 98)], fill=(218, 155, 55, 255),
+                      outline=outline)
+            d.ellipse([29, 86, 32, 89], fill=(31, 27, 23, 255))
+            d.ellipse([35, 86, 38, 89], fill=(31, 27, 23, 255))
+        else:
+            d.polygon([(30, 74), (35, 68), (29, 68)], fill=(218, 155, 55, 255),
+                      outline=outline)
+            d.ellipse([29, 82, 32, 85], fill=(31, 27, 23, 255))
+            d.ellipse([35, 82, 38, 85], fill=(31, 27, 23, 255))
+        _animal_legs(d, kind, 0, (20, 88, 43, 108), (body_color, light, dark), outline)
+    elif kind == "goat":
+        _shadow(canvas, [12, 105, 54, 118], 60)
+        d.ellipse([14, 84, 48, 108], fill=color(body_color), outline=outline)
+        d.ellipse([25, 70, 42, 90], fill=color(light), outline=outline)
+        d.ellipse([24, 74, 28, 84], fill=color(light), outline=outline)
+        d.ellipse([38, 74, 42, 84], fill=color(light), outline=outline)
+        d.line([(27, 72), (22, 58)], fill=outline, width=2)
+        d.line([(23, 60), (18, 54)], fill=outline, width=2)
+        d.line([(39, 72), (44, 58)], fill=outline, width=2)
+        d.line([(43, 60), (48, 54)], fill=outline, width=2)
+        if direction == "down":
+            d.ellipse([29, 80, 32, 83], fill=(31, 27, 23, 255))
+            d.ellipse([35, 80, 38, 83], fill=(31, 27, 23, 255))
+            d.line([(32, 89), (32, 96)], fill=(232, 226, 190, 255), width=2)
+        else:
+            d.ellipse([29, 78, 32, 81], fill=(31, 27, 23, 255))
+            d.ellipse([35, 78, 38, 81], fill=(31, 27, 23, 255))
+            d.line([(32, 72), (32, 66)], fill=(232, 226, 190, 255), width=2)
+        _animal_legs(d, kind, 0, (14, 84, 48, 108), (body_color, light, dark), outline)
+    else:
+        _shadow(canvas, [10, 105, 57, 118], 65)
+        d.ellipse([13, 84, 50, 108], fill=color(body_color), outline=outline)
+        d.ellipse([24, 72, 42, 90], fill=color(light), outline=outline)
+        d.ellipse([26, 68, 29, 77], fill=color(light), outline=outline)
+        d.ellipse([37, 68, 40, 77], fill=color(light), outline=outline)
+        d.ellipse([28, 77, 31, 80], fill=(31, 27, 23, 255)) if direction == "down" else d.ellipse([28, 75, 31, 78], fill=(31, 27, 23, 255))
+        d.line([(24, 88), (18, 93)], fill=(232, 226, 190, 255), width=2)
+        d.line([(42, 88), (48, 93)], fill=(232, 226, 190, 255), width=2)
+        _animal_legs(d, kind, 0, (13, 84, 50, 108), (body_color, light, dark), outline)
+    return canvas
 
 
 def _humanoid(direction, walk_frame, zombie=False):
@@ -555,6 +836,229 @@ def make_campfire():
     return canvas
 
 
+def _vehicle_axes(direction):
+    if direction == "east":
+        return (1.0, 0.0), (0.0, -1.0)
+    if direction == "west":
+        return (-1.0, 0.0), (0.0, 1.0)
+    if direction == "north":
+        return (0.0, -1.0), (-1.0, 0.0)
+    if direction == "southeast":
+        diagonal = math.sqrt(0.5)
+        return (diagonal, diagonal), (diagonal, -diagonal)
+    if direction == "southwest":
+        diagonal = math.sqrt(0.5)
+        return (-diagonal, diagonal), (diagonal, diagonal)
+    if direction == "northwest":
+        diagonal = math.sqrt(0.5)
+        return (-diagonal, -diagonal), (-diagonal, diagonal)
+    if direction == "northeast":
+        diagonal = math.sqrt(0.5)
+        return (diagonal, -diagonal), (-diagonal, -diagonal)
+    return (0.0, 1.0), (1.0, 0.0)
+
+
+def _vehicle_point(f, r, z, forward, right):
+    wx = f * forward[0] + r * right[0]
+    wy = f * forward[1] + r * right[1]
+    return (80 + int(round((wx - wy) * 32.0)),
+            81 + int(round((wx + wy) * 16.0 - z * 24.0)))
+
+
+def _vehicle_quad(d, points, fill):
+    d.polygon(points, fill=fill, outline=OUTLINE)
+
+
+def _vehicle_visible(normal):
+    # 等距相机从左上看；法线朝向屏幕下方（+x/+y 分量）的面才可见。
+    return normal[0] + normal[1] > 0.0001
+
+
+def _vehicle_box(d, forward, right, f0, f1, r0, r1, z0, z1, side, top,
+                 side_light=None, side_dark=None):
+    if side_light is None:
+        side_light = color(shade(side[:3], 12))
+    if side_dark is None:
+        side_dark = color(shade(side[:3], -14))
+    base = {
+        "rf": _vehicle_point(f0, r0, z0, forward, right),
+        "rb": _vehicle_point(f0, r1, z0, forward, right),
+        "ff": _vehicle_point(f1, r0, z0, forward, right),
+        "fb": _vehicle_point(f1, r1, z0, forward, right),
+    }
+    upper = {
+        "rf": _vehicle_point(f0, r0, z1, forward, right),
+        "rb": _vehicle_point(f0, r1, z1, forward, right),
+        "ff": _vehicle_point(f1, r0, z1, forward, right),
+        "fb": _vehicle_point(f1, r1, z1, forward, right),
+    }
+    faces = (
+        ("rear", (-forward[0], -forward[1]), "rf", "rb", side_dark),
+        ("front", forward, "ff", "fb", side_light),
+        ("left", (-right[0], -right[1]), "rf", "ff", side_dark),
+        ("right", right, "rb", "fb", side),
+    )
+    for _name, normal, a, b, fill in faces:
+        if _vehicle_visible(normal):
+            _vehicle_quad(d, [base[a], base[b], upper[b], upper[a]], fill)
+    _vehicle_quad(d, [upper["rf"], upper["rb"], upper["fb"], upper["ff"]], top)
+
+
+def _vehicle_face(d, forward, right, f, r0, r1, z0, z1, fill,
+                  normal=None, f0=None, f1=None):
+    if normal is not None and not _vehicle_visible(normal):
+        return
+    if f is not None:
+        points = [
+            _vehicle_point(f, r0, z0, forward, right),
+            _vehicle_point(f, r1, z0, forward, right),
+            _vehicle_point(f, r1, z1, forward, right),
+            _vehicle_point(f, r0, z1, forward, right),
+        ]
+    else:
+        points = [
+            _vehicle_point(f0, r0, z0, forward, right),
+            _vehicle_point(f1, r0, z0, forward, right),
+            _vehicle_point(f1, r0, z1, forward, right),
+            _vehicle_point(f0, r0, z1, forward, right),
+        ]
+    _vehicle_quad(d, points, fill)
+
+
+def make_vehicle(direction):
+    forward, right = _vehicle_axes(direction)
+    canvas = new_canvas(VEHICLE_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    body = (90, 108, 110, 255)
+    body_top = (111, 131, 130, 255)
+    body_dark = (59, 74, 77, 255)
+    body_light = (132, 151, 148, 255)
+    tire = (38, 38, 36, 255)
+    tire_top = (57, 57, 52, 255)
+    rim = (125, 124, 112, 255)
+    glass = (61, 91, 102, 255)
+    glass_light = (105, 143, 148, 255)
+    bed_floor = (54, 54, 48, 255)
+    bed_rail = (78, 88, 87, 255)
+    bumper = (68, 72, 72, 255)
+    headlight = (238, 220, 151, 255)
+    taillight = (155, 48, 40, 255)
+    rust = (121, 72, 45, 255)
+
+    # 接地阴影：比车身略宽，避免车辆看起来悬空。
+    shadow = []
+    for f, r in ((-1.48, -0.68), (1.48, -0.68), (1.48, 0.68), (-1.48, 0.68)):
+        x, y = _vehicle_point(f, r, 0.0, forward, right)
+        shadow.append((x, y + 3))
+    d.polygon(shadow, fill=(0, 0, 0, 70))
+
+    # 四个轮子先画，车身覆盖内侧；外露部分形成轮胎/轮眉的层次。
+    for wheel_f in (-0.86, 0.86):
+        for wheel_r in (-0.55, 0.55):
+            _vehicle_box(d, forward, right, wheel_f - 0.23, wheel_f + 0.23,
+                         wheel_r - 0.08, wheel_r + 0.08, 0.0, 0.30,
+                         tire, tire_top)
+
+    # 底盘/货斗下方车身。
+    _vehicle_box(d, forward, right, -1.30, 1.28, -0.52, 0.52, 0.20, 0.54,
+                 body, body_top, body_light, body_dark)
+
+    # 前保险杠、后保险杠。
+    _vehicle_box(d, forward, right, 1.27, 1.38, -0.55, 0.55, 0.25, 0.42,
+                 bumper, color(shade(bumper[:3], 10)),
+                 color(shade(bumper[:3], 16)), color(shade(bumper[:3], -12)))
+    _vehicle_box(d, forward, right, -1.38, -1.27, -0.55, 0.55, 0.25, 0.42,
+                 bumper, color(shade(bumper[:3], 6)),
+                 color(shade(bumper[:3], 10)), color(shade(bumper[:3], -16)))
+
+    # 引擎盖：比货斗略低，前缘略微收窄。
+    _vehicle_box(d, forward, right, 0.58, 1.27, -0.50, 0.50, 0.54, 0.64,
+                 body_dark, body_top, body_light, body_dark)
+    d.line([_vehicle_point(0.72, 0.0, 0.65, forward, right),
+            _vehicle_point(1.20, 0.0, 0.65, forward, right)],
+           fill=color(shade(body_top[:3], 14)), width=1)
+
+    # 开放货斗：先铺深色底板，再画三面栏板。
+    _vehicle_quad(d, [
+        _vehicle_point(-1.28, -0.49, 0.55, forward, right),
+        _vehicle_point(-1.28, 0.49, 0.55, forward, right),
+        _vehicle_point(-0.28, 0.49, 0.55, forward, right),
+        _vehicle_point(-0.28, -0.49, 0.55, forward, right),
+    ], bed_floor)
+    _vehicle_box(d, forward, right, -1.34, -1.23, -0.58, 0.58, 0.55, 0.73,
+                 bed_rail, color(shade(bed_rail[:3], 8)),
+                 color(shade(bed_rail[:3], 14)), color(shade(bed_rail[:3], -12)))
+    _vehicle_box(d, forward, right, -1.23, -0.28, -0.58, -0.50, 0.55, 0.69,
+                 bed_rail, color(shade(bed_rail[:3], 8)),
+                 color(shade(bed_rail[:3], 14)), color(shade(bed_rail[:3], -12)))
+    _vehicle_box(d, forward, right, -1.23, -0.28, 0.50, 0.58, 0.55, 0.69,
+                 bed_rail, color(shade(bed_rail[:3], 8)),
+                 color(shade(bed_rail[:3], 14)), color(shade(bed_rail[:3], -12)))
+    for f in (-1.10, -0.82, -0.54):
+        d.line([_vehicle_point(f, -0.49, 0.56, forward, right),
+                _vehicle_point(f, 0.49, 0.56, forward, right)],
+               fill=color(shade(bed_floor[:3], 12)), width=1)
+
+    # 驾驶室：车顶高于货斗栏板，前排有挡风玻璃。
+    _vehicle_box(d, forward, right, -0.24, 0.58, -0.46, 0.46, 0.54, 1.01,
+                 body, body_top, body_light, body_dark)
+
+    # 玻璃只画朝相机的面，避免背面窗浮在车顶轮廓外。
+    if _vehicle_visible(forward):
+        _vehicle_face(d, forward, right, 0.585, -0.37, 0.37, 0.64, 0.94,
+                      glass)
+        d.line([_vehicle_point(0.59, 0.0, 0.64, forward, right),
+                _vehicle_point(0.59, 0.0, 0.94, forward, right)],
+               fill=color(glass_light), width=1)
+    if _vehicle_visible((-forward[0], -forward[1])):
+        _vehicle_face(d, forward, right, -0.245, -0.34, 0.34, 0.68, 0.94,
+                      glass)
+    if _vehicle_visible(right):
+        for f0, f1 in ((-0.10, 0.16), (0.24, 0.48)):
+            _vehicle_face(d, forward, right, None, 0.465, 0.465,
+                          0.66, 0.92, glass,
+                          normal=right, f0=f0, f1=f1)
+    if _vehicle_visible((-right[0], -right[1])):
+        for f0, f1 in ((-0.10, 0.16), (0.24, 0.48)):
+            _vehicle_face(d, forward, right, None, -0.465, -0.465,
+                          0.66, 0.92, glass,
+                          normal=(-right[0], -right[1]), f0=f0, f1=f1)
+
+    # 车门缝、把手与车顶高光。
+    for side_r, normal in ((0.465, right), (-0.465, (-right[0], -right[1]))):
+        if not _vehicle_visible(normal):
+            continue
+        d.line([_vehicle_point(-0.02, side_r, 0.26, forward, right),
+                _vehicle_point(-0.02, side_r, 0.86, forward, right)],
+               fill=color(shade(body_dark[:3], -8)), width=1)
+        d.line([_vehicle_point(0.06, side_r, 0.62, forward, right),
+                _vehicle_point(0.20, side_r, 0.62, forward, right)],
+               fill=color(shade(body_dark[:3], 18)), width=1)
+    d.line([_vehicle_point(-0.12, 0.22, 1.02, forward, right),
+            _vehicle_point(0.46, 0.22, 1.02, forward, right)],
+           fill=color(shade(body_top[:3], 16)), width=1)
+
+    # 前灯/尾灯：只在对应的面可见时出现。
+    if _vehicle_visible(forward):
+        for r in (-0.34, 0.34):
+            _vehicle_face(d, forward, right, 1.275, r - 0.10, r + 0.10,
+                          0.43, 0.50, headlight)
+    if _vehicle_visible((-forward[0], -forward[1])):
+        for r in (-0.36, 0.36):
+            _vehicle_face(d, forward, right, -1.335, r - 0.08, r + 0.08,
+                          0.41, 0.48, taillight)
+
+    # 旧车质感：引擎盖/货斗边缘的锈斑与泥点，保持低饱和。
+    for f, r, dx, dy in ((0.88, -0.34, 4, 1), (1.12, 0.18, 3, 1),
+                         (-0.70, 0.44, 4, 1), (0.38, -0.50, 3, 1)):
+        x, y = _vehicle_point(f, r, 0.66, forward, right)
+        d.line([(x, y), (x + dx, y + dy)], fill=color(rust), width=1)
+    for f, r in ((0.74, 0.30), (1.10, -0.22), (-0.94, -0.52)):
+        x, y = _vehicle_point(f, r, 0.67, forward, right)
+        d.point((x, y), fill=color(shade(rust[:3], 20)))
+    return canvas
+
+
 def make_crate():
     canvas = new_canvas(FLOOR_CANVAS)
     d = ImageDraw.Draw(canvas)
@@ -572,6 +1076,27 @@ def make_crate():
     d.line([(48, 89), (16, 107)], fill=(168, 118, 69, 255), width=2)
     d.rectangle([27, 91, 37, 97], fill=(92, 96, 98, 255), outline=dark)
     d.point((30, 94), fill=(190, 190, 180, 255))
+    return canvas
+
+
+def make_barricade():
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    _shadow(canvas, [7, 102, 57, 118], 76)
+    dark = OUTLINE
+    wood = (137, 94, 54, 255)
+    light = (184, 132, 76, 255)
+    side = (103, 69, 42, 255)
+    d.rectangle([12, 66, 20, 110], fill=side, outline=dark)
+    d.rectangle([44, 66, 52, 110], fill=side, outline=dark)
+    for y in (76, 88, 100):
+        d.rectangle([8, y, 56, y + 8], fill=wood, outline=dark)
+        d.line([(11, y + 2), (53, y + 2)], fill=light, width=1)
+        d.line([(11, y + 7), (53, y + 7)], fill=side, width=1)
+    d.line([(15, 105), (49, 74)], fill=side, width=4)
+    d.line([(16, 105), (50, 74)], fill=light, width=1)
+    for x, y in ((15, 79), (49, 79), (15, 103), (49, 103)):
+        d.rectangle([x - 1, y - 1, x + 1, y + 1], fill=(194, 186, 135, 255))
     return canvas
 
 
@@ -593,6 +1118,32 @@ def make_locker():
     d.rectangle([27, 85, 30, 92], fill=(191, 174, 112, 255), outline=dark)
     d.rectangle([38, 85, 41, 92], fill=(191, 174, 112, 255), outline=dark)
     d.line([(20, 106), (44, 106)], fill=(49, 58, 60, 255), width=2)
+    return canvas
+
+
+def make_bed():
+    canvas = new_canvas(FLOOR_CANVAS)
+    d = ImageDraw.Draw(canvas)
+    _shadow(canvas, [8, 101, 56, 118], 78)
+    dark = OUTLINE
+    frame = (112, 75, 46, 255)
+    frame_light = (157, 108, 66, 255)
+    sheet = (216, 210, 190, 255)
+    sheet_shadow = (177, 171, 151, 255)
+    blanket = (93, 112, 128, 255)
+    blanket_light = (126, 145, 159, 255)
+    pillow = (238, 234, 218, 255)
+    d.rectangle([10, 69, 54, 112], fill=frame, outline=dark)
+    d.rectangle([12, 66, 52, 78], fill=frame_light, outline=dark)
+    d.rectangle([14, 79, 50, 109], fill=sheet, outline=dark)
+    d.rectangle([14, 101, 50, 109], fill=sheet_shadow, outline=dark)
+    d.rectangle([17, 82, 31, 94], fill=pillow, outline=dark)
+    d.line([(19, 86), (29, 86)], fill=(208, 203, 188, 255), width=1)
+    d.rectangle([30, 87, 50, 109], fill=blanket, outline=dark)
+    d.line([(33, 90), (47, 90)], fill=blanket_light, width=2)
+    d.line([(33, 96), (47, 96)], fill=blanket_light, width=1)
+    d.rectangle([10, 108, 15, 115], fill=frame, outline=dark)
+    d.rectangle([49, 108, 54, 115], fill=frame, outline=dark)
     return canvas
 
 
@@ -709,6 +1260,16 @@ def make_icon(kind):
             d.line([(x, 107), (x, 112)], fill=(194, 186, 135, 255), width=1)
         d.rectangle([42, 88, 46, 92], fill=(208, 111, 63, 255), outline=OUTLINE)
         d.line([(18, 98), (14, 98)], fill=(194, 186, 135, 255), width=2)
+    elif kind == "wood":
+        for i, y in enumerate((108, 98, 88)):
+            x0 = 15 + i * 2
+            x1 = 49 - i * 2
+            d.rectangle([x0, y, x1, y + 8], fill=(137, 94, 54, 255),
+                        outline=OUTLINE)
+            d.line([(x0 + 3, y + 2), (x1 - 3, y + 2)],
+                   fill=(184, 132, 76, 255), width=1)
+            d.line([(x0 + 2, y + 6), (x1 - 2, y + 6)],
+                   fill=(103, 69, 42, 255), width=1)
     elif kind == "projectile_bullet":
         d.line([(13, 94), (28, 94)], fill=(243, 226, 160, 160), width=2)
         d.line([(17, 100), (25, 100)], fill=(222, 192, 116, 140), width=1)
@@ -750,6 +1311,9 @@ def build_specs():
         canvas = make_wood_floor(3100 + i, i)
         specs.append((f"floor_wood_{i + 1}", canvas, (0, 0, 64, 32),
                       0, 96, 64, 128))
+    canvas = make_water_floor(4100)
+    specs.append(("floor_water_1", canvas, (0, 0, 64, 32),
+                  0, 96, 64, 128))
 
     for i in range(3):
         canvas = make_wall(2200 + i, i)
@@ -759,6 +1323,19 @@ def build_specs():
         canvas = make_wall(2300 + i, i, door=True)
         specs.append((f"wall_door_{i + 1}", canvas, (0, 112, 64, 112),
                       0, 112, 64, 224))
+
+    wall_wood = make_wood_wall(2400, 0)
+    door_closed = make_built_door(2500, open_door=False)
+    door_open = make_built_door(2600, open_door=True)
+    for name, canvas in (
+        ("wall_wood_h_1", wall_wood),
+        ("wall_wood_v_1", ImageOps.mirror(wall_wood)),
+        ("door_wood_closed_h_1", door_closed),
+        ("door_wood_closed_v_1", ImageOps.mirror(door_closed)),
+        ("door_wood_open_h_1", door_open),
+        ("door_wood_open_v_1", ImageOps.mirror(door_open)),
+    ):
+        specs.append((name, canvas, (0, 112, 64, 112), 0, 112, 64, 224))
 
     for dir_name in ("down", "left", "right", "up"):
         for frame in range(2):
@@ -808,15 +1385,32 @@ def build_specs():
         specs.append((f"corpse_{i + 1}", canvas, _bbox(canvas),
                       _bbox(canvas)[0], _bbox(canvas)[1], 64, 128))
 
+    for kind in ("deer", "rabbit", "boar", "chicken", "goat"):
+        for direction in ("down", "left", "right", "up"):
+            for frame in (0, 1):
+                canvas = make_animal(kind, direction, frame)
+                bbox = _bbox(canvas)
+                specs.append((f"animal_{kind}_{direction}_{frame}", canvas, bbox,
+                              bbox[0], bbox[1], 64, 128))
+
     for i in range(3):
         canvas = make_tree(6100 + i, i)
         bbox = _bbox(canvas)
         specs.append((f"tree_{i + 1}", canvas, bbox, bbox[0], bbox[1], 192, 256))
 
+    for direction in ("north", "northeast", "east", "southeast",
+                      "south", "southwest", "west", "northwest"):
+        canvas = make_vehicle(direction)
+        bbox = _bbox(canvas)
+        specs.append((f"vehicle_{direction}", canvas, bbox, bbox[0], bbox[1],
+                      160, 128))
+
     for name, canvas in (("workbench_1", make_workbench()),
                          ("campfire_1", make_campfire()),
                          ("crate_1", make_crate()),
                          ("locker_1", make_locker()),
+                         ("bed_1", make_bed()),
+                         ("barricade_1", make_barricade()),
                          ("radio_1", make_radio()),
                          ("extraction_1", make_extraction())):
         bbox = _bbox(canvas)
@@ -824,12 +1418,12 @@ def build_specs():
 
     slice_icons = ("bandage", "canned_beans", "axe", "water_bottle", "backpack",
                    "hammer", "makeshift_spear", "padded_jacket", "repair_kit",
-                   "radio_part")
+                   "radio_part", "wood")
     for kind in ("bandage", "canned_beans", "axe", "kitchen_knife", "rag", "jacket",
                  "tote_bag", "water_bottle", "painkillers", "hammer", "screwdriver",
                  "energy_bar", "hiking_boots", "backpack", "cooked_beans",
                  "magazine_cooking", "makeshift_spear", "padded_jacket", "repair_kit",
-                 "radio_part"):
+                 "radio_part", "wood"):
         canvas = make_icon(kind) if kind in slice_icons else base.make_item_icon(kind)
         bbox = _bbox(canvas)
         specs.append((f"item_{kind}", canvas, bbox, bbox[0], bbox[1], 64, 128))

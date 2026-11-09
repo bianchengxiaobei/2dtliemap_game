@@ -26,6 +26,8 @@ public:
     // 平台层填充（每帧 PollEvents 时调用）
     void SetKeyState(int keyCode, bool down);
     void SetMouseButton(int button, bool down);
+    // 平台层鼠标回调：即使按下与松开发生在同一帧轮询间隔内，也保留一次按下边沿。
+    void LatchMouseButton(int button, bool down);
     void SetMousePosition(float x, float y);
     void AddScroll(float deltaX, float deltaY);
 
@@ -41,6 +43,8 @@ public:
     float MouseY() const { return m_mouseY; }
     float ScrollDeltaY() const { return m_gameplayBlocked ? 0.0f : m_scrollY; }
     bool IsMouseButtonPressed(int button) const;
+    // 不受 UI 阻断影响的按下边沿；调用方必须自行确认光标不在 UI 上。
+    bool IsMouseButtonPressedRaw(int button) const;
     bool IsMouseButtonDown(int button) const;
     bool IsMouseButtonReleased(int button) const;
 
@@ -55,6 +59,7 @@ private:
     std::array<bool, kKeyCount> m_keyPrev{};
     std::array<bool, kMouseButtonCount> m_mouseDown{};
     std::array<bool, kMouseButtonCount> m_mousePrev{};
+    std::array<bool, kMouseButtonCount> m_mousePressedLatch{};
     std::unordered_map<std::string, int> m_actionToKey;
 
     float m_mouseX = 0.0f;

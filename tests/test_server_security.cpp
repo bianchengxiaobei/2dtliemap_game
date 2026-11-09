@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <span>
@@ -12,6 +13,7 @@
 #include "characters/components/CharacterComponents.h"
 #include "ecs/components/CommonComponents.h"
 #include "game/WorldSimulation.h"
+#include "items/ItemComponents.h"
 #include "net/Command.h"
 #include "net/CommandCodec.h"
 #include "net/KcpSession.h"
@@ -192,14 +194,23 @@ TEST_CASE("M13-T6 服务器拒绝越权/超距/限频/冷却与畸形包") {
     REQUIRE(zombieId != 0);
     const float healthBefore = registry.get<zl::ecs::Health>(zombie).current;
 
+    // M15-T1：服务器按主手武器参数结算（axe damage=65, wear=0.035）。
+    auto& equipment = registry.get_or_emplace<zl::ecs::Equipment>(player);
+    equipment.slots[static_cast<std::size_t>(zl::ecs::EquipSlot::PrimaryHand)] =
+        zl::ecs::ItemInstance{"axe", 1, 1.0f};
+
     zl::net::Command attack;
     attack.type = zl::net::CommandType::Attack;
     attack.playerStableId = playerId;
     attack.payload.entityId = zombieId;
     send({attack, attack});
-    host.RunForTicks(1);
+    // M30-T6：服务器按武器前摇推进挥击（消防斧轻击 0.10s）。
+    host.RunForTicks(10);
     CHECK(host.GetNetworkStats().cooldownRejected >= 1);
-    CHECK(registry.get<zl::ecs::Health>(zombie).current < healthBefore);
+    CHECK(registry.get<zl::ecs::Health>(zombie).current ==
+          doctest::Approx(healthBefore - 65.0f));
+    REQUIRE(equipment.slots[0].has_value());
+    CHECK(equipment.slots[0]->condition == doctest::Approx(0.965f));
 
     // 经过这些恶意/非法输入后，会话仍然存活并继续接受合法命令。
     const std::uint64_t acceptedBefore = host.GetNetworkStats().commandsAccepted;

@@ -193,6 +193,33 @@ body {
     color: #ffd479;
 }
 
+.storage-actions {
+    display: none;
+    margin-top: 8px;
+    width: 300px;
+    height: 26px;
+}
+
+.storage-btn {
+    display: inline-block;
+    width: 92px;
+    height: 24px;
+    line-height: 24px;
+    margin-right: 8px;
+    text-align: center;
+    font-size: 12px;
+    color: #d7e2ec;
+    background-color: #16222c;
+    border-width: 1px;
+    border-color: #34495c;
+    border-radius: 3px;
+}
+
+.storage-btn:hover {
+    color: #ffd479;
+    border-color: #ffd479;
+}
+
 .inv-hint {
     margin-top: 12px;
     width: 286px;

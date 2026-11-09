@@ -2,12 +2,21 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <utility>
 
 #include "characters/components/CharacterComponents.h"
+#include "characters/systems/InfectionSystem.h"
+#include "characters/systems/PainSystem.h"
+#include "characters/systems/WoundSystem.h"
 #include "core/EventBus.h"
 #include "core/GameEvents.h"
+#include "game/BuildingRules.h"
+#include "game/FoodSafety.h"
 #include "game/GroundItems.h"
+#include "game/LootContainers.h"
+#include "game/PlayerStorage.h"
+#include "game/StructureComponents.h"
 #include "game/WorldQueries.h"
 #include "items/Crafting.h"
 #include "items/InventoryOps.h"
@@ -96,6 +105,22 @@ std::string PlayerInventoryService::StationLabel(std::string_view station) const
     return it != m_options.stationLabels.end() ? it->second : std::string(station);
 }
 
+float PlayerInventoryService::CraftSeconds(ecs::Entity player,
+                                           const items::RecipeDef& recipe,
+                                           float efficiency) const {
+    const float base = items::EffectiveCraftSeconds(recipe, efficiency);
+    if (m_options.progression == nullptr || !m_options.progression->enabled) {
+        return base;
+    }
+    const auto* progression =
+        m_world.Registry().try_get<ecs::Progression>(player);
+    if (progression == nullptr) {
+        return base;
+    }
+    return base *
+           game::CraftDurationScale(*progression, *m_options.progression);
+}
+
 InventoryResult PlayerInventoryService::PickupNearest(ecs::Entity player) {
     entt::registry& registry = m_world.Registry();
     auto* container = registry.try_get<ecs::Container>(player);
@@ -170,6 +195,37 @@ InventoryResult PlayerInventoryService::Pickup(ecs::Entity player,
     return Ok("拾取了 " + name + " ×" + std::to_string(result.picked));
 }
 
+bool PlayerInventoryService::ApplyUseInfectionRisk(ecs::Entity player,
+                                                   std::string_view defId,
+                                                   float risk) {
+    if (!(risk > 0.0f) || !m_world.Alive(player)) {
+        return false;
+    }
+    entt::registry& registry = m_world.Registry();
+    auto* wounds = registry.try_get<ecs::Wounds>(player);
+    if (wounds == nullptr || wounds->count == 0) {
+        return false;
+    }
+    auto& infection = registry.get_or_emplace<ecs::Infection>(player);
+    const std::uint64_t seed = DeriveFoodPoisonSeed(
+        m_world.IdOf(player).id, ++m_useRiskSerial, defId);
+    return characters::TryInfectWithRisk(infection, risk, seed, wounds);
+}
+
+void PlayerInventoryService::ApplyFoodUse(ecs::Entity player,
+                                          const items::ItemDef& def,
+                                          const items::UseResult& use) {
+    if (!IsFoodUse(use.effect) || !m_world.Alive(player)) {
+        return;
+    }
+    entt::registry& registry = m_world.Registry();
+    auto& food = registry.get_or_emplace<ecs::FoodState>(player);
+    const std::uint64_t seed = DeriveFoodPoisonSeed(
+        m_world.IdOf(player).id, ++m_foodUseSerial, def.id);
+    (void)ApplyFoodConsumption(food, def, use.spoiled, m_options.foodSafety,
+                               seed);
+}
+
 InventoryResult PlayerInventoryService::UseBag(ecs::Entity player, int index) {
     entt::registry& registry = m_world.Registry();
     auto* container = registry.try_get<ecs::Container>(player);
@@ -179,7 +235,32 @@ InventoryResult PlayerInventoryService::UseBag(ecs::Entity player, int index) {
     }
 
     if (index < 0) {
-        const items::UseResult use = items::UseFirstConsumable(*container, m_items);
+        const auto* painState = registry.try_get<ecs::Pain>(player);
+        const auto* infectionState = registry.try_get<ecs::Infection>(player);
+        const bool infected =
+            infectionState != nullptr &&
+            infectionState->stage != ecs::InfectionStage::None;
+        int useIndex = -1;
+        for (std::size_t i = 0; i < container->items.size(); ++i) {
+            const items::ItemDef* candidate = m_items.Find(container->items[i].defId);
+            if (candidate == nullptr || !candidate->use.Any()) {
+                continue;
+            }
+            if (candidate->use.painRelief > 0.0f &&
+                (painState == nullptr || painState->baseLevel <= 0.01f)) {
+                continue;
+            }
+            if (candidate->use.infectionCure > 0.0f && !infected) {
+                continue;
+            }
+            useIndex = static_cast<int>(i);
+            break;
+        }
+        if (useIndex < 0) {
+            return Fail("背包里没有可使用的消耗品");
+        }
+        const items::UseResult use =
+            items::UseAt(*container, m_items, static_cast<std::size_t>(useIndex));
         if (!use.applied) {
             return Fail("背包里没有可使用的消耗品");
         }
@@ -189,10 +270,78 @@ InventoryResult PlayerInventoryService::UseBag(ecs::Entity player, int index) {
             needs != nullptr ? &needs->hunger : nullptr,
             needs != nullptr ? &needs->thirst : nullptr,
             needs != nullptr ? &needs->fatigue : nullptr);
+        const float foodDamage =
+            use.spoiled ? m_options.spoiledFoodDamage : 0.0f;
+        const float totalDamage = use.effect.healthPenalty + foodDamage;
+        if (totalDamage > 0.0f) {
+            health->current = std::max(0.0f, health->current - totalDamage);
+        }
+        if (const items::ItemDef* foodDef = m_items.Find(use.defId);
+            foodDef != nullptr) {
+            ApplyFoodUse(player, *foodDef, use);
+        }
+        characters::WoundTreatment treatment;
+        if (use.effect.bandage > 0.0f) {
+            if (auto* wounds = registry.try_get<ecs::Wounds>(player);
+                wounds != nullptr) {
+                treatment = characters::TreatWounds(*wounds, use.effect.bandage);
+            }
+        }
+        characters::InfectionTreatment infectionTreatment;
+        if (use.effect.infectionCure > 0.0f || use.effect.infectionSlow > 0.0f) {
+            if (auto* infection = registry.try_get<ecs::Infection>(player);
+                infection != nullptr) {
+                infectionTreatment = characters::TreatInfection(
+                    *infection, use.effect.infectionCure, use.effect.infectionSlow,
+                    use.effect.infectionSlowSeconds,
+                    registry.try_get<ecs::Wounds>(player));
+            }
+        }
+        bool painRelieved = false;
+        if (use.effect.painRelief > 0.0f) {
+            auto& pain = registry.get_or_emplace<ecs::Pain>(player);
+            painRelieved = characters::ApplyPainRelief(
+                pain, use.effect.painRelief, use.effect.painReliefSeconds);
+        }
         const std::string name = ItemLabel(m_items, use.defId);
+        if (treatment.wounds > 0) {
+            std::string message = "使用了 " + name + "：止血 " +
+                                  std::to_string(treatment.wounds) + " 处伤口";
+            if (healed > 0.0f) {
+                message += "，+" +
+                           std::to_string(static_cast<int>(std::lround(healed))) +
+                           " HP";
+            }
+            if (infectionTreatment.applied) {
+                message += infectionTreatment.cured ? "，感染已清除" : "，感染延缓";
+            }
+            return Ok(std::move(message));
+        }
+        if (infectionTreatment.applied) {
+            if (infectionTreatment.cured) {
+                return Ok("使用了 " + name + "：感染已清除");
+            }
+            char progress[64];
+            std::snprintf(progress, sizeof(progress), "感染病程 -%.0f%%",
+                          static_cast<double>(infectionTreatment.progressReduced *
+                                              100.0f));
+            return Ok("使用了 " + name + "：" + progress);
+        }
+        if (painRelieved) {
+            return Ok("使用了 " + name + "：止痛 " +
+                      std::to_string(static_cast<int>(use.effect.painReliefSeconds)) +
+                      " 秒");
+        }
         if (use.effect.heal > 0.0f) {
-            return Ok("使用了 " + name + "（+" +
-                      std::to_string(static_cast<int>(std::lround(healed))) + " HP）");
+            return Ok("使用了 " + name + "：" +
+                      std::to_string(static_cast<int>(std::lround(healed))) + " HP");
+        }
+        if (totalDamage > 0.0f) {
+            return Ok("使用了 " + name + "：-" +
+                          std::to_string(
+                              static_cast<int>(std::lround(totalDamage))) +
+                          " HP",
+                      InventoryTone::Info);
         }
         return Ok("使用了 " + name);
     }
@@ -241,6 +390,19 @@ InventoryResult PlayerInventoryService::UseBag(ecs::Entity player, int index) {
         return Ok("学会了配方：" + labels);
     }
 
+    if (def->use.painRelief > 0.0f) {
+        const auto* pain = registry.try_get<ecs::Pain>(player);
+        if (pain == nullptr || pain->baseLevel <= 0.01f) {
+            return Fail("当前没有需要缓解的疼痛");
+        }
+    }
+    if (def->use.infectionCure > 0.0f) {
+        const auto* infection = registry.try_get<ecs::Infection>(player);
+        if (infection == nullptr ||
+            infection->stage == ecs::InfectionStage::None) {
+            return Fail("当前没有感染");
+        }
+    }
     const items::UseResult use =
         items::UseAt(*container, m_items, static_cast<std::size_t>(index));
     if (!use.applied) {
@@ -252,7 +414,68 @@ InventoryResult PlayerInventoryService::UseBag(ecs::Entity player, int index) {
         needs != nullptr ? &needs->hunger : nullptr,
         needs != nullptr ? &needs->thirst : nullptr,
         needs != nullptr ? &needs->fatigue : nullptr);
+    const float foodDamage = use.spoiled ? m_options.spoiledFoodDamage : 0.0f;
+    const float totalDamage = use.effect.healthPenalty + foodDamage;
+    if (totalDamage > 0.0f) {
+        health->current = std::max(0.0f, health->current - totalDamage);
+    }
+    if (def != nullptr) {
+        ApplyFoodUse(player, *def, use);
+    }
+    characters::WoundTreatment treatment;
+    if (use.effect.bandage > 0.0f) {
+        if (auto* wounds = registry.try_get<ecs::Wounds>(player); wounds != nullptr) {
+            treatment = characters::TreatWounds(*wounds, use.effect.bandage);
+        }
+    }
+    characters::InfectionTreatment infectionTreatment;
+    if (use.effect.infectionCure > 0.0f || use.effect.infectionSlow > 0.0f) {
+        if (auto* infection = registry.try_get<ecs::Infection>(player);
+            infection != nullptr) {
+            infectionTreatment = characters::TreatInfection(
+                *infection, use.effect.infectionCure, use.effect.infectionSlow,
+                use.effect.infectionSlowSeconds,
+                registry.try_get<ecs::Wounds>(player));
+        }
+    }
+    bool painRelieved = false;
+    if (use.effect.painRelief > 0.0f) {
+        auto& pain = registry.get_or_emplace<ecs::Pain>(player);
+        painRelieved = characters::ApplyPainRelief(
+            pain, use.effect.painRelief, use.effect.painReliefSeconds);
+    }
     const std::string name = ItemLabel(m_items, use.defId);
+    if (ApplyUseInfectionRisk(player, use.defId, use.effect.infectionRisk)) {
+        return Ok("使用了 " + name + "：污染导致感染", InventoryTone::Fail);
+    }
+    if (treatment.wounds > 0) {
+        std::string message = "使用了 " + name + "：止血 " +
+                              std::to_string(treatment.wounds) + " 处伤口";
+        if (healed > 0.0f) {
+            message += "（+" +
+                       std::to_string(static_cast<int>(std::lround(healed))) +
+                       " HP）";
+        }
+        if (infectionTreatment.applied) {
+            message += infectionTreatment.cured ? "，感染已清除" : "，感染延缓";
+        }
+        return Ok(std::move(message));
+    }
+    if (infectionTreatment.applied) {
+        if (infectionTreatment.cured) {
+            return Ok("使用了 " + name + "：感染已清除");
+        }
+        char progress[64];
+        std::snprintf(progress, sizeof(progress), "感染病程 -%.0f%%",
+                      static_cast<double>(infectionTreatment.progressReduced *
+                                          100.0f));
+        return Ok("使用了 " + name + "：" + progress);
+    }
+    if (painRelieved) {
+        return Ok("使用了 " + name + "：止痛 " +
+                  std::to_string(static_cast<int>(use.effect.painReliefSeconds)) +
+                  " 秒");
+    }
     if (use.effect.heal > 0.0f) {
         return Ok("使用了 " + name + "（+" +
                   std::to_string(static_cast<int>(std::lround(healed))) + " HP）");
@@ -482,6 +705,160 @@ InventoryResult PlayerInventoryService::EquipLoot(ecs::Entity player,
     return Ok("装备了 " + def->name);
 }
 
+InventoryResult PlayerInventoryService::SearchLoot(ecs::Entity player,
+                                                    std::uint64_t stableId,
+                                                    std::string* tableId) {
+    if (tableId != nullptr) {
+        tableId->clear();
+    }
+    if (m_options.lootTables == nullptr) {
+        return Fail("战利品表不可用");
+    }
+    entt::registry& registry = m_world.Registry();
+    const auto* playerPosition = registry.try_get<ecs::Position>(player);
+    auto* playerContainer = registry.try_get<ecs::Container>(player);
+    const ecs::Entity source =
+        stableId != 0 ? m_world.FindById(stableId) : entt::null;
+    const auto* sourcePosition =
+        source != entt::null ? registry.try_get<ecs::Position>(source) : nullptr;
+    const auto* loot =
+        source != entt::null ? registry.try_get<ecs::LootContainer>(source)
+                             : nullptr;
+    if (!m_world.Alive(player) || playerPosition == nullptr ||
+        playerContainer == nullptr || source == entt::null ||
+        !m_world.Alive(source) || sourcePosition == nullptr || loot == nullptr ||
+        !registry.all_of<ecs::Container>(source)) {
+        return Fail("容器不存在");
+    }
+    const float dx = sourcePosition->x - playerPosition->x;
+    const float dy = sourcePosition->y - playerPosition->y;
+    if (dx * dx + dy * dy >
+        m_options.inventoryRange * m_options.inventoryRange) {
+        return Fail("容器距离太远");
+    }
+    if (tableId != nullptr) {
+        *tableId = loot->tableId;
+    }
+    const game::LootSearchResult result = game::SearchLootContainer(
+        m_world, m_items, *m_options.lootTables, source);
+    if (!result.found) {
+        return Fail("容器不存在");
+    }
+    if (!result.searchedNow) {
+        return Ok("容器已搜索", InventoryTone::Info);
+    }
+    if (m_options.lootSearched) {
+        m_options.lootSearched(player, result.tableId);
+    }
+    const items::LootTable* table = m_options.lootTables->Find(result.tableId);
+    const std::string name = table != nullptr ? table->name : result.tableId;
+    if (result.totalItems <= 0) {
+        return Ok("搜索了 " + name + "：空的", InventoryTone::Info);
+    }
+    return Ok("搜索了 " + name + "：" + std::to_string(result.itemStacks) +
+                  " 堆 / " + std::to_string(result.totalItems) + " 件");
+}
+
+InventoryResult PlayerInventoryService::TakeLootContainer(
+    ecs::Entity player, ecs::Entity source, int index, int count) {
+    entt::registry& registry = m_world.Registry();
+    const auto* playerPosition = registry.try_get<ecs::Position>(player);
+    auto* container = registry.try_get<ecs::Container>(player);
+    const auto* sourcePosition = registry.try_get<ecs::Position>(source);
+    if (!m_world.Alive(player) || playerPosition == nullptr || container == nullptr ||
+        source == entt::null || !m_world.Alive(source) ||
+        sourcePosition == nullptr ||
+        !registry.all_of<ecs::LootContainer>(source)) {
+        return Fail("容器不存在");
+    }
+    const float dx = sourcePosition->x - playerPosition->x;
+    const float dy = sourcePosition->y - playerPosition->y;
+    if (dx * dx + dy * dy >
+        m_options.inventoryRange * m_options.inventoryRange) {
+        return Fail("容器距离太远");
+    }
+    const game::LootTakeResult result = game::TakeLootContainerItem(
+        m_world, m_items, source, *container, index, std::max(1, count));
+    if (!result.found) {
+        return Fail("容器里没有可拿取的物品");
+    }
+    if (result.taken <= 0) {
+        return Fail("背包已满");
+    }
+    if (m_events != nullptr) {
+        m_events->EmitQueued(
+            core::kOnItemPickup,
+            core::ItemEvent{m_world.IdOf(source).id, result.defId,
+                            result.taken});
+    }
+    const std::string name = ItemLabel(m_items, result.defId);
+    if (result.remaining > 0) {
+        return Ok("取出了 " + name + " ×" + std::to_string(result.taken) +
+                  "（容器剩 " + std::to_string(result.remaining) + "）");
+    }
+    return Ok("取出了 " + name + " ×" + std::to_string(result.taken));
+}
+
+InventoryResult PlayerInventoryService::EquipLootContainer(
+    ecs::Entity player, ecs::Entity source, int index, int slot) {
+    if (!ValidSlot(slot)) {
+        return Fail("装备槽非法");
+    }
+    entt::registry& registry = m_world.Registry();
+    auto* equipment = registry.try_get<ecs::Equipment>(player);
+    const auto* playerPosition = registry.try_get<ecs::Position>(player);
+    auto* sourceContainer =
+        source != entt::null ? registry.try_get<ecs::Container>(source)
+                             : nullptr;
+    const auto* sourcePosition =
+        source != entt::null ? registry.try_get<ecs::Position>(source) : nullptr;
+    if (!m_world.Alive(player) || equipment == nullptr ||
+        playerPosition == nullptr || source == entt::null ||
+        !m_world.Alive(source) || sourceContainer == nullptr ||
+        sourcePosition == nullptr ||
+        !registry.all_of<ecs::LootContainer>(source)) {
+        return Fail("容器不存在");
+    }
+    const float dx = sourcePosition->x - playerPosition->x;
+    const float dy = sourcePosition->y - playerPosition->y;
+    if (dx * dx + dy * dy >
+        m_options.inventoryRange * m_options.inventoryRange) {
+        return Fail("容器距离太远");
+    }
+    if (index < 0 ||
+        static_cast<std::size_t>(index) >= sourceContainer->items.size()) {
+        return Fail("容器物品槽不存在");
+    }
+    const ecs::ItemInstance entry =
+        sourceContainer->items[static_cast<std::size_t>(index)];
+    const items::ItemDef* def = m_items.Find(entry.defId);
+    const ecs::EquipSlot equipSlot = static_cast<ecs::EquipSlot>(slot);
+    if (def == nullptr || !items::SlotAccepts(equipSlot, def->type)) {
+        return Fail("该物品不能放入该装备槽");
+    }
+    ecs::ItemInstance one = entry;
+    one.count = 1;
+    ecs::ItemInstance removed;
+    if (!items::TakeAt(*sourceContainer, static_cast<std::size_t>(index), 1,
+                       &removed)) {
+        return Fail("容器物品槽不存在");
+    }
+    ecs::ItemInstance swapped;
+    if (!items::Equip(*equipment, m_items, equipSlot, one, &swapped)) {
+        (void)items::AddItem(*sourceContainer, m_items, removed);
+        return Fail("装备失败");
+    }
+    if (m_events != nullptr) {
+        m_events->EmitQueued(
+            core::kOnItemPickup,
+            core::ItemEvent{m_world.IdOf(source).id, one.defId, 1});
+    }
+    if (swapped.Valid()) {
+        ReturnOrDrop(player, swapped);
+    }
+    return Ok("装备了 " + def->name, InventoryTone::Info);
+}
+
 InventoryResult PlayerInventoryService::RepairBag(ecs::Entity player, int index) {
     entt::registry& registry = m_world.Registry();
     auto* container = registry.try_get<ecs::Container>(player);
@@ -561,7 +938,7 @@ InventoryResult PlayerInventoryService::StartCraft(ecs::Entity player,
         return Fail("材料或背包空间不足");
     }
     const float efficiency = items::ToolEfficiency(*container, recipe);
-    const float seconds = items::EffectiveCraftSeconds(recipe, efficiency);
+    const float seconds = CraftSeconds(player, recipe, efficiency);
     job->active = true;
     job->recipeId = recipe.id;
     job->elapsed = 0.0f;
@@ -702,7 +1079,7 @@ bool PlayerInventoryService::TickCrafting(ecs::Entity player, float dt,
             return failCraft(reason);
         }
         const float efficiency = items::ToolEfficiency(*container, *recipe);
-        const float seconds = items::EffectiveCraftSeconds(*recipe, efficiency);
+        const float seconds = CraftSeconds(player, *recipe, efficiency);
         job->elapsed = 0.0f;
         job->duration = seconds;
         job->toolEfficiency = efficiency;
@@ -740,8 +1117,139 @@ bool PlayerInventoryService::TickCrafting(ecs::Entity player, float dt,
     return true;
 }
 
+ecs::Entity PlayerInventoryService::FindNearbyStorage(ecs::Entity player) const {
+    if (!m_world.Alive(player)) {
+        return entt::null;
+    }
+    const auto* position = m_world.Registry().try_get<ecs::Position>(player);
+    if (position == nullptr) {
+        return entt::null;
+    }
+    return game::FindNearestPlayerStorage(m_world, position->x, position->y,
+                                          position->z,
+                                          m_options.inventoryRange);
+}
+
+bool PlayerInventoryService::StorageAccessible(ecs::Entity player,
+                                               ecs::Entity storage) const {
+    if (!game::IsPlayerStorage(m_world, storage)) {
+        return false;
+    }
+    const auto* playerPosition = m_world.Registry().try_get<ecs::Position>(player);
+    const auto* storagePosition =
+        m_world.Registry().try_get<ecs::Position>(storage);
+    if (playerPosition == nullptr || storagePosition == nullptr ||
+        playerPosition->z != storagePosition->z) {
+        return false;
+    }
+    const float dx = storagePosition->x - playerPosition->x;
+    const float dy = storagePosition->y - playerPosition->y;
+    if (dx * dx + dy * dy >
+        m_options.inventoryRange * m_options.inventoryRange) {
+        return false;
+    }
+    const auto* owner =
+        m_world.Registry().try_get<ecs::StructureOwner>(storage);
+    const std::uint64_t ownerStableId =
+        owner != nullptr ? owner->ownerStableId : 0;
+    return game::CanEditStructure(ownerStableId, m_world.IdOf(player).id);
+}
+
+InventoryResult PlayerInventoryService::StoreItemInStorage(
+    ecs::Entity player, ecs::Entity storage, int index, int count) {
+    auto* container = m_world.Registry().try_get<ecs::Container>(player);
+    if (container == nullptr) {
+        return Fail("玩家背包不可用");
+    }
+    const game::StorageTransferResult result =
+        game::StorePlayerStorageItem(m_world, m_items, storage, *container,
+                                     index, count);
+    if (!result.found) {
+        return Fail("仓库物品槽不存在");
+    }
+    if (result.moved <= 0) {
+        return Fail("仓库已满，无法存入");
+    }
+    return Ok("存入 " + ItemLabel(m_items, result.defId) + " ×" +
+              std::to_string(result.moved));
+}
+
+InventoryResult PlayerInventoryService::TakeItemFromStorage(
+    ecs::Entity player, ecs::Entity storage, int index, int count) {
+    auto* container = m_world.Registry().try_get<ecs::Container>(player);
+    if (container == nullptr) {
+        return Fail("玩家背包不可用");
+    }
+    const game::StorageTransferResult result =
+        game::TakePlayerStorageItem(m_world, m_items, storage, *container,
+                                    index, count);
+    if (!result.found) {
+        return Fail("仓库物品槽不存在");
+    }
+    if (result.moved <= 0) {
+        return Fail("背包已满，无法取出");
+    }
+    return Ok("取出 " + ItemLabel(m_items, result.defId) + " ×" +
+              std::to_string(result.moved));
+}
+
+InventoryResult PlayerInventoryService::StoreAllInStorage(
+    ecs::Entity player, ecs::Entity storage) {
+    auto* container = m_world.Registry().try_get<ecs::Container>(player);
+    if (container == nullptr) {
+        return Fail("玩家背包不可用");
+    }
+    const game::StorageTransferResult result =
+        game::StoreAllInPlayerStorage(m_world, m_items, storage, *container);
+    if (!result.found) {
+        return Fail("仓库不可用");
+    }
+    if (result.moved <= 0) {
+        return Fail("仓库已满或背包为空");
+    }
+    return Ok("已存入 " + std::to_string(result.moved) + " 件物品");
+}
+
+InventoryResult PlayerInventoryService::TakeAllFromStorage(
+    ecs::Entity player, ecs::Entity storage) {
+    auto* container = m_world.Registry().try_get<ecs::Container>(player);
+    if (container == nullptr) {
+        return Fail("玩家背包不可用");
+    }
+    const game::StorageTransferResult result =
+        game::TakeAllFromPlayerStorage(m_world, m_items, storage, *container);
+    if (!result.found) {
+        return Fail("仓库不可用");
+    }
+    if (result.moved <= 0) {
+        return Fail("仓库为空或背包已满");
+    }
+    return Ok("已取出 " + std::to_string(result.moved) + " 件物品");
+}
+
+InventoryResult PlayerInventoryService::SortStorage(ecs::Entity player,
+                                                    ecs::Entity storage) {
+    static_cast<void>(player);
+    game::SortPlayerStorage(m_world, m_items, storage);
+    return Ok("仓库已整理", InventoryTone::Info);
+}
+
 InventoryResult PlayerInventoryService::Dispatch(ecs::Entity player,
                                                   const ui::InventoryAction& action) {
+    const auto resolveStorage = [&](std::uint64_t requestedId) -> ecs::Entity {
+        if (requestedId != 0) {
+            const ecs::Entity candidate = m_world.FindById(requestedId);
+            if (game::IsPlayerStorage(m_world, candidate)) {
+                return StorageAccessible(player, candidate) ? candidate
+                                                            : entt::null;
+            }
+        }
+        const ecs::Entity storage = FindNearbyStorage(player);
+        if (storage == entt::null || !StorageAccessible(player, storage)) {
+            return entt::null;
+        }
+        return storage;
+    };
     switch (action.type) {
         case ui::InventoryActionType::Transfer:
             if (action.from == ui::InventoryArea::Backpack &&
@@ -765,6 +1273,11 @@ InventoryResult PlayerInventoryService::Dispatch(ecs::Entity player,
             }
             if (action.from == ui::InventoryArea::Backpack &&
                 action.to == ui::InventoryArea::Loot) {
+                const ecs::Entity storage = resolveStorage(0);
+                if (storage != entt::null) {
+                    return StoreItemInStorage(player, storage, action.fromIndex,
+                                              9999);
+                }
                 return DropBag(player, action.fromIndex);
             }
             if (action.from == ui::InventoryArea::Equipment &&
@@ -777,10 +1290,84 @@ InventoryResult PlayerInventoryService::Dispatch(ecs::Entity player,
             }
             if (action.from == ui::InventoryArea::Loot &&
                 action.to == ui::InventoryArea::Backpack) {
+                const ecs::Entity source =
+                    action.fromEntityId != 0
+                        ? m_world.FindById(action.fromEntityId)
+                        : entt::null;
+                if (game::IsPlayerStorage(m_world, source)) {
+                    if (!StorageAccessible(player, source)) {
+                        return Fail("仓库距离太远或无权访问");
+                    }
+                    return TakeItemFromStorage(
+                        player, source, action.fromIndex,
+                        std::max(1, action.count));
+                }
+                if (source != entt::null &&
+                    m_world.Registry().all_of<ecs::LootContainer>(source)) {
+                    return TakeLootContainer(player, source, action.fromIndex,
+                                             std::max(1, action.count));
+                }
                 return Pickup(player, action.fromEntityId);
             }
             if (action.from == ui::InventoryArea::Loot &&
                 action.to == ui::InventoryArea::Equipment) {
+                const ecs::Entity source =
+                    action.fromEntityId != 0
+                        ? m_world.FindById(action.fromEntityId)
+                        : entt::null;
+                if (game::IsPlayerStorage(m_world, source)) {
+                    if (!StorageAccessible(player, source)) {
+                        return Fail("仓库距离太远或无权访问");
+                    }
+                    entt::registry& registry = m_world.Registry();
+                    auto* storageContainer =
+                        registry.try_get<ecs::Container>(source);
+                    auto* equipment =
+                        registry.try_get<ecs::Equipment>(player);
+                    if (storageContainer == nullptr || equipment == nullptr ||
+                        action.fromIndex < 0 ||
+                        static_cast<std::size_t>(action.fromIndex) >=
+                            storageContainer->items.size() ||
+                        action.toIndex < 0 ||
+                        action.toIndex >=
+                            static_cast<int>(ecs::kEquipSlotCount)) {
+                        return Fail("仓库物品槽不存在");
+                    }
+                    const ecs::ItemInstance entry =
+                        storageContainer->items[static_cast<std::size_t>(
+                            action.fromIndex)];
+                    const items::ItemDef* def = m_items.Find(entry.defId);
+                    const ecs::EquipSlot slot =
+                        static_cast<ecs::EquipSlot>(action.toIndex);
+                    if (def == nullptr || !items::SlotAccepts(slot, def->type)) {
+                        return Fail("无法装备该物品");
+                    }
+                    ecs::ItemInstance one = entry;
+                    one.count = 1;
+                    ecs::ItemInstance removed;
+                    if (!items::TakeAt(*storageContainer,
+                                       static_cast<std::size_t>(
+                                           action.fromIndex),
+                                       1, &removed)) {
+                        return Fail("仓库物品槽不存在");
+                    }
+                    ecs::ItemInstance swapped;
+                    if (!items::Equip(*equipment, m_items, slot, one,
+                                      &swapped)) {
+                        (void)items::AddItem(*storageContainer, m_items,
+                                             removed);
+                        return Fail("装备失败");
+                    }
+                    if (swapped.Valid()) {
+                        ReturnOrDrop(player, swapped);
+                    }
+                    return Ok("装备了 " + def->name, InventoryTone::Info);
+                }
+                if (source != entt::null &&
+                    m_world.Registry().all_of<ecs::LootContainer>(source)) {
+                    return EquipLootContainer(player, source, action.fromIndex,
+                                              action.toIndex);
+                }
                 return EquipLoot(player, action.fromEntityId, action.toIndex);
             }
             return Fail("不支持的背包拖拽");
@@ -824,8 +1411,25 @@ InventoryResult PlayerInventoryService::Dispatch(ecs::Entity player,
                 return Fail("只能维修背包中的工具");
             }
             return RepairBag(player, action.fromIndex);
-        case ui::InventoryActionType::Pickup:
+        case ui::InventoryActionType::Pickup: {
+            const ecs::Entity source =
+                action.fromEntityId != 0
+                    ? m_world.FindById(action.fromEntityId)
+                    : entt::null;
+            if (game::IsPlayerStorage(m_world, source)) {
+                if (!StorageAccessible(player, source)) {
+                    return Fail("仓库距离太远或无权访问");
+                }
+                return TakeItemFromStorage(player, source, action.fromIndex,
+                                          std::max(1, action.count));
+            }
+            if (source != entt::null &&
+                m_world.Registry().all_of<ecs::LootContainer>(source)) {
+                return TakeLootContainer(player, source, action.fromIndex,
+                                         std::max(1, action.count));
+            }
             return Pickup(player, action.fromEntityId);
+        }
         case ui::InventoryActionType::Craft: {
             entt::registry& registry = m_world.Registry();
             auto* job = registry.try_get<ecs::CraftingJob>(player);
@@ -947,6 +1551,27 @@ InventoryResult PlayerInventoryService::Dispatch(ecs::Entity player,
                 job->queue[static_cast<std::size_t>(action.fromIndex)];
             entry.count = std::clamp(action.count, 1, 99);
             return Ok("已调整队列项数量", InventoryTone::Info);
+        }
+        case ui::InventoryActionType::StoreAll: {
+            const ecs::Entity storage = resolveStorage(action.fromEntityId);
+            if (storage == entt::null) {
+                return Fail("附近没有可访问的仓库");
+            }
+            return StoreAllInStorage(player, storage);
+        }
+        case ui::InventoryActionType::TakeAll: {
+            const ecs::Entity storage = resolveStorage(action.fromEntityId);
+            if (storage == entt::null) {
+                return Fail("附近没有可访问的仓库");
+            }
+            return TakeAllFromStorage(player, storage);
+        }
+        case ui::InventoryActionType::SortStorage: {
+            const ecs::Entity storage = resolveStorage(action.fromEntityId);
+            if (storage == entt::null) {
+                return Fail("附近没有可访问的仓库");
+            }
+            return SortStorage(player, storage);
         }
     }
     return Fail("未知背包动作");

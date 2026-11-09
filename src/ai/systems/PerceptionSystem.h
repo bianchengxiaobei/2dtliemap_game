@@ -52,6 +52,9 @@ public:
     void Update(ecs::EcsWorld& world, float dt);
     const Stats& GetStats() const { return m_stats; }
 
+    // M20-F2：雨/雾/寒潮缩放视距；默认 1，WorldSimulation 每 tick 按天气写入。
+    void SetEnvironmentSightScale(float scale);
+
 private:
     // 视线粗判：沿线每 0.5 格采样（不含端点），任一格不可走 → 遮挡
     bool LineOfSight(float px, float py, float tx, float ty) const;
@@ -62,6 +65,7 @@ private:
 
     WalkableQuery m_walkable;
     PerceptionParams m_params;
+    float m_environmentSightScale = 1.0f;
     std::vector<core::SoundEvent> m_pendingSounds;  // 本 tick 待消费
     // 视觉目标缓存（每 tick 收集一次"玩家"位置，避免在每僵尸循环里构造 view——
     // Debug/Release 下 EnTT view 构造都是热路径成本）

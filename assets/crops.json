@@ -1,0 +1,105 @@
+{
+  "format": "crops-v1",
+  "crops": [
+    {
+      "id": "cabbage",
+      "name": "白菜",
+      "seedItem": "cabbage_seeds",
+      "produceItem": "fresh_cabbage",
+      "growMinutes": 240.0,
+      "waterMinutes": 360.0,
+      "maxWaterMinutes": 720.0,
+      "witherMinutes": 1440.0,
+      "waterUsePerMinute": 1.0,
+      "diseaseChance": 0.05,
+      "harvestYield": 2,
+      "seedYield": 1,
+      "stages": [
+        { "name": "幼苗", "start": 0.0 },
+        { "name": "生长", "start": 0.33 },
+        { "name": "结球", "start": 0.66 },
+        { "name": "成熟", "start": 1.0 }
+      ]
+    },
+    {
+      "id": "potato",
+      "name": "土豆",
+      "seedItem": "potato_seeds",
+      "produceItem": "fresh_potato",
+      "growMinutes": 360.0,
+      "waterMinutes": 300.0,
+      "maxWaterMinutes": 600.0,
+      "witherMinutes": 1800.0,
+      "waterUsePerMinute": 1.2,
+      "diseaseChance": 0.12,
+      "harvestYield": 3,
+      "seedYield": 1,
+      "stages": [
+        { "name": "幼苗", "start": 0.0 },
+        { "name": "生长", "start": 0.3 },
+        { "name": "块茎膨大", "start": 0.65 },
+        { "name": "成熟", "start": 1.0 }
+      ]
+    },
+    {
+      "id": "tomato",
+      "name": "番茄",
+      "seedItem": "tomato_seeds",
+      "produceItem": "fresh_tomato",
+      "growMinutes": 300.0,
+      "waterMinutes": 420.0,
+      "maxWaterMinutes": 840.0,
+      "witherMinutes": 1200.0,
+      "waterUsePerMinute": 1.15,
+      "diseaseChance": 0.15,
+      "harvestYield": 3,
+      "seedYield": 1,
+      "stages": [
+        { "name": "幼苗", "start": 0.0 },
+        { "name": "生长", "start": 0.28 },
+        { "name": "开花结果", "start": 0.62 },
+        { "name": "成熟", "start": 1.0 }
+      ]
+    },
+    {
+      "id": "corn",
+      "name": "玉米",
+      "seedItem": "corn_seeds",
+      "produceItem": "fresh_corn",
+      "growMinutes": 480.0,
+      "waterMinutes": 480.0,
+      "maxWaterMinutes": 960.0,
+      "witherMinutes": 2160.0,
+      "waterUsePerMinute": 1.3,
+      "diseaseChance": 0.1,
+      "harvestYield": 4,
+      "seedYield": 2,
+      "stages": [
+        { "name": "幼苗", "start": 0.0 },
+        { "name": "生长", "start": 0.25 },
+        { "name": "抽穗", "start": 0.6 },
+        { "name": "成熟", "start": 1.0 }
+      ]
+    },
+    {
+      "id": "carrot",
+      "name": "胡萝卜",
+      "seedItem": "carrot_seeds",
+      "produceItem": "fresh_carrot",
+      "growMinutes": 300.0,
+      "waterMinutes": 300.0,
+      "maxWaterMinutes": 600.0,
+      "witherMinutes": 1400.0,
+      "waterUsePerMinute": 1.0,
+      "diseaseChance": 0.10,
+      "harvestYield": 2,
+      "seedYield": 1,
+      "stages": [
+        { "name": "幼苗", "start": 0.0 },
+        { "name": "生长", "start": 0.33 },
+        { "name": "膨大", "start": 0.66 },
+        { "name": "成熟", "start": 1.0 }
+      ]
+    }
+  ]
+}

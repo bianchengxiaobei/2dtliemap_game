@@ -1,0 +1,70 @@
+{
+  "format": "fire-v1",
+  "materials": [
+    {
+      "id": "campfire",
+      "name": "篝火",
+      "sprites": ["object.campfire"],
+      "flammability": {
+        "ignitionThreshold": 0.0,
+        "burnSeconds": 600.0,
+        "smokePerSecond": 0.8,
+        "heatRadius": 3.0
+      }
+    },
+    {
+      "id": "wood_wall",
+      "name": "木墙",
+      "sprites": ["object.wall_h", "object.wall_v"],
+      "flammability": {
+        "ignitionThreshold": 0.38,
+        "burnSeconds": 90.0,
+        "smokePerSecond": 1.2,
+        "heatRadius": 2.5
+      },
+      "charredDrops": [
+        { "item": "wood", "count": 2 }
+      ]
+    },
+    {
+      "id": "wood_floor",
+      "name": "木地板",
+      "sprites": ["tile.floor.wood"],
+      "flammability": {
+        "ignitionThreshold": 0.22,
+        "burnSeconds": 45.0,
+        "smokePerSecond": 0.6,
+        "heatRadius": 2.0
+      },
+      "charredDrops": [
+        { "item": "wood", "count": 1 }
+      ]
+    },
+    {
+      "id": "tree",
+      "name": "树木",
+      "sprites": ["object.tree"],
+      "flammability": {
+        "ignitionThreshold": 0.50,
+        "burnSeconds": 120.0,
+        "smokePerSecond": 2.0,
+        "heatRadius": 3.0
+      },
+      "charredDrops": [
+        { "item": "wood", "count": 2 },
+        { "item": "forage_stick", "count": 2 }
+      ]
+    },
+    {
+      "id": "grass_tuft",
+      "name": "草丛",
+      "sprites": ["decor.grass_tuft"],
+      "flammability": {
+        "ignitionThreshold": 0.18,
+        "burnSeconds": 15.0,
+        "smokePerSecond": 0.25,
+        "heatRadius": 1.0
+      }
+    }
+  ]
+}

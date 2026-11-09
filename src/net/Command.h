@@ -26,10 +26,51 @@ enum class CommandType : std::uint16_t {
     InventoryAction = 11,  // payload.flags 低 8 位 = ui::InventoryActionType，高 8 位 = 批量件数
     Gunshot = 12,
     SelectHotbar = 13,  // payload.index = 0..4
-    FireProjectile = 14,  // payload.x/y = 世界方向；payload.entityId = 可选目标 StableId
+    FireProjectile = 14,  // M23-F1-T7：旧客户端兼容别名，服务器转换为 FireRanged 并走权威校验
+    ChoosePerk = 15,      // payload.index = 当前 Perk 选项索引 0..2（服务器权威）
+    PlaceStructure = 16,  // payload.x/y = 格坐标；index = 建造项；flags bit0 = 竖向
+    DemolishStructure = 17,  // payload.x/y = 格坐标
+    RepairStructure = 18,    // payload.x/y = 格坐标
+    ToggleDoor = 19,         // payload.x/y = 格坐标
+    InteractFacility = 20,   // payload.entityId = 设施 StableId
+    TradeOffer = 21,         // payload.entityId = 商人 StableId；index = 报价索引
+    SearchLootContainer = 22,  // payload.entityId = 容器 StableId
+    AbandonMission = 23,       // payload.index = m_missionConfig.defs 索引
+    InteractRadio = 24,        // 无 payload；服务器校验电台距离/无线电零件
+    SleepRequest = 25,         // payload.x = 分钟；flags bit0 = 睡到天亮
+    SleepVote = 26,            // flags bit0 = 1 同意 / 0 拒绝
+    SleepCancel = 27,          // 取消当前投票或全队睡眠
+    FireRanged = 28,           // M23-F1-T6：payload.x/y = 世界方向；服务器权威扣弹/生成弹丸
+    ReloadRanged = 29,         // M23-F1-T6：服务器权威换弹；无 payload
+    ForageStart = 30,          // M23-F2a-T6：payload.x/y = 节点中心；targetIndex = z
+    ForageCancel = 31,         // 取消服务器权威采集
+    FishingStart = 32,         // M23-F2a-T6：payload.x/y = 钓点中心；targetIndex = z
+    FishingReel = 33,          // 咬钩窗口内收杆，服务器判定鱼获
+    FishingCancel = 34,        // 取消等待/收杆
+    IgniteFire = 35,           // M23-F3-T6：payload.x/y = 篝火格；targetIndex = z
+    ExtinguishFire = 36,       // M23-F3-T6：payload.x/y = 火源格；targetIndex = z
+    AnimalHarvestStart = 37,   // M23-F2b-T6：payload.entityId = 动物尸体 StableId
+    AnimalHarvestCancel = 38,  // 取消服务器权威剥取
+    AcceptSettlementMission = 39,  // M23-F4-T6：payload.entityId = 求助者 StableId
+    EnterVehicle = 40,             // M25-T3：payload.entityId = 车辆 StableId
+    ExitVehicle = 41,              // M25-T3：离开当前车辆
+    ServiceVehicle = 42,           // M25-T3：payload.entityId = 车辆 StableId
+    ToggleHeadlights = 43,         // M25-T4-V2：驾驶中切换车灯
+    HonkHorn = 44,                 // M25-T4-V14：驾驶中鸣笛，服务器权威噪音
+    EnterVehiclePassenger = 45,    // M25-T4-V22：payload.entityId = 车辆 StableId
+    TakeDriverSeat = 46,           // M25-T4-V23：乘客接管空驾驶位
+    GiveDriverSeat = 47,           // M25-T4-V24：驾驶员停车时把驾驶位让给乘客
+    Block = 48,                    // M30-T6：flags bit0 1=按下 0=松开
+    Dodge = 49,                    // M30-T6：payload.x/y = 世界闪避方向
 };
 
 inline constexpr std::uint64_t kNoEntity = 0;
+inline constexpr std::uint16_t kDemolishConfirmRequestFlag = 1u << 0;
+inline constexpr std::uint16_t kDemolishConfirmAcceptFlag = 1u << 1;
+inline constexpr std::uint16_t kSleepUntilDawnFlag = 1u << 0;
+inline constexpr std::uint16_t kSleepVoteYesFlag = 1u << 0;
+inline constexpr std::uint16_t kAttackHeavyFlag = 1u << 0;  // M30-T3：Attack 重击标记
+inline constexpr std::uint16_t kBlockDownFlag = 1u << 0;    // M30-T6：Block 按下/松开
 
 // 固定字段 payload：网络编码不需要 variant/JSON；未使用字段保持默认值。
 // flags 低 8 位保存 InventoryActionType，高 8 位保存批量制作件数（0 兼容旧命令，视为 1）。
@@ -53,7 +94,7 @@ struct Command {
 };
 
 constexpr bool IsValidCommandType(CommandType type) {
-    return type >= CommandType::Move && type <= CommandType::FireProjectile;
+    return type >= CommandType::Move && type <= CommandType::Dodge;
 }
 
 const char* CommandTypeName(CommandType type);

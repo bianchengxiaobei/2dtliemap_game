@@ -18,8 +18,8 @@ struct CraftResult {
     std::vector<std::string> brokenToolDefIds;
 };
 
-// 工具状态对制作效率的影响：无工具为 1.0；否则为 0.5 + 0.5 * 最低可用工具耐久。
-// 缺少工具/工具全部损坏时返回 0。
+// 工具/锅具状态对制作效率的影响：无要求为 1.0；否则为 0.5 + 0.5 * 最低可用耐久。
+// 缺少工具/锅具或全部损坏时返回 0；燃料不参与效率。
 float ToolEfficiency(const ecs::Container& container, const RecipeDef& recipe);
 
 // 按效率换算实际耗时；efficiency<=0 返回 0。效率下限 0.5，实际耗时最多为基础耗时 2 倍。
@@ -39,7 +39,7 @@ struct CraftingProcess {
     float Progress() const;  // 0~1；未激活时为 0
 };
 
-// 检查材料与输出空间；不修改容器。reason 返回首个不满足项。
+// 检查材料/工具/锅具/燃料与输出空间；不修改容器。reason 返回首个不满足项。
 bool CanCraft(const ecs::Container& container, const ItemRegistry& registry,
               const RecipeDef& recipe, std::string* reason = nullptr);
 

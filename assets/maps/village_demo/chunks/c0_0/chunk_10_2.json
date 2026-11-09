@@ -2,12 +2,12 @@
  "cx": 10,
  "cy": 2,
  "floors": [
-  "gggggggggg",
-  "gggggggggg",
-  "gggggggggg",
-  "gggggggggg",
-  "gggggggggg",
-  "gggggggggg",
+  "wwwwwwwwww",
+  "wwwwwwwwww",
+  "wwwwwwwwww",
+  "wwwwwwwwww",
+  "wwwwwwwwww",
+  "ggggddgggg",
   "dddddddddd",
   "dddddddddd",
   "dddddddddd",
@@ -15,19 +15,204 @@
  ],
  "objects": [
   {
-   "x": 5,
+   "x": 0,
+   "y": 0,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
    "y": 0,
    "z": 0,
    "layer": "furniture",
-   "sprite": "decor.grass_tuft"
+   "sprite": "object.barricade",
+   "solid": true
   },
   {
    "x": 4,
-   "y": 2,
+   "y": 0,
    "z": 0,
    "layer": "furniture",
-   "sprite": "object.tree",
+   "sprite": "object.workbench",
    "solid": true
+  },
+  {
+   "x": 7,
+   "y": 0,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.barricade",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 0,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 1,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.barricade",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 3,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.crate"
+  },
+  {
+   "x": 7,
+   "y": 3,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.barricade",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 3,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.door"
+  },
+  {
+   "x": 6,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 7,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 1,
+   "y": 0,
+   "w": 8,
+   "h": 4,
+   "id": 13,
+   "name": "poi_military_checkpoint"
   }
  ]
 }

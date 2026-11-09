@@ -1,6 +1,18 @@
 {
  "cx": 9,
  "cy": 8,
+ "floors": [
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "ggggggdddd"
+ ],
  "objects": [
   {
    "x": 0,

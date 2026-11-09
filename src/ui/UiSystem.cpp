@@ -9,6 +9,7 @@
 #include <GLFW/glfw3.h>
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
+#include <RmlUi/Core/StringUtilities.h>
 #include <bgfx/bgfx.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -203,10 +204,87 @@ bool UiSystem::EnsureHudDocument() {
     m_hpTextElement = m_hudDocument->GetElementById("hp-text");
     m_staminaFillElement = m_hudDocument->GetElementById("stamina-fill");
     m_staminaTextElement = m_hudDocument->GetElementById("stamina-text");
+    m_combatStatusElement = m_hudDocument->GetElementById("combat-status");
+    m_rangedStatusElement = m_hudDocument->GetElementById("ranged-status");
+    m_forageStatusElement = m_hudDocument->GetElementById("forage-status");
+    m_fishingStatusElement = m_hudDocument->GetElementById("fishing-status");
     m_needsStatusElement = m_hudDocument->GetElementById("needs-status");
+    m_woundStatusElement = m_hudDocument->GetElementById("wound-status");
+    m_painStatusElement = m_hudDocument->GetElementById("pain-status");
+    m_armorStatusElement = m_hudDocument->GetElementById("armor-status");
+    m_infectionStatusElement =
+        m_hudDocument->GetElementById("infection-status");
+    m_weatherStatusElement = m_hudDocument->GetElementById("weather-status");
+    m_weatherOverlayElement =
+        m_hudDocument->GetElementById("weather-overlay");
+    m_threatStatusElement = m_hudDocument->GetElementById("threat-status");
+    m_threatEdges[0] = m_hudDocument->GetElementById("threat-left");
+    m_threatEdges[1] = m_hudDocument->GetElementById("threat-right");
+    m_threatEdges[2] = m_hudDocument->GetElementById("threat-top");
+    m_threatEdges[3] = m_hudDocument->GetElementById("threat-bottom");
     m_objectivePanelElement = m_hudDocument->GetElementById("hud-objective");
     m_objectiveElement = m_hudDocument->GetElementById("objective-text");
     m_objectiveHintElement = m_hudDocument->GetElementById("objective-hint");
+    m_poiGuideElement = m_hudDocument->GetElementById("poi-guide");
+    m_missionGuideElement = m_hudDocument->GetElementById("mission-guide");
+    m_eventGuideElement = m_hudDocument->GetElementById("event-guide");
+    m_siegeStatusElement = m_hudDocument->GetElementById("siege-status");
+    m_baseStatusElement = m_hudDocument->GetElementById("base-status");
+    m_modFieldsElement = m_hudDocument->GetElementById("mod-fields");
+    for (int i = 0; i < 8; ++i) {
+        const std::string suffix = std::to_string(i);
+        m_modFieldRows[static_cast<std::size_t>(i)] =
+            m_hudDocument->GetElementById("mod-field-" + suffix);
+        m_modFieldLabels[static_cast<std::size_t>(i)] =
+            m_hudDocument->GetElementById("mod-field-label-" + suffix);
+        m_modFieldValues[static_cast<std::size_t>(i)] =
+            m_hudDocument->GetElementById("mod-field-value-" + suffix);
+    }
+    m_siegeReportElement = m_hudDocument->GetElementById("siege-report");
+    m_siegeReportTitleElement =
+        m_hudDocument->GetElementById("siege-report-title");
+    m_siegeReportRatingElement =
+        m_hudDocument->GetElementById("siege-report-rating");
+    m_siegeReportHintElement =
+        m_hudDocument->GetElementById("siege-report-hint");
+    for (int i = 0; i < 8; ++i) {
+        m_siegeReportLineElements[static_cast<std::size_t>(i)] =
+            m_hudDocument->GetElementById("siege-report-line-" +
+                                          std::to_string(i));
+    }
+    m_levelPanelElement = m_hudDocument->GetElementById("hud-level");
+    m_levelTextElement = m_hudDocument->GetElementById("level-text");
+    m_levelPerkElement = m_hudDocument->GetElementById("level-perk");
+    m_levelFillElement = m_hudDocument->GetElementById("level-fill");
+    m_levelXpElement = m_hudDocument->GetElementById("level-xp");
+    m_perkPromptElement = m_hudDocument->GetElementById("perk-prompt");
+    m_characterPanelElement = m_hudDocument->GetElementById("character-panel");
+    m_characterLevelElement = m_hudDocument->GetElementById("character-level");
+    m_characterXpElement = m_hudDocument->GetElementById("character-xp");
+    m_characterXpFillElement = m_hudDocument->GetElementById("character-xp-fill");
+    m_characterPerksElement = m_hudDocument->GetElementById("character-perks");
+    for (int i = 0; i < 4; ++i) {
+        m_characterSkillElements[static_cast<std::size_t>(i)] =
+            m_hudDocument->GetElementById("character-skill-" + std::to_string(i));
+    }
+    for (int i = 0; i < 3; ++i) {
+        m_perkChoiceElements[static_cast<std::size_t>(i)] =
+            m_hudDocument->GetElementById("perk-choice-" + std::to_string(i));
+    }
+    m_dialoguePanelElement =
+        m_hudDocument->GetElementById("dialogue-panel");
+    m_dialogueSpeakerElement =
+        m_hudDocument->GetElementById("dialogue-speaker");
+    m_dialogueTextElement =
+        m_hudDocument->GetElementById("dialogue-text");
+    for (int i = 0; i < 5; ++i) {
+        m_dialogueOptionElements[static_cast<std::size_t>(i)] =
+            m_hudDocument->GetElementById("dialogue-option-" +
+                                          std::to_string(i));
+    }
+    m_dialogueHintElement =
+        m_hudDocument->GetElementById("dialogue-hint");
+    m_actionHintElement = m_hudDocument->GetElementById("action-hint");
     m_noticeElement = m_hudDocument->GetElementById("notice");
     for (int i = 0; i < 5; ++i) {
         const std::string suffix = std::to_string(i);
@@ -433,10 +511,55 @@ void UiSystem::Shutdown() {
     m_hpTextElement = nullptr;
     m_staminaFillElement = nullptr;
     m_staminaTextElement = nullptr;
+    m_combatStatusElement = nullptr;
+    m_rangedStatusElement = nullptr;
+    m_forageStatusElement = nullptr;
+    m_fishingStatusElement = nullptr;
     m_needsStatusElement = nullptr;
+    m_woundStatusElement = nullptr;
+    m_painStatusElement = nullptr;
+    m_armorStatusElement = nullptr;
+    m_infectionStatusElement = nullptr;
+    m_weatherStatusElement = nullptr;
+    m_weatherOverlayElement = nullptr;
+    m_threatStatusElement = nullptr;
+    m_threatEdges.fill(nullptr);
     m_objectivePanelElement = nullptr;
     m_objectiveElement = nullptr;
     m_objectiveHintElement = nullptr;
+    m_poiGuideElement = nullptr;
+    m_missionGuideElement = nullptr;
+    m_eventGuideElement = nullptr;
+    m_siegeStatusElement = nullptr;
+    m_baseStatusElement = nullptr;
+    m_modFieldsElement = nullptr;
+    m_modFieldRows.fill(nullptr);
+    m_modFieldLabels.fill(nullptr);
+    m_modFieldValues.fill(nullptr);
+    m_siegeReportElement = nullptr;
+    m_siegeReportTitleElement = nullptr;
+    m_siegeReportRatingElement = nullptr;
+    m_siegeReportHintElement = nullptr;
+    m_siegeReportLineElements.fill(nullptr);
+    m_levelPanelElement = nullptr;
+    m_levelTextElement = nullptr;
+    m_levelPerkElement = nullptr;
+    m_levelFillElement = nullptr;
+    m_levelXpElement = nullptr;
+    m_perkPromptElement = nullptr;
+    m_characterPanelElement = nullptr;
+    m_characterLevelElement = nullptr;
+    m_characterXpElement = nullptr;
+    m_characterXpFillElement = nullptr;
+    m_characterPerksElement = nullptr;
+    m_characterSkillElements.fill(nullptr);
+    m_perkChoiceElements.fill(nullptr);
+    m_dialoguePanelElement = nullptr;
+    m_dialogueSpeakerElement = nullptr;
+    m_dialogueTextElement = nullptr;
+    m_dialogueOptionElements.fill(nullptr);
+    m_dialogueHintElement = nullptr;
+    m_actionHintElement = nullptr;
     m_noticeElement = nullptr;
     m_hotbarSlots.fill(nullptr);
     m_hotbarNames.fill(nullptr);
@@ -581,13 +704,11 @@ void UiSystem::Update(core::Input& input) {
         }
     } else if (!menuOpenAtStart && !multiplayerOpenAtStart &&
                !IsInventoryOpen() && IsSocialVisible()) {
-        const bool enter = input.IsKeyPressed(GLFW_KEY_ENTER);
-        const bool keypadEnter = input.IsKeyPressed(GLFW_KEY_KP_ENTER);
-        if (enter || keypadEnter) {
+        if (input.IsKeyPressed(GLFW_KEY_Y)) {
             if (m_social != nullptr) {
                 m_social->OpenChat();
             }
-            consumedKey = enter ? GLFW_KEY_ENTER : GLFW_KEY_KP_ENTER;
+            consumedKey = GLFW_KEY_Y;
             m_consumeGameplayThisFrame = true;
         }
     }
@@ -777,6 +898,11 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
             element->SetInnerRML(text);
         }
     };
+    auto setModText = [](Rml::Element* element, const std::string& text) {
+        if (element != nullptr) {
+            element->SetInnerRML(Rml::StringUtilities::EncodeRml(text));
+        }
+    };
     auto setBar = [&](Rml::Element* fill, Rml::Element* label, float value, float maxValue,
                       bool valid) {
         const float ratio =
@@ -818,6 +944,59 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
         state.stamina != m_hudCache.stamina || state.staminaMax != m_hudCache.staminaMax) {
         setBar(m_staminaFillElement, m_staminaTextElement, state.stamina, state.staminaMax,
                state.playerValid);
+        if (m_staminaFillElement != nullptr) {
+            m_staminaFillElement->SetClass(
+                "low", state.playerValid && state.staminaMax > 0.0f &&
+                           state.stamina / state.staminaMax < 0.3f);
+        }
+    }
+    if (first || state.combatStatus != m_hudCache.combatStatus ||
+        state.combatTone != m_hudCache.combatTone) {
+        setText(m_combatStatusElement, state.combatStatus);
+        if (m_combatStatusElement != nullptr) {
+            m_combatStatusElement->SetProperty(
+                "display", state.combatStatus.empty() ? "none" : "block");
+            m_combatStatusElement->SetClass("status-warn",
+                                            state.combatTone == "warn");
+            m_combatStatusElement->SetClass("status-fail",
+                                            state.combatTone == "fail");
+        }
+    }
+    if (first || state.rangedStatus != m_hudCache.rangedStatus ||
+        state.rangedTone != m_hudCache.rangedTone) {
+        setText(m_rangedStatusElement, state.rangedStatus);
+        if (m_rangedStatusElement != nullptr) {
+            m_rangedStatusElement->SetProperty(
+                "display", state.rangedStatus.empty() ? "none" : "block");
+            m_rangedStatusElement->SetClass("status-warn",
+                                            state.rangedTone == "warn");
+            m_rangedStatusElement->SetClass("status-fail",
+                                            state.rangedTone == "fail");
+        }
+    }
+    if (first || state.forageStatus != m_hudCache.forageStatus ||
+        state.forageTone != m_hudCache.forageTone) {
+        setText(m_forageStatusElement, state.forageStatus);
+        if (m_forageStatusElement != nullptr) {
+            m_forageStatusElement->SetProperty(
+                "display", state.forageStatus.empty() ? "none" : "block");
+            m_forageStatusElement->SetClass("status-warn",
+                                            state.forageTone == "warn");
+            m_forageStatusElement->SetClass("status-fail",
+                                            state.forageTone == "fail");
+        }
+    }
+    if (first || state.fishingStatus != m_hudCache.fishingStatus ||
+        state.fishingTone != m_hudCache.fishingTone) {
+        setText(m_fishingStatusElement, state.fishingStatus);
+        if (m_fishingStatusElement != nullptr) {
+            m_fishingStatusElement->SetProperty(
+                "display", state.fishingStatus.empty() ? "none" : "block");
+            m_fishingStatusElement->SetClass("status-warn",
+                                             state.fishingTone == "warn");
+            m_fishingStatusElement->SetClass("status-fail",
+                                             state.fishingTone == "fail");
+        }
     }
     if (first || state.needsStatus != m_hudCache.needsStatus ||
         state.needsTone != m_hudCache.needsTone) {
@@ -829,14 +1008,122 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
             m_needsStatusElement->SetClass("status-fail", state.needsTone == "fail");
         }
     }
+    if (first || state.woundStatus != m_hudCache.woundStatus ||
+        state.woundTone != m_hudCache.woundTone) {
+        setText(m_woundStatusElement, state.woundStatus);
+        if (m_woundStatusElement != nullptr) {
+            m_woundStatusElement->SetProperty(
+                "display", state.woundStatus.empty() ? "none" : "block");
+            m_woundStatusElement->SetClass("status-warn", state.woundTone == "warn");
+            m_woundStatusElement->SetClass("status-fail", state.woundTone == "fail");
+        }
+    }
+    if (first || state.painStatus != m_hudCache.painStatus ||
+        state.painTone != m_hudCache.painTone) {
+        setText(m_painStatusElement, state.painStatus);
+        if (m_painStatusElement != nullptr) {
+            m_painStatusElement->SetProperty(
+                "display", state.painStatus.empty() ? "none" : "block");
+            m_painStatusElement->SetClass("status-warn", state.painTone == "warn");
+            m_painStatusElement->SetClass("status-fail", state.painTone == "fail");
+        }
+    }
+    if (first || state.armorStatus != m_hudCache.armorStatus ||
+        state.armorTone != m_hudCache.armorTone) {
+        setText(m_armorStatusElement, state.armorStatus);
+        if (m_armorStatusElement != nullptr) {
+            m_armorStatusElement->SetProperty(
+                "display", state.armorStatus.empty() ? "none" : "block");
+            m_armorStatusElement->SetClass("status-warn", state.armorTone == "warn");
+            m_armorStatusElement->SetClass("status-fail", state.armorTone == "fail");
+        }
+    }
+    if (first || state.infectionStatus != m_hudCache.infectionStatus ||
+        state.infectionTone != m_hudCache.infectionTone) {
+        setText(m_infectionStatusElement, state.infectionStatus);
+        if (m_infectionStatusElement != nullptr) {
+            m_infectionStatusElement->SetProperty(
+                "display", state.infectionStatus.empty() ? "none" : "block");
+            m_infectionStatusElement->SetClass(
+                "status-warn", state.infectionTone == "warn");
+            m_infectionStatusElement->SetClass(
+                "status-fail", state.infectionTone == "fail");
+        }
+    }
+    if (first || state.weatherStatus != m_hudCache.weatherStatus ||
+        state.weatherTone != m_hudCache.weatherTone ||
+        state.weatherClass != m_hudCache.weatherClass) {
+        setText(m_weatherStatusElement, state.weatherStatus);
+        if (m_weatherStatusElement != nullptr) {
+            m_weatherStatusElement->SetProperty(
+                "display", state.weatherStatus.empty() ? "none" : "block");
+            m_weatherStatusElement->SetClass("status-warn",
+                                             state.weatherTone == "warn");
+            m_weatherStatusElement->SetClass("status-fail",
+                                             state.weatherTone == "fail");
+        }
+        if (m_weatherOverlayElement != nullptr) {
+            const std::string overlayClass =
+                state.weatherClass.empty() ? "clear" : state.weatherClass;
+            m_weatherOverlayElement->SetClassNames("weather-overlay weather-" +
+                                                   overlayClass);
+            m_weatherOverlayElement->SetProperty(
+                "display", overlayClass == "clear" ? "none" : "block");
+        }
+    }
+    const bool threatActive =
+        !state.threatDirection.empty() && state.threatRemaining > 0.0f;
+    if (first || threatActive ||
+        state.threatStatus != m_hudCache.threatStatus ||
+        state.threatRemaining != m_hudCache.threatRemaining ||
+        state.threatDirection != m_hudCache.threatDirection) {
+        const float ratio = state.threatDuration > 0.0f
+                                ? std::clamp(state.threatRemaining /
+                                                 state.threatDuration,
+                                             0.0f, 1.0f)
+                                : 1.0f;
+        char alpha[16];
+        std::snprintf(alpha, sizeof(alpha), "%.2f", ratio);
+        static constexpr const char* kDirections[4] = {"left", "right", "top",
+                                                       "bottom"};
+        for (std::size_t i = 0; i < m_threatEdges.size(); ++i) {
+            Rml::Element* edge = m_threatEdges[i];
+            if (edge == nullptr) {
+                continue;
+            }
+            const bool active =
+                threatActive && state.threatDirection == kDirections[i];
+            edge->SetProperty("display", active ? "block" : "none");
+            if (active) {
+                edge->SetProperty("opacity", alpha);
+            }
+        }
+        setText(m_threatStatusElement, state.threatStatus);
+        if (m_threatStatusElement != nullptr) {
+            m_threatStatusElement->SetProperty(
+                "display", state.threatStatus.empty() ? "none" : "block");
+        }
+    }
     if (first || state.objective != m_hudCache.objective ||
         state.objectiveTone != m_hudCache.objectiveTone ||
-        state.objectiveHint != m_hudCache.objectiveHint) {
+        state.objectiveHint != m_hudCache.objectiveHint ||
+        state.poiGuide != m_hudCache.poiGuide ||
+        state.poiGuideTone != m_hudCache.poiGuideTone ||
+        state.missionGuide != m_hudCache.missionGuide ||
+        state.missionTone != m_hudCache.missionTone ||
+        state.eventGuide != m_hudCache.eventGuide ||
+        state.eventTone != m_hudCache.eventTone) {
         setText(m_objectiveElement, state.objective);
         setText(m_objectiveHintElement, state.objectiveHint);
+        setText(m_poiGuideElement, state.poiGuide);
+        setText(m_missionGuideElement, state.missionGuide);
+        setText(m_eventGuideElement, state.eventGuide);
         if (m_objectivePanelElement != nullptr) {
             m_objectivePanelElement->SetProperty(
-                "display", state.objective.empty() ? "none" : "block");
+                "display", state.objective.empty() && state.missionGuide.empty() &&
+                                   state.eventGuide.empty()
+                               ? "none"
+                               : "block");
         }
         if (m_objectiveElement != nullptr) {
             m_objectiveElement->SetClass("objective-warn", state.objectiveTone == "warn");
@@ -845,6 +1132,252 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
         if (m_objectiveHintElement != nullptr) {
             m_objectiveHintElement->SetProperty(
                 "display", state.objectiveHint.empty() ? "none" : "block");
+        }
+        if (m_poiGuideElement != nullptr) {
+            m_poiGuideElement->SetProperty(
+                "display", state.poiGuide.empty() ? "none" : "block");
+            m_poiGuideElement->SetClass("status-warn",
+                                        state.poiGuideTone == "warn");
+            m_poiGuideElement->SetClass("status-ok", state.poiGuideTone == "ok");
+        }
+        if (m_missionGuideElement != nullptr) {
+            m_missionGuideElement->SetProperty(
+                "display", state.missionGuide.empty() ? "none" : "block");
+            m_missionGuideElement->SetClass("status-warn",
+                                            state.missionTone == "warn");
+            m_missionGuideElement->SetClass("status-ok",
+                                            state.missionTone == "ok");
+        }
+        if (m_eventGuideElement != nullptr) {
+            m_eventGuideElement->SetProperty(
+                "display", state.eventGuide.empty() ? "none" : "block");
+            m_eventGuideElement->SetClass("status-warn",
+                                          state.eventTone == "warn");
+            m_eventGuideElement->SetClass("status-ok",
+                                          state.eventTone == "ok");
+            m_eventGuideElement->SetClass("status-fail",
+                                          state.eventTone == "fail");
+        }
+    }
+    if (first || state.siegeStatus != m_hudCache.siegeStatus ||
+        state.siegeTone != m_hudCache.siegeTone) {
+        setText(m_siegeStatusElement, state.siegeStatus);
+        if (m_siegeStatusElement != nullptr) {
+            m_siegeStatusElement->SetProperty(
+                "display", state.siegeStatus.empty() ? "none" : "block");
+            m_siegeStatusElement->SetClass("status-warn",
+                                           state.siegeTone == "warn");
+            m_siegeStatusElement->SetClass("status-fail",
+                                           state.siegeTone == "fail");
+        }
+    }
+    if (first || state.baseStatus != m_hudCache.baseStatus ||
+        state.baseTone != m_hudCache.baseTone) {
+        setText(m_baseStatusElement, state.baseStatus);
+        if (m_baseStatusElement != nullptr) {
+            m_baseStatusElement->SetProperty(
+                "display", state.baseStatus.empty() ? "none" : "block");
+            m_baseStatusElement->SetClass("status-warn",
+                                          state.baseTone == "warn");
+            m_baseStatusElement->SetClass("status-fail",
+                                          state.baseTone == "fail");
+        }
+    }
+    bool modFieldsChanged =
+        first || state.modFieldCount != m_hudCache.modFieldCount;
+    for (int i = 0; i < state.modFieldCount && !modFieldsChanged; ++i) {
+        const std::size_t index = static_cast<std::size_t>(i);
+        if (!(state.modFields[index] == m_hudCache.modFields[index])) {
+            modFieldsChanged = true;
+        }
+    }
+    if (modFieldsChanged) {
+        bool anyVisible = false;
+        for (std::size_t i = 0; i < m_modFieldRows.size(); ++i) {
+            Rml::Element* row = m_modFieldRows[i];
+            const bool visible =
+                static_cast<int>(i) < state.modFieldCount &&
+                !state.modFields[i].text.empty();
+            if (row != nullptr) {
+                row->SetProperty("display", visible ? "block" : "none");
+                row->SetClass("status-warn",
+                              visible && state.modFields[i].tone == "warn");
+                row->SetClass("status-ok",
+                              visible && state.modFields[i].tone == "ok");
+                row->SetClass("status-fail",
+                              visible && state.modFields[i].tone == "fail");
+            }
+            if (visible) {
+                anyVisible = true;
+                setModText(m_modFieldLabels[i], state.modFields[i].label);
+                setModText(m_modFieldValues[i], state.modFields[i].text);
+            }
+        }
+        if (m_modFieldsElement != nullptr) {
+            m_modFieldsElement->SetProperty("display",
+                                            anyVisible ? "block" : "none");
+        }
+    }
+    if (first || state.siegeReportOpen != m_hudCache.siegeReportOpen ||
+        state.siegeReportTitle != m_hudCache.siegeReportTitle ||
+        state.siegeReportRating != m_hudCache.siegeReportRating ||
+        state.siegeReportTone != m_hudCache.siegeReportTone ||
+        state.siegeReportHint != m_hudCache.siegeReportHint ||
+        state.siegeReportLines != m_hudCache.siegeReportLines) {
+        setText(m_siegeReportTitleElement, state.siegeReportTitle);
+        setText(m_siegeReportRatingElement, state.siegeReportRating);
+        setText(m_siegeReportHintElement, state.siegeReportHint);
+        if (m_siegeReportElement != nullptr) {
+            m_siegeReportElement->SetProperty(
+                "display", state.siegeReportOpen ? "block" : "none");
+            m_siegeReportElement->SetClass("status-warn",
+                                           state.siegeReportTone == "warn");
+            m_siegeReportElement->SetClass("status-fail",
+                                           state.siegeReportTone == "fail");
+        }
+        if (m_siegeReportRatingElement != nullptr) {
+            m_siegeReportRatingElement->SetProperty(
+                "display", state.siegeReportRating.empty() ? "none" : "block");
+        }
+        for (std::size_t i = 0; i < m_siegeReportLineElements.size(); ++i) {
+            Rml::Element* line = m_siegeReportLineElements[i];
+            if (line == nullptr) {
+                continue;
+            }
+            const std::string& text = state.siegeReportLines[i];
+            setText(line, text);
+            line->SetProperty("display", text.empty() ? "none" : "block");
+        }
+    }
+    const bool progressionChanged =
+        first || state.progressionValid != m_hudCache.progressionValid ||
+        state.progressionLevel != m_hudCache.progressionLevel ||
+        state.progressionXp != m_hudCache.progressionXp ||
+        state.progressionXpNext != m_hudCache.progressionXpNext ||
+        state.progressionPerkPoints != m_hudCache.progressionPerkPoints ||
+        state.progressionSkills != m_hudCache.progressionSkills ||
+        state.progressionPerks != m_hudCache.progressionPerks ||
+        state.progressionChoices != m_hudCache.progressionChoices ||
+        state.progressionChoiceCount != m_hudCache.progressionChoiceCount ||
+        state.perkPrompt != m_hudCache.perkPrompt ||
+        state.characterOpen != m_hudCache.characterOpen;
+    if (progressionChanged) {
+        const float ratio =
+            state.progressionXpNext > 0.0f
+                ? std::clamp(state.progressionXp / state.progressionXpNext, 0.0f,
+                             1.0f)
+                : (state.progressionValid ? 1.0f : 0.0f);
+        char percent[24];
+        std::snprintf(percent, sizeof(percent), "%.1f%%",
+                      static_cast<double>(ratio * 100.0f));
+        if (m_levelPanelElement != nullptr) {
+            m_levelPanelElement->SetProperty(
+                "display", state.progressionValid ? "block" : "none");
+        }
+        setText(m_levelTextElement,
+                "Lv." + std::to_string(state.progressionLevel));
+        setText(m_levelPerkElement,
+                state.progressionPerkPoints > 0
+                    ? "Perk×" + std::to_string(state.progressionPerkPoints)
+                    : "");
+        if (m_levelPerkElement != nullptr) {
+            m_levelPerkElement->SetProperty(
+                "display",
+                state.progressionPerkPoints > 0 ? "block" : "none");
+        }
+        if (m_levelFillElement != nullptr) {
+            m_levelFillElement->SetProperty("width", percent);
+        }
+        setText(m_levelXpElement,
+                state.progressionXpNext > 0.0f
+                    ? std::to_string(static_cast<int>(std::lround(
+                          state.progressionXp))) +
+                          " / " +
+                          std::to_string(static_cast<int>(std::lround(
+                              state.progressionXpNext)))
+                    : "MAX");
+        setText(m_perkPromptElement, state.perkPrompt);
+        if (m_perkPromptElement != nullptr) {
+            m_perkPromptElement->SetProperty(
+                "display", state.perkPrompt.empty() ? "none" : "block");
+        }
+        if (m_characterPanelElement != nullptr) {
+            m_characterPanelElement->SetProperty(
+                "display",
+                state.characterOpen && state.progressionValid ? "block" : "none");
+        }
+        const std::string characterLevel =
+            "等级 " + std::to_string(state.progressionLevel) +
+            (state.progressionPerkPoints > 0
+                 ? " · 待选 Perk ×" +
+                       std::to_string(state.progressionPerkPoints)
+                 : std::string());
+        setText(m_characterLevelElement, characterLevel);
+        if (m_characterXpFillElement != nullptr) {
+            m_characterXpFillElement->SetProperty("width", percent);
+        }
+        setText(m_characterXpElement,
+                state.progressionXpNext > 0.0f
+                    ? "XP " +
+                          std::to_string(static_cast<int>(std::lround(
+                              state.progressionXp))) +
+                          " / " +
+                          std::to_string(static_cast<int>(std::lround(
+                              state.progressionXpNext)))
+                    : "XP MAX");
+        for (std::size_t i = 0; i < m_characterSkillElements.size(); ++i) {
+            setText(m_characterSkillElements[i], state.progressionSkills[i]);
+        }
+        setText(m_characterPerksElement, state.progressionPerks);
+        for (std::size_t i = 0; i < m_perkChoiceElements.size(); ++i) {
+            setText(m_perkChoiceElements[i], state.progressionChoices[i]);
+            if (m_perkChoiceElements[i] != nullptr) {
+                m_perkChoiceElements[i]->SetProperty(
+                    "display",
+                    state.progressionChoices[i].empty() ? "none" : "block");
+            }
+        }
+    }
+    const bool dialogueChanged =
+        first || state.dialogueOpen != m_hudCache.dialogueOpen ||
+        state.dialogueSpeaker != m_hudCache.dialogueSpeaker ||
+        state.dialogueText != m_hudCache.dialogueText ||
+        state.dialogueOptions != m_hudCache.dialogueOptions ||
+        state.dialogueOptionCount != m_hudCache.dialogueOptionCount ||
+        state.dialogueSelected != m_hudCache.dialogueSelected ||
+        state.dialogueHint != m_hudCache.dialogueHint;
+    if (dialogueChanged) {
+        if (m_dialoguePanelElement != nullptr) {
+            m_dialoguePanelElement->SetProperty(
+                "display", state.dialogueOpen ? "block" : "none");
+        }
+        setText(m_dialogueSpeakerElement, state.dialogueSpeaker);
+        setText(m_dialogueTextElement, state.dialogueText);
+        setText(m_dialogueHintElement, state.dialogueHint);
+        for (int i = 0; i < 5; ++i) {
+            Rml::Element* option =
+                m_dialogueOptionElements[static_cast<std::size_t>(i)];
+            if (option == nullptr) {
+                continue;
+            }
+            const bool visible = state.dialogueOpen &&
+                                 i < state.dialogueOptionCount;
+            option->SetProperty("display", visible ? "block" : "none");
+            if (visible) {
+                setText(option,
+                        state.dialogueOptions[static_cast<std::size_t>(i)]);
+                option->SetClass("selected", i == state.dialogueSelected);
+            }
+        }
+    }
+    if (first || state.actionHint != m_hudCache.actionHint ||
+        state.actionTone != m_hudCache.actionTone) {
+        setText(m_actionHintElement, state.actionHint);
+        if (m_actionHintElement != nullptr) {
+            m_actionHintElement->SetProperty(
+                "display", state.actionHint.empty() ? "none" : "block");
+            m_actionHintElement->SetClass("status-warn", state.actionTone == "warn");
+            m_actionHintElement->SetClass("status-fail", state.actionTone == "fail");
         }
     }
     if (first || state.selectedSlot != m_hudCache.selectedSlot) {
@@ -888,7 +1421,7 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
         const float opacity = std::min(1.0f, state.noticeRemaining / 0.35f);
         char bottom[32];
         char alpha[16];
-        std::snprintf(bottom, sizeof(bottom), "%.0fpx", 96.0f + rise);
+        std::snprintf(bottom, sizeof(bottom), "%.0fpx", 116.0f + rise);
         std::snprintf(alpha, sizeof(alpha), "%.2f", std::max(0.0f, opacity));
         m_noticeElement->SetProperty("bottom", bottom);
         m_noticeElement->SetProperty("opacity", alpha);
@@ -1119,7 +1652,8 @@ void UiSystem::ShowPauseMenu() {
 }
 
 void UiSystem::ShowEndScreen(bool victory, const std::string& title,
-                             const std::string& subtitle, const std::string& stats) {
+                             const std::string& subtitle, const std::string& stats,
+                             bool showRestart) {
     CloseInventory();
     if (IsMultiplayerOpen()) {
         HideMultiplayerMenu();
@@ -1133,7 +1667,7 @@ void UiSystem::ShowEndScreen(bool victory, const std::string& title,
         ZL_ERROR("ui", "结算页不可用：assets/ui/menu.rml");
         return;
     }
-    m_menu->ShowEndScreen(victory, title, subtitle, stats);
+    m_menu->ShowEndScreen(victory, title, subtitle, stats, showRestart);
     if (!m_menu->IsOpen()) {
         return;
     }
@@ -1165,6 +1699,19 @@ bool UiSystem::IsMenuOpen() const {
 
 bool UiSystem::IsMenuSettingsOpen() const {
     return m_menu != nullptr && m_menu->IsSettingsOpen();
+}
+
+bool UiSystem::IsPointerOverUi() const {
+    if (m_context == nullptr) {
+        return false;
+    }
+    Rml::Element* hover = m_context->GetHoverElement();
+    if (hover == nullptr) {
+        return false;
+    }
+    const Rml::String tag = hover->GetTagName();
+    return tag != "body" && tag != "html" &&
+           dynamic_cast<Rml::ElementDocument*>(hover) == nullptr;
 }
 
 bool UiSystem::GetMenuState(MenuState& out) const {
@@ -1338,16 +1885,7 @@ void UiSystem::HandleChar(unsigned int codepoint) {
 }
 
 bool UiSystem::HasInputFocus() const {
-    if (m_context == nullptr) {
-        return false;
-    }
-    Rml::Element* focus = m_context->GetFocusElement();
-    if (focus == nullptr) {
-        return false;
-    }
-    // RmlUi 在无显式焦点时会返回 body；它不是输入控件，不应阻断游戏输入。
-    const Rml::String tag = focus->GetTagName();
-    return tag != "body" && tag != "html";
+    return IsInputFocusBlocking(m_context);
 }
 
 void UiSystem::AddClickHandler(const char* elementId, std::function<void()> action) {

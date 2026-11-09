@@ -53,6 +53,17 @@ GridSquare* Cell::GetSquare(int wx, int wy, int z) {
     return &chunk->Square(local.lx, local.ly, z);
 }
 
+const GridSquare* Cell::GetSquare(int wx, int wy, int z) const {
+    const ChunkCoord chunkCoord = ChunkOf(wx, wy);
+    const ChunkLocal chunkLocal = ChunkLocalOf(chunkCoord.cx, chunkCoord.cy);
+    const Chunk* chunk = GetChunk(chunkLocal.lcx, chunkLocal.lcy);
+    if (!chunk) {
+        return nullptr;
+    }
+    const SquareLocal local = SquareLocalOf(wx, wy);
+    return &chunk->Square(local.lx, local.ly, z);
+}
+
 GridSquare& Cell::GetOrCreateSquare(int wx, int wy, int z) {
     const ChunkCoord chunkCoord = ChunkOf(wx, wy);
     const ChunkLocal chunkLocal = ChunkLocalOf(chunkCoord.cx, chunkCoord.cy);

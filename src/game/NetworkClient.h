@@ -10,6 +10,8 @@
 #include "net/KcpSession.h"
 #include "net/PlayerState.h"
 #include "net/SocialProtocol.h"
+#include "net/WorldSound.h"
+#include "save/ChunkDiff.h"
 
 namespace zl::game {
 
@@ -40,8 +42,10 @@ public:
         std::uint64_t connectAttempts = 0;
         std::uint64_t assignments = 0;
         std::uint64_t snapshotsReceived = 0;
+        std::uint64_t chunkDiffsReceived = 0;
         std::uint64_t playerStatesReceived = 0;
         std::uint64_t socialStatesReceived = 0;
+        std::uint64_t worldSoundsReceived = 0;
         std::uint64_t chatMessagesSent = 0;
         std::uint64_t commandPacketsSent = 0;
         std::uint64_t commandPacketsRejected = 0;
@@ -81,6 +85,10 @@ public:
 
     EntityReplicationClient& Replication() { return m_replication; }
     const EntityReplicationClient& Replication() const { return m_replication; }
+    // X-F1：服务器下发的玩家建筑/地图格补丁；由世界状态在对应 chunk 加载后应用。
+    std::vector<save::ChunkDiff> TakeChunkDiffs();
+    // M23-F1-T11：服务器广播的远端世界声音（枪声），由世界状态播放/生成表现。
+    std::vector<net::WorldSoundEvent> TakeWorldSounds();
     Stats GetStats() const;
 
 private:
@@ -92,6 +100,8 @@ private:
     net::ReplicationRegistry m_registry;
     net::KcpSessionClient m_session;
     EntityReplicationClient m_replication;
+    std::vector<save::ChunkDiff> m_pendingChunkDiffs;
+    std::vector<net::WorldSoundEvent> m_pendingWorldSounds;
     net::PlayerState m_playerState;
     bool m_hasPlayerState = false;
     net::SocialState m_socialState;

@@ -165,10 +165,15 @@ void SocialPanel::OpenChat() {
     if (m_chatHint != nullptr) {
         m_chatHint->SetInnerRML("Enter 发送 · Esc 取消");
     }
+    RefreshVisibility();
+    // 输入行从 display:none 切换为可见后，必须先完成布局，否则 RmlUi 会拒绝
+    // Focus()，聊天期间的游戏按键也不会被阻断。
+    if (m_context != nullptr) {
+        m_context->Update();
+    }
     if (m_chatInput != nullptr) {
         m_chatInput->Focus();
     }
-    RefreshVisibility();
 }
 
 void SocialPanel::CloseChat() {
@@ -183,7 +188,7 @@ void SocialPanel::CloseChat() {
     }
     SetVisible(m_chatInputRow, false);
     if (m_chatHint != nullptr) {
-        m_chatHint->SetInnerRML("Enter 聊天");
+        m_chatHint->SetInnerRML("Y 聊天");
     }
     RefreshVisibility();
 }
@@ -269,7 +274,7 @@ void SocialPanel::RefreshVisibility() {
     SetVisible(m_chatInputRow, visible && m_chatOpen);
     SetVisible(m_status, visible && !m_state.status.empty());
     if (m_chatHint != nullptr) {
-        m_chatHint->SetInnerRML(m_chatOpen ? "Enter 发送 · Esc 取消" : "Enter 聊天");
+        m_chatHint->SetInnerRML(m_chatOpen ? "Enter 发送 · Esc 取消" : "Y 聊天");
     }
 }
 

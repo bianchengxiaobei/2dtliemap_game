@@ -1,9 +1,10 @@
 {
-  "format": "recipes-v3",
+  "format": "recipes-v4",
   "recipes": [
     {
       "id": "field_bandage",
       "name": "简易绷带",
+      "category": "medical",
       "output": { "item": "bandage", "count": 1 },
       "ingredients": [ { "item": "rag", "count": 2 } ],
       "time": 0.8
@@ -11,6 +12,7 @@
     {
       "id": "makeshift_spear",
       "name": "简易长矛",
+      "category": "crafting",
       "output": { "item": "makeshift_spear", "count": 1 },
       "ingredients": [
         { "item": "kitchen_knife", "count": 1 },
@@ -21,6 +23,7 @@
     {
       "id": "padded_jacket",
       "name": "加固夹克",
+      "category": "crafting",
       "output": { "item": "padded_jacket", "count": 1 },
       "ingredients": [
         { "item": "jacket", "count": 1 },
@@ -31,12 +34,302 @@
       "time": 3.0
     },
     {
+      "id": "craft_leather_jacket",
+      "name": "皮夹克",
+      "category": "crafting",
+      "output": { "item": "leather_jacket", "count": 1 },
+      "ingredients": [
+        { "item": "animal_hide", "count": 3 },
+        { "item": "rag", "count": 2 }
+      ],
+      "tools": [ { "item": "kitchen_knife", "count": 1, "wear": 0.05 } ],
+      "station": "workbench",
+      "time": 4.0
+    },
+    {
+      "id": "craft_bone_spear",
+      "name": "骨制长矛",
+      "category": "crafting",
+      "output": { "item": "bone_spear", "count": 1 },
+      "ingredients": [
+        { "item": "bone", "count": 2 },
+        { "item": "wood", "count": 2 },
+        { "item": "rag", "count": 1 }
+      ],
+      "station": "workbench",
+      "time": 3.0
+    },
+    {
       "id": "campfire_beans",
       "name": "烤豆子",
+      "category": "cooking",
       "output": { "item": "cooked_beans", "count": 1 },
       "ingredients": [ { "item": "canned_beans", "count": 1 } ],
       "station": "campfire",
       "time": 2.0
+    },
+    {
+      "id": "cook_small_fish",
+      "name": "烤小鱼",
+      "category": "cooking",
+      "output": { "item": "cooked_small_fish", "count": 1 },
+      "ingredients": [ { "item": "small_fish", "count": 1 } ],
+      "station": "campfire",
+      "time": 2.2
+    },
+    {
+      "id": "cook_wild_berries",
+      "name": "烤野果",
+      "category": "cooking",
+      "output": { "item": "cooked_wild_berries", "count": 1 },
+      "ingredients": [ { "item": "wild_berries", "count": 1 } ],
+      "station": "campfire",
+      "time": 1.6
+    },
+    {
+      "id": "cook_wild_mushroom",
+      "name": "烤蘑菇",
+      "category": "cooking",
+      "output": { "item": "cooked_wild_mushroom", "count": 1 },
+      "ingredients": [ { "item": "wild_mushroom", "count": 1 } ],
+      "station": "campfire",
+      "time": 1.6
+    },
+    {
+      "id": "cook_venison",
+      "name": "烤鹿肉",
+      "category": "cooking",
+      "output": { "item": "cooked_venison", "count": 1 },
+      "ingredients": [ { "item": "raw_venison", "count": 1 } ],
+      "station": "campfire",
+      "time": 2.2
+    },
+    {
+      "id": "cook_rabbit_meat",
+      "name": "烤兔肉",
+      "category": "cooking",
+      "output": { "item": "cooked_rabbit_meat", "count": 1 },
+      "ingredients": [ { "item": "raw_rabbit_meat", "count": 1 } ],
+      "station": "campfire",
+      "time": 1.8
+    },
+    {
+      "id": "cook_boar_meat",
+      "name": "烤野猪肉",
+      "category": "cooking",
+      "output": { "item": "cooked_boar_meat", "count": 1 },
+      "ingredients": [ { "item": "raw_boar_meat", "count": 1 } ],
+      "station": "campfire",
+      "time": 2.6
+    },
+    {
+      "id": "brew_herbal_tea",
+      "name": "草药茶",
+      "category": "cooking",
+      "output": { "item": "herbal_tea", "count": 1 },
+      "ingredients": [
+        { "item": "medicinal_herb", "count": 1 },
+        { "item": "water_bottle", "count": 1 }
+      ],
+      "station": "campfire",
+      "time": 2.4
+    },
+    {
+      "id": "craft_fishing_rod",
+      "name": "制作鱼竿",
+      "category": "general",
+      "output": { "item": "fishing_rod", "count": 1 },
+      "ingredients": [
+        { "item": "forage_stick", "count": 2 },
+        { "item": "rag", "count": 1 }
+      ],
+      "time": 2.0
+    },
+    {
+      "id": "craft_wet_rag",
+      "name": "浸湿破布",
+      "category": "general",
+      "output": { "item": "wet_rag", "count": 1 },
+      "ingredients": [
+        { "item": "rag", "count": 1 },
+        { "item": "dirty_water", "count": 1 }
+      ],
+      "time": 0.4
+    },
+    {
+      "id": "craft_fish_bait",
+      "name": "制作鱼饵",
+      "category": "general",
+      "output": { "item": "fish_bait", "count": 3 },
+      "ingredients": [ { "item": "small_fish", "count": 1 } ],
+      "time": 1.0
+    },
+    {
+      "id": "fill_bottle",
+      "name": "装水",
+      "category": "general",
+      "output": { "item": "dirty_water", "count": 1 },
+      "ingredients": [ { "item": "empty_bottle", "count": 1 } ],
+      "station": "locker",
+      "time": 0.8
+    },
+    {
+      "id": "boil_water",
+      "name": "烧水",
+      "category": "cooking",
+      "output": { "item": "water_bottle", "count": 1 },
+      "ingredients": [ { "item": "dirty_water", "count": 1 } ],
+      "station": "campfire",
+      "time": 1.5
+    },
+    {
+      "id": "cook_hearty_stew",
+      "name": "丰盛炖菜",
+      "category": "cooking",
+      "output": { "item": "hearty_stew", "count": 1 },
+      "ingredients": [
+        { "item": "fresh_potato", "count": 1 },
+        { "item": "fresh_cabbage", "count": 1 },
+        { "item": "water_bottle", "count": 1 }
+      ],
+      "cookware": { "item": "cooking_pot", "count": 1 },
+      "fuel": { "item": "wood", "count": 1 },
+      "station": "campfire",
+      "time": 3.0
+    },
+    {
+      "id": "smoke_boar_meat",
+      "name": "熏野猪肉",
+      "category": "preservation",
+      "output": { "item": "smoked_boar_meat", "count": 1 },
+      "ingredients": [ { "item": "raw_boar_meat", "count": 1 } ],
+      "fuel": { "item": "wood", "count": 2 },
+      "station": "campfire",
+      "time": 3.2
+    },
+    {
+      "id": "roast_carrot",
+      "name": "烤胡萝卜",
+      "category": "cooking",
+      "output": { "item": "roasted_carrot", "count": 1 },
+      "ingredients": [ { "item": "fresh_carrot", "count": 1 } ],
+      "station": "campfire",
+      "time": 1.6
+    },
+    {
+      "id": "cook_chicken",
+      "name": "烤鸡肉",
+      "category": "cooking",
+      "output": { "item": "cooked_chicken", "count": 1 },
+      "ingredients": [ { "item": "raw_chicken", "count": 1 } ],
+      "station": "campfire",
+      "time": 1.8
+    },
+    {
+      "id": "cook_goat",
+      "name": "烤山羊肉",
+      "category": "cooking",
+      "output": { "item": "cooked_goat_meat", "count": 1 },
+      "ingredients": [ { "item": "raw_goat_meat", "count": 1 } ],
+      "station": "campfire",
+      "time": 2.2
+    },
+    {
+      "id": "carrot_stew",
+      "name": "胡萝卜炖菜",
+      "category": "cooking",
+      "output": { "item": "hearty_stew", "count": 1 },
+      "ingredients": [
+        { "item": "fresh_carrot", "count": 1 },
+        { "item": "fresh_potato", "count": 1 },
+        { "item": "water_bottle", "count": 1 }
+      ],
+      "cookware": { "item": "cooking_pot", "count": 1 },
+      "fuel": { "item": "wood", "count": 1 },
+      "station": "campfire",
+      "time": 3.0
+    },
+    {
+      "id": "chicken_stew",
+      "name": "鸡肉炖菜",
+      "category": "cooking",
+      "output": { "item": "hearty_stew", "count": 1 },
+      "ingredients": [
+        { "item": "raw_chicken", "count": 1 },
+        { "item": "fresh_potato", "count": 1 },
+        { "item": "water_bottle", "count": 1 }
+      ],
+      "cookware": { "item": "cooking_pot", "count": 1 },
+      "fuel": { "item": "wood", "count": 1 },
+      "station": "campfire",
+      "time": 3.0
+    },
+    {
+      "id": "goat_stew",
+      "name": "山羊肉炖菜",
+      "category": "cooking",
+      "output": { "item": "hearty_stew", "count": 1 },
+      "ingredients": [
+        { "item": "raw_goat_meat", "count": 1 },
+        { "item": "fresh_corn", "count": 1 },
+        { "item": "water_bottle", "count": 1 }
+      ],
+      "cookware": { "item": "cooking_pot", "count": 1 },
+      "fuel": { "item": "wood", "count": 1 },
+      "station": "campfire",
+      "time": 3.2
+    },
+    {
+      "id": "first_aid_kit",
+      "name": "急救包",
+      "category": "medical",
+      "output": { "item": "first_aid_kit", "count": 1 },
+      "ingredients": [
+        { "item": "bandage", "count": 3 },
+        { "item": "disinfectant", "count": 1 },
+        { "item": "rag", "count": 1 }
+      ],
+      "station": "workbench",
+      "time": 3.0
+    },
+    {
+      "id": "herbal_salve",
+      "name": "草药膏",
+      "category": "medical",
+      "output": { "item": "herbal_salve", "count": 1 },
+      "ingredients": [
+        { "item": "medicinal_herb", "count": 2 },
+        { "item": "rag", "count": 1 },
+        { "item": "water_bottle", "count": 1 }
+      ],
+      "station": "campfire",
+      "time": 2.0
+    },
+    {
+      "id": "sledgehammer",
+      "name": "大锤",
+      "category": "crafting",
+      "output": { "item": "sledgehammer", "count": 1 },
+      "ingredients": [
+        { "item": "wood", "count": 3 },
+        { "item": "repair_kit", "count": 1 }
+      ],
+      "tools": [ { "item": "toolbox", "count": 1, "wear": 0.10 } ],
+      "station": "workbench",
+      "time": 4.0
+    },
+    {
+      "id": "fire_suit",
+      "name": "消防防护服",
+      "category": "crafting",
+      "output": { "item": "fire_suit", "count": 1 },
+      "ingredients": [
+        { "item": "leather_jacket", "count": 1 },
+        { "item": "animal_hide", "count": 2 }
+      ],
+      "tools": [ { "item": "sewing_kit", "count": 1, "wear": 0.10 } ],
+      "station": "workbench",
+      "time": 5.0
     }
   ]
 }

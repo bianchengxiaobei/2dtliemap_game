@@ -98,6 +98,7 @@ struct AudioEngine::Impl {
         bool initialized = false;
         bool looping = false;
         bool spatial = false;
+        bool allowPitch = false;
         AudioGroup group = AudioGroup::SFX;
         float baseVolume = 1.0f;
         float maxDistance = 0.0f;
@@ -161,8 +162,21 @@ struct AudioEngine::Impl {
         ma_sound_set_pan(&voice.sound, spatial.pan);
     }
 
+    Voice* FindVoice(AudioHandle handle) {
+        if (!handle.Valid()) {
+            return nullptr;
+        }
+        for (auto& voice : voices) {
+            if (voice != nullptr && voice->handle.id == handle.id) {
+                return voice.get();
+            }
+        }
+        return nullptr;
+    }
+
     AudioHandle Start(std::string_view clip, AudioGroup group, float volume, bool loop,
-                      bool spatial, const glm::vec2& position, float maxDistance) {
+                      bool spatial, const glm::vec2& position, float maxDistance,
+                      bool allowPitch) {
         if (!engineInitialized || !groupsInitialized || clip.empty()) {
             return {};
         }
@@ -178,8 +192,10 @@ struct AudioEngine::Impl {
 
         const std::string path = ClipPath(clip);
         auto voice = std::make_unique<Voice>();
-        const ma_uint32 flags = MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION |
-                                MA_SOUND_FLAG_NO_PITCH;
+        ma_uint32 flags = MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_NO_SPATIALIZATION;
+        if (!allowPitch) {
+            flags |= MA_SOUND_FLAG_NO_PITCH;
+        }
         const ma_result result =
             ma_sound_init_from_file(&engine, path.c_str(), flags, Group(group), nullptr,
                                     &voice->sound);
@@ -198,6 +214,7 @@ struct AudioEngine::Impl {
         voice->handle.id = nextHandle++;
         voice->looping = loop;
         voice->spatial = spatial;
+        voice->allowPitch = allowPitch;
         voice->group = group;
         voice->baseVolume = std::clamp(volume, 0.0f, 1.0f);
         voice->maxDistance = maxDistance;
@@ -362,15 +379,18 @@ AudioHandle AudioEngine::Play2D(std::string_view clip, AudioGroup group, float v
     if (m_impl == nullptr) {
         return {};
     }
-    return m_impl->Start(clip, group, volume, loop, false, glm::vec2(0.0f, 0.0f), 0.0f);
+    return m_impl->Start(clip, group, volume, loop, false, glm::vec2(0.0f, 0.0f),
+                         0.0f, false);
 }
 
 AudioHandle AudioEngine::Play3D(std::string_view clip, const glm::vec2& worldPos,
-                                AudioGroup group, float volume, bool loop, float maxDistance) {
+                                AudioGroup group, float volume, bool loop, float maxDistance,
+                                bool allowPitch) {
     if (m_impl == nullptr) {
         return {};
     }
-    return m_impl->Start(clip, group, volume, loop, true, worldPos, maxDistance);
+    return m_impl->Start(clip, group, volume, loop, true, worldPos, maxDistance,
+                         allowPitch);
 }
 
 void AudioEngine::Stop(AudioHandle handle) {
@@ -396,6 +416,45 @@ void AudioEngine::StopAll() {
     }
     m_impl->voices.clear();
     m_impl->stats.activeVoices = 0;
+}
+
+void AudioEngine::SetVolume(AudioHandle handle, float volume) {
+    if (m_impl == nullptr) {
+        return;
+    }
+    Impl::Voice* voice = m_impl->FindVoice(handle);
+    if (voice == nullptr) {
+        return;
+    }
+    voice->baseVolume = std::clamp(volume, 0.0f, 1.0f);
+    if (voice->spatial) {
+        m_impl->ApplySpatial(*voice);
+    } else {
+        ma_sound_set_volume(&voice->sound, voice->baseVolume);
+    }
+}
+
+void AudioEngine::SetPitch(AudioHandle handle, float pitch) {
+    if (m_impl == nullptr) {
+        return;
+    }
+    Impl::Voice* voice = m_impl->FindVoice(handle);
+    if (voice == nullptr || !voice->allowPitch) {
+        return;
+    }
+    ma_sound_set_pitch(&voice->sound, std::clamp(pitch, 0.25f, 4.0f));
+}
+
+void AudioEngine::SetPosition(AudioHandle handle, const glm::vec2& worldPos) {
+    if (m_impl == nullptr) {
+        return;
+    }
+    Impl::Voice* voice = m_impl->FindVoice(handle);
+    if (voice == nullptr) {
+        return;
+    }
+    voice->position = worldPos;
+    m_impl->ApplySpatial(*voice);
 }
 
 void AudioEngine::SetGroupVolume(AudioGroup group, float volume) {

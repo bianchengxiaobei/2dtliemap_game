@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "game/BuildingRules.h"
 #include "save/SaveTypes.h"
 #include "ui/HudState.h"
 #include "ui/InventoryUi.h"
@@ -86,9 +87,17 @@ struct Command;
 
 namespace zl::game {
 
+class AnimalRegistry;
+class AnimalSystem;
 class AssetProvider;
+class CropRegistry;
+class FireRegistry;
+class ForageRegistry;
 class NetworkClient;
 class WorldSimulation;
+struct MissionConfig;
+struct PoiConfig;
+struct SettlementConfig;
 
 struct MultiplayerRequest {
     std::string host;
@@ -177,6 +186,7 @@ struct GameContext {    core::Config* config = nullptr;
 
     // 刷怪与虚拟化（M5-T7 起）：密度目标/实体化/虚拟化（只读统计）
     ai::SpawnLodSystem* spawnLod = nullptr;
+    AnimalSystem* animalSystem = nullptr;
 
     // 物品定义（M6-T1 起）：只读查询（ItemDef 生命周期同进程）
     items::ItemRegistry* items = nullptr;
@@ -184,6 +194,26 @@ struct GameContext {    core::Config* config = nullptr;
     items::RecipeRegistry* recipes = nullptr;
     // M14-T5：战利品表（assets/loot.json），容器首次搜索时只读查询。
     items::LootTableRegistry* lootTables = nullptr;
+    // M23-F2a-T1：觅食/钓鱼区域与点位数据，T2/T3 交互只读查询。
+    ForageRegistry* forage = nullptr;
+    AnimalRegistry* animals = nullptr;
+    CropRegistry* crops = nullptr;
+    FireRegistry* fire = nullptr;
+    PoiConfig* poiConfig = nullptr;
+    MissionConfig* missionConfig = nullptr;
+    SettlementConfig* settlements = nullptr;
+    std::string missionSourceJson;
+
+    std::vector<BuildableDef> modBuildables;
+    std::vector<std::string> modAssetManifests;
+    std::vector<ui::HudModField> modHudFields;
+    std::uint64_t contentHash = 0;
+    bool allowDynamicContent = true;
+    int dynamicContentCount = 0;
+    int contentReloadCount = 0;
+    std::function<void()> contentChanged;
+    // X3-T4：GameApp 产生的一次性内容策略提示，由 WorldDemoState 消费成 HUD notice。
+    std::string contentNotice;
 
     // 存档管理（M10-T4/T5 起）：元数据 + 后台写入；组件表只在主线程生成快照时使用
     save::SaveManager* saveManager = nullptr;

@@ -1,5 +1,6 @@
 #include "save/SqliteMeta.h"
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -21,14 +22,15 @@ CREATE TABLE IF NOT EXISTS meta (
     save_version INTEGER NOT NULL,
     game_version TEXT NOT NULL,
     map_id TEXT NOT NULL,
-    thumbnail TEXT NOT NULL
+    thumbnail TEXT NOT NULL,
+    game_minutes REAL NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS players (
     stable_id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     is_local INTEGER NOT NULL
 );
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 )sql";
 
 bool Fail(std::string* error, std::string message) {
@@ -149,6 +151,13 @@ bool SqliteMeta::Initialize(std::string* error) {
         return Fail(error, "元数据版本不兼容: 读取到 " + std::to_string(version) +
                                "，支持 " + std::to_string(kMetaSchemaVersion));
     }
+    if (version == 1) {
+        if (!Exec(m_db,
+                  "ALTER TABLE meta ADD COLUMN game_minutes REAL NOT NULL DEFAULT 0;",
+                  error)) {
+            return false;
+        }
+    }
     return Exec(m_db, kSchemaSql, error);
 }
 
@@ -164,6 +173,9 @@ bool SqliteMeta::Write(const SaveMetadata& metadata, std::string* error) {
     }
     if (metadata.gameVersion.empty()) {
         return Fail(error, "游戏版本不能为空");
+    }
+    if (!std::isfinite(metadata.gameMinutes) || metadata.gameMinutes < 0.0) {
+        return Fail(error, "存档游戏时间非法");
     }
 
     std::unordered_set<std::uint64_t> playerIds;
@@ -192,8 +204,8 @@ bool SqliteMeta::Write(const SaveMetadata& metadata, std::string* error) {
     if (!Prepare(m_db,
                  "INSERT OR REPLACE INTO meta "
                  "(id, save_id, name, created_at, updated_at, save_version, "
-                 "game_version, map_id, thumbnail) "
-                 "VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?);",
+                 "game_version, map_id, thumbnail, game_minutes) "
+                 "VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
                  metaStatement.Address(), error)) {
         rollback();
         return false;
@@ -208,7 +220,8 @@ bool SqliteMeta::Write(const SaveMetadata& metadata, std::string* error) {
         sqlite3_bind_int(meta, 5, static_cast<int>(metadata.saveVersion)) != SQLITE_OK ||
         !BindText(meta, 6, metadata.gameVersion, error) ||
         !BindText(meta, 7, metadata.mapId, error) ||
-        !BindText(meta, 8, metadata.thumbnail, error)) {
+        !BindText(meta, 8, metadata.thumbnail, error) ||
+        sqlite3_bind_double(meta, 9, metadata.gameMinutes) != SQLITE_OK) {
         rollback();
         return false;
     }
@@ -280,7 +293,7 @@ bool SqliteMeta::Read(SaveMetadata* metadata, std::string* error) const {
     Statement metaStatement;
     if (!Prepare(m_db,
                  "SELECT save_id, name, created_at, updated_at, save_version, "
-                 "game_version, map_id, thumbnail FROM meta WHERE id = 1;",
+                 "game_version, map_id, thumbnail, game_minutes FROM meta WHERE id = 1;",
                  metaStatement.Address(), error)) {
         return false;
     }
@@ -307,6 +320,10 @@ bool SqliteMeta::Read(SaveMetadata* metadata, std::string* error) const {
     loaded.gameVersion = ColumnText(meta, 5);
     loaded.mapId = ColumnText(meta, 6);
     loaded.thumbnail = ColumnText(meta, 7);
+    loaded.gameMinutes = sqlite3_column_double(meta, 8);
+    if (!std::isfinite(loaded.gameMinutes) || loaded.gameMinutes < 0.0) {
+        return Fail(error, "存档游戏时间非法");
+    }
 
     Statement playerStatement;
     if (!Prepare(m_db,

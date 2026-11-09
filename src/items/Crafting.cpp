@@ -63,6 +63,18 @@ CraftAttempt TryCraft(const ecs::Container& container, const ItemRegistry& regis
             return attempt;
         }
     }
+    if (recipe.cookware.has_value() &&
+        (recipe.cookware->count <= 0 ||
+         registry.Find(recipe.cookware->defId) == nullptr)) {
+        attempt.error = "配方锅具无效：" + recipe.cookware->defId;
+        return attempt;
+    }
+    if (recipe.fuel.has_value() &&
+        (recipe.fuel->count <= 0 ||
+         registry.Find(recipe.fuel->defId) == nullptr)) {
+        attempt.error = "配方燃料无效：" + recipe.fuel->defId;
+        return attempt;
+    }
 
     const ItemDef* output = registry.Find(recipe.outputDefId);
     if (output == nullptr || recipe.outputCount <= 0) {
@@ -77,6 +89,34 @@ CraftAttempt TryCraft(const ecs::Container& container, const ItemRegistry& regis
             const std::string label = def != nullptr ? def->name : tool.defId;
             attempt.error = "缺少工具：" + label + " 需要 " +
                             std::to_string(tool.count) + "，现有 " +
+                            std::to_string(have);
+            return attempt;
+        }
+    }
+
+    if (recipe.cookware.has_value()) {
+        const int have =
+            CountUsableTools(attempt.result, recipe.cookware->defId);
+        if (have < recipe.cookware->count) {
+            const ItemDef* def = registry.Find(recipe.cookware->defId);
+            const std::string label =
+                def != nullptr ? def->name : recipe.cookware->defId;
+            attempt.error = "缺少锅具：" + label + " 需要 " +
+                            std::to_string(recipe.cookware->count) + "，现有 " +
+                            std::to_string(have);
+            return attempt;
+        }
+    }
+
+    if (recipe.fuel.has_value()) {
+        const int have = CountOf(attempt.result, recipe.fuel->defId);
+        if (have < recipe.fuel->count) {
+            const ItemDef* def =
+                registry.Find(recipe.fuel->defId);
+            const std::string label =
+                def != nullptr ? def->name : recipe.fuel->defId;
+            attempt.error = "缺少燃料：" + label + " 需要 " +
+                            std::to_string(recipe.fuel->count) + "，现有 " +
                             std::to_string(have);
             return attempt;
         }
@@ -100,6 +140,13 @@ CraftAttempt TryCraft(const ecs::Container& container, const ItemRegistry& regis
             attempt.error = "材料扣除失败：" + ingredient.defId;
             return attempt;
         }
+    }
+
+    if (recipe.fuel.has_value() &&
+        RemoveItem(attempt.result, recipe.fuel->defId,
+                   recipe.fuel->count) != recipe.fuel->count) {
+        attempt.error = "燃料扣除失败：" + recipe.fuel->defId;
+        return attempt;
     }
 
     for (const RecipeIngredient& tool : recipe.tools) {
@@ -128,29 +175,39 @@ CraftAttempt TryCraft(const ecs::Container& container, const ItemRegistry& regis
 }  // namespace
 
 float ToolEfficiency(const ecs::Container& container, const RecipeDef& recipe) {
-    if (recipe.tools.empty()) {
+    if (recipe.tools.empty() && !recipe.cookware.has_value()) {
         return 1.0f;
     }
     float lowestCondition = 1.0f;
-    for (const RecipeIngredient& tool : recipe.tools) {
-        if (tool.count <= 0) {
-            return 0.0f;
+    auto account = [&](const RecipeIngredient& requirement) {
+        if (requirement.count <= 0) {
+            return false;
         }
         int found = 0;
         float toolLowest = 1.0f;
         for (const ecs::ItemInstance& entry : container.items) {
-            if (entry.defId != tool.defId || !(entry.condition > 0.0f)) {
+            if (entry.defId != requirement.defId ||
+                !(entry.condition > 0.0f)) {
                 continue;
             }
             toolLowest = std::min(toolLowest, entry.condition);
-            if (++found >= tool.count) {
+            if (++found >= requirement.count) {
                 break;
             }
         }
-        if (found < tool.count) {
-            return 0.0f;
+        if (found < requirement.count) {
+            return false;
         }
         lowestCondition = std::min(lowestCondition, toolLowest);
+        return true;
+    };
+    for (const RecipeIngredient& tool : recipe.tools) {
+        if (!account(tool)) {
+            return 0.0f;
+        }
+    }
+    if (recipe.cookware.has_value() && !account(*recipe.cookware)) {
+        return 0.0f;
     }
     return 0.5f + 0.5f * std::clamp(lowestCondition, 0.0f, 1.0f);
 }

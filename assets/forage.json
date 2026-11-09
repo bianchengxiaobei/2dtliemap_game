@@ -1,0 +1,58 @@
+{
+  "format": "forage-v1",
+  "seed": 20261029,
+  "forageZones": [
+    {
+      "id": "forest_understory",
+      "name": "森林地表",
+      "tableId": "forage_forest",
+      "floors": ["tile.floor.grass"],
+      "requiredNearbySprites": ["object.tree"],
+      "nearbyRadius": 5.0,
+      "density": 0.08,
+      "spacing": 4,
+      "maxNodes": 64,
+      "respawnMinutes": 240,
+      "searchSeconds": 2.6,
+      "survivalXp": 8
+    },
+    {
+      "id": "meadow_grass",
+      "name": "草地",
+      "tableId": "forage_meadow",
+      "floors": ["tile.floor.grass"],
+      "excludedNearbySprites": ["object.tree"],
+      "nearbyRadius": 4.0,
+      "density": 0.05,
+      "spacing": 4,
+      "maxNodes": 48,
+      "respawnMinutes": 180,
+      "searchSeconds": 2.0,
+      "toolDefId": "forage_stick",
+      "toolWear": 0.02,
+      "survivalXp": 6
+    }
+  ],
+  "fishingSpots": [
+    {
+      "id": "still_water",
+      "name": "静水岸边",
+      "tableId": "fish_water",
+      "trashTableId": "fish_water_trash",
+      "waterFloors": ["tile.floor.water"],
+      "bankRadius": 3,
+      "density": 0.3,
+      "spacing": 4,
+      "maxSpots": 12,
+      "respawnMinutes": 360,
+      "waitSeconds": 5.0,
+      "biteWindowSeconds": 2.0,
+      "catchChance": 0.62,
+      "survivalXp": 10,
+      "rodDefId": "fishing_rod",
+      "rodWear": 0.03,
+      "baitDefId": "fish_bait",
+      "baitCost": 1
+    }
+  ]
+}

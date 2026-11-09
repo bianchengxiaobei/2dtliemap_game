@@ -65,8 +65,15 @@
                         <div id="loot-slot-3" class="inv-slot loot-slot" data-area="loot" data-index="3"><div id="loot-name-3" class="inv-name">无</div><div id="loot-count-3" class="inv-count"></div></div>
                         <div id="loot-slot-4" class="inv-slot loot-slot" data-area="loot" data-index="4"><div id="loot-name-4" class="inv-name">无</div><div id="loot-count-4" class="inv-count"></div></div>
                         <div id="loot-slot-5" class="inv-slot loot-slot" data-area="loot" data-index="5"><div id="loot-name-5" class="inv-name">无</div><div id="loot-count-5" class="inv-count"></div></div>
+                        <div id="loot-slot-6" class="inv-slot loot-slot" data-area="loot" data-index="6"><div id="loot-name-6" class="inv-name">无</div><div id="loot-count-6" class="inv-count"></div></div>
+                        <div id="loot-slot-7" class="inv-slot loot-slot" data-area="loot" data-index="7"><div id="loot-name-7" class="inv-name">无</div><div id="loot-count-7" class="inv-count"></div></div>
                     </div>
-                    <div class="inv-hint">拖动：交换 / 合并 / 装到装备槽 / 与地面转移。右键：装备、使用、维修、丢弃、拾取。拖到地面格丢弃。维修需维修包。按 I 或 X 关闭。</div>
+                    <div id="storage-actions" class="storage-actions">
+                        <div id="storage-store-all" class="storage-btn">全部存入</div>
+                        <div id="storage-take-all" class="storage-btn">全部取出</div>
+                        <div id="storage-sort" class="storage-btn">整理</div>
+                    </div>
+                    <div class="inv-hint">拖动：交换 / 合并 / 装到装备槽 / 与地面或仓库转移。右键：装备、使用、维修、丢弃、拾取。仓库支持全部存入/取出。按 I 或 X 关闭。</div>
                     <div id="inv-status" class="inv-status status-info"></div>
                 </div>
             </div>

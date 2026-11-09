@@ -8,6 +8,8 @@
 #include "net/PlayerAssignment.h"
 #include "net/PlayerIdentity.h"
 #include "net/Replication.h"
+#include "save/BinaryFormat.h"
+#include "save/ChunkDiff.h"
 
 namespace zl::game {
 namespace {
@@ -72,6 +74,8 @@ void NetworkClient::ClearReplication() {
     m_socialState = {};
     m_hasSocialState = false;
     m_playerStableId = 0;
+    m_pendingChunkDiffs.clear();
+    m_pendingWorldSounds.clear();
 }
 
 void NetworkClient::ScheduleReconnect() {
@@ -240,6 +244,38 @@ void NetworkClient::HandleMessage(std::span<const std::uint8_t> message) {
         return;
     }
 
+    if (message.size() >= 4 && ReadU32Le(message.data()) == save::kMagicChunkDiff) {
+        save::ChunkDiff diff;
+        std::string error;
+        if (!save::DecodeChunkDiff(message, &diff, &error)) {
+            m_stats.lastError = error;
+            ZL_WARN("net", "chunk diff 消息无效：{}", error);
+            m_session.Close();
+            return;
+        }
+        m_pendingChunkDiffs.push_back(std::move(diff));
+        ++m_stats.chunkDiffsReceived;
+        return;
+    }
+
+    if (message.size() >= 4 &&
+        ReadU32Le(message.data()) == net::kWorldSoundMagic) {
+        net::WorldSoundEvent sound;
+        std::string error;
+        if (!net::DecodeWorldSound(message, &sound, &error)) {
+            m_stats.lastError = error;
+            ZL_WARN("net", "世界声音消息无效：{}", error);
+            m_session.Close();
+            return;
+        }
+        if (m_pendingWorldSounds.size() >= 128) {
+            m_pendingWorldSounds.erase(m_pendingWorldSounds.begin());
+        }
+        m_pendingWorldSounds.push_back(std::move(sound));
+        ++m_stats.worldSoundsReceived;
+        return;
+    }
+
     if (message.size() >= 4 && ReadU32Le(message.data()) == net::kReplicationMagic) {
         net::ReplicationSnapshot snapshot;
         std::string error;
@@ -261,6 +297,18 @@ void NetworkClient::HandleMessage(std::span<const std::uint8_t> message) {
 
     m_stats.lastError = "收到未知数据消息";
     ZL_WARN("net", "收到未知数据消息（{} 字节），已忽略", message.size());
+}
+
+std::vector<save::ChunkDiff> NetworkClient::TakeChunkDiffs() {
+    std::vector<save::ChunkDiff> result;
+    result.swap(m_pendingChunkDiffs);
+    return result;
+}
+
+std::vector<net::WorldSoundEvent> NetworkClient::TakeWorldSounds() {
+    std::vector<net::WorldSoundEvent> result;
+    result.swap(m_pendingWorldSounds);
+    return result;
 }
 
 bool NetworkClient::SendCommand(const net::Command& command, std::string* error) {

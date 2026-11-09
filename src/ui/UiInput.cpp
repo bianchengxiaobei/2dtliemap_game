@@ -1,6 +1,7 @@
 #include "ui/UiInput.h"
 
 #include <GLFW/glfw3.h>
+#include <RmlUi/Core.h>
 
 #include "core/Input.h"
 #include "platform/KeyNames.h"
@@ -124,6 +125,19 @@ int ModifiersFromInput(const core::Input& input) {
         modifiers |= Rml::Input::KM_ALT;
     }
     return modifiers;
+}
+
+bool IsInputFocusBlocking(Rml::Context* context) {
+    if (context == nullptr) {
+        return false;
+    }
+    Rml::Element* focus = context->GetFocusElement();
+    if (focus == nullptr) {
+        return false;
+    }
+    // RmlUi 在无显式焦点时会返回 body；它不是输入控件，不应阻断游戏输入。
+    const Rml::String tag = focus->GetTagName();
+    return tag != "body" && tag != "html";
 }
 
 std::string KeyNameFromRmlKey(Rml::Input::KeyIdentifier key) {

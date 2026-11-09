@@ -12,6 +12,8 @@
 #include "core/SoundEvent.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
+#include "game/RangedSound.h"
+#include "items/ItemDef.h"
 
 using namespace zl;
 
@@ -289,6 +291,35 @@ TEST_CASE("M5-T4：事件总线 OnSound（SoundEvent 载荷）→ 感知系统�
     CHECK(rig.perception.GetStats().heard == 1);
 
     bus.Unsubscribe(sub);
+}
+
+TEST_CASE("M23-F1-T5：远程枪声 noiseRadius 经 OnSound 吸引僵尸搜索") {
+    PercRig rig;
+    const ecs::Entity zombie = rig.AddZombie(5.5f, 5.5f);
+    rig.Ai(zombie).idleSeconds = 100.0f;
+    rig.Percep(zombie).sinceHeard = 100.0f;
+
+    items::RangedCombat ranged;
+    ranged.noiseRadius = 28.0f;
+    const core::SoundEvent shot = game::MakeRangedGunshot(20.5f, 5.5f, ranged);
+
+    core::EventBus bus;
+    const core::EventBus::SubscriptionId subscription = bus.Subscribe(
+        core::kOnSound, [&rig](const core::Event& event) {
+            if (const auto* sound = std::get_if<core::SoundEvent>(&event.payload)) {
+                rig.perception.PushSound(*sound);
+            }
+        });
+    bus.EmitQueued(core::kOnSound, shot);
+    bus.FlushQueued();
+
+    rig.Tick();
+    CHECK(rig.Ai(zombie).status == ecs::AiStatus::SearchLastKnown);
+    CHECK(rig.Request(zombie).goalX == 20);
+    CHECK(rig.Request(zombie).goalY == 5);
+    CHECK(rig.Percep(zombie).lastKnownX == doctest::Approx(20.5f));
+
+    bus.Unsubscribe(subscription);
 }
 
 TEST_CASE("M5-T4 验收：枪声吸引半径外僵尸（事件总线全链）；隔墙衰减下不被吸引") {

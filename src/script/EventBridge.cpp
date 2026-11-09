@@ -17,8 +17,8 @@ constexpr std::string_view kEventKeys[] = {
     core::kOnGameStart,   core::kOnTick,        core::kOnPlayerMove,  core::kOnPlayerDeath,
     core::kOnZombieSpawn, core::kOnZombieDead,  core::kOnItemPickup,  core::kOnItemDrop,
     core::kOnSound,       core::kOnChunkLoaded, core::kOnChunkUnloaded, core::kOnSaveBegin,
-    core::kOnSaveEnd,     core::kOnModReload,   core::kOnUiReady,      core::kOnUiEvent,
-    core::kOnMenuChanged, core::kOnInventoryChanged,
+    core::kOnSaveEnd,     core::kOnModReload,   core::kOnUiFrame,      core::kOnUiReady,
+    core::kOnUiEvent,     core::kOnMenuChanged, core::kOnInventoryChanged,
 };
 
 std::string_view SoundTypeName(core::SoundType type) {
@@ -33,6 +33,8 @@ std::string_view SoundTypeName(core::SoundType type) {
             return "ZombieGrowl";
         case core::SoundType::Ui:
             return "Ui";
+        case core::SoundType::Vehicle:
+            return "Vehicle";
         case core::SoundType::Generic:
         default:
             return "Generic";
@@ -73,7 +75,8 @@ std::optional<core::ScriptEvent> EventBridge::Translate(const core::Event& event
     core::ScriptEvent out;
     out.name = event.key;
 
-    if (event.key == core::kOnGameStart || event.key == core::kOnUiReady) {
+    if (event.key == core::kOnGameStart || event.key == core::kOnUiReady ||
+        event.key == core::kOnUiFrame) {
         return out;  // 无载荷
     }
     if (event.key == core::kOnTick) {

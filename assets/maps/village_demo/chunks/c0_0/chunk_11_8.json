@@ -1,6 +1,18 @@
 {
  "cx": 11,
  "cy": 8,
+ "floors": [
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "wwgggggggg",
+  "wwgggggggg",
+  "wwgggggggg",
+  "wwgggggggg",
+  "wwgggggggg",
+  "wwgggggggg"
+ ],
  "objects": [
   {
    "x": 8,
@@ -8,6 +20,72 @@
    "z": 0,
    "layer": "furniture",
    "sprite": "decor.grass_tuft"
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 5,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 0,
+   "y": 5,
+   "w": 1,
+   "h": 5,
+   "id": 19,
+   "name": "poi_warehouse"
   }
  ]
 }

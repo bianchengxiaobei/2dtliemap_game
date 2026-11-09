@@ -59,6 +59,7 @@ private:
     void OpenContextMenu(Rml::Element* slot, float mouseX, float mouseY);
     void HideContextMenu();
     void TriggerContextAction(InventoryActionType type);
+    void TriggerStorageAction(InventoryActionType type);
 
     Rml::Element* FindSlot(Rml::Element* element) const;
     InventoryArea AreaOf(const Rml::Element* slot) const;
@@ -73,6 +74,10 @@ private:
     Rml::Element* m_bagStacks = nullptr;
     Rml::Element* m_lootTitle = nullptr;
     Rml::Element* m_lootStacks = nullptr;
+    Rml::Element* m_storageActions = nullptr;
+    Rml::Element* m_storageStoreAll = nullptr;
+    Rml::Element* m_storageTakeAll = nullptr;
+    Rml::Element* m_storageSort = nullptr;
     Rml::Element* m_status = nullptr;
     std::array<Rml::Element*, kInventoryBagSlots> m_bagSlots{};
     std::array<Rml::Element*, kInventoryBagSlots> m_bagNames{};

@@ -46,7 +46,7 @@
                 <div id="end-restart" class="menu-btn primary">重新开始</div>
                 <div id="end-main-menu" class="menu-btn">返回主菜单</div>
             </div>
-            <div class="menu-hint">本局已结束 · 重新开始会生成新的世界</div>
+            <div id="end-hint" class="menu-hint">本局已结束 · 重新开始会生成新的世界</div>
         </div>
 
         <div id="settings-menu" class="menu-view menu-settings">
@@ -86,6 +86,9 @@
                     <div class="settings-row"><span class="settings-label">向左移动</span><div id="bind-MoveLeft" class="key-btn">A</div></div>
                     <div class="settings-row"><span class="settings-label">向右移动</span><div id="bind-MoveRight" class="key-btn">D</div></div>
                     <div class="settings-row"><span class="settings-label">攻击</span><div id="bind-Attack" class="key-btn">SPACE</div></div>
+                    <div class="settings-row"><span class="settings-label">重击</span><div id="bind-HeavyAttack" class="key-btn">LSHIFT</div></div>
+                    <div class="settings-row"><span class="settings-label">格挡</span><div id="bind-Block" class="key-btn">LCTRL</div></div>
+                    <div class="settings-row"><span class="settings-label">闪避</span><div id="bind-Dodge" class="key-btn">Z</div></div>
                 </div>
                 <div class="settings-column">
                     <div class="settings-row"><span class="settings-label">拾取</span><div id="bind-Pickup" class="key-btn">F</div></div>

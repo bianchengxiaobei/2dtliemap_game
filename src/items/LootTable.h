@@ -42,6 +42,11 @@ public:
     bool LoadFromString(std::string_view text, const std::string& source,
                         const ItemRegistry& items, std::string* error = nullptr);
 
+    bool MergeFile(const std::filesystem::path& path, const ItemRegistry& items,
+                   std::string* error = nullptr);
+    bool MergeFromString(std::string_view text, const std::string& source,
+                         const ItemRegistry& items, std::string* error = nullptr);
+
     const LootTable* Find(std::string_view id) const;
     const std::vector<LootTable>& All() const { return m_tables; }
     std::size_t Size() const { return m_tables.size(); }

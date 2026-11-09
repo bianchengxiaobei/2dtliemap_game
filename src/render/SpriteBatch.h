@@ -58,6 +58,9 @@ public:
     void DrawRectFill(float x, float y, float w, float h, uint32_t color);
 
     bgfx::TextureHandle WhiteTexture() const { return m_whiteTexture; }
+    bgfx::TextureHandle SoftParticleTexture() const {
+        return m_softParticleTexture;
+    }
 
     uint32_t QuadsThisFrame() const { return m_frameQuads; }
     uint32_t DrawCallsThisFrame() const { return m_frameDrawCalls; }
@@ -71,6 +74,7 @@ private:
     bgfx::UniformHandle m_texSampler = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout m_layout;
     bgfx::TextureHandle m_whiteTexture = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_softParticleTexture = BGFX_INVALID_HANDLE;
 
     // 帧内暂存：Flush 时整体灌入 transient 顶点缓冲（bgfx 专为"一帧多次小提交"设计，
     // 避免多次 bgfx::update 同一动态缓冲的语义问题）

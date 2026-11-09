@@ -9,7 +9,7 @@ struct sqlite3;
 
 namespace zl::save {
 
-inline constexpr int kMetaSchemaVersion = 1;
+inline constexpr int kMetaSchemaVersion = 2;
 
 class SqliteMeta {
 public:

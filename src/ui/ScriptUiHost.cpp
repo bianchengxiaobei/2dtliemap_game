@@ -506,7 +506,12 @@ void ScriptUiHost::OnRmlEvent(const std::string& owner, const std::string& docum
 
     if (uiEvent.type == "click" || uiEvent.type == "dblclick" ||
         uiEvent.type == "mousedown" || uiEvent.type == "mouseup") {
-        m_inputConsumed = !uiEvent.elementId.empty();
+        // 全屏 HUD 的 body/文档背景不是可交互控件：点击世界时 RmlUi 会命中它们，
+        // 不能把这类点击算作“UI 已消费”，否则单机点地移动/建造会被吞掉。
+        const bool background =
+            target->GetTagName() == "body" ||
+            dynamic_cast<Rml::ElementDocument*>(target) != nullptr;
+        m_inputConsumed = !background && !uiEvent.elementId.empty();
     }
     QueueEvent(std::move(uiEvent));
 }

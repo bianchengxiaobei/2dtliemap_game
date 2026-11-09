@@ -3,8 +3,10 @@
 #include <algorithm>
 
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
 #include "core/Constants.h"
 #include "ecs/components/CommonComponents.h"
+#include "game/Animals.h"
 #include "world/WorldCoords.h"
 
 namespace zl::game {
@@ -52,9 +54,39 @@ void RenderCollectSystem::Collect(ecs::EcsWorld& world, const ecs::SpatialIndex&
             return;
         }
         render::DrawItem item;
-        FillEntityDrawItem(pos->x, pos->y, pos->z, sprite->tint, world.IdOf(e).id,
+        std::uint32_t tint = sprite->tint;
+        if (const auto* burning = registry.try_get<ecs::BurningZombie>(e);
+            burning != nullptr && burning->remaining > 0.0f) {
+            const auto* hit = registry.try_get<ecs::HitReaction>(e);
+            if (hit == nullptr || hit->flashLeft <= 0.0f) {
+                tint = 0xFF409AFFu;
+            }
+        }
+        FillEntityDrawItem(pos->x, pos->y, pos->z, tint, world.IdOf(e).id,
                            *selected->frame, selected->atlas->Texture(), sprite->layer,
                            &item);
+        if (const auto* scale = registry.try_get<ecs::SpriteScale>(e);
+            scale != nullptr && scale->scale != 1.0f) {
+            const float factor = std::clamp(scale->scale, 0.25f, 4.0f);
+            const float centerX = item.rect.x + item.rect.w * 0.5f;
+            const float bottom = item.rect.y + item.rect.h;
+            item.rect.w *= factor;
+            item.rect.h *= factor;
+            item.rect.x = centerX - item.rect.w * 0.5f;
+            item.rect.y = bottom - item.rect.h;
+        }
+        if (const auto* animal = registry.try_get<ecs::Animal>(e);
+            animal != nullptr) {
+            const float scale = AnimalVisualScale(animal->speciesId);
+            if (scale != 1.0f) {
+                const float centerX = item.rect.x + item.rect.w * 0.5f;
+                const float bottom = item.rect.y + item.rect.h;
+                item.rect.w *= scale;
+                item.rect.h *= scale;
+                item.rect.x = centerX - item.rect.w * 0.5f;
+                item.rect.y = bottom - item.rect.h;
+            }
+        }
         if (const auto* variant = registry.try_get<ecs::ZombieVariant>(e);
             variant != nullptr) {
             const float scale = std::clamp(variant->visualScale, 0.5f, 2.0f);
@@ -66,8 +98,7 @@ void RenderCollectSystem::Collect(ecs::EcsWorld& world, const ecs::SpatialIndex&
                 item.rect.x = centerX - item.rect.w * 0.5f;
                 item.rect.y = bottom - item.rect.h;
             }
-        }
-        items.push_back(item);
+        }        items.push_back(item);
     });
 }
 

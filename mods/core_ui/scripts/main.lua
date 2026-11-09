@@ -18,6 +18,30 @@ local function set_bar(element, text_element, value, maximum, valid)
     return ratio
 end
 
+local function refresh_mod_fields(s)
+    local fields = s.modFields or {}
+    local any_visible = false
+    for i = 1, 8 do
+        local field = fields[i]
+        local text = field and field.text or ""
+        local label = field and field.label or ""
+        local tone = field and field.tone or "info"
+        local row = "mod-field-" .. (i - 1)
+        local visible = text ~= ""
+        UI.SetProperty(HUD_DOC, row, "display", visible and "block" or "none")
+        UI.SetText(HUD_DOC, "mod-field-label-" .. (i - 1), label)
+        UI.SetText(HUD_DOC, "mod-field-value-" .. (i - 1), text)
+        UI.SetClass(HUD_DOC, row, "status-warn", visible and tone == "warn")
+        UI.SetClass(HUD_DOC, row, "status-ok", visible and tone == "ok")
+        UI.SetClass(HUD_DOC, row, "status-fail", visible and tone == "fail")
+        if visible then
+            any_visible = true
+        end
+    end
+    UI.SetProperty(HUD_DOC, "mod-fields", "display",
+                   any_visible and "block" or "none")
+end
+
 local function refresh_hud()
     local s = Hud.GetState()
     if not s.active then
@@ -45,20 +69,250 @@ local function refresh_hud()
     local hp_ratio = set_bar("hp-fill", "hp-text", s.health, s.healthMax, s.playerValid)
     UI.SetClass(HUD_DOC, "hp-fill", "low", s.playerValid and hp_ratio < 0.3)
     set_bar("stamina-fill", "stamina-text", s.stamina, s.staminaMax, s.playerValid)
+    local combat_status = s.combatStatus or ""
+    local combat_tone = s.combatTone or "info"
+    UI.SetText(HUD_DOC, "combat-status", combat_status)
+    UI.SetProperty(HUD_DOC, "combat-status", "display",
+                   combat_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "combat-status", "status-warn", combat_tone == "warn")
+    UI.SetClass(HUD_DOC, "combat-status", "status-fail", combat_tone == "fail")
+    local ranged_status = s.rangedStatus or ""
+    local ranged_tone = s.rangedTone or "info"
+    UI.SetText(HUD_DOC, "ranged-status", ranged_status)
+    UI.SetProperty(HUD_DOC, "ranged-status", "display",
+                   ranged_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "ranged-status", "status-warn", ranged_tone == "warn")
+    UI.SetClass(HUD_DOC, "ranged-status", "status-fail", ranged_tone == "fail")
+    local forage_status = s.forageStatus or ""
+    local forage_tone = s.forageTone or "info"
+    UI.SetText(HUD_DOC, "forage-status", forage_status)
+    UI.SetProperty(HUD_DOC, "forage-status", "display",
+                   forage_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "forage-status", "status-warn", forage_tone == "warn")
+    UI.SetClass(HUD_DOC, "forage-status", "status-fail", forage_tone == "fail")
+    local fishing_status = s.fishingStatus or ""
+    local fishing_tone = s.fishingTone or "info"
+    UI.SetText(HUD_DOC, "fishing-status", fishing_status)
+    UI.SetProperty(HUD_DOC, "fishing-status", "display",
+                   fishing_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "fishing-status", "status-warn", fishing_tone == "warn")
+    UI.SetClass(HUD_DOC, "fishing-status", "status-fail", fishing_tone == "fail")
     UI.SetText(HUD_DOC, "needs-status", s.needsStatus)
     UI.SetProperty(HUD_DOC, "needs-status", "display",
                    s.needsStatus ~= "" and "block" or "none")
     UI.SetClass(HUD_DOC, "needs-status", "status-warn", s.needsTone == "warn")
     UI.SetClass(HUD_DOC, "needs-status", "status-fail", s.needsTone == "fail")
+    UI.SetText(HUD_DOC, "wound-status", s.woundStatus)
+    UI.SetProperty(HUD_DOC, "wound-status", "display",
+                   s.woundStatus ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "wound-status", "status-warn", s.woundTone == "warn")
+    UI.SetClass(HUD_DOC, "wound-status", "status-fail", s.woundTone == "fail")
+    UI.SetText(HUD_DOC, "pain-status", s.painStatus)
+    UI.SetProperty(HUD_DOC, "pain-status", "display",
+                   s.painStatus ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "pain-status", "status-warn", s.painTone == "warn")
+    UI.SetClass(HUD_DOC, "pain-status", "status-fail", s.painTone == "fail")
+    local armor_status = s.armorStatus or ""
+    local armor_tone = s.armorTone or "info"
+    UI.SetText(HUD_DOC, "armor-status", armor_status)
+    UI.SetProperty(HUD_DOC, "armor-status", "display",
+                   armor_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "armor-status", "status-warn", armor_tone == "warn")
+    UI.SetClass(HUD_DOC, "armor-status", "status-fail", armor_tone == "fail")
+    local infection_status = s.infectionStatus or ""
+    local infection_tone = s.infectionTone or "info"
+    UI.SetText(HUD_DOC, "infection-status", infection_status)
+    UI.SetProperty(HUD_DOC, "infection-status", "display",
+                   infection_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "infection-status", "status-warn",
+                infection_tone == "warn")
+    UI.SetClass(HUD_DOC, "infection-status", "status-fail",
+                infection_tone == "fail")
+    local weather_status = s.weatherStatus or ""
+    local weather_tone = s.weatherTone or "info"
+    local weather_class = s.weatherClass or "clear"
+    UI.SetText(HUD_DOC, "weather-status", weather_status)
+    UI.SetProperty(HUD_DOC, "weather-status", "display",
+                   weather_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "weather-status", "status-warn", weather_tone == "warn")
+    UI.SetClass(HUD_DOC, "weather-status", "status-fail", weather_tone == "fail")
+    UI.SetClass(HUD_DOC, "weather-overlay", "weather-rain", weather_class == "rain")
+    UI.SetClass(HUD_DOC, "weather-overlay", "weather-fog", weather_class == "fog")
+    UI.SetClass(HUD_DOC, "weather-overlay", "weather-cold", weather_class == "cold")
+    UI.SetProperty(HUD_DOC, "weather-overlay", "display",
+                   weather_class ~= "clear" and "block" or "none")
+
+    local threat_active = s.threatDirection ~= "" and s.threatRemaining > 0.0
+    local threat_opacity = 1.0
+    if s.threatDuration > 0.0 then
+        threat_opacity = math.max(0.0, math.min(1.0, s.threatRemaining / s.threatDuration))
+    end
+    for _, direction in ipairs({ "left", "right", "top", "bottom" }) do
+        local edge_active = threat_active and s.threatDirection == direction
+        UI.SetProperty(HUD_DOC, "threat-" .. direction, "display",
+                       edge_active and "block" or "none")
+        if edge_active then
+            UI.SetProperty(HUD_DOC, "threat-" .. direction, "opacity",
+                           string.format("%.2f", threat_opacity))
+        end
+    end
+    UI.SetText(HUD_DOC, "threat-status", s.threatStatus)
+    UI.SetProperty(HUD_DOC, "threat-status", "display",
+                   s.threatStatus ~= "" and "block" or "none")
 
     UI.SetText(HUD_DOC, "objective-text", s.objective)
     UI.SetProperty(HUD_DOC, "hud-objective", "display",
-                   s.objective ~= "" and "block" or "none")
+                   (s.objective ~= "" or (s.missionGuide or "") ~= ""
+                    or (s.eventGuide or "") ~= "")
+                   and "block" or "none")
     UI.SetClass(HUD_DOC, "objective-text", "objective-warn", s.objectiveTone == "warn")
     UI.SetClass(HUD_DOC, "objective-text", "objective-ok", s.objectiveTone == "ok")
     UI.SetText(HUD_DOC, "objective-hint", s.objectiveHint)
     UI.SetProperty(HUD_DOC, "objective-hint", "display",
                    s.objectiveHint ~= "" and "block" or "none")
+    local poi_guide = s.poiGuide or ""
+    local poi_tone = s.poiGuideTone or "info"
+    UI.SetText(HUD_DOC, "poi-guide", poi_guide)
+    UI.SetProperty(HUD_DOC, "poi-guide", "display",
+                   poi_guide ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "poi-guide", "status-warn", poi_tone == "warn")
+    UI.SetClass(HUD_DOC, "poi-guide", "status-ok", poi_tone == "ok")
+    local mission_guide = s.missionGuide or ""
+    local mission_tone = s.missionTone or "info"
+    UI.SetText(HUD_DOC, "mission-guide", mission_guide)
+    UI.SetProperty(HUD_DOC, "mission-guide", "display",
+                   mission_guide ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "mission-guide", "status-warn", mission_tone == "warn")
+    UI.SetClass(HUD_DOC, "mission-guide", "status-ok", mission_tone == "ok")
+    local event_guide = s.eventGuide or ""
+    local event_tone = s.eventTone or "warn"
+    UI.SetText(HUD_DOC, "event-guide", event_guide)
+    UI.SetProperty(HUD_DOC, "event-guide", "display",
+                   event_guide ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "event-guide", "status-warn", event_tone == "warn")
+    UI.SetClass(HUD_DOC, "event-guide", "status-ok", event_tone == "ok")
+    UI.SetClass(HUD_DOC, "event-guide", "status-fail", event_tone == "fail")
+
+    UI.SetText(HUD_DOC, "siege-status", s.siegeStatus)
+    UI.SetProperty(HUD_DOC, "siege-status", "display",
+                   s.siegeStatus ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "siege-status", "status-warn", s.siegeTone == "warn")
+    UI.SetClass(HUD_DOC, "siege-status", "status-fail", s.siegeTone == "fail")
+
+    local base_status = s.baseStatus or ""
+    local base_tone = s.baseTone or "info"
+    UI.SetText(HUD_DOC, "base-status", base_status)
+    UI.SetProperty(HUD_DOC, "base-status", "display",
+                   base_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "base-status", "status-warn", base_tone == "warn")
+    UI.SetClass(HUD_DOC, "base-status", "status-fail", base_tone == "fail")
+    refresh_mod_fields(s)
+
+    local report_open = s.siegeReportOpen or false
+    local report_tone = s.siegeReportTone or "info"
+    UI.SetProperty(HUD_DOC, "siege-report", "display",
+                   report_open and "block" or "none")
+    UI.SetClass(HUD_DOC, "siege-report", "status-warn", report_tone == "warn")
+    UI.SetClass(HUD_DOC, "siege-report", "status-fail", report_tone == "fail")
+    UI.SetText(HUD_DOC, "siege-report-title", s.siegeReportTitle or "守夜战报")
+    local report_rating = s.siegeReportRating or ""
+    UI.SetText(HUD_DOC, "siege-report-rating", report_rating)
+    UI.SetProperty(HUD_DOC, "siege-report-rating", "display",
+                   report_rating ~= "" and "block" or "none")
+    UI.SetText(HUD_DOC, "siege-report-hint", s.siegeReportHint or "ESC 关闭")
+    local report_lines = s.siegeReportLines or {}
+    for i = 0, 7 do
+        local line = report_lines[i + 1] or ""
+        UI.SetText(HUD_DOC, "siege-report-line-" .. i, line)
+        UI.SetProperty(HUD_DOC, "siege-report-line-" .. i, "display",
+                       line ~= "" and "block" or "none")
+    end
+
+    local progression_valid = s.progressionValid or false
+    local progression_level = s.progressionLevel or 1
+    local progression_xp = s.progressionXp or 0.0
+    local progression_next = s.progressionXpNext or 0.0
+    local progression_points = s.progressionPerkPoints or 0
+    local progression_ratio = 0.0
+    if progression_valid then
+        if progression_next > 0.0 then
+            progression_ratio = math.max(0.0, math.min(1.0, progression_xp / progression_next))
+        else
+            progression_ratio = 1.0
+        end
+    end
+    UI.SetProperty(HUD_DOC, "hud-level", "display",
+                   progression_valid and "block" or "none")
+    UI.SetProperty(HUD_DOC, "level-fill", "width",
+                   string.format("%.1f%%", progression_ratio * 100.0))
+    UI.SetText(HUD_DOC, "level-text", "Lv." .. tostring(progression_level))
+    UI.SetText(HUD_DOC, "level-perk", "Perk×" .. tostring(progression_points))
+    UI.SetProperty(HUD_DOC, "level-perk", "display",
+                   progression_points > 0 and "block" or "none")
+    if progression_next > 0.0 then
+        UI.SetText(HUD_DOC, "level-xp",
+                   string.format("%d / %d", math.floor(progression_xp + 0.5),
+                                 math.floor(progression_next + 0.5)))
+    else
+        UI.SetText(HUD_DOC, "level-xp", "MAX")
+    end
+    UI.SetText(HUD_DOC, "perk-prompt", s.perkPrompt or "")
+    UI.SetProperty(HUD_DOC, "perk-prompt", "display",
+                   (s.perkPrompt or "") ~= "" and "block" or "none")
+    UI.SetProperty(HUD_DOC, "character-panel", "display",
+                   (progression_valid and s.characterOpen) and "block" or "none")
+    if progression_valid then
+        UI.SetText(HUD_DOC, "character-level",
+                   "等级 " .. tostring(progression_level)
+                   .. (progression_points > 0
+                       and (" · 待选 Perk ×" .. tostring(progression_points))
+                       or ""))
+        if progression_next > 0.0 then
+            UI.SetText(HUD_DOC, "character-xp",
+                       string.format("XP %d / %d", math.floor(progression_xp + 0.5),
+                                     math.floor(progression_next + 0.5)))
+        else
+            UI.SetText(HUD_DOC, "character-xp", "XP MAX")
+        end
+        UI.SetProperty(HUD_DOC, "character-xp-fill", "width",
+                       string.format("%.1f%%", progression_ratio * 100.0))
+        local skills = s.progressionSkills or {}
+        for i = 1, 4 do
+            UI.SetText(HUD_DOC, "character-skill-" .. (i - 1), skills[i] or "")
+        end
+        UI.SetText(HUD_DOC, "character-perks", s.progressionPerks or "暂无")
+        local choices = s.progressionChoices or {}
+        for i = 1, 3 do
+            local line = choices[i] or ""
+            UI.SetText(HUD_DOC, "perk-choice-" .. (i - 1), line)
+            UI.SetProperty(HUD_DOC, "perk-choice-" .. (i - 1), "display",
+                           line ~= "" and "block" or "none")
+        end
+    end
+
+    local dialogue_open = s.dialogueOpen or false
+    local dialogue_options = s.dialogueOptions or {}
+    local dialogue_count = s.dialogueOptionCount or 0
+    local dialogue_selected = s.dialogueSelected or 0
+    UI.SetProperty(HUD_DOC, "dialogue-panel", "display",
+                   dialogue_open and "block" or "none")
+    UI.SetText(HUD_DOC, "dialogue-speaker", s.dialogueSpeaker or "")
+    UI.SetText(HUD_DOC, "dialogue-text", s.dialogueText or "")
+    UI.SetText(HUD_DOC, "dialogue-hint", s.dialogueHint or "")
+    for i = 0, 4 do
+        local option = dialogue_options[i + 1] or ""
+        UI.SetText(HUD_DOC, "dialogue-option-" .. i, option)
+        UI.SetProperty(HUD_DOC, "dialogue-option-" .. i, "display",
+                       dialogue_open and i < dialogue_count and "block" or "none")
+        UI.SetClass(HUD_DOC, "dialogue-option-" .. i, "selected",
+                    dialogue_open and i == dialogue_selected)
+    end
+
+    UI.SetText(HUD_DOC, "action-hint", s.actionHint)
+    UI.SetProperty(HUD_DOC, "action-hint", "display",
+                   s.actionHint ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "action-hint", "status-warn", s.actionTone == "warn")
+    UI.SetClass(HUD_DOC, "action-hint", "status-fail", s.actionTone == "fail")
 
     for i = 1, 5 do
         local slot = s.slots[i]
@@ -80,7 +334,7 @@ local function refresh_hud()
         local elapsed = math.max(0.0, duration - s.noticeRemaining)
         local rise = math.min(elapsed * 30.0, 30.0)
         local opacity = math.min(1.0, s.noticeRemaining / 0.35)
-        UI.SetProperty(HUD_DOC, "notice", "bottom", string.format("%.0fpx", 96.0 + rise))
+        UI.SetProperty(HUD_DOC, "notice", "bottom", string.format("%.0fpx", 116.0 + rise))
         UI.SetProperty(HUD_DOC, "notice", "opacity", string.format("%.2f", opacity))
     end
 end
@@ -547,7 +801,11 @@ local inv = {
     selected = nil,
     craftQty = 1,
     craftPage = 1,
+    craftCategory = "all",
     queueSel = 1,
+}
+local INV_CATEGORY_ORDER = {
+    "all", "cooking", "preservation", "medical", "crafting", "general",
 }
 
 local function inv_slot_id(area, index)
@@ -604,8 +862,16 @@ local function inv_update_slot(area, index, slot)
     if slot.filled then
         local name = slot.label
         local condition = slot.condition or 1.0
-        if condition < 0.999 then
-            name = string.format("%s %d%%", name, math.floor(condition * 100 + 0.5))
+        if slot.perishable and condition <= 0.05 then
+            name = string.format("%s [变质]", name)
+        elseif condition < 0.999 then
+            if slot.perishable then
+                name = string.format("%s 新鲜 %d%%", name,
+                    math.floor(condition * 100 + 0.5))
+            else
+                name = string.format("%s %d%%", name,
+                    math.floor(condition * 100 + 0.5))
+            end
         end
         UI.SetText(INV_DOC, prefix .. "-name-" .. tostring(index), name)
         UI.SetText(INV_DOC, prefix .. "-count-" .. tostring(index),
@@ -636,6 +902,54 @@ end
 
 local function inv_recipe_known(recipe)
     return recipe.known ~= false
+end
+
+local function inv_category_label(category, fallback)
+    if category == nil or category == "" or category == "all" then
+        return "全部"
+    end
+    return fallback or category
+end
+
+local function inv_visible_recipes()
+    local recipes = inv.state and inv.state.recipes or {}
+    local visible = {}
+    for i = 1, #recipes do
+        if inv.craftCategory == "all" or
+            (recipes[i].category or "general") == inv.craftCategory then
+            visible[#visible + 1] = { recipe = recipes[i], index = i - 1 }
+        end
+    end
+    return visible
+end
+
+local function inv_recipe_extra_ok(recipe)
+    local cookware = recipe.cookware
+    if cookware ~= nil and cookware.have < cookware.required then
+        return false
+    end
+    local fuel = recipe.fuel
+    if fuel ~= nil and fuel.have < fuel.required then
+        return false
+    end
+    return true
+end
+
+local function inv_recipe_extra_text(recipe)
+    local parts = {}
+    if recipe.cookware ~= nil then
+        parts[#parts + 1] = string.format("锅具 %s %d/%d",
+                                          recipe.cookware.label,
+                                          recipe.cookware.have,
+                                          recipe.cookware.required)
+    end
+    if recipe.fuel ~= nil then
+        parts[#parts + 1] = string.format("燃料 %s %d/%d",
+                                          recipe.fuel.label,
+                                          recipe.fuel.have,
+                                          recipe.fuel.required)
+    end
+    return table.concat(parts, "、")
 end
 
 local function inv_recipe_tools_ok(recipe)
@@ -669,11 +983,18 @@ local function inv_recipe_ingredients(recipe)
     if not inv_recipe_tools_ok(recipe) then
         return "需要工具: " .. inv_recipe_tools_text(recipe)
     end
+    if not inv_recipe_extra_ok(recipe) then
+        return "需要" .. inv_recipe_extra_text(recipe)
+    end
     local parts = {}
     for i = 1, #recipe.ingredients do
         local ingredient = recipe.ingredients[i]
         parts[#parts + 1] = string.format("%s %d/%d", ingredient.label,
                                          ingredient.have, ingredient.required)
+    end
+    local extra = inv_recipe_extra_text(recipe)
+    if extra ~= "" then
+        parts[#parts + 1] = extra
     end
     return "材料: " .. table.concat(parts, "、")
 end
@@ -709,6 +1030,8 @@ local function inv_update_recipe(index, recipe, busy_recipe_id, crafting_active)
         state = "缺" .. inv_recipe_station_name(recipe)
     elseif not inv_recipe_tools_ok(recipe) then
         state = "缺工具"
+    elseif not inv_recipe_extra_ok(recipe) then
+        state = "缺锅具/燃料"
     end
     UI.SetText(INV_DOC, "craft-state-" .. tostring(index), state)
     UI.SetClass(INV_DOC, "craft-state-" .. tostring(index), "ok",
@@ -739,6 +1062,15 @@ local function inv_refresh()
     UI.SetText(INV_DOC, "bag-stack-count", tostring(s.bagStacks) .. " 堆")
     UI.SetText(INV_DOC, "loot-title", s.lootTitle or "附近地面")
     UI.SetText(INV_DOC, "loot-stack-count", tostring(s.lootStacks) .. " 堆")
+    local canTakeAll = s.lootIsStorage == true or s.lootCanTakeAll == true
+    UI.SetProperty(INV_DOC, "storage-actions", "display",
+                   canTakeAll and "block" or "none")
+    UI.SetProperty(INV_DOC, "storage-store-all", "display",
+                   s.lootIsStorage == true and "block" or "none")
+    UI.SetProperty(INV_DOC, "storage-sort", "display",
+                   s.lootIsStorage == true and "block" or "none")
+    UI.SetProperty(INV_DOC, "storage-take-all", "display",
+                   canTakeAll and "block" or "none")
     UI.SetText(INV_DOC, "inv-status", s.status)
     UI.SetClass(INV_DOC, "inv-status", "status-info", s.statusTone == "info")
     UI.SetClass(INV_DOC, "inv-status", "status-ok", s.statusTone == "ok")
@@ -753,8 +1085,26 @@ local function inv_refresh()
         inv_update_slot("loot", i - 1, s.loot[i])
     end
     local recipes = s.recipes or {}
-    UI.SetText(INV_DOC, "craft-count", tostring(#recipes) .. " 条")
-    local pageCount = math.max(1, math.ceil(#recipes / INV_CRAFT_ROWS))
+    local visible = inv_visible_recipes()
+    if #visible == 0 and inv.craftCategory ~= "all" then
+        inv.craftCategory = "all"
+        visible = inv_visible_recipes()
+    end
+    local categoryLabel = "全部分类"
+    for i = 1, #recipes do
+        if inv.craftCategory ~= "all" and
+            (recipes[i].category or "general") == inv.craftCategory then
+            categoryLabel = inv_category_label(recipes[i].category,
+                                               recipes[i].categoryLabel)
+            break
+        end
+    end
+    if inv.craftCategory == "all" then
+        categoryLabel = "全部分类"
+    end
+    UI.SetText(INV_DOC, "craft-category", categoryLabel)
+    UI.SetText(INV_DOC, "craft-count", tostring(#visible) .. " 条")
+    local pageCount = math.max(1, math.ceil(#visible / INV_CRAFT_ROWS))
     if inv.craftPage < 1 then
         inv.craftPage = 1
     elseif inv.craftPage > pageCount then
@@ -826,7 +1176,8 @@ local function inv_refresh()
                        string.format("%.1f%%", progress * 100.0))
     end
     for i = 0, INV_CRAFT_ROWS - 1 do
-        inv_update_recipe(i, recipes[craftStart + i + 1], busy_recipe_id,
+        local entry = visible[craftStart + i + 1]
+        inv_update_recipe(i, entry and entry.recipe or nil, busy_recipe_id,
                           crafting.active == true)
     end
 end
@@ -949,16 +1300,16 @@ end
 
 local function inv_craft(slot)
     local start = (inv.craftPage - 1) * INV_CRAFT_ROWS
-    local recipe = inv.state ~= nil and inv.state.recipes ~= nil and
-                       inv.state.recipes[start + slot + 1] or nil
-    if recipe == nil then
+    local visible = inv_visible_recipes()
+    local entry = visible[start + slot + 1]
+    if entry == nil then
         return
     end
     Inventory.PlayClick()
     Inventory.Action({
         type = "craft",
         from = "bag",
-        fromIndex = start + slot,
+        fromIndex = entry.index,
         to = "bag",
         toIndex = -1,
         count = inv.craftQty,
@@ -1044,15 +1395,46 @@ local function inv_on_click(element)
         return
     end
     if element == "craft-page-next" then
-        local pageCount = 1
-        if inv.state ~= nil and inv.state.recipes ~= nil then
-            pageCount = math.max(1, math.ceil(#inv.state.recipes / INV_CRAFT_ROWS))
-        end
+        local pageCount = math.max(1, math.ceil(#inv_visible_recipes() /
+                                                 INV_CRAFT_ROWS))
         if inv.craftPage < pageCount then
             inv.craftPage = inv.craftPage + 1
             Inventory.PlayClick()
             inv_refresh()
         end
+        return
+    end
+    if element == "craft-category" then
+        local current = 1
+        for i = 1, #INV_CATEGORY_ORDER do
+            if INV_CATEGORY_ORDER[i] == inv.craftCategory then
+                current = i
+                break
+            end
+        end
+        for _ = 1, #INV_CATEGORY_ORDER do
+            current = current % #INV_CATEGORY_ORDER + 1
+            local candidate = INV_CATEGORY_ORDER[current]
+            if candidate == "all" then
+                inv.craftCategory = candidate
+                break
+            end
+            local recipes = inv.state and inv.state.recipes or {}
+            local found = false
+            for i = 1, #recipes do
+                if (recipes[i].category or "general") == candidate then
+                    found = true
+                    break
+                end
+            end
+            if found then
+                inv.craftCategory = candidate
+                break
+            end
+        end
+        inv.craftPage = 1
+        Inventory.PlayClick()
+        inv_refresh()
         return
     end
     if element == "craft-queue-prev" then
@@ -1124,6 +1506,32 @@ local function inv_on_click(element)
         local index = tonumber(string.sub(element, #craftPrefix + 1))
         if index ~= nil then
             inv_craft(index)
+        end
+        return
+    end
+    if element == "storage-store-all" or element == "storage-take-all" or
+        element == "storage-sort" then
+        local s = inv.state
+        local canTakeAll = s ~= nil and
+            (s.lootIsStorage == true or
+             (element == "storage-take-all" and s.lootCanTakeAll == true))
+        if canTakeAll then
+            local action_type = "store_all"
+            if element == "storage-take-all" then
+                action_type = "take_all"
+            elseif element == "storage-sort" then
+                action_type = "sort_storage"
+            end
+            Inventory.PlayClick()
+            Inventory.Action({
+                type = action_type,
+                from = "loot",
+                fromIndex = -1,
+                fromEntityId = s.lootEntityId or 0,
+                to = "bag",
+                toIndex = -1,
+            })
+            inv_refresh()
         end
         return
     end
@@ -1251,7 +1659,7 @@ local function on_inventory_reload(e)
 end
 
 Events.On("OnUiReady", function(_) sync_menu(); sync_inventory() end)
-Events.On("OnTick", function(_) refresh_hud() end)
+Events.On("OnUiFrame", function(_) refresh_hud() end)
 Events.On("OnMenuChanged", on_menu_changed)
 Events.On("OnInventoryChanged", on_inventory_changed)
 Events.On("OnModReload", on_mod_reload)

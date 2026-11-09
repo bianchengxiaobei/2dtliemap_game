@@ -19,6 +19,28 @@ def set_bar(element, text_element, value, maximum, valid):
     return ratio
 
 
+def refresh_mod_fields(s):
+    fields = s.get("modFields", []) or []
+    any_visible = False
+    for i in range(8):
+        field = fields[i] if i < len(fields) else None
+        text = field.get("text", "") if field else ""
+        label = field.get("label", "") if field else ""
+        tone = field.get("tone", "info") if field else "info"
+        row = "mod-field-%d" % i
+        visible = text != ""
+        UI.SetProperty(DOC, row, "display", "block" if visible else "none")
+        UI.SetText(DOC, "mod-field-label-%d" % i, label)
+        UI.SetText(DOC, "mod-field-value-%d" % i, text)
+        UI.SetClass(DOC, row, "status-warn", visible and tone == "warn")
+        UI.SetClass(DOC, row, "status-ok", visible and tone == "ok")
+        UI.SetClass(DOC, row, "status-fail", visible and tone == "fail")
+        if visible:
+            any_visible = True
+    UI.SetProperty(DOC, "mod-fields", "display",
+                   "block" if any_visible else "none")
+
+
 def refresh():
     s = Hud.GetState()
     if not s["active"]:
@@ -42,20 +64,236 @@ def refresh():
     UI.SetClass(DOC, "hp-fill", "low", s["playerValid"] and hp_ratio < 0.3)
     set_bar("stamina-fill", "stamina-text", s["stamina"], s["staminaMax"],
             s["playerValid"])
+    combat_status = s.get("combatStatus", "")
+    combat_tone = s.get("combatTone", "info")
+    UI.SetText(DOC, "combat-status", combat_status)
+    UI.SetProperty(DOC, "combat-status", "display",
+                   "block" if combat_status != "" else "none")
+    UI.SetClass(DOC, "combat-status", "status-warn", combat_tone == "warn")
+    UI.SetClass(DOC, "combat-status", "status-fail", combat_tone == "fail")
+    ranged_status = s.get("rangedStatus", "")
+    ranged_tone = s.get("rangedTone", "info")
+    UI.SetText(DOC, "ranged-status", ranged_status)
+    UI.SetProperty(DOC, "ranged-status", "display",
+                   "block" if ranged_status != "" else "none")
+    UI.SetClass(DOC, "ranged-status", "status-warn", ranged_tone == "warn")
+    UI.SetClass(DOC, "ranged-status", "status-fail", ranged_tone == "fail")
+    forage_status = s.get("forageStatus", "")
+    forage_tone = s.get("forageTone", "info")
+    UI.SetText(DOC, "forage-status", forage_status)
+    UI.SetProperty(DOC, "forage-status", "display",
+                   "block" if forage_status != "" else "none")
+    UI.SetClass(DOC, "forage-status", "status-warn", forage_tone == "warn")
+    UI.SetClass(DOC, "forage-status", "status-fail", forage_tone == "fail")
+    fishing_status = s.get("fishingStatus", "")
+    fishing_tone = s.get("fishingTone", "info")
+    UI.SetText(DOC, "fishing-status", fishing_status)
+    UI.SetProperty(DOC, "fishing-status", "display",
+                   "block" if fishing_status != "" else "none")
+    UI.SetClass(DOC, "fishing-status", "status-warn", fishing_tone == "warn")
+    UI.SetClass(DOC, "fishing-status", "status-fail", fishing_tone == "fail")
     UI.SetText(DOC, "needs-status", s["needsStatus"])
     UI.SetProperty(DOC, "needs-status", "display",
                    "block" if s["needsStatus"] != "" else "none")
     UI.SetClass(DOC, "needs-status", "status-warn", s["needsTone"] == "warn")
     UI.SetClass(DOC, "needs-status", "status-fail", s["needsTone"] == "fail")
+    UI.SetText(DOC, "wound-status", s["woundStatus"])
+    UI.SetProperty(DOC, "wound-status", "display",
+                   "block" if s["woundStatus"] != "" else "none")
+    UI.SetClass(DOC, "wound-status", "status-warn", s["woundTone"] == "warn")
+    UI.SetClass(DOC, "wound-status", "status-fail", s["woundTone"] == "fail")
+    UI.SetText(DOC, "pain-status", s["painStatus"])
+    UI.SetProperty(DOC, "pain-status", "display",
+                   "block" if s["painStatus"] != "" else "none")
+    UI.SetClass(DOC, "pain-status", "status-warn", s["painTone"] == "warn")
+    UI.SetClass(DOC, "pain-status", "status-fail", s["painTone"] == "fail")
+    armor_status = s.get("armorStatus", "")
+    armor_tone = s.get("armorTone", "info")
+    UI.SetText(DOC, "armor-status", armor_status)
+    UI.SetProperty(DOC, "armor-status", "display",
+                   "block" if armor_status != "" else "none")
+    UI.SetClass(DOC, "armor-status", "status-warn", armor_tone == "warn")
+    UI.SetClass(DOC, "armor-status", "status-fail", armor_tone == "fail")
+    infection_status = s.get("infectionStatus", "")
+    infection_tone = s.get("infectionTone", "info")
+    UI.SetText(DOC, "infection-status", infection_status)
+    UI.SetProperty(DOC, "infection-status", "display",
+                   "block" if infection_status != "" else "none")
+    UI.SetClass(DOC, "infection-status", "status-warn", infection_tone == "warn")
+    UI.SetClass(DOC, "infection-status", "status-fail", infection_tone == "fail")
+    weather_status = s.get("weatherStatus", "")
+    weather_tone = s.get("weatherTone", "info")
+    weather_class = s.get("weatherClass", "clear")
+    UI.SetText(DOC, "weather-status", weather_status)
+    UI.SetProperty(DOC, "weather-status", "display",
+                   "block" if weather_status != "" else "none")
+    UI.SetClass(DOC, "weather-status", "status-warn", weather_tone == "warn")
+    UI.SetClass(DOC, "weather-status", "status-fail", weather_tone == "fail")
+    UI.SetClass(DOC, "weather-overlay", "weather-rain", weather_class == "rain")
+    UI.SetClass(DOC, "weather-overlay", "weather-fog", weather_class == "fog")
+    UI.SetClass(DOC, "weather-overlay", "weather-cold", weather_class == "cold")
+    UI.SetProperty(DOC, "weather-overlay", "display",
+                   "block" if weather_class != "clear" else "none")
+
+    threat_active = s["threatDirection"] != "" and s["threatRemaining"] > 0.0
+    threat_opacity = 1.0
+    if s["threatDuration"] > 0.0:
+        threat_opacity = max(0.0, min(1.0, s["threatRemaining"] / s["threatDuration"]))
+    for direction in ("left", "right", "top", "bottom"):
+        edge_active = threat_active and s["threatDirection"] == direction
+        UI.SetProperty(DOC, "threat-" + direction, "display",
+                       "block" if edge_active else "none")
+        if edge_active:
+            UI.SetProperty(DOC, "threat-" + direction, "opacity",
+                           "%.2f" % threat_opacity)
+    UI.SetText(DOC, "threat-status", s["threatStatus"])
+    UI.SetProperty(DOC, "threat-status", "display",
+                   "block" if s["threatStatus"] != "" else "none")
 
     UI.SetText(DOC, "objective-text", s["objective"])
     UI.SetProperty(DOC, "hud-objective", "display",
-                   "block" if s["objective"] != "" else "none")
+                   "block" if (s["objective"] != ""
+                               or s.get("missionGuide", "") != ""
+                               or s.get("eventGuide", "") != "") else "none")
     UI.SetClass(DOC, "objective-text", "objective-warn", s["objectiveTone"] == "warn")
     UI.SetClass(DOC, "objective-text", "objective-ok", s["objectiveTone"] == "ok")
     UI.SetText(DOC, "objective-hint", s["objectiveHint"])
     UI.SetProperty(DOC, "objective-hint", "display",
                    "block" if s["objectiveHint"] != "" else "none")
+    poi_guide = s.get("poiGuide", "")
+    poi_tone = s.get("poiGuideTone", "info")
+    UI.SetText(DOC, "poi-guide", poi_guide)
+    UI.SetProperty(DOC, "poi-guide", "display",
+                   "block" if poi_guide != "" else "none")
+    UI.SetClass(DOC, "poi-guide", "status-warn", poi_tone == "warn")
+    UI.SetClass(DOC, "poi-guide", "status-ok", poi_tone == "ok")
+    mission_guide = s.get("missionGuide", "")
+    mission_tone = s.get("missionTone", "info")
+    UI.SetText(DOC, "mission-guide", mission_guide)
+    UI.SetProperty(DOC, "mission-guide", "display",
+                   "block" if mission_guide != "" else "none")
+    UI.SetClass(DOC, "mission-guide", "status-warn", mission_tone == "warn")
+    UI.SetClass(DOC, "mission-guide", "status-ok", mission_tone == "ok")
+    event_guide = s.get("eventGuide", "")
+    event_tone = s.get("eventTone", "warn")
+    UI.SetText(DOC, "event-guide", event_guide)
+    UI.SetProperty(DOC, "event-guide", "display",
+                   "block" if event_guide != "" else "none")
+    UI.SetClass(DOC, "event-guide", "status-warn", event_tone == "warn")
+    UI.SetClass(DOC, "event-guide", "status-ok", event_tone == "ok")
+    UI.SetClass(DOC, "event-guide", "status-fail", event_tone == "fail")
+
+    UI.SetText(DOC, "siege-status", s["siegeStatus"])
+    UI.SetProperty(DOC, "siege-status", "display",
+                   "block" if s["siegeStatus"] != "" else "none")
+    UI.SetClass(DOC, "siege-status", "status-warn", s["siegeTone"] == "warn")
+    UI.SetClass(DOC, "siege-status", "status-fail", s["siegeTone"] == "fail")
+
+    base_status = s.get("baseStatus", "")
+    base_tone = s.get("baseTone", "info")
+    UI.SetText(DOC, "base-status", base_status)
+    UI.SetProperty(DOC, "base-status", "display",
+                   "block" if base_status != "" else "none")
+    UI.SetClass(DOC, "base-status", "status-warn", base_tone == "warn")
+    UI.SetClass(DOC, "base-status", "status-fail", base_tone == "fail")
+    refresh_mod_fields(s)
+
+    report_open = s.get("siegeReportOpen", False)
+    report_tone = s.get("siegeReportTone", "info")
+    UI.SetProperty(DOC, "siege-report", "display",
+                   "block" if report_open else "none")
+    UI.SetClass(DOC, "siege-report", "status-warn", report_tone == "warn")
+    UI.SetClass(DOC, "siege-report", "status-fail", report_tone == "fail")
+    UI.SetText(DOC, "siege-report-title",
+               s.get("siegeReportTitle", "守夜战报"))
+    report_rating = s.get("siegeReportRating", "")
+    UI.SetText(DOC, "siege-report-rating", report_rating)
+    UI.SetProperty(DOC, "siege-report-rating", "display",
+                   "block" if report_rating else "none")
+    UI.SetText(DOC, "siege-report-hint",
+               s.get("siegeReportHint", "ESC 关闭"))
+    report_lines = s.get("siegeReportLines", [])
+    for i in range(8):
+        line = report_lines[i] if i < len(report_lines) else ""
+        UI.SetText(DOC, "siege-report-line-%d" % i, line)
+        UI.SetProperty(DOC, "siege-report-line-%d" % i, "display",
+                       "block" if line else "none")
+
+    progression_valid = s.get("progressionValid", False)
+    progression_level = s.get("progressionLevel", 1)
+    progression_xp = s.get("progressionXp", 0.0)
+    progression_next = s.get("progressionXpNext", 0.0)
+    progression_points = s.get("progressionPerkPoints", 0)
+    progression_ratio = 0.0
+    if progression_valid:
+        progression_ratio = (max(0.0, min(1.0, progression_xp / progression_next))
+                             if progression_next > 0.0 else 1.0)
+    UI.SetProperty(DOC, "hud-level", "display",
+                   "block" if progression_valid else "none")
+    UI.SetProperty(DOC, "level-fill", "width", "%.1f%%" % (progression_ratio * 100.0))
+    UI.SetText(DOC, "level-text", "Lv.%d" % progression_level)
+    UI.SetText(DOC, "level-perk", "Perk×%d" % progression_points)
+    UI.SetProperty(DOC, "level-perk", "display",
+                   "block" if progression_points > 0 else "none")
+    if progression_next > 0.0:
+        UI.SetText(DOC, "level-xp", "%d / %d" % (math.floor(progression_xp + 0.5),
+                                                  math.floor(progression_next + 0.5)))
+    else:
+        UI.SetText(DOC, "level-xp", "MAX")
+    perk_prompt = s.get("perkPrompt", "")
+    UI.SetText(DOC, "perk-prompt", perk_prompt)
+    UI.SetProperty(DOC, "perk-prompt", "display",
+                   "block" if perk_prompt else "none")
+    UI.SetProperty(DOC, "character-panel", "display",
+                   "block" if progression_valid and s.get("characterOpen", False)
+                   else "none")
+    if progression_valid:
+        points_suffix = (" · 待选 Perk ×%d" % progression_points
+                         if progression_points > 0 else "")
+        UI.SetText(DOC, "character-level",
+                   "等级 %d%s" % (progression_level, points_suffix))
+        if progression_next > 0.0:
+            UI.SetText(DOC, "character-xp",
+                       "XP %d / %d" % (math.floor(progression_xp + 0.5),
+                                       math.floor(progression_next + 0.5)))
+        else:
+            UI.SetText(DOC, "character-xp", "XP MAX")
+        UI.SetProperty(DOC, "character-xp-fill", "width",
+                       "%.1f%%" % (progression_ratio * 100.0))
+        skills = s.get("progressionSkills", [])
+        for i in range(4):
+            UI.SetText(DOC, "character-skill-%d" % i,
+                       skills[i] if i < len(skills) else "")
+        UI.SetText(DOC, "character-perks", s.get("progressionPerks", "暂无"))
+        choices = s.get("progressionChoices", [])
+        for i in range(3):
+            line = choices[i] if i < len(choices) else ""
+            UI.SetText(DOC, "perk-choice-%d" % i, line)
+            UI.SetProperty(DOC, "perk-choice-%d" % i, "display",
+                           "block" if line else "none")
+
+    dialogue_open = s.get("dialogueOpen", False)
+    dialogue_options = s.get("dialogueOptions", [])
+    dialogue_count = s.get("dialogueOptionCount", 0)
+    dialogue_selected = s.get("dialogueSelected", 0)
+    UI.SetProperty(DOC, "dialogue-panel", "display",
+                   "block" if dialogue_open else "none")
+    UI.SetText(DOC, "dialogue-speaker", s.get("dialogueSpeaker", ""))
+    UI.SetText(DOC, "dialogue-text", s.get("dialogueText", ""))
+    UI.SetText(DOC, "dialogue-hint", s.get("dialogueHint", ""))
+    for i in range(5):
+        option = dialogue_options[i] if i < len(dialogue_options) else ""
+        UI.SetText(DOC, "dialogue-option-%d" % i, option)
+        UI.SetProperty(DOC, "dialogue-option-%d" % i, "display",
+                       "block" if dialogue_open and i < dialogue_count else "none")
+        UI.SetClass(DOC, "dialogue-option-%d" % i, "selected",
+                    dialogue_open and i == dialogue_selected)
+
+    UI.SetText(DOC, "action-hint", s["actionHint"])
+    UI.SetProperty(DOC, "action-hint", "display",
+                   "block" if s["actionHint"] != "" else "none")
+    UI.SetClass(DOC, "action-hint", "status-warn", s["actionTone"] == "warn")
+    UI.SetClass(DOC, "action-hint", "status-fail", s["actionTone"] == "fail")
 
     for i in range(5):
         slot = s["slots"][i]
@@ -75,7 +313,7 @@ def refresh():
         elapsed = max(0.0, duration - s["noticeRemaining"])
         rise = min(elapsed * 30.0, 30.0)
         opacity = min(1.0, s["noticeRemaining"] / 0.35)
-        UI.SetProperty(DOC, "notice", "bottom", "%.0fpx" % (96.0 + rise))
+        UI.SetProperty(DOC, "notice", "bottom", "%.0fpx" % (116.0 + rise))
         UI.SetProperty(DOC, "notice", "opacity", "%.2f" % opacity)
 
 
@@ -90,7 +328,7 @@ def on_mod_reload(e):
         refresh()
 
 
-Events.On("OnTick", lambda _: refresh())
+Events.On("OnUiFrame", lambda _: refresh())
 Events.On("OnUiEvent", on_ui_event)
 Events.On("OnModReload", on_mod_reload)
 
@@ -528,8 +766,12 @@ inv_state = {
     "selected": None,
     "craftQty": 1,
     "craftPage": 1,
+    "craftCategory": "all",
     "queueSel": 1,
 }
+INV_CATEGORY_ORDER = (
+    "all", "cooking", "preservation", "medical", "crafting", "general",
+)
 INV_PREFIXES = (
     ("bag-slot-", "bag"),
     ("bag-name-", "bag"),
@@ -585,8 +827,13 @@ def inv_update_slot(area, index, slot):
     if slot["filled"]:
         name = slot["label"]
         condition = slot.get("condition", 1.0)
-        if condition < 0.999:
-            name = "%s %d%%" % (name, int(condition * 100 + 0.5))
+        if slot.get("perishable", False) and condition <= 0.05:
+            name = "%s [变质]" % name
+        elif condition < 0.999:
+            if slot.get("perishable", False):
+                name = "%s 新鲜 %d%%" % (name, int(condition * 100 + 0.5))
+            else:
+                name = "%s %d%%" % (name, int(condition * 100 + 0.5))
         UI.SetText(INV_DOC, "%s-name-%d" % (prefix, index), name)
         UI.SetText(INV_DOC, "%s-count-%d" % (prefix, index),
                    str(slot["count"]) if slot["count"] > 1 else "")
@@ -616,6 +863,43 @@ def inv_recipe_known(recipe):
     return recipe.get("known", True) is not False
 
 
+def inv_category_label(category, fallback):
+    if not category or category == "all":
+        return "全部"
+    return fallback or category
+
+
+def inv_visible_recipes():
+    state = inv_state["state"]
+    recipes = state.get("recipes", []) if state is not None else []
+    visible = []
+    for index, recipe in enumerate(recipes):
+        if inv_state["craftCategory"] == "all" or \
+                recipe.get("category", "general") == inv_state["craftCategory"]:
+            visible.append((recipe, index))
+    return visible
+
+
+def inv_recipe_extra_ok(recipe):
+    for key in ("cookware", "fuel"):
+        requirement = recipe.get(key)
+        if requirement is not None and \
+                requirement["have"] < requirement["required"]:
+            return False
+    return True
+
+
+def inv_recipe_extra_text(recipe):
+    parts = []
+    for key, label in (("cookware", "锅具"), ("fuel", "燃料")):
+        requirement = recipe.get(key)
+        if requirement is not None:
+            parts.append("%s %s %d/%d" % (
+                label, requirement["label"], requirement["have"],
+                requirement["required"]))
+    return "、".join(parts)
+
+
 def inv_recipe_tools_ok(recipe):
     for tool in recipe.get("tools", []):
         if tool["have"] < tool["required"]:
@@ -638,10 +922,15 @@ def inv_recipe_ingredients(recipe):
         return inv_recipe_station_text(recipe)
     if not inv_recipe_tools_ok(recipe):
         return "需要工具: " + inv_recipe_tools_text(recipe)
+    if not inv_recipe_extra_ok(recipe):
+        return "需要" + inv_recipe_extra_text(recipe)
     parts = []
     for ingredient in recipe["ingredients"]:
         parts.append("%s %d/%d" % (
             ingredient["label"], ingredient["have"], ingredient["required"]))
+    extra = inv_recipe_extra_text(recipe)
+    if extra:
+        parts.append(extra)
     return "材料: " + "、".join(parts)
 
 
@@ -674,6 +963,8 @@ def inv_update_recipe(index, recipe, busy_recipe_id, crafting_active):
         state = "缺" + inv_recipe_station_name(recipe)
     elif not inv_recipe_tools_ok(recipe):
         state = "缺工具"
+    elif not inv_recipe_extra_ok(recipe):
+        state = "缺锅具/燃料"
     UI.SetText(INV_DOC, "craft-state-%d" % index, state)
     UI.SetClass(INV_DOC, "craft-state-%d" % index, "ok",
                 recipe["canCraft"] and not busy)
@@ -704,6 +995,15 @@ def inv_refresh():
     UI.SetText(INV_DOC, "bag-stack-count", "%d 堆" % s["bagStacks"])
     UI.SetText(INV_DOC, "loot-title", s.get("lootTitle", "附近地面"))
     UI.SetText(INV_DOC, "loot-stack-count", "%d 堆" % s["lootStacks"])
+    can_take_all = s.get("lootIsStorage", False) or s.get("lootCanTakeAll", False)
+    UI.SetProperty(INV_DOC, "storage-actions", "display",
+                   "block" if can_take_all else "none")
+    UI.SetProperty(INV_DOC, "storage-store-all", "display",
+                   "block" if s.get("lootIsStorage", False) else "none")
+    UI.SetProperty(INV_DOC, "storage-sort", "display",
+                   "block" if s.get("lootIsStorage", False) else "none")
+    UI.SetProperty(INV_DOC, "storage-take-all", "display",
+                   "block" if can_take_all else "none")
     UI.SetText(INV_DOC, "inv-status", s["status"])
     UI.SetClass(INV_DOC, "inv-status", "status-info", s["statusTone"] == "info")
     UI.SetClass(INV_DOC, "inv-status", "status-ok", s["statusTone"] == "ok")
@@ -715,8 +1015,21 @@ def inv_refresh():
     for i, slot in enumerate(s["loot"]):
         inv_update_slot("loot", i, slot)
     recipes = s.get("recipes", [])
-    UI.SetText(INV_DOC, "craft-count", "%d 条" % len(recipes))
-    page_count = max(1, (len(recipes) + INV_CRAFT_ROWS - 1) // INV_CRAFT_ROWS)
+    visible = inv_visible_recipes()
+    if not visible and inv_state["craftCategory"] != "all":
+        inv_state["craftCategory"] = "all"
+        visible = inv_visible_recipes()
+    category_label = "全部分类"
+    for recipe in recipes:
+        if inv_state["craftCategory"] != "all" and \
+                recipe.get("category", "general") == inv_state["craftCategory"]:
+            category_label = inv_category_label(
+                recipe.get("category"), recipe.get("categoryLabel"))
+            break
+    UI.SetText(INV_DOC, "craft-category", category_label)
+    UI.SetText(INV_DOC, "craft-count", "%d 条" % len(visible))
+    page_count = max(1, (len(visible) + INV_CRAFT_ROWS - 1) //
+                     INV_CRAFT_ROWS)
     if inv_state["craftPage"] < 1:
         inv_state["craftPage"] = 1
     elif inv_state["craftPage"] > page_count:
@@ -785,7 +1098,8 @@ def inv_refresh():
                        "%.1f%%" % (progress * 100.0))
     for i in range(INV_CRAFT_ROWS):
         index = craft_start + i
-        inv_update_recipe(i, recipes[index] if index < len(recipes) else None,
+        entry = visible[index] if index < len(visible) else None
+        inv_update_recipe(i, entry[0] if entry is not None else None,
                           busy_recipe_id, bool(crafting.get("active")))
 
 
@@ -898,19 +1212,18 @@ def inv_handle_context(element):
 
 
 def inv_craft(slot):
-    state = inv_state["state"]
-    if state is None:
+    if inv_state["state"] is None:
         return
     start = (inv_state["craftPage"] - 1) * INV_CRAFT_ROWS
+    visible = inv_visible_recipes()
     index = start + slot
-    recipes = state.get("recipes", [])
-    if index < 0 or index >= len(recipes):
+    if index < 0 or index >= len(visible):
         return
     Inventory.PlayClick()
     Inventory.Action({
         "type": "craft",
         "from": "bag",
-        "fromIndex": index,
+        "fromIndex": visible[index][1],
         "to": "bag",
         "toIndex": -1,
         "count": inv_state["craftQty"],
@@ -983,13 +1296,33 @@ def inv_on_click(element):
             inv_refresh()
         return
     if element == "craft-page-next":
-        state = inv_state["state"]
-        recipes = state.get("recipes", []) if state is not None else []
-        page_count = max(1, (len(recipes) + INV_CRAFT_ROWS - 1) // INV_CRAFT_ROWS)
+        page_count = max(1, (len(inv_visible_recipes()) + INV_CRAFT_ROWS - 1) //
+                         INV_CRAFT_ROWS)
         if inv_state["craftPage"] < page_count:
             inv_state["craftPage"] += 1
             Inventory.PlayClick()
             inv_refresh()
+        return
+    if element == "craft-category":
+        try:
+            current = INV_CATEGORY_ORDER.index(inv_state["craftCategory"])
+        except ValueError:
+            current = 0
+        for _ in range(len(INV_CATEGORY_ORDER)):
+            current = (current + 1) % len(INV_CATEGORY_ORDER)
+            candidate = INV_CATEGORY_ORDER[current]
+            if candidate == "all":
+                inv_state["craftCategory"] = candidate
+                break
+            recipes = (inv_state["state"].get("recipes", [])
+                       if inv_state["state"] is not None else [])
+            if any(recipe.get("category", "general") == candidate
+                   for recipe in recipes):
+                inv_state["craftCategory"] = candidate
+                break
+        inv_state["craftPage"] = 1
+        Inventory.PlayClick()
+        inv_refresh()
         return
     if element == "craft-queue-prev":
         if inv_state["queueSel"] > 1:
@@ -1049,6 +1382,29 @@ def inv_on_click(element):
         except ValueError:
             return
         inv_craft(index)
+        return
+    if element in ("storage-store-all", "storage-take-all", "storage-sort"):
+        state = inv_state["state"]
+        can_take_all = state is not None and (
+            state.get("lootIsStorage", False) or
+            (element == "storage-take-all" and
+             state.get("lootCanTakeAll", False)))
+        if can_take_all:
+            action_type = {
+                "storage-store-all": "store_all",
+                "storage-take-all": "take_all",
+                "storage-sort": "sort_storage",
+            }[element]
+            Inventory.PlayClick()
+            Inventory.Action({
+                "type": action_type,
+                "from": "loot",
+                "fromIndex": -1,
+                "fromEntityId": state.get("lootEntityId", 0),
+                "to": "bag",
+                "toIndex": -1,
+            })
+            inv_refresh()
         return
     if element == "inventory-close":
         inv_hide_context()

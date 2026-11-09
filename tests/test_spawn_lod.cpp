@@ -189,6 +189,25 @@ TEST_CASE("SpawnLodSystem：倒地窗口 / 已死亡实体不参与虚拟化（�
     CHECK(rig.system->GetStats().virtualized == 1u);
 }
 
+TEST_CASE("SpawnLodSystem：基地守夜事件僵尸不计入人口且不被虚拟化") {
+    ai::SpawnLodSystem::Params p;
+    p.populationTarget = 0;
+    p.materializeRadius = 10.0f;
+    p.virtualizeRadius = 40.0f;
+    p.virtualizePerSecond = 100.0f;
+    SpawnRig rig(p);
+    const ecs::Entity eventZombie = rig.AddZombie(90.0f, 0.0f);
+    rig.world.Registry().emplace<ecs::BaseSiegeZombie>(eventZombie);
+    const ecs::Entity normal = rig.AddZombie(91.0f, 0.0f);
+
+    rig.Run(5);
+    CHECK(rig.world.Alive(eventZombie));
+    CHECK(!rig.world.Alive(normal));
+    CHECK(rig.system->GetStats().live == 0);
+    CHECK(rig.system->GetStats().virtualized == 1u);
+    CHECK(rig.hordes.GetStats(0.0f, 0.0f).zombies == 1);
+}
+
 TEST_CASE("SpawnLodSystem：人口低于目标 → 补给进虚拟层（环形放置/到达目标即停）") {
     ai::SpawnLodSystem::Params p;
     p.populationTarget = 20;
@@ -236,4 +255,43 @@ TEST_CASE("SpawnLodSystem：守恒——实体化/虚拟化只做形态转换（
     CHECK(rig.system->GetStats().live == 0);
     CHECK(rig.system->GetStats().virtualZombies == 10);
     CHECK(rig.world.AliveCount() == 0u);
+}
+
+TEST_CASE("M19-F2 POI 守军不被虚拟化且不计入人口") {
+    ai::SpawnLodSystem::Params p;
+    p.populationTarget = 0;
+    p.materializeRadius = 10.0f;
+    p.virtualizeRadius = 40.0f;
+    p.virtualizePerSecond = 100.0f;
+    SpawnRig rig(p);
+    const ecs::Entity guard = rig.AddZombie(90.0f, 0.0f);
+    rig.world.Registry().emplace<ecs::PoiGuard>(guard, ecs::PoiGuard{"gas_station"});
+    const ecs::Entity normal = rig.AddZombie(91.0f, 0.0f);
+
+    rig.Run(5);
+    CHECK(rig.world.Alive(guard));
+    CHECK(!rig.world.Alive(normal));
+    CHECK(rig.system->GetStats().live == 0);
+    CHECK(rig.system->GetStats().virtualized == 1u);
+    CHECK(rig.hordes.GetStats(0.0f, 0.0f).zombies == 1);
+}
+
+TEST_CASE("M24-T4 随机事件敌人不被虚拟化且不计入人口") {
+    ai::SpawnLodSystem::Params p;
+    p.populationTarget = 0;
+    p.materializeRadius = 10.0f;
+    p.virtualizeRadius = 40.0f;
+    p.virtualizePerSecond = 100.0f;
+    SpawnRig rig(p);
+    const ecs::Entity actor = rig.AddZombie(90.0f, 0.0f);
+    rig.world.Registry().emplace<ecs::RandomEventActor>(
+        actor, ecs::RandomEventActor{"event_wandering_horde", 1});
+    const ecs::Entity normal = rig.AddZombie(91.0f, 0.0f);
+
+    rig.Run(5);
+    CHECK(rig.world.Alive(actor));
+    CHECK(!rig.world.Alive(normal));
+    CHECK(rig.system->GetStats().live == 0);
+    CHECK(rig.system->GetStats().virtualized == 1u);
+    CHECK(rig.hordes.GetStats(0.0f, 0.0f).zombies == 1);
 }

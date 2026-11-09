@@ -65,6 +65,8 @@
                         <div id="loot-slot-3" class="inv-slot loot-slot" data-area="loot" data-index="3"><div id="loot-name-3" class="inv-name">无</div><div id="loot-count-3" class="inv-count"></div></div>
                         <div id="loot-slot-4" class="inv-slot loot-slot" data-area="loot" data-index="4"><div id="loot-name-4" class="inv-name">无</div><div id="loot-count-4" class="inv-count"></div></div>
                         <div id="loot-slot-5" class="inv-slot loot-slot" data-area="loot" data-index="5"><div id="loot-name-5" class="inv-name">无</div><div id="loot-count-5" class="inv-count"></div></div>
+                        <div id="loot-slot-6" class="inv-slot loot-slot" data-area="loot" data-index="6"><div id="loot-name-6" class="inv-name">无</div><div id="loot-count-6" class="inv-count"></div></div>
+                        <div id="loot-slot-7" class="inv-slot loot-slot" data-area="loot" data-index="7"><div id="loot-name-7" class="inv-name">无</div><div id="loot-count-7" class="inv-count"></div></div>
                     </div>
                     <div class="craft-toolbar">
                         <div class="inv-section-title">制作 <div id="craft-page-prev" class="craft-page-btn disabled">&#8249;</div><span id="craft-count" class="inv-count-label">0 条</span><span id="craft-page-indicator" class="craft-page-indicator">1/1 页</span><div id="craft-page-next" class="craft-page-btn disabled">&#8250;</div></div>
@@ -74,6 +76,7 @@
                             <div id="craft-qty-value" class="craft-qty-value">1</div>
                             <div id="craft-qty-plus" class="craft-qty-btn">+</div>
                         </div>
+                        <div id="craft-category" class="craft-category">全部</div>
                     </div>
                     <div id="craft-list" class="craft-list">
                         <div id="craft-row-0" class="craft-row">
@@ -127,7 +130,12 @@
                             <div id="craft-queue-remove" class="craft-queue-btn craft-queue-remove">&#215;</div>
                         </div>
                     </div>
-                    <div class="inv-hint">拖动：交换/装备/地面。右键：装备、使用、维修、丢弃、拾取。制作完成才扣料；数量支持批量，材料/空间不足自动截断；制作中“加入”排队，用 &lt; &gt; 选择、↑↓ 调序、−/+ 改数量、× 移除；配方多时用 ‹ › 翻页。缺工具需携带，制作站需靠近；未学会需看杂志。</div>
+                    <div id="storage-actions" class="storage-actions">
+                        <div id="storage-store-all" class="storage-btn">全部存入</div>
+                        <div id="storage-take-all" class="storage-btn">全部取出</div>
+                        <div id="storage-sort" class="storage-btn">整理</div>
+                    </div>
+                    <div class="inv-hint">拖动：交换/装备/地面/仓库。右键：装备、使用、维修、丢弃、拾取。仓库支持全部存入/取出/整理，尸体与世界容器支持全部取出。制作完成才扣料；数量支持批量，材料/空间不足自动截断；制作中“加入”排队，用 &lt; &gt; 选择、↑↓ 调序、−/+ 改数量、× 移除；配方多时用 ‹ › 翻页；点击分类筛选。缺工具/锅具/燃料需携带，制作站需靠近；未学会需看杂志。</div>
                     <div id="inv-status" class="inv-status status-info"></div>
                 </div>
             </div>

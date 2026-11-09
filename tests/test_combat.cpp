@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <type_traits>
 
 #include "ai/components/AiComponents.h"
@@ -11,8 +12,15 @@
 #include "characters/components/CombatComponents.h"
 #include "characters/systems/CombatSystem.h"
 #include "characters/systems/DeathSystem.h"
+#include "characters/systems/MovementSystem.h"
+#include "characters/systems/PainSystem.h"
+#include "characters/systems/WoundSystem.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
+#include "game/PainStatus.h"
+#include "items/InventoryOps.h"
+#include "items/ItemComponents.h"
+#include "items/ItemRegistry.h"
 
 using namespace zl;
 
@@ -62,6 +70,7 @@ TEST_CASE("战斗组件：默认值与平凡可拷贝（M5-T6 定稿）") {
     static_assert(std::is_trivially_copyable_v<DamageEvent>);
     static_assert(std::is_trivially_copyable_v<ecs::AttackIntent>);
     static_assert(std::is_trivially_copyable_v<HitReaction>);
+    static_assert(std::is_trivially_copyable_v<ecs::DamageResist>);
     static_assert(std::is_trivially_copyable_v<ecs::Dying>);
 }
 
@@ -173,6 +182,147 @@ TEST_CASE("CombatSystem：伤害管线（来源/类型解耦）+ 硬直/击退/�
     CHECK(combat.GetStats().damageDealt == doctest::Approx(30.0f + 999.0f));
 }
 
+TEST_CASE("M19-F4 护甲按伤害类型减伤、写入实际伤害并通知磨损") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto target = world.Create();
+    registry.emplace<Position>(target, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(target, Health{100.0f, 100.0f});
+    ecs::DamageResist resist;
+    resist.clawReduction = 0.5f;
+    resist.biteReduction = 0.25f;
+    resist.bluntReduction = 0.1f;
+    resist.wearPerHit = 0.02f;
+    resist.moveScale = 0.9f;
+    registry.emplace<ecs::DamageResist>(target, resist);
+
+    int wearCount = 0;
+    float wearAmount = 0.0f;
+    CombatSystem combat;
+    combat.SetArmorWearCallback([&](ecs::Entity entity, float amount) {
+        CHECK(entity == target);
+        ++wearCount;
+        wearAmount = amount;
+    });
+
+    DamageEvent event;
+    event.sourceId = 7;
+    event.type = DamageType::Bite;
+    event.amount = 20.0f;
+    REQUIRE(combat.ApplyDamage(world, target, event));
+    CHECK(registry.get<Health>(target).current == doctest::Approx(85.0f));
+    CHECK(registry.get<ecs::LastDamage>(target).amount == doctest::Approx(15.0f));
+    CHECK(wearCount == 1);
+    CHECK(wearAmount == doctest::Approx(0.02f));
+    REQUIRE(registry.get<ecs::Wounds>(target).count == 1);
+    CHECK(registry.get<ecs::Wounds>(target).entries[0].severity ==
+          doctest::Approx(0.48f));
+
+    event.type = DamageType::Claw;
+    REQUIRE(combat.ApplyDamage(world, target, event));
+    CHECK(registry.get<Health>(target).current == doctest::Approx(75.0f));
+    CHECK(wearCount == 2);
+
+    event.type = DamageType::Debug;
+    event.amount = 10.0f;
+    REQUIRE(combat.ApplyDamage(world, target, event));
+    CHECK(registry.get<Health>(target).current == doctest::Approx(65.0f));
+    CHECK(wearCount == 2);  // 环境/调试伤害不吃护甲
+
+    event.type = DamageType::Blunt;
+    event.amount = 20.0f;
+    REQUIRE(combat.ApplyDamage(world, target, event));
+    CHECK(registry.get<Health>(target).current == doctest::Approx(47.0f));
+    CHECK(wearCount == 3);
+}
+
+TEST_CASE("M25-T4-V9 驾驶位对爪/咬获得车辆减伤，火焰/钝击不受影响") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto driver = world.Create();
+    registry.emplace<Position>(driver, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(driver, Health{100.0f, 100.0f});
+    registry.emplace<ecs::VehicleOccupant>(driver,
+                                           ecs::VehicleOccupant{0.75f});
+
+    CombatSystem combat;
+    DamageEvent event;
+    event.sourceId = 9;
+    event.type = DamageType::Claw;
+    event.amount = 40.0f;
+    REQUIRE(combat.ApplyDamage(world, driver, event));
+    CHECK(registry.get<Health>(driver).current == doctest::Approx(90.0f));
+    CHECK(registry.get<ecs::LastDamage>(driver).amount == doctest::Approx(10.0f));
+
+    event.type = DamageType::Bite;
+    REQUIRE(combat.ApplyDamage(world, driver, event));
+    CHECK(registry.get<Health>(driver).current == doctest::Approx(80.0f));
+
+    event.type = DamageType::Blunt;
+    REQUIRE(combat.ApplyDamage(world, driver, event));
+    CHECK(registry.get<Health>(driver).current == doctest::Approx(40.0f));
+
+    event.type = DamageType::Fire;
+    REQUIRE(combat.ApplyDamage(world, driver, event));
+    CHECK(registry.get<Health>(driver).current == doctest::Approx(0.0f));
+}
+
+TEST_CASE("M23-F6-T3 军械守卫减伤并抗击退，火焰/调试伤害不受护甲影响") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto guard = world.Create();
+    registry.emplace<Position>(guard, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(guard, Health{100.0f, 100.0f});
+    registry.emplace<ecs::ZombieVariant>(
+        guard, ecs::ZombieVariant{ecs::ZombieVariantKind::Armored, 0.62f, 1.42f,
+                                  1.22f});
+
+    CombatSystem combat;
+    DamageEvent event;
+    event.sourceId = 7;
+    event.type = DamageType::Claw;
+    event.amount = 20.0f;
+    event.dirX = 1.0f;
+    event.knockback = 4.0f;
+    REQUIRE(combat.ApplyDamage(world, guard, event));
+    CHECK(registry.get<Health>(guard).current == doctest::Approx(87.0f));
+    CHECK(registry.get<ecs::LastDamage>(guard).amount == doctest::Approx(13.0f));
+    CHECK(registry.get<ecs::HitReaction>(guard).vx ==
+          doctest::Approx(4.0f * ecs::kArmoredZombieKnockbackScale));
+
+    event.type = DamageType::Bite;
+    REQUIRE(combat.ApplyDamage(world, guard, event));
+    CHECK(registry.get<Health>(guard).current == doctest::Approx(74.0f));
+
+    event.type = DamageType::Fire;
+    event.amount = 10.0f;
+    event.knockback = 0.0f;
+    REQUIRE(combat.ApplyDamage(world, guard, event));
+    CHECK(registry.get<Health>(guard).current == doctest::Approx(64.0f));
+
+    event.type = DamageType::Debug;
+    REQUIRE(combat.ApplyDamage(world, guard, event));
+    CHECK(registry.get<Health>(guard).current == doctest::Approx(54.0f));
+}
+
+TEST_CASE("M19-F4 护甲移速乘数叠加到玩家的 MovementSystem") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto player = world.Create();
+    registry.emplace<Position>(player, Position{0.0f, 0.0f, 0});
+    registry.emplace<Velocity>(player, Velocity{});
+    registry.emplace<ecs::MoveIntent>(player, ecs::MoveIntent{4.0f, 0.0f});
+    registry.emplace<ecs::PlayerTag>(player);
+    ecs::DamageResist resist;
+    resist.moveScale = 0.5f;
+    registry.emplace<ecs::DamageResist>(player, resist);
+
+    zl::characters::MovementSystem movement;
+    movement.Update(world, 0.5f);
+    CHECK(registry.get<Velocity>(player).x == doctest::Approx(2.0f));
+    CHECK(registry.get<Position>(player).x == doctest::Approx(1.0f));
+}
+
 TEST_CASE("AiSystem：攻击脉冲落下 AttackIntent（指向目标）；硬直中冻结状态机（不再挥击）") {
     EcsWorld world;
     entt::registry& registry = world.Registry();
@@ -199,15 +349,21 @@ TEST_CASE("AiSystem：攻击脉冲落下 AttackIntent（指向目标）；硬直
     registry.emplace<ecs::AttackIntent>(zombie, ecs::AttackIntent{});
 
     ai::AiSystem::AttackParams params;
-    params.damage = 8.0f;
-    params.knockback = 2.0f;
-    params.staggerSeconds = 0.3f;
-    params.range = 1.3f;
-    params.arcDegrees = 120.0f;
-    params.type = DamageType::Bite;
+    params.normal.damage = 8.0f;
+    params.normal.knockback = 2.0f;
+    params.normal.staggerSeconds = 0.3f;
+    params.normal.range = 1.3f;
+    params.normal.arcDegrees = 120.0f;
+    params.normal.windupSeconds = 0.1f;
+    params.normal.type = DamageType::Bite;
     ai::AiSystem system([](int, int) { return true; }, params);
 
-    system.Update(world, kDt);  // 进入攻击节拍：cooldown=0 → 立即落一次脉冲
+    system.Update(world, kDt);  // 进入前摇：不立即落伤害
+    CHECK_FALSE(registry.get<ecs::AttackIntent>(zombie).pending);
+    CHECK(registry.get<ecs::AiState>(zombie).attackWindupLeft > 0.0f);
+    for (int i = 0; i < 8; ++i) {
+        system.Update(world, kDt);
+    }
     const auto& attack = registry.get<ecs::AttackIntent>(zombie);
     CHECK(attack.pending);
     CHECK(attack.targetId == targetId);
@@ -468,4 +624,457 @@ TEST_CASE("M13-T10 ActorAction：攻击/受击/死亡表现状态") {
     lethal.amount = 100.0f;
     REQUIRE(combat.ApplyDamage(world, target, lethal));
     CHECK(registry.get<ecs::ActionState>(target).action == ecs::ActorAction::Dead);
+}
+
+
+TEST_CASE("M15-T1：命中消耗主手武器耐久（每次挥击一次，多目标不叠加；空挥不磨损）") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto attacker = world.Create();
+    registry.emplace<Position>(attacker, Position{0.0f, 0.0f, 0});
+    ecs::Equipment equipment;
+    equipment.slots[static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand)] =
+        ecs::ItemInstance{"axe", 1, 0.9f};
+    registry.emplace<ecs::Equipment>(attacker, equipment);
+    ecs::AttackIntent intent;
+    intent.dirX = 1.0f;
+    intent.dirY = 0.0f;
+    intent.range = 2.0f;
+    intent.arcDegrees = 180.0f;
+    intent.damage = 10.0f;
+    intent.weaponWearPerHit = 0.03f;
+    intent.pending = true;
+    registry.emplace<ecs::AttackIntent>(attacker, intent);
+
+    const auto first = world.Create();
+    registry.emplace<Position>(first, Position{1.0f, 0.0f, 0});
+    registry.emplace<Health>(first, Health{100.0f, 100.0f});
+    const auto second = world.Create();
+    registry.emplace<Position>(second, Position{0.5f, 0.5f, 0});
+    registry.emplace<Health>(second, Health{100.0f, 100.0f});
+
+    CombatSystem combat;
+    combat.Update(world, kDt);
+    CHECK(combat.GetStats().hits == 2u);
+    REQUIRE(combat.GetWeaponWears().size() == 1u);
+    CHECK(combat.GetWeaponWears()[0].amount == doctest::Approx(0.03f));
+    auto* equipped = registry.try_get<ecs::Equipment>(attacker);
+    REQUIRE(equipped != nullptr);
+    CHECK_FALSE(items::WearEquippedWeapon(*equipped,
+                                          combat.GetWeaponWears()[0].amount));
+    CHECK(equipped->slots[static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand)]
+              ->condition == doctest::Approx(0.87f));
+
+    // 空挥：不产生磨损请求
+    registry.get<ecs::AttackIntent>(attacker).pending = true;
+    registry.get<Position>(first).x = 20.0f;
+    registry.get<Position>(second).x = 20.0f;
+    combat.Update(world, kDt);
+    CHECK(combat.GetWeaponWears().empty());
+}
+
+TEST_CASE("M15-T2 伤害类型映射为伤口：claw/bite 流血、blunt 不流血、debug 忽略") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto target = world.Create();
+    registry.emplace<Position>(target, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(target, Health{100.0f, 100.0f});
+
+    CombatSystem combat;
+    DamageEvent event;
+    event.sourceId = 7;
+    event.amount = 10.0f;
+    event.type = DamageType::Bite;
+    REQUIRE(combat.ApplyDamage(world, target, event));
+    auto& wounds = registry.get<ecs::Wounds>(target);
+    REQUIRE(wounds.count == 1);
+    CHECK(wounds.entries[0].source == DamageType::Bite);
+    CHECK(wounds.entries[0].severity == doctest::Approx(0.32f));
+    CHECK(wounds.entries[0].bleedRate == doctest::Approx(0.8f));
+    CHECK(wounds.entries[0].bleedDuration == doctest::Approx(30.0f));
+    CHECK(wounds.entries[0].bleedRemaining == doctest::Approx(30.0f));
+    CHECK_FALSE(wounds.entries[0].bandaged);
+    CHECK(zl::characters::CurrentBleedRate(wounds) == doctest::Approx(0.8f));
+
+    event.type = DamageType::Claw;
+    REQUIRE(combat.ApplyDamage(world, target, event));
+    REQUIRE(wounds.count == 2);
+    CHECK(wounds.entries[1].source == DamageType::Claw);
+    CHECK(wounds.entries[1].severity == doctest::Approx(0.24f));
+    CHECK(wounds.entries[1].bleedRate == doctest::Approx(0.35f));
+    CHECK(wounds.entries[1].bleedDuration == doctest::Approx(18.0f));
+
+    event.type = DamageType::Blunt;
+    REQUIRE(combat.ApplyDamage(world, target, event));
+    REQUIRE(wounds.count == 3);
+    CHECK(wounds.entries[2].source == DamageType::Blunt);
+    CHECK(wounds.entries[2].bleedRate == doctest::Approx(0.0f));
+    CHECK(wounds.entries[2].bleedDuration == doctest::Approx(0.0f));
+
+    event.type = DamageType::Debug;
+    event.amount = 5.0f;
+    REQUIRE(combat.ApplyDamage(world, target, event));
+    CHECK(wounds.count == 3);
+    CHECK(registry.get<Health>(target).current == doctest::Approx(65.0f));
+    CHECK(zl::characters::WoundCount(wounds) == 3);
+    CHECK(zl::characters::WorstWoundSeverity(wounds) == doctest::Approx(0.32f));
+}
+
+TEST_CASE("M15-T2 流血按 tick 衰减并停止，不触发受击闪红") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto target = world.Create();
+    registry.emplace<Position>(target, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(target, Health{100.0f, 100.0f});
+
+    CombatSystem combat;
+    DamageEvent event;
+    event.sourceId = 7;
+    event.amount = 10.0f;
+    event.type = DamageType::Bite;
+    REQUIRE(combat.ApplyDamage(world, target, event));
+    REQUIRE(registry.get<Health>(target).current == doctest::Approx(90.0f));
+
+    zl::characters::WoundSystem wounds;
+    wounds.Update(world, 1.0f);
+    const float first = registry.get<Health>(target).current;
+    CHECK(first == doctest::Approx(89.2f));
+    REQUIRE(registry.try_get<ecs::LastDamage>(target) != nullptr);
+    CHECK(registry.get<ecs::LastDamage>(target).cause == ecs::DamageCause::Bleed);
+    wounds.Update(world, 1.0f);
+    const float second = registry.get<Health>(target).current;
+    CHECK(second == doctest::Approx(88.4267f));
+    CHECK((first - second) < (90.0f - first));
+
+    for (int i = 0; i < 35; ++i) {
+        wounds.Update(world, 1.0f);
+    }
+    const auto& entries = registry.get<ecs::Wounds>(target);
+    CHECK(entries.entries[0].bleedRemaining == doctest::Approx(0.0f));
+    CHECK(zl::characters::CurrentBleedRate(entries) == doctest::Approx(0.0f));
+    const float stable = registry.get<Health>(target).current;
+    CHECK(stable > 77.0f);
+    CHECK(stable < 78.0f);
+    wounds.Update(world, 1.0f);
+    CHECK(registry.get<Health>(target).current == doctest::Approx(stable));
+}
+
+TEST_CASE("M15-T2 绷带/破布止血并降低伤口；伤口上限四层") {
+    ecs::Wounds wounds;
+    zl::characters::AddWound(wounds, DamageType::Bite, 20.0f, {});
+    REQUIRE(wounds.count == 1);
+    REQUIRE(wounds.entries[0].bleedRate > 0.0f);
+    const auto treated = zl::characters::TreatWounds(wounds, 0.7f);
+    CHECK(treated.wounds == 1);
+    CHECK(treated.stoppedBleeding);
+    CHECK(wounds.entries[0].bandaged);
+    CHECK(wounds.entries[0].bleedRate == doctest::Approx(0.0f));
+    CHECK(wounds.entries[0].severity == doctest::Approx(0.192f));
+
+    for (int i = 0; i < 5; ++i) {
+        zl::characters::AddWound(wounds, DamageType::Claw, 5.0f, {});
+    }
+    CHECK(wounds.count == ecs::kMaxWounds);
+}
+
+TEST_CASE("M15-T6 验收链路：武器磨损→撕咬流血→绷带止血→致死尸体") {
+    items::ItemRegistry itemRegistry;
+    std::string itemError;
+    REQUIRE(itemRegistry.LoadFile(std::string(ZL_SOURCE_DIR) + "/assets/items.json",
+                                  &itemError));
+
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto player = world.Create();
+    registry.emplace<Position>(player, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(player, Health{100.0f, 100.0f});
+    ecs::Equipment equipment;
+    REQUIRE(items::Equip(equipment, itemRegistry, ecs::EquipSlot::PrimaryHand,
+                         ecs::ItemInstance{"axe", 1, 1.0f}, nullptr));
+    registry.emplace<ecs::Equipment>(player, equipment);
+
+    const auto zombie = world.Create();
+    registry.emplace<Position>(zombie, Position{1.0f, 0.0f, 0});
+    registry.emplace<Health>(zombie, Health{60.0f, 100.0f});
+
+    ecs::AttackIntent attack;
+    attack.dirX = 1.0f;
+    attack.range = 2.0f;
+    attack.arcDegrees = 180.0f;
+    attack.damage = 65.0f;
+    attack.weaponWearPerHit = 0.035f;
+    attack.pending = true;
+    registry.emplace<ecs::AttackIntent>(player, attack);
+
+    CombatSystem combat;
+    combat.Update(world, kDt);
+    CHECK(registry.get<Health>(zombie).current <= 0.0f);
+    CHECK(combat.GetStats().kills == 1u);
+    REQUIRE(combat.GetWeaponWears().size() == 1u);
+    auto& equipped = registry.get<ecs::Equipment>(player);
+    CHECK_FALSE(items::WearEquippedWeapon(equipped,
+                                          combat.GetWeaponWears()[0].amount));
+    const auto& primary =
+        equipped.slots[static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand)];
+    REQUIRE(primary.has_value());
+    CHECK(primary->condition == doctest::Approx(0.965f));
+
+    ecs::DamageEvent bite;
+    bite.sourceId = world.IdOf(zombie).id;
+    bite.amount = 12.4f;
+    bite.type = DamageType::Bite;
+    REQUIRE(combat.ApplyDamage(world, player, bite));
+    auto* health = registry.try_get<Health>(player);
+    auto* wounds = registry.try_get<ecs::Wounds>(player);
+    REQUIRE(health != nullptr);
+    REQUIRE(wounds != nullptr);
+    CHECK(health->current == doctest::Approx(87.6f));
+    REQUIRE(zl::characters::CurrentBleedRate(*wounds) > 0.0f);
+
+    zl::characters::WoundSystem woundSystem;
+    woundSystem.Update(world, 1.0f);
+    const float bleeding = health->current;
+    CHECK(bleeding < 87.6f);
+
+    ecs::Container bag;
+    bag.capacityKg = 10.0f;
+    REQUIRE(items::AddItem(bag, itemRegistry,
+                           ecs::ItemInstance{"bandage", 1, 1.0f}) == 1);
+    const items::UseResult bandage = items::UseAt(bag, itemRegistry, 0);
+    REQUIRE(bandage.applied);
+    CHECK(bandage.defId == "bandage");
+    CHECK(bag.items.empty());
+    items::ApplyUseEffect(bandage.effect, 100.0f, &health->current, nullptr, nullptr,
+                          nullptr);
+    const auto treatment =
+        zl::characters::TreatWounds(*wounds, bandage.effect.bandage);
+    CHECK(treatment.stoppedBleeding);
+    CHECK(zl::characters::CurrentBleedRate(*wounds) == doctest::Approx(0.0f));
+    const float bandagedHealth = health->current;
+    woundSystem.Update(world, 2.0f);
+    CHECK(health->current == doctest::Approx(bandagedHealth));
+
+    ecs::DamageEvent lethal;
+    lethal.sourceId = world.IdOf(zombie).id;
+    lethal.amount = 200.0f;
+    lethal.type = DamageType::Bite;
+    REQUIRE(combat.ApplyDamage(world, player, lethal));
+    CHECK(health->current <= 0.0f);
+    const auto* lastDamage = registry.try_get<ecs::LastDamage>(player);
+    REQUIRE(lastDamage != nullptr);
+    CHECK(lastDamage->cause == ecs::DamageCause::Bite);
+
+    DeathSystem death(nullptr);
+    death.Update(world, kDt);
+    CHECK(registry.all_of<ecs::Dying>(player));
+    death.Update(world, DeathSystem::kDefaultFallSeconds);
+    world.Flush();
+    CHECK(registry.view<ecs::Corpse>().size() == 2u);
+    CHECK_FALSE(registry.valid(player));
+}
+
+TEST_CASE("M15-T4 疼痛由伤口汇总，止痛短时降低惩罚且不叠加") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto target = world.Create();
+    registry.emplace<ecs::Wounds>(target, ecs::Wounds{});
+    registry.emplace<ecs::Pain>(target, ecs::Pain{});
+
+    ecs::Wounds wounds;
+    wounds.entries[0] =
+        ecs::WoundEntry{DamageType::Bite, 0.4f, 0.0f, 0.0f, 0.0f, false};
+    wounds.entries[1] =
+        ecs::WoundEntry{DamageType::Claw, 0.2f, 0.0f, 0.0f, 0.0f, true};
+    wounds.count = 2;
+    registry.get<ecs::Wounds>(target) = wounds;
+
+    zl::characters::PainSystem painSystem;
+    painSystem.Update(world, 0.0f);
+    auto& pain = registry.get<ecs::Pain>(target);
+    CHECK(pain.baseLevel == doctest::Approx(0.325f));
+    CHECK(pain.level == doctest::Approx(0.325f));
+    CHECK(pain.moveScale == doctest::Approx(0.88625f));
+    CHECK(pain.attackCooldownScale == doctest::Approx(1.1625f));
+
+    REQUIRE(zl::characters::ApplyPainRelief(pain, 0.65f, 10.0f));
+    CHECK(pain.reliefStrength == doctest::Approx(0.65f));
+    CHECK(pain.reliefRemaining == doctest::Approx(10.0f));
+    CHECK(pain.level == doctest::Approx(0.11375f));
+
+    REQUIRE(zl::characters::ApplyPainRelief(pain, 0.5f, 20.0f));
+    CHECK(pain.reliefStrength == doctest::Approx(0.65f));
+    CHECK(pain.reliefDuration == doctest::Approx(20.0f));
+    CHECK(pain.reliefRemaining == doctest::Approx(20.0f));
+
+    painSystem.Update(world, 10.0f);
+    const float halfway = pain.level;
+    painSystem.Update(world, 10.0f);
+    CHECK(pain.level == doctest::Approx(0.325f));
+    CHECK(pain.reliefStrength == doctest::Approx(0.0f));
+    CHECK(pain.moveScale == doctest::Approx(0.88625f));
+    CHECK(halfway > 0.11375f);
+    CHECK(halfway < 0.325f);
+
+    registry.get<ecs::Wounds>(target).count = 0;
+    painSystem.Update(world, 0.0f);
+    CHECK(pain.baseLevel == doctest::Approx(0.0f));
+    CHECK(pain.level == doctest::Approx(0.0f));
+    CHECK(pain.moveScale == doctest::Approx(1.0f));
+    CHECK(pain.attackCooldownScale == doctest::Approx(1.0f));
+}
+
+TEST_CASE("M15-T4 疼痛 HUD 文案包含等级、惩罚与剩余止痛") {
+    ecs::Pain pain;
+    pain.level = 0.25f;
+    pain.moveScale = 0.9125f;
+    pain.attackCooldownScale = 1.125f;
+    pain.reliefRemaining = 30.0f;
+    std::string tone;
+    const std::string text = zl::game::PainStatusText(pain, &tone);
+    CHECK(text.find("疼痛：轻微 25%") != std::string::npos);
+    CHECK(text.find("止痛 30s") != std::string::npos);
+
+    pain.level = 0.75f;
+    pain.moveScale = 0.7375f;
+    pain.attackCooldownScale = 1.375f;
+    pain.reliefRemaining = 0.0f;
+    const std::string severe = zl::game::PainStatusText(pain, &tone);
+    CHECK(severe.find("疼痛：严重 75%") != std::string::npos);
+    CHECK(severe.find("止痛") == std::string::npos);
+    CHECK(tone == "fail");
+}
+
+TEST_CASE("M15-T4 疼痛移速乘数由 MovementSystem 应用到玩家速度") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto player = world.Create();
+    registry.emplace<Position>(player, Position{0.0f, 0.0f, 0});
+    registry.emplace<Velocity>(player, Velocity{});
+    registry.emplace<ecs::MoveIntent>(player, ecs::MoveIntent{4.0f, 0.0f});
+    registry.emplace<ecs::PlayerTag>(player);
+    registry.emplace<ecs::Needs>(player, ecs::Needs{});
+    ecs::Pain pain;
+    pain.moveScale = 0.5f;
+    registry.emplace<ecs::Pain>(player, pain);
+
+    zl::characters::MovementSystem movement;
+    movement.Update(world, 0.5f);
+    CHECK(registry.get<Velocity>(player).x == doctest::Approx(2.0f));
+    CHECK(registry.get<Position>(player).x == doctest::Approx(1.0f));
+}
+
+TEST_CASE("M15-T5 致死命中后死因保持直接伤害，不被同 tick 流血覆盖") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto target = world.Create();
+    registry.emplace<Position>(target, Position{0.0f, 0.0f, 0});
+    registry.emplace<Health>(target, Health{5.0f, 100.0f});
+
+    CombatSystem combat;
+    DamageEvent event;
+    event.sourceId = 7;
+    event.amount = 10.0f;
+    event.type = DamageType::Bite;
+    REQUIRE(combat.ApplyDamage(world, target, event));
+    zl::characters::WoundSystem wounds;
+    wounds.Update(world, 1.0f);
+    REQUIRE(registry.try_get<ecs::LastDamage>(target) != nullptr);
+    CHECK(registry.get<ecs::LastDamage>(target).cause == ecs::DamageCause::Bite);
+}
+
+TEST_CASE("M15-T3 受击反馈：来源方向/类型/serial，闪红结束后还原变体 tint") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto attacker = world.Create();
+    registry.emplace<Position>(attacker, Position{1.0f, 1.0f, 0});
+    const auto victim = world.Create();
+    registry.emplace<Position>(victim, Position{1.0f, 2.0f, 0});
+    registry.emplace<Health>(victim, Health{100.0f, 100.0f});
+    constexpr std::uint32_t kStrongTint = 0xFFFF8070u;
+    registry.emplace<SpriteRef>(
+        victim, SpriteRef{ecs::HashName("character.zombie"), 0, kStrongTint});
+
+    CombatSystem combat;
+    ecs::DamageEvent event;
+    event.sourceId = world.IdOf(attacker).id;
+    event.type = DamageType::Claw;
+    event.amount = 5.0f;
+    event.dirX = 0.0f;
+    event.dirY = 1.0f;
+    REQUIRE(combat.ApplyDamage(world, victim, event));
+
+    const auto& hit = registry.get<HitReaction>(victim);
+    CHECK(hit.hitSerial == 1u);
+    CHECK(hit.sourceType == DamageType::Claw);
+    CHECK(hit.sourceDirX == doctest::Approx(0.0f));
+    CHECK(hit.sourceDirY == doctest::Approx(-1.0f));
+    CHECK(registry.get<SpriteRef>(victim).tint != kStrongTint);
+
+    for (int i = 0; i < 12; ++i) {
+        combat.Update(world, kDt);
+    }
+    CHECK(registry.get<SpriteRef>(victim).tint == kStrongTint);
+}
+
+TEST_CASE("M15-T3 变体攻击参数：fast 爪击 / strong 撕咬且冷却/前摇可区分") {
+    ai::AiSystem::AttackParams params;
+    CHECK(params.ProfileFor(ecs::ZombieVariantKind::Normal).type ==
+          DamageType::Claw);
+    CHECK(params.ProfileFor(ecs::ZombieVariantKind::Fast).type ==
+          DamageType::Claw);
+    CHECK(params.ProfileFor(ecs::ZombieVariantKind::Strong).type ==
+          DamageType::Bite);
+    CHECK(params.ProfileFor(ecs::ZombieVariantKind::Armored).type ==
+          DamageType::Bite);
+    CHECK(params.ProfileFor(ecs::ZombieVariantKind::Fast).windupSeconds <
+          params.ProfileFor(ecs::ZombieVariantKind::Strong).windupSeconds);
+    CHECK(params.ProfileFor(ecs::ZombieVariantKind::Strong).damage >
+          params.ProfileFor(ecs::ZombieVariantKind::Fast).damage);
+    CHECK(params.ProfileFor(ecs::ZombieVariantKind::Armored).damage >
+          params.ProfileFor(ecs::ZombieVariantKind::Strong).damage);
+}
+
+TEST_CASE("M15-T3 前摇中断：硬直期间清空蓄力，结束后必须重新完成完整前摇") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto target = world.Create();
+    registry.emplace<Position>(target, Position{5.6f, 5.0f, 0});
+    registry.emplace<Health>(target, Health{100.0f, 100.0f});
+    const std::uint64_t targetId = world.IdOf(target).id;
+
+    const auto zombie = world.Create();
+    registry.emplace<Position>(zombie, Position{5.0f, 5.0f, 0});
+    registry.emplace<Health>(zombie, Health{100.0f, 100.0f});
+    ecs::AiState ai;
+    ai.status = ecs::AiStatus::Attack;
+    ai.targetId = targetId;
+    registry.emplace<ecs::AiState>(zombie, ai);
+    ecs::PerceptionState percep;
+    percep.lastKnownX = 5.6f;
+    percep.lastKnownY = 5.0f;
+    registry.emplace<ecs::PerceptionState>(zombie, percep);
+    registry.emplace<ecs::MoveIntent>(zombie, ecs::MoveIntent{});
+    registry.emplace<ecs::AttackIntent>(zombie, ecs::AttackIntent{});
+
+    ai::AiSystem::AttackParams params;
+    params.normal.windupSeconds = 0.5f;
+    ai::AiSystem system([](int, int) { return true; }, params);
+    system.Update(world, kDt);
+    CHECK(registry.get<ecs::AiState>(zombie).attackWindupLeft > 0.0f);
+    CHECK_FALSE(registry.get<ecs::AttackIntent>(zombie).pending);
+
+    registry.emplace<HitReaction>(zombie, HitReaction{1.0f, 0.0f, 0.0f, 0.0f});
+    system.Update(world, kDt);
+    CHECK(registry.get<ecs::AiState>(zombie).attackWindupLeft ==
+          doctest::Approx(0.0f));
+    CHECK(system.GetStats().interrupted == 1u);
+    CHECK_FALSE(registry.get<ecs::AttackIntent>(zombie).pending);
+
+    for (int i = 0; i < 10; ++i) {
+        system.Update(world, kDt);
+    }
+    registry.remove<HitReaction>(zombie);
+    system.Update(world, kDt);
+    CHECK(registry.get<ecs::AiState>(zombie).attackWindupLeft > 0.0f);
+    CHECK_FALSE(registry.get<ecs::AttackIntent>(zombie).pending);
 }

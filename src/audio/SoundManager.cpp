@@ -32,6 +32,7 @@ const char* DefaultClip(core::SoundType type) {
             return kZombieGrowl;
         case core::SoundType::Ui:
             return kUiClick;
+        case core::SoundType::Vehicle:
         case core::SoundType::Generic:
         default:
             return kImpact;
@@ -48,6 +49,8 @@ float DefaultMaxDistance(core::SoundType type) {
             return 12.0f;
         case core::SoundType::ZombieGrowl:
             return 30.0f;
+        case core::SoundType::Vehicle:
+            return 26.0f;
         case core::SoundType::Generic:
         case core::SoundType::Ui:
         default:
@@ -67,6 +70,8 @@ float DefaultVolume(core::SoundType type) {
             return 0.8f;
         case core::SoundType::Ui:
             return 0.55f;
+        case core::SoundType::Vehicle:
+            return 0.45f;
         case core::SoundType::Generic:
         default:
             return 0.7f;

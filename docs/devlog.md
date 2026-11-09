@@ -4,6 +4,713 @@
 
 ---
 
+## 2026-11-09 M30 后续自然 100HP 四面围攻完整清场复验
+
+**范围**：补一条默认 100HP/默认战斗规则下四方向 4 只普通僵尸的完整清场。`build/m30_natural_surround_clear_smoke.ps1` 使用真实 1280 窗口；探针在玩家 N/W/S/E 各 1.3 格生成 1 只普通僵尸并发放大锤（`sledgehammer`）；仅通过命令行 `--input.bindings.HeavyAttack=U` 临时重绑重击键（后台窗口发送 LSHIFT 不稳定），不修改 `config/game.json`；无 `--combat.*` 覆盖。
+
+**结果**：稳定 ID 29/30/31/32；真实输入 4 次大锤重击（105/105/105/108.15）按 31→30→29→32 清除，重击后短格挡吸伤，僵尸计数 4→3→2→1→0；最终 HP **51.9**、体力 **74.74**，无玩家死亡；连续复跑最终 HP 51.3–51.9。脚本输出 `m30-natural-surround-clear-smoke-pass finalHp=51.9 finalStamina=74.74 kills=4`；证据 `build/m30_natural_surround_clear_smoke/` 3 张 1280（ready/first-pair/final），`app.err.log` 为空。
+
+**限制**：每方向仅 1 只普通僵尸，依赖大锤重击 105 伤害一击清除；不覆盖消防斧逐只清场、轻/重击混用、连续换向、闪避脱困、重甲自然战、多波围攻、多人联机或正式动画/音效；探针生成/定位与命令行重击键重绑仍属自动化测试起点。不改源码、协议、存档或默认数值；全量基线沿用 Debug 822/134579、Release 822/134593、Python 94/94；未提交。
+
+## 2026-11-09 M30 后续自然 100HP 双客户端轻击/受击/闪避复验
+
+**范围**：补一条真实双客户端服务器权威自然战斗烟测。`build/m30_natural_net_combat_smoke.ps1` 使用真实无窗口服务器 + 两个 1280 客户端；除 `--combat.pvp=true` 外不添加任何 `--combat.*` 覆盖，保持默认 `health.playerMaxHp/playerStartHp=100` 与默认 `combat.rules`，只关闭背景生成/动物/POI；A/B 使用真实窗口输入发送轻击与闪避。
+
+**结果**：A 轻击命中 B **40**（100→60），B 轻击命中 A **40**（100→60），A 闪避 B 轻击零伤害（60→60），A 收尾轻击命中 B **40**（60→20）。服务器日志 **4 条攻击目标**、**3 条 40 伤害**、无死亡；最终 A **HP 60**、B **HP 20**，默认体力回复后约 99.8。脚本输出 `m30-natural-net-combat-smoke-pass attacks=4 damageLines=3`；证据 `build/m30_natural_net_combat_smoke/` 8 张 1280（双方 ready、B 受击、A 受击、A 闪避、B 收尾受击、双方 final），`server.err.log`/`a.err.log`/`b.err.log` 为空。
+
+**限制**：不覆盖双客户端自然重击、普通格挡、弹反、击杀、完整硬直链或完整围攻清场。自然格挡自动化在服务器 `Facing` 与出生点碰撞下无法稳定取得正面扇区，重击输入在窗口焦点切换下不稳定；构造双客户端重击/格挡/弹反/闪避仍由 `build/m30_t7_net_smoke.ps1` 覆盖，单机自然重击/格挡/弹反由 `build/m30_natural_combat_smoke.ps1` 覆盖。临时服务器朝向调试日志已移除并重建正式 Release；不改协议/存档/默认数值；全量基线沿用 Debug 822/134579、Release 822/134593、Python 94/94；未提交。
+
+## 2026-11-09 M30 后续自然 100HP 重甲伤害/硬直边界复验（自动化隔离）
+
+**范围**：补一条真实 POI 生成、真实输入的重甲伤害/硬直边界烟测，不改源码、协议、存档或默认战斗数值。`build/m30_natural_armored_combat_smoke.ps1` 通过动态 `pois-v1` 注册只含 1 名 `armored` 守军的 `M30 Armored Range`，探针发放 `makeshift_spear`。为自动化时序稳定，仅设置 `combat.zombieAttacks.armored.staggerSeconds=0`（避免连续硬直中断按键）与 `combat.rules.poiseRegenDelaySeconds=10`（避免脚本等待期间硬直条回复）；玩家 100HP、重甲 35% 减伤、55 硬直条、14.5 撕咬伤害等保持默认。
+
+**结果**：守军稳定 ID 65；2 次前置轻击 + 1 次破防后补刀各 **32.5**、2 次重击各 **40.3**，第二次重击触发 `破防！目标硬直`，最后 1 次轻击击杀（32.5，剩 -10.6 HP）。玩家被重甲撕咬命中 2 次（各 14.5），最终 HP **59.2**、体力 **88.21**；脚本输出 `m30-natural-armored-smoke-pass guardId=65 lightHits=3 heavyHits=2 finalHp=59.2 finalStamina=88.21`。截图 `build/m30_natural_armored_combat_smoke/` 2 张 1280（ready/kill），日志 `build/m30_natural_armored_combat_smoke/app.log`，`app.err.log` 为空。
+
+**限制**：这是自动化隔离烟测，不是完整自然手感试玩；动态 POI/探针定位、守卫攻击硬直关闭和硬直条回复窗口延长均属测试构造。不覆盖完整自然重甲压制、多人联机、正式动画/音效或长时间生存。单测/全量基线不变（Debug 822/134579、Release 822/134593、Python 94/94）。未提交。
+
+## 2026-11-09 M30 后续自然 100HP 四面围攻格挡边界复验
+
+**范围**：补自然 100HP 下 4 只普通僵尸的四面围攻初始格挡边界，不改战斗数值、`PlayerState` v20、`SessionProtocol` v2 或存档。`build/m30_natural_surround_combat_smoke.ps1` 使用默认规则，在玩家四个等距对角方向各生成 1 只普通僵尸；探针发放消防斧，生成前先按 `W` 面向西北并按住普通格挡，避免首个正面攻击落入弹反窗口。
+
+**结果**：4 个普通僵尸稳定 ID 为 29/30/31/32；正面僵尸只造成 3.6 点格挡减伤，东北/西南/东南三个方向各造成 8 点完整伤害，日志按来源 ID 解析到 3 个不同攻击者。格挡窗口末 HP 72.4，最终 HP **71.7**、体力 **83.98**，脚本输出 `m30-natural-surround-smoke-pass finalHp=71.7 finalStamina=83.98 flankHits=3`。截图 `build/m30_natural_surround_combat_smoke/` 2 张 1280（ready/block），日志 `build/m30_natural_surround_combat_smoke/app.log`。
+
+**限制**：本脚本只验证初始四面围攻的格挡方向边界，不执行完整围攻清场，也不覆盖连续换向、闪避脱困、弹反时序、重甲自然战、多人联机或正式动画/音效；探针生成/定位仍属构造起点。单测/全量基线不变（Debug 822/134579、Release 822/134593、Python 94/94）。未提交。
+
+## 2026-11-09 M30 后续自然 100HP 双普通僵尸同场复验
+
+**范围**：补自然 100HP 下的双普通僵尸同场战斗，不改战斗数值、`PlayerState` v20、`SessionProtocol` v2 或存档。`build/m30_natural_multi_combat_smoke.ps1` 使用默认 `health.playerMaxHp/playerStartHp=100`、默认 `combat.rules` 与普通僵尸攻击，不传 `--combat.*` 覆盖；只关闭背景生成/动物/POI，由探针发放消防斧并在玩家西北/西侧生成 2 只普通僵尸。
+
+**结果**：真实输入先完成两次普通格挡；一次消防斧重击同时命中两只普通僵尸（各 92 伤害、剩 8 HP），随后轻击同时命中并以 65 伤害双杀；最终 HP **52.5**、体力 **49.41**，`zombie_count count=0`。首轮探索性连续重击会被双僵尸反复打断，最终仅剩 6.6 HP，因此最终脚本采用“重击削血 + 轻击收尾”的战术，未调整任何战斗规则。截图 `build/m30_natural_multi_combat_smoke/` 4 张 1280（ready/block/heavy/final），日志 `build/m30_natural_multi_combat_smoke/app.log`，脚本输出 `m30-natural-multi-smoke-pass`。
+
+**限制**：两只僵尸仍位于同一前方扇区，不是真正的四面围攻；本脚本不重复覆盖闪避/弹反时序、重甲自然战、多人联机、正式动画/音效或长时间自然试玩。单测/全量基线不变（Debug 822/134579、Release 822/134593、Python 94/94）。未提交。
+
+## 2026-11-09 M30 后续自然 100HP 全动作与格挡朝向修复
+
+**范围**：补自然 100HP 下的重击/普通格挡/弹反/闪避验收，不改战斗数值、`PlayerState` v20、`SessionProtocol` v2 或存档。脚本 `build/m30_natural_combat_smoke.ps1` 使用默认 `health.playerMaxHp/playerStartHp=100`、默认 `combat.rules` 与默认普通僵尸攻击，不传 `--combat.*` 覆盖；只关闭背景生成/动物/POI，由探针发放消防斧并生成 1 只普通僵尸，真实窗口按键完成动作。
+
+**结果**：重击两次 92 伤害（第一次破防、第二次击杀），普通格挡承受 3.6 伤害（消防斧 55% 减伤），弹反与闪避均零伤害；有普通爪击命中，最终 HP **62.9**、体力 **84.71**。日志含 `格挡成功（爪击）`、`弹反！攻击者硬直（爪击）`、`闪避：无敌帧`、2 条 `玩家挥击（LSHIFT 重击）`、`击杀：目标稳定 ID 29`；截图 `build/m30_natural_combat_smoke/` 6 张 1280（ready/dodge/parry/block/heavy/final），脚本输出 `m30-natural-combat-smoke-pass`。
+
+**修复**：自然复验发现第一次格挡后的击退速度会让 `AnimationSystem` 把 `Facing` 转向远离攻击者，后续攻击落在 140° 格挡扇区外。`AnimationSystem` 现在在 `HitReaction` 硬直或击退速度未衰减时保持原朝向，衰减后再由移动更新；新增 `M30-T4` 回归用例。`M30-T4*` 现为 **5/5（33 assertions）**。
+
+**测试/证据**：全量 Debug **822/822（134579 assertions）**、Release **822/822（134593 assertions）**、Python **94/94**；日志 `build/m30_natural_combat_debug_full.log`、`build/m30_natural_combat_release_full.log`、`build/m30_natural_combat_python.log`、`build/m30_natural_combat_smoke.log`、`build/m30_natural_fix_targeted.log`。单只普通僵尸、探针生成/定位仍是构造起点；不覆盖重甲、多人围攻、正式动画/音效或长时间自然试玩。未提交。
+
+## 2026-11-09 M30-T9 远端格挡/闪避姿态
+
+**范围**：补齐 T8 遗留的远端姿态表现，不改服务器权威战斗判定、体力/伤害、存档或 `PlayerState v20`。`ZLR1` 新增 `CombatStance`（`CBST`，25B）组件，只抓取 `PlayerTag`，复制 blocking/blockElapsed/guardBreakLeft/dodgeLeft/dodgeInvulnLeft/dodgeDirX/Y；客户端 `ReplicatedActor` 全量/增量保存姿态，非法值/非法闪避方向拒绝。
+
+**表现**：新增 `game/CombatPresentation.h` 纯映射（闪避优先、弹反窗口、破防、闪避比例/无敌/方向归一）；`DrawRemoteCombatOverlay` 按 `Facing` 画格挡盾弧、弹反白色内弧、破防红 X、闪避残影/方向弧/无敌横线，跳过本地、死亡、载具隐藏与 AOI 外实体。不新增贴图/音频；正式动画仍不在此步。
+
+**测试/证据**：`M30-T9*` **4/4（52 assertions）**，覆盖姿态映射、非法方向/时长回退、`CombatStance` 全量/增量与非法负载拒绝；`M30-T6*` 扩为 **2/2（56 assertions）**，增加远端复制端断言。全量 Debug **821/821（134576 assertions）**、Release **821/821（134589 assertions）**、Python **94/94**；日志 `build/m30_t9_debug_full.log`、`build/m30_t9_release_full.log`、`build/m30_t9_python.log`、`build/m30_t9_targeted.log`、`build/m30_t9_net_targeted.log`。`build/m30_t7_net_smoke.ps1` 先在开放地 staging 再驱动格挡/闪避，`build/m30_t9_remote_pose_smoke/` 9 张 1280（原有 5 + 4 张远端），输出 `m30-t9-remote-pose-pass`。
+
+**限制/下一步**：姿态是线段/矩形标记，不是骨骼动画；只复制姿态，不复制体力/冷却；`ZLR1` 组件注册数 28→29，旧客户端需同版本重建；烟测用长闪避/长弹反构造参数，不替代自然手感。未提交。
+
+## 2026-11-09 M30 逐武器平衡基线
+
+**范围**：补 M30 的“逐武器平衡表自动生成”缺口，不改运行时战斗代码、配置、协议或存档。新增 `tools/combat_balance_report.py`，读取 `config/game.json` 与 `assets/items.json`，按 C++ 轻/重击派生、四变体硬直条、重甲 35% 减伤和格挡公式，生成 `docs/15-M30战斗平衡基线.md` 与 `build/combat_balance_report.json`。
+
+**结果**：覆盖 11 把近战、轻/重击参数、DPS、伤害/体力、满体力轻击次数、格挡承伤/体力，以及普通/快速/强壮/重甲 TTK 与破防时间。当前读数：厨刀轻击 DPS **127.27** 最高、轻击伤害/体力 **7.00** 最高；砍刀重击 DPS **121.66** 最高；厨刀/简易长矛/大锤重击 DPS 低于轻击（换取破防/硬直）；消防斧轻/重 DPS **92.86/96.84**。新增 `tools/tests/test_combat_balance_report.py` **4/4**，全量 Python **94/94**。
+
+**限制/下一步**：报告是公式化数据基线，不含移动/未命中/成长/疼痛/疲劳/自然操作差异，也不替代实机试玩；未调整任何武器数值。新增测试使 Python 计数从 90 升至 94，Debug/Release 不变。未提交。
+
+## 2026-11-09 M30 后续自然 100HP 轻击烟测
+
+**范围**：补一条不修改玩家生命、战斗规则或僵尸伤害的自然轻击验收；仍按 T7 方式关闭背景生成/动物/POI，由探针发放消防斧并依次生成 3 只普通僵尸。
+
+**结果**：默认 `health.playerMaxHp/playerStartHp=100`、默认 `combat.rules`；6 次 `SPACE` 轻击全部命中并击杀，仅被爪击 1 次（8 伤害），最终 **约 90 HP**（体力最低约 69，复跑末尾约 84–89）；脚本 `build/m30_natural_smoke.ps1`，截图 3 张在 `build/m30_natural_smoke/`。
+
+**限制**：只覆盖自然 100HP 下的轻击/体力/受伤；自然重击、格挡、弹反、闪避仍由 T7 构造烟测覆盖，未新增代码/协议/存档字段。
+
+## 2026-11-09 M30 战斗 2.0 T1–T8 完成
+
+**范围**：把单键近战升级为体力、轻重击、格挡/弹反、闪避与敌人硬直循环；单机先行，联机保持服务器权威。T1 规则/武器数据、T2 ECS 核心、T3 单机轻重击/体力 HUD、T4 格挡/弹反/闪避、T5 敌人硬直/反馈、T6 联机权威/v20、T7 配置/平衡/1280 烟测、T8 文档/清理/交付全部完成。
+
+**实现**：`CombatComponents` 增加 `CombatStamina/CombatStance/Poise/AttackIntent`；`CombatRules`/`PlayerCombat` 统一轻/重击派生、体力、格挡/弹反/闪避与武器覆盖；`CombatSystem` 推进前摇、体力/姿态、硬直条并按闪避无敌→格挡/弹反→护甲/变体减伤→伤口/硬直/死亡结算。`WorldSimulation::LoadCombatRuleConfig` 读取 `config/game.json` 的 `combat.rules.*`（43 键）并在单机/服务器共用钳制；四变体硬直上限（20/14/32/55）与重甲轻击阈值（16）由 `ZombieFactory` 注入。HUD 体力条改用 `CombatStamina`，格挡/闪避/弹反/破防走 notice；Lua/Python `combatStatus/combatTone` 与 native/core_ui `combat-status` 同步。
+
+**联机**：`PlayerState` 升 **v20**，末尾仅 owner 追加 `PlayerCombatState`（体力/上限/姿态/弹反窗口/破防/闪避无敌）；旧 v19 及更早回退满体力/None。`Attack` 复用 flags bit0 表示重击，新增 `Block=48`（按下/松开）与 `Dodge=49`（世界方向）。服务器校验体力、姿态、硬直、驾驶/死亡/冷却并权威写 `AttackIntent`/`CombatStance`；`combat.pvp=false` 时玩家目标不可选。客户端只发命令并读 `PlayerState` 镜像；`ZLR1` 不新增战斗体力/姿态，远端格挡/闪避动画不在 v1。`SessionProtocol` v2/命令包 v1 不变，旧客户端需重建后加入 v20。
+
+**测试/证据**：新增 `M30-T7*` **3/3（60 assertions）**（`combat.rules` 读取/默认回退/钳制、消防斧轻/重击变体 TTK/体力/硬直/格挡收益、变体 Poise 上限注入）；全量 Debug **817/817（134520 assertions）**、Release **817/817（134534 assertions）**、Python **90/90**；日志 `build/m30_t8_debug_full.log`、`build/m30_t8_release_full.log`、`build/m30_t8_python.log`、`build/m30_t7_targeted.log`。Release 1280 单机构造烟测 `build/m30_t7_combat_smoke/` 6 张（轻击/重击/格挡/弹反/闪避/体力耗尽），双客户端 PvP `build/m30_t7_net_smoke/` 5 张；服务器 6 条攻击目标、仅 2 条伤害（未格挡 10、普通格挡 3.5），弹反/闪避零伤害。
+
+**限制/下一步**：烟测使用低体力/长弹反窗口/长闪避时长等构造参数，单机 3 只普通僵尸；变体上限/阈值由 T5/T7 单测覆盖，不替代自然 100HP 手感试玩。远端格挡/闪避动画、更细动作/正式音效仍属后续；逐武器平衡表已由 `docs/15` 补齐；动物保持既有受击规则，不初始化 `Poise`。未提交。
+
+## 2026-11-08 M26-V14 低速持续接触冲量
+
+**范围**：在 V13 的车身/轮胎模型上，补车损门槛以下的载具间接触冲量：接触但接近速度低于 `vehicleCollisionMinSpeed` 时仍按质量传递完全非弹性法线速度，让低速顶推可推动停放/无人物车；不改高速碰撞的车况/乘员伤害/推挤/音效/冷却，不新增命令、配置、协议或存档字段。
+
+**实现**：新增 `kVehicleContactMinSpeed=0.15f` 与 `VehicleContactImpulseFor`，接触路径恢复系数/切向摩擦为 0；`VehicleCollisionImpulseFor` 追加可选 `minClosingSpeed`，默认仍用 `vehicleCollisionMinSpeed`。服务器 `ApplyServerVehicleVehicleCollisions` 在 `bodyContact`/`bodyCollision` 时先计算接触冲量，无车损时只写速度并同步目标 `Position`/`Velocity`/乘员；无人目标由既有 `vehicleCoastBraking` 滑行，不扣车况、不伤乘员、不广播 `kVehicleRam`、不设置碰撞冷却。单机 `ApplyLocalVehicleVehicleCollision` 复用同一纯逻辑，低速目标写入 `m_localParkedVehicleMotions` 并滑行；接触日志降为 debug。
+
+**测试/证据**：新增 `M26-V14 VehicleContactImpulse` **1/1（15 assertions）**、`M26-V14 服务器载具低速接触` **1/1（20 assertions）**；`M26*` **25/25（421 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **59/59（750 assertions）**、`M25-T4* + M26*` **58/58（1003 assertions）**；全量 Debug **782/782（133914 assertions）**、Release **782/782（133928 assertions）**、Python **89/89**；日志 `build/m26_v14_*.log`。Release 1280 重跑 V5 单机多车烟测 `build/m26_v14_v5_regression_smoke/`：A/B 驾驶 4.02/5.06 格、走回 A 漂移 0.00 格，stderr 为空。
+
+**限制/下一步**：只做速度传递，不做接触位置分离/持续法向约束；目标被墙体/第三辆车卡住时不会强制挤出；低速接触无独立音效/车损/乘员伤害；阈值是代码常量。仍缺稳定 1280 碰撞/接触构造烟测；下一步优先补 1280 碰撞/乘客/接触验收，再考虑逐车轮接地/纵向滑移或完整刚体。未提交。
+
+## 2026-11-08 M26-V13 轮胎转向极限与悬挂姿态
+
+**范围**：在 V12 显式车型/heading 上补每车型轴距、轮距、最大前轮转角、轮胎横向加速度上限和悬挂 roll/pitch，加入自行车模型转向不足与运行时车身姿态；不改命令、协议、存档或复制字段。
+
+**实现**：`VehicleProfile` 轻/标准/重轴距 1.02/1.15/1.28 格、轮距 0.84/0.90/0.98 格、最大前轮转角 0.92/0.85/0.72 rad、最大横向加速度 20/18/15 格/秒²；`VehicleTuningForType` 继承到单机、服务器和客户端预测。`VehicleTireYawRate` 用 `speed*tan(steer)/wheelbase` 求横摆，并由 `turnRate` 与 `maxLateralAcceleration/max(speed,0.5)` 双重钳制；`VehicleStep` 先求前轮转角再更新 heading，低速仍直接对齐。`VehicleMotion` 新增 `steerAngle/lateralAcceleration/longitudinalAcceleration/bodyRoll/bodyRollVelocity/bodyPitch/bodyPitchVelocity`；`VehicleSuspensionStep` 用弹簧-阻尼趋近目标姿态，运行时数据不写存档/不复制。`VehicleSurfaceProfile` 追加横向附着倍率：泥土路 0.90、草地 0.62。
+
+**测试/证据**：新增 `M26-V13 VehicleProfile` **1/1（10 assertions）**、`M26-V13 VehicleTire` **1/1（9 assertions）**、`M26-V13 VehicleSuspension` **1/1（8 assertions）**、`M26-V13 VehicleStep` **1/1（4 assertions）**；`M26*` **23/23（386 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **58/58（735 assertions）**、`M25-T4* + M26*` **56/56（968 assertions）**；全量 Debug **780/780（133879 assertions）**、Release **780/780（133893 assertions）**、Python **89/89**；日志 `build/m26_v13_debug_full.log`、`build/m26_v13_release_full.log`、`build/m26_v13_build_debug.log`、`build/m26_v13_build_release.log`、`build/m26_v13_v5_smoke.log`、`build/m26_v13_python.log`。Release 1280 重跑 V5 单机多车烟测 `build/m26_v13_v5_regression_smoke/`：3 辆车 A/B 驾驶 2.57/3.95 格、走回 A 漂移 0.00 格，stderr 为空。
+
+**限制/下一步**：没有逐车轮接地采样、轮胎纵向滑移/ABS、悬挂碰撞、车身姿态渲染旋转或持续接触冲量；姿态只是运行时状态；稳定 1280 双车碰撞/乘客构造烟测仍待补。下一步优先补可重复的碰撞/乘客 1280 验收，再考虑持续接触冲量或逐车轮模型。未提交。
+
+## 2026-11-08 M26-V12 显式车型与完整车身朝向
+
+**范围**：把 V11 的 StableId 质量档升级为显式车型表，并把碰撞角速度从短时 `spinAngle` 外观升级为持久 `heading` 车身朝向；加入转向速率、侧向抓地与车型性能/损伤倍率，补齐存档/ZLR1/PlayerState 复制。新增命令/配置为零，但存档、ZLR1、PlayerState 与复制组件版本均前移。
+
+**实现**：`ecs::VehicleType` 为轻/标准/重皮卡；`VehicleProfile` 表含质量 1100/1600/2400 kg、半径 0.60/0.65/0.65 格、长宽、极速/加速/制动/转向/侧向抓地/车况伤害/乘员伤害倍率。`VehicleMotion` 新增 `heading/type`，`VehicleStep` 先转向再沿 heading 加速并按 `lateralGrip` 衰减侧向速度，角速度积分到 heading，`spinAngle` 移除；单机/服务器按 `VehicleTuningForType` 使用各自车型参数，质量用于冲量、半径用于碰撞/角惯量、质量比缩放推挤距离，车型倍率缩放车况/乘员伤害。`ecs::Vehicle` 持久化 type/heading，存档 Vehicle 组件 v3、ZLR1 `VHCL` 37B、复制组件 v4/40B，`PlayerState` v19；客户端预测用 `VehicleCorrectHeading` 平滑校正，HUD/日志显示车型/质量。
+
+**测试/证据**：新增 `M26-V12 VehicleProfile` **1/1（22 assertions）**、`M26-V12 VehicleIntegrateAngular` **1/1（6 assertions）**、`M26-V12 VehicleStep` **1/1（5 assertions）**、`M26-V12 VehicleCorrectHeading` **1/1（4 assertions）**；`M26*` **19/19（355 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **54/54（704 assertions）**、`M25-T4* + M26*` **52/52（937 assertions）**；全量 Debug **776/776（133848 assertions）**、Release **776/776（133862 assertions）**、Python **89/89**；日志 `build/m26_v12_targeted.log`、`build/m26_v12_m26.log`、`build/m26_v12_vehicle.log`、`build/m26_v12_combined.log`、`build/m26_v12_debug_full.log`、`build/m26_v12_release_full.log`、`build/m26_v12_build_debug.log`、`build/m26_v12_build_release.log`、`build/m26_v12_app_debug.log`、`build/m26_v12_app_release.log`、`build/m26_v12_python.log`。Release 1280 重跑 V5 单机多车烟测 `build/m26_v12_v5_regression_smoke/`：A/B 驾驶 3.57/3.92 格、走回 A 漂移 0.00 格，HUD 显示 `标准皮卡 1600kg`/`重型皮卡 2400kg`，stderr 为空。
+
+**限制/下一步**：没有车轮/悬挂/轮胎受力、持续接触冲量或完整刚体求解；视觉仍是八向资源；重型碰撞半径不放大到标准车以上以保持狭窄道路通行；未新增 1280 碰撞烟测。下一步优先 1280 碰撞/乘客验收，再考虑车轮/悬挂与持续接触模型。未提交。
+
+## 2026-11-08 M26-V11 分级质量与碰撞角动量
+
+**范围**：在 V9/V10 的线性冲量与乘员伤害基础上，把质量参数接入载具间碰撞，并增加切向摩擦产生的角速度与短时八向外观偏转。只改碰撞速度/外观与配置，不改命令、复制字段、协议或存档 schema。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleMassClass`（轻/标准/重）与 `VehicleMassClassForStableId`，质量 0.85/1.0/1.35 按 StableId 稳定分配；`VehicleCollisionImpulseFor` 用双方质量计算法线冲量并保持动量守恒。新增 `vehicleCollisionFriction` 切向摩擦冲量与 `VehicleAngularInertia`，产生双方 `angularVelocity`；`VehicleIntegrateAngular` 在 `VehicleStep`/`VehiclePredictStep` 中积分 `spinAngle` 并按 `vehicleAngularDamping` 回正。服务器写回双方角速度并通过既有 `visualDirection`/`SpriteRef` 复制；单机活动车与 `m_localParkedVehicleMotions` 停放车复用同一角速度与八向外观；HUD 显示质量档位。新增 `vehicleCollisionFriction`/`vehicleAngularDamping` 配置，默认 0.35/3.0。
+
+**测试/证据**：新增 `M26-V11 VehicleMass：StableId 分级与碰撞质量比` **1/1（13 assertions）**、`M26-V11 VehicleCollisionImpulse：切向摩擦与角速度` **1/1（10 assertions）**、`M26-V11 VehicleIntegrateAngular：角速度偏转与阻尼回正` **1/1（6 assertions）**、`M26-V11 服务器载具碰撞：分级质量与角速度` **1/1（24 assertions）**；`M26*` **17/17（337 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **52/52（684 assertions）**、`M25-T4* + M26*` **50/50（919 assertions）**；全量 Debug **774/774（133822 assertions）**、Release **774/774（133836 assertions）**、Python **89/89**；日志 `build/m26_v11_targeted.log`、`build/m26_v11_m26.log`、`build/m26_v11_vehicle.log`、`build/m26_v11_combined.log`、`build/m26_v11_debug_full.log`、`build/m26_v11_release_full.log`、`build/m26_v11_python.log`。服务器日志实测质量 1.35/0.85、接近速度 4.0、角速度 1.12/1.79。
+
+**限制/下一步**：角速度只驱动短时八向外观偏转/阻尼回正，不改变驾驶输入目标方向；没有完整刚体朝向、车轮/悬挂/轮胎抓地、持续接触冲量或 1280 碰撞烟测。下一步优先补 1280 碰撞验收，或继续完整刚体朝向/持续冲量。未提交。
+
+## 2026-11-08 M26-V10 碰撞乘员伤害
+
+**范围**：在 V2/V4/V9 载具间碰撞、推挤和冲量基础上，对碰撞双方车内乘员结算生命伤害。只改乘员生命、提示与配置，不改命令、复制字段、协议或存档 schema；撞墙/撞僵尸/撞动物仍走各自既有路径。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleCollisionOccupantDamage`，以 `vehicleCollisionMinSpeed` 为门槛，按 `base + (impactSpeed - minSpeed) × perSpeed` 计算 HP，并受 `max` 上限钳制；NaN/非法配置返回 0。服务器遍历碰撞双方驾驶位、第一乘客位和第二乘客位，对存活乘员发出一次 `Blunt` 伤害事件，不施加击退/硬直，保留既有护甲钝击减伤，并通过 `stateDirty`/`PlayerState` 同步生命。单机在 `ApplyLocalVehicleVehicleCollision` 中对当前驾驶员使用同一规则并显示 `碰撞受伤：-X HP`。新增 `vehicleCollisionOccupantDamageBase/PerSpeed/Max` 配置，默认 3.0/1.2/20.0。
+
+**测试/证据**：新增 `M26-V10 VehicleCollisionOccupantDamage：速度映射与配置上限` **1/1（10 assertions）**；V2 服务器三客户端碰撞用例追加双驾驶员+乘客 HP 下降断言（V2 服务器用例 **49 assertions**）；`M26*` **13/13（284 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **49/49（655 assertions）**、`M25-T4* + M26*` **46/46（866 assertions）**；全量 Debug **770/770（133769 assertions）**、Release **770/770（133783 assertions）**、Python **89/89**；日志 `build/m26_v10_passenger_v2.log`、`build/m26_v10_m26_passenger.log`、`build/m26_v10_vehicle_passenger.log`、`build/m26_v10_combined_passenger.log`、`build/m26_v10_debug_passenger_full.log`、`build/m26_v10_release_passenger_full.log`、`build/m26_v10_python.log`。V2 日志实测两名驾驶员和乘客各扣约 4.4 HP（剩余 96 HP），车况各 -1.9%。
+
+**限制/下一步**：V10 未新增 1280 碰撞烟测，但 V2 三客户端集成已覆盖乘客槽位；不做角动量/旋转、分级质量、持续冲量或轮胎抓地模型；撞墙/撞僵尸/撞动物不结算乘员生命伤害。下一步优先补 1280 碰撞/乘客验收或完整刚体朝向。未提交。
+
+## 2026-11-08 M26-V9 等质量碰撞冲量与无人车滑行
+
+**范围**：在 V2/V4/V6 位置阻挡、推挤和双方车况基础上，增加等质量线性碰撞冲量。撞击车与被撞车按中心法线分配碰撞后速度，被撞无人车可短时滑行；同时用 `bodyContact` 让轴滑动接触也触发碰撞结算。只改位置/速度表现与碰撞触发，不改命令、复制字段、协议或存档 schema。
+
+**实现**：`VehicleSpike.h` 新增 `kVehicleCollisionRestitution=0.20`、`kVehicleCoastBraking=3.0`、`VehicleCollisionImpulseFor` 与 `VehicleStepResult::bodyContact`；冲量保留切向分量，NaN/非法质量/低于最小速度返回未应用，位置重合时用速度方向或 +X 兜底。服务器在 V2/V4 结算后写回双方 `VehicleMotion`，无人物车用 `VehiclePredictStep` 按 3.0 格/秒² 滑行，不消耗燃料、不追加车损；单机新增 `m_localParkedVehicleMotions`，按 StableId 保存被撞车残余运动并同步 ECS `Position`/`Velocity`。新增 `vehicleCollisionRestitution`/`vehicleCoastBraking` 配置，默认 0.20/3.0。
+
+**测试/证据**：新增 `M26-V9 VehicleCollisionImpulse：等质量冲量与质量比` **1/1（19 assertions）** 与 `M26-V9 服务器载具碰撞：冲量继承与无人车滑行` **1/1（23 assertions）**；`M26*` **12/12（261 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **48/48（645 assertions）**、`M25-T4* + M26*` **45/45（843 assertions）**；全量 Debug **769/769（133746 assertions）**、Release **769/769（133760 assertions）**、Python **89/89**；日志 `build/m26_v9_targeted_final.log`、`build/m26_v9_only.log`、`build/m26_v9_vehicle_final.log`、`build/m26_v9_combined_final.log`、`build/m26_v9_debug_final4.log`、`build/m26_v9_release_final6.log`、`build/m26_v9_python_final.log`。
+
+**限制/下一步**：V9 未新增 1280 碰撞烟测，自动化覆盖冲量、目标速度、滑行与服务器无人物车；不做角动量/旋转、分级质量、持续冲量、乘员伤害或轮胎抓地模型，1280 碰撞与自然多人手感仍待补。未提交。
+## 2026-11-08 M26-V8 多车远端引擎音
+
+**范围**：监听客户端不再只播放当前绑定车辆的远端引擎循环。按 StableId 为最近最多 4 辆、18 格内、车况大于 0 的远端载具同时维护引擎声部，本地驾驶声部优先；只改客户端音频状态，不改服务器、协议、存档、碰撞、推挤或车况。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleEngineAudioCandidate`/`SelectRemoteVehicleEngineAudio`（远端/车况/距离筛选、同距 StableId 排序、去重、4 声部上限、NaN/非法参数安全）；`WorldDemoState` 用 `m_vehicleEngineVoices` 按 StableId 保存句柄，逐帧按各自速度更新位置/音量/音高；驾驶员退出、车况归零、超出 18 格/4 声部或断线时停止对应声部。复用 `vehicle_engine` 资源，不新增配置/复制字段/协议/存档；网络绑定离开视野时不再顺带停止其他车辆声部。
+
+**测试/证据**：新增 `M26-V8 VehicleEngineAudio：远端多车距离筛选与声部上限` **1/1（12 assertions）**；`M26*` **10/10（218 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **47/47（625 assertions）**、`M25-T4* + M26*` **43/43（800 assertions）**；全量 Debug **767/767（133703 assertions）**、Release **767/767（133717 assertions）**、Python **89/89**；日志 `build/m26_v8_targeted.log`、`build/m26_v8_targeted_release_all.log`、`build/m26_v8_vehicle_only.log`、`build/m26_v8_combined.log`、`build/m26_v8_debug_final.log`、`build/m26_v8_release_final.log`、`build/m26_v8_python_final.log`。三客户端 Release 1280 烟测 `build/m26_v8_multi_engine_smoke/`：A/C 分别驾驶载具 6/8，B null device 监听并同时启动/停止两个远端声部，A/C 分别驾驶 2.67/2.55 格，4 张截图、服务端/三客户端 stderr 为空，结果 `m26-v8-multi-engine-smoke-pass cars=3 listeners=1 remoteVoices=2`。
+
+**限制/下一步**：最多 4 辆远端声部，超出按距离截断；null device 只验证句柄/资源/状态，不做正式混音、遮挡、距离曲线或多车听感验收；V9 已补等质量线性冲量，V10 已补乘员伤害，V11 已补分级质量/角速度；多车自然多人试玩仍待后续。未提交。
+
+## 2026-11-08 M26-V7 每车远端朝向/车灯/破损/烟雾
+
+**范围**：多车辆不再只有当前绑定车拥有完整视觉。服务器按速度更新并复制八向载具朝向，停车时保留最后方向；客户端为所有车辆分别绘制已开启车灯、程序化破损叠加和低车况烟雾。只改复制/表现，不改碰撞、推挤、车况、命令、协议或存档 schema。
+
+**实现**：`ServerVehicleRuntime` 新增 `visualDirection`，`SyncServerVehicleToEcs` 用 `VehicleVisualDirectionFor` 更新并写入 `SpriteRef`；读档时从已有精灵恢复。客户端 `m_vehicleVisualDirections` 按 StableId 缓存方向，本地绑定车继续平滑朝向/滞回，其他车从复制精灵与速度恢复；`DrawVehicleHeadlights` 遍历视野内全部开灯车辆；`m_vehicleDamageVisuals` 让每个载具 DrawItem 叠加自己的划痕/凹陷；`m_vehicleSmokeRuntimes` 按 StableId 独立计时，软粒子烟雾全局上限 96。切换绑定/网络绑定切换时从当前精灵恢复朝向，避免回退南向。
+
+**测试/证据**：新增 `M26-V7 VehicleVisualDirectionVector：朝向单位向量` **1/1（26 assertions）**、`M26-V7 服务器载具朝向：移动后复制并在停车后保持` **1/1（21 assertions）**；`M26*` **9/9（206 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **46/46（613 assertions）**、`M25-T4* + M26*` **42/42（788 assertions）**；全量 Debug **766/766（133691 assertions）**、Release **766/766（133705 assertions）**、Python **89/89**；日志 `build/m26_v7_targeted.log`、`build/m26_v7_targeted_release.log`、`build/m26_v7_targeted_all.log`、`build/m26_v7_vehicle.log`、`build/m26_v7_debug.log`、`build/m26_v7_release.log`、`build/m26_v7_python.log`。Release 1280 重跑 V5 单机多车烟测 `build/m26_v7_v5_visual_regression_smoke/`，A/B 驾驶 4.02/5.02 格、停车漂移 0.00 格、10 张截图、stderr 为空。
+
+**限制/下一步**：V7 未单独构造夜间车灯/低车况破损截图；破损仍是程序化划痕/凹陷占位，车灯光束无墙体遮挡/阴影；多辆远端车仍共用最近一辆的引擎音；未做多车自然多人视觉验收。下一步可补夜间/破损 1280 视觉烟测，或继续完整刚体动量/质量传递。未提交。
+
+## 2026-11-07 M26-V6 单机停放车推挤与共用步进
+
+**范围**：单机驾驶撞击停放车后，沿撞击方向把被撞车推开一次；单机与服务器共用分步推挤逻辑。只做一次性位置推挤与双方车况，不做质量/动量/持续冲量/乘员伤害。
+
+**实现**：`VehicleSpike.h` 新增 `VehiclePushResult` 与 `VehiclePushBody`，按 `VehicleCollisionPushDistance` 结果以 0.05 格步进，每步检查目标格与第三辆车，方向自动归一化，非法/零方向原地返回。`WorldDemoState::PushLocalVehicleOnCollision` 在双方车损结算后更新目标车 `ecs::Position`，记录 `单机载具推挤` 日志；服务器 V4 推挤改为复用同一 helper，保持原行为并补第三辆车同层检查。协议/存档 schema 不变。
+
+**测试/证据**：新增 `M26-V6 VehiclePushBody：分步推挤与阻挡` **1/1（13 assertions）**；`M26*` **7/7（159 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **45/45（587 assertions）**、`M25-T4* + M26*` **40/40（741 assertions）**；全量 Debug **764/764（133644 assertions）**、Release **764/764（133658 assertions）**、Python **89/89**；日志 `build/m26_v6_targeted.log`、`build/m26_v6_targeted_all.log`、`build/m26_v6_vehicle.log`、`build/m26_v6_debug.log`、`build/m26_v6_release.log`、`build/m26_v6_python.log`。
+
+**限制/下一步**：V6 未新增 1280 碰撞烟测，自然驾驶路线受地图障碍影响；由纯逻辑测试 + 服务器碰撞集成用例 + V5 单机烟测回归覆盖。Release 1280 重跑 V5 多车烟测 `build/m26_v6_v5_regression_smoke/`，A/B 驾驶 2.59/2.42 格、停车漂移 0.00 格。非活动车仍不持续模拟移动/推挤，不做完整刚体动量/质量传递或碰撞乘员伤害。下一步优先补自然碰撞验收或每车远端车灯/破损表现。未提交。
+
+## 2026-11-07 M26-V1/V2/V3/V4/V5 多车辆、碰撞反馈、推挤与单机多车
+
+**范围**：服务器从单车运行时改为多车向量，接管存档中的全部载具并默认补足 3 辆；每辆车独立座位、燃料、车况、后备箱、冷却和撞击记录。单机本地也按 `vehicle.count` 生成多辆并支持步行换车；V2 已做载具间阻挡与双方车损，V4 补服务器位置推挤，V5 补单机多车生成/就近绑定/停放阻挡；完整刚体动量/质量传递、每车远端车灯与破损叠加暂不做。
+
+**实现**：`ServerVehicleRuntime` 转为 `m_serverVehicles`，新增按 StableId 查找/就近查找/当前会话车辆查找；`EnsureServerVehicles` 读档接管全部 `ecs::Vehicle`，按 `vehicle.count` 在锚点附近找空地补足并保持车辆间距。上车/乘客/维修命令按 `payload.entityId` 路由，其余乘坐命令按 `drivingVehicleId` 路由；`Move` 只写当前车。`VehicleStableId()` 返回最小 StableId，`VehicleStableIds()` 升序。客户端新增 `FindNearestVehicle(range)`，非乘坐时只绑定 `enterRange` 内最近车辆用于上下车/维修/后备箱/HUD；乘坐第二辆/第三辆时仍按 `PlayerState.vehicleStableId` 绑定。ZLR1 仍按车辆实体复制，无新命令/`PlayerState`/存档 schema。
+
+**V2 载具间碰撞**：`VehicleStep`/`VehiclePredictStep` 新增可选动态车身回调；服务器把同层其他载具作为障碍并权威结算双方车况，客户端驾驶预测用复制载具阻挡；相对速度按 `vehicleCollisionConditionDamageBase/PerSpeed/Max` 计算，`vehicleCollisionCooldownSeconds` 限频，服务器广播 `kVehicleRam` 并写双方驾驶员状态；V2 不做推挤/动量传递与乘员伤害，V4 后补位置推挤。
+
+**V3 客户端反馈**：`ApplyNetworkWorldSounds` 处理 `kVehicleRam`，在撞击位置生成火花/金属碎片并记录“网络载具撞击”；`SpawnVehicleHitFeedback` 增加可选震动开关，只有本地驾驶且撞击点距本地车辆 8 格内才震动镜头，网络 `kVehicleHit` 复用同一门控，避免远端车辆碰撞抖动本地镜头。仅表现层，不改变服务器结算、协议或存档。
+
+**V4 位置推挤**：`VehicleCollisionPushDistance` 按相对速度和 `vehicleCollisionPushPerSpeed/Max` 计算；服务器沿撞击方向以 0.05 格步进推开被撞车，检查目标格可走且不与第三辆车重叠，随后同步载具、驾驶员与乘客位置。复用碰撞冷却；不做质量、速度继承或持续冲量，客户端收到位置后校正。
+
+**V5 单机多车**：`EnsureVehicleSpawned` 统计全部 `Position + Vehicle` 并按 `vehicle.count` 用 6/10/14 格候选偏移补足，`SpawnLocalVehicle` 统一创建车辆组件；`BindNearestLocalVehicle` 在非驾驶且背包关闭时绑定 `enterRange` 内最近车辆，切换前同步旧车状态。单机驾驶把其他车辆作为 `VehicleBodyBlocked` 障碍，完全阻挡时按 V2 参数对双方扣车况并使用同一冷却；V5 不推挤停放车辆，不做质量/动量/乘员伤害。
+
+**测试/证据**：新增 `M26 多载具：两车独立驾驶与命令目标` **1/1（40 assertions）**、`M26-V2 VehicleStep：其他载具动态阻挡与相对冲击` **1/1（16 assertions）**、`M26-V2 服务器载具间碰撞：阻挡、双方车损与撞击音` **1/1（36 assertions）**、`M26-V4 VehicleCollisionPush：相对速度推挤距离` **1/1（7 assertions）**、`M26-V5 单机多车碰撞/存档` **2/2（47 assertions）**；`M26*` **6/6（146 assertions）**；`M25-T4*` **33/33（582 assertions）**、载具过滤 **44/44（574 assertions）**、`M25-T4* + M26*` **39/39（728 assertions）**；全量 Debug **763/763（133631 assertions）**、Release **763/763（133645 assertions）**、Python **89/89**；日志 `build/m26_v5_targeted.log`、`build/m26_v5_targeted_all.log`、`build/m26_v5_vehicle.log`、`build/m26_v5_debug.log`、`build/m26_v5_release.log`、`build/m26_v5_python.log`。Release 1280 双客户端烟测 `build/m26_v1_multi_vehicle_smoke/`：服务器生成 3 辆车（StableId 6/7/8），A 进入 6、B 进入 8；A/B 分别真实按键驾驶，A 首驶 4.03 格、B 驶 2.67 格、A 二次驶 2.55 格；A 驾驶时 B 位移 0、B 驾驶时 A 位移 0；两次下车成功，三份 stderr 为空；14 张截图与 `SUMMARY.md`，结果 `m26-v1-multi-vehicle-smoke-pass cars=3 drivers=2`。单机 V5 烟测 `build/m26_v5_single_player_multi_vehicle_smoke/`：新世界生成 3 辆，真实 WASD/Enter 分别驾驶 A/B，A 驶 3.15 格、B 驶 4.78 格，走回 A 漂移 0.00 格，10 张截图，结果 `m26-v5-single-player-multi-vehicle-smoke-pass`。
+
+**限制/下一步**：单机已支持多车生成/换车，但同一时刻只保留一个活动驾驶运行时，非活动车不模拟移动/推挤；非当前绑定车辆只有基础复制精灵，无远端车灯/破损叠加；客户端只保留一个引擎音循环；V2/V4 不做完整刚体动量/质量传递或乘员伤害，慢速接触不扣车况；V3/V4 未新增 1280 碰撞烟测；1280 构造/单机烟测已通过，未做多车自然多人试玩验收。下一步优先做碰撞场景实机验收，再决定完整刚体动量或每车表现扩展。未提交。
+
+## 2026-11-07 M25-T4 V27 双乘客位
+
+**范围**：联机车辆从“驾驶员 + 单乘客”扩展为“驾驶员 + 最多 2 名乘客”；复用既有 `EnterVehiclePassenger=45` 自动占第一个空位，不新增命令、`PlayerState` 字段或存档字段。不做后排独立座位/偏移、座位持久化、多车辆、乘客攻击或正式多人平衡。
+
+**实现**：`VehicleSpike.h` 增加 `kVehicleMaxPassengers=2`，`VehiclePassengerSeatAvailable`/`VehicleSeatForEnter`/`VehicleCanTakeDriverSeat` 接受第二乘客，新增 `VehicleCanGiveDriverSeatWithSecondPassenger`。服务器 `ServerVehicleRuntime` 增加 `secondPassengerStableId`，上下车/接管/让座均支持两名乘客，乘客下车后压缩到第一空位；`SyncServerVehiclePassengers` 统一校验/同步两名乘客。ZLR1 `VHCL` 从 25B 扩为 33B，追加第二乘客 StableId；`EntityReplication` 应用字段、客户端隐藏两名乘客，车外 HUD 只在两名乘客都满时显示“载具已满”。`PlayerState` v18 与存档 schema 不变，旧 25B 客户端不兼容。
+
+**测试/证据**：新增 `M25-T4-V27 VehicleSeat：双乘客位进入选择` **1/1（11 assertions）**、`M25-T4-V27 三客户端载具双乘客位：占用、接管与让座` **1/1（60 assertions）**，V27 合计 **2/2（71 assertions）**；`M25-T4*` **33/33（582 assertions）**，载具过滤 **42/42（551 assertions）**；全量 Debug **757/757（133485 assertions）**、Release **757/757（133498 assertions）**、Python **89/89**；日志 `build/m25_t4_v27_targeted.log`、`build/m25_t4_v27_all.log`、`build/m25_t4_v27_vehicle.log`、`build/m25_t4_v27_v26_regression.log`、`build/m25_t4_v27_replication.log`、`build/m25_t4_v27_debug.log`、`build/m25_t4_v27_release.log`、`build/m25_t4_v27_python.log`。Release 1280 三客户端烟测 `build/m25_t4_v27_double_passenger_smoke/`：A 驾驶、B/C 上乘客位，C 下车重上，A 下车后 C 接管、再让座给 B；服务器日志含 3 次 `服务器上乘客位`、2 个不同乘客 StableId、`服务器乘客下车`/`服务器下车`/`服务器接管驾驶位`/`服务器让座`；20 张 1280 截图，四份 stderr 为空；结果 `m25-t4-v27-double-passenger-smoke-pass passengers=2`。
+
+**限制/下一步**：只支持 2 名乘客，没有后排座位号 UI、每座位独立位置/朝向/碰撞、座位持久化、多车辆或乘客战斗；仍只允许乘客下车/快捷栏/背包/快捷使用/接管/让座；ZLR1 版本已扩展，旧客户端不能加入；构造三客户端烟测不替代自然多人试玩；正式音效仍待后续。未提交。
+
+## 2026-11-07 M25-T4 V26 乘客快捷使用与装备
+
+**范围**：联机乘客在车内无需打开背包即可按 `E` 使用背包中第一件可用消耗品、按 `R` 切换主手武器、按 `1–5` 选择快捷栏；驾驶员驾驶中仍不能打开背包或使用快捷栏。不新增命令、复制字段、`PlayerState`/ZLR1/存档 schema，不做攻击/换弹/建造、车内专属 UI、多乘客或物品所有权。
+
+**实现**：乘客输入分支在背包关闭时处理 `1–5`/`E`/`R`，分别发送既有 `SelectHotbar`/`UseBag`/`EquipBag`；背包打开时仍由背包 UI 处理，避免与 F 接管/Enter 下车冲突。乘客 HUD 增加 `E 使用 · R 装备 · 1-5 快捷栏`。服务器乘客白名单在 V25 基础上放行 `UseBag`/`EquipBag`，仍拒绝驾驶输入、攻击、建造、交易等动作；驾驶员驾驶中继续被拒绝，`InventoryAction` 边界不变。
+
+**测试/证据**：扩展双客户端用例为 `M25-T4-V22/V23/V24/V25/V26`，新增驾驶员 `UseBag` 被拒、乘客 `UseBag` 消耗罐头豆子（饥饿 1.00→0.65、状态含“使用”）、乘客 `EquipBag` 装备 `kitchen_knife`，现 **1/1（89 assertions）**；`M25-T4*` **31/31（508 assertions）**，载具过滤 **41/41（537 assertions）**；全量 Debug **755/755（133406 assertions）**、Release **755/755（133420 assertions）**、Python **89/89**；日志 `build/m25_t4_v26_targeted.log`、`build/m25_t4_v26_all.log`、`build/m25_t4_v26_all_release.log`、`build/m25_t4_v26_vehicle.log`、`build/m25_t4_v26_command.log`、`build/m25_t4_v26_debug.log`、`build/m25_t4_v26_debug_rerun.log`、`build/m25_t4_v26_release.log`、`build/m25_t4_v26_python.log`。Release 1280 双客户端烟测 `build/m25_t4_v26_quick_use_smoke/`：B 首连接后拾取出生点旁绷带（`stacks=1 items=2`）；A 驾驶、B 上乘客位，B 按 `E` 后探针 `items=2→1`，服务器日志 `服务器上乘客位`/`服务器乘客下车`，10 张截图，三份 stderr 为空；结果 `m25-t4-v26-quick-use-smoke-pass quickuse=1`。
+
+**限制/下一步**：只支持单乘客；驾驶员仍不能打开背包或使用快捷栏；烟测使用演示地面绷带只验证 `E` 快捷使用，`R` 装备由双客户端集成测试覆盖；自动化数字键注入未稳定触发 `1–5` 选择，快捷栏选择未单独截图；构造烟测不替代自然多人试玩。未提交。
+
+## 2026-11-07 M25-T4 V25 乘客车内背包与后备箱
+
+**范围**：联机乘客在车内按 `I` 打开背包/车辆后备箱，通过既有服务器权威 `InventoryAction` 存取、整理或使用物品；驾驶员驾驶中不能打开背包的边界不变。不新增命令、复制字段、`PlayerState`/ZLR1/存档 schema，不做多乘客、物品所有权或座位持久化。
+
+**实现**：客户端乘客输入分支不再强制关闭背包，打开后 `FindNearbyStorage` 将同位置车辆识别为后备箱，乘客 HUD 增加 `I 背包/后备箱`；背包打开时乘客输入不再触发 F 接管/Enter，关闭后恢复原逻辑。服务器 `ExecuteSessionCommand` 放行乘客 `InventoryAction`，`PlayerInventoryService` 继续做距离、容量、堆数与所有权校验；驾驶员驾驶中仍被拒绝。
+
+**测试/证据**：扩展双客户端用例为 `M25-T4-V22/V23/V24/V25`，新增驾驶员取后备箱被拒、乘客 `TakeAll` 将 2 个绷带从车辆后备箱取入背包、状态断言，现 **1/1（80 assertions）**；`M25-T4*` **31/31（499 assertions）**；载具过滤 **41/41（537 assertions）**；全量 Debug **755/755（133397 assertions）**、Release **755/755（133411 assertions）**、Python **89/89**；日志 `build/m25_t4_v25_targeted.log`、`build/m25_t4_v25_all.log`、`build/m25_t4_v25_all_release.log`、`build/m25_t4_v25_vehicle.log`、`build/m25_t4_v25_debug.log`、`build/m25_t4_v25_release.log`、`build/m25_t4_v25_python.log`、`build/m25_t4_v25_net.log`。Release 1280 双客户端烟测 `build/m25_t4_v25_passenger_inventory_smoke/`：A 驾驶、B 乘客；B 按 I，探针记录 `inv=1 title=后备箱：皮卡（0/40 kg）（空）`，关闭后 Enter 下车；服务器日志 `服务器上乘客位`/`服务器乘客下车`，11 张截图，三份 stderr 为空；结果 `m25-t4-v25-passenger-inventory-smoke-pass title=后备箱`。
+
+**限制/下一步**：只支持单乘客；驾驶员仍不能在驾驶中打开背包；烟测只验证打开/关闭后备箱，物品存取由集成测试覆盖，未做真实鼠标拖拽、多乘客、物品所有权或移动中后备箱自然体验；构造烟测不替代自然多人试玩。未提交。
+
+## 2026-11-07 M25-T4 V24 驾驶员停车让座
+
+**范围**：联机车辆停稳后，驾驶员可把驾驶位直接交给当前乘客，原驾驶员变为乘客；不做驾驶中换座、多乘客、让座给车外玩家或座位持久化。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleCanGiveDriverSeat(driver, passenger, requester, speed, maxSpeed)` 与默认上限 `kVehicleSeatHandoffMaxSpeed=0.10`、配置 `vehicle.seatHandoffMaxSpeed`；新增 `CommandType::GiveDriverSeat=47`。服务器仅驾驶位可发，校验乘客存在且车辆停稳；成功后交换 `driverStableId`/`passengerStableId`，清空车辆输入/速度，`SyncServerVehicleToEcs` 后同步新驾驶员与旧驾驶员，双方 status/stateDirty 更新。`PlayerState`/ZLR1/存档 schema 不变。客户端驾驶 HUD 在停车且存在乘客时显示 `F 让座`，按 F 发送命令；乘客端沿用 V23 的接管/下车逻辑。
+
+**测试/证据**：新增 `M25-T4-V24 VehicleDriverHandoff` **1/1（11 assertions）**；扩展双客户端用例为 `M25-T4-V22/V23/V24`，新增乘客回座、让座、状态/复制、旧驾驶员越权与下车断言，现 **1/1（74 assertions）**；`M25-T4*` **31/31（493 assertions）**；载具过滤 **41/41（537 assertions）**；全量 Debug **755/755（133391 assertions）**、Release **755/755（133405 assertions）**、Python **89/89**；日志 `build/m25_t4_v24_targeted.log`、`build/m25_t4_v24_v22v23v24.log`、`build/m25_t4_v24_all.log`、`build/m25_t4_v24_vehicle_all.log`、`build/m25_t4_v24_debug.log`、`build/m25_t4_v24_release.log`、`build/m25_t4_v24_python.log`、`build/m25_t4_v24_net.log`。Release 1280 双客户端烟测 `build/m25_t4_v24_seat_handoff_smoke/`：A 驾驶、B 乘客；A 停车按 F 让座，B 成为驾驶员并驾驶 2.42 格，A 作为乘客跟随 1.10 格；服务器日志 `服务器让座`，14 张截图，三份 stderr 为空。
+
+**限制/下一步**：只支持停稳后的驾驶位让座；不支持驾驶中换座、多乘客、让座给车外玩家、座位持久化、乘客受击/死亡/经验/任务或安全区；燃料/车况/车灯/后备箱不变；构造烟测不替代自然多人试玩。未提交。
+
+## 2026-11-06 M25-T4 V23 乘客接管驾驶位
+
+**范围**：驾驶员下车后，原联机乘客可在空驾驶位直接接管，不必先下车绕行；接管后沿用既有驾驶输入、预测、HUD、引擎音与车辆状态。不做驾驶中换座、多乘客、乘客专属权限或座位持久化。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleCanTakeDriverSeat(driver, passenger, requester)`；新增 `CommandType::TakeDriverSeat=46`。服务器只允许乘客位会话请求，校验驾驶位为空且请求者就是当前乘客；成功后清空 `passengerStableId`、把请求者写入 `driverStableId`，清空车辆输入/速度，调用 `SyncServerVehicleToEcs`/`SyncVehicleDriver` 并回 status；`PlayerState`/ZLR1/存档 schema 不变。客户端乘客 HUD 在空位时显示 `F 接管驾驶`，输入分支发送命令；接管后服务器回传 `driving=true`，复用既有驾驶路径。
+
+**测试/证据**：新增 `M25-T4-V23 VehicleDriverSeat` **1/1（6 assertions）**；扩展 V22 双客户端用例为 `M25-T4-V22/V23`，新增接管、乘客位清空、复制与再次驾驶断言，现 **3/3（78 assertions）**；`M25-T4*` **30/30（468 assertions）**；载具过滤 **40/40（526 assertions）**；全量 Debug **754/754（133338 assertions）**、Release **754/754（133352 assertions）**、Python **89/89**；日志 `build/m25_t4_v23_targeted.log`、`build/m25_t4_v23_v22.log`、`build/m25_t4_v23_all.log`、`build/m25_t4_v23_vehicle_all.log`、`build/m25_t4_v23_debug.log`、`build/m25_t4_v23_release.log`、`build/m25_t4_v23_python.log`。Release 1280 双客户端烟测 `build/m25_t4_v23_seat_switch_smoke/`：A 驾驶、B 乘客；A 下车后 B 按 F 接管，乘客跟随 1.19 格、接管后驾驶 2.42 格；服务器日志 `服务器接管驾驶位`，14 张截图，三份 stderr 为空。
+
+**限制/下一步**：只支持驾驶员下车后的空位接管；不支持驾驶中换座、驾驶员主动让座、多乘客、座位持久化、乘客受击/死亡/经验/任务或安全区；车辆损坏/无燃料仍沿用既有驾驶限制；构造烟测不替代自然多人试玩。未提交。
+
+## 2026-11-06 M25-T4 V22 联机载具乘客位
+
+**范围**：在单车/单驾驶位上增加一个联机乘客位；驾驶员与乘客都随服务器权威车辆移动，乘客不能驾驶/鸣笛/开关车灯；不做多乘客、乘客专属伤害/经验/任务、乘客引擎音或正式 PvP 平衡。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleSeat`/`VehicleSeatForEnter`/`VehiclePassengerSeatAvailable`；`EnterVehiclePassenger=45` 显式请求乘客位，`EnterVehicle=40` 保持驾驶位语义；`PlayerState` v18 增加与 `driving` 互斥的 `passenger`，ZLR1 `VHCL` 25B 追加 passenger id；服务器用 `passengerStableId`/`ecs::VehiclePassenger` 维护单乘客，`SyncVehiclePassenger`/`ReleaseServerVehicleSeat` 处理上下车、跟随、死亡/断线/接管；乘客命令白名单只允许下车/快捷栏；客户端 `m_riding`、自动乘客命令、乘客 HUD 与隐藏精灵恢复；PvP 撞击和车辆攻击继续排除 `VehicleOccupant`。
+
+**测试/证据**：新增 `M25-T4-V22 VehicleSeat` **1/1（7 assertions）**、`M25-T4-V22 玩家状态协议` **1/1（9 assertions）**、`M25-T4-V22 双客户端载具乘客位` **1/1（53 assertions）**，V22 目标 **3/3（69 assertions）**；`M25-T4*` **29/29（453 assertions）**；载具过滤 **39/39（520 assertions）**；全量 Debug **753/753（133309 assertions）**、Release **753/753（133323 assertions）**、Python **89/89**；日志 `build/m25_t4_v22_targeted.log`、`build/m25_t4_v22_all.log`、`build/m25_t4_v22_vehicle_all.log`、`build/m25_t4_v22_debug.log`、`build/m25_t4_v22_release.log`、`build/m25_t4_v22_python.log`。Release 1280 双客户端烟测 `build/m25_t4_v22_passenger_smoke/`：A 驾驶、B 自动进入乘客位，B 跟随 1.19 格后下车；服务器日志 `服务器上乘客位`/`服务器乘客下车`，9 张截图，三份 stderr 为空。
+
+**限制/下一步**：只支持一个驾驶员 + 一个乘客，不支持多乘客/换座/乘客驾驶、乘客受击/死亡/经验/任务、乘客引擎音或安全区；ZLR1/PlayerState 版本已提升，旧客户端不能加入；烟测为构造双客户端场景，不替代自然多人试玩。未提交。
+
+## 2026-11-06 M25-T4 V21 联机 PvP 载具撞玩家
+
+**范围**：仅 `combat.pvp=true` 的联机服务器，载具撞击驾驶员以外的存活车外玩家，服务器权威结算 Blunt 伤害/击退/硬直；不做单机玩家、乘客/多座位、友方 NPC、安全区、致死/击杀归属或正式 PvP 平衡。
+
+**实现**：`VehicleRamTargetKind` 新增 `Player`，`VehicleRamTargetKindFor` 增加 `allowPlayer`（默认 `false`）；服务器 `ApplyServerVehicleRam` 遍历 `PlayerTag`，排除驾驶员、`VehicleOccupant` 与 `NoCombatTarget`，由 `m_pvpEnabled` 控制玩家分支，命中后复用现有载具撞击伤害/击退/硬直，伤害来源写驾驶员 StableId，日志为 `服务器载具撞玩家`/`服务器载具撞杀玩家`；不新增命令、复制字段、`PlayerState`、协议或存档 schema，PvP 关闭时不伤害玩家。
+
+**测试/证据**：新增 `M25-T4-V21 VehicleRamTargetKind：PvP 玩家筛选` **1/1（10 assertions）**；新增双客户端服务器用例 `服务器载具撞击玩家` 与 `服务器载具撞击玩家受 PvP 开关限制` **2/2（49 assertions）**；`M25-T4*` **26/26（384 assertions）**；载具过滤 **38/38（513 assertions）**；全量 Debug **750/750（133240 assertions）**、Release **750/750（133254 assertions）**、Python **89/89**；日志 `build/m25_t4_v21_targeted.log`、`build/m25_t4_v21_all.log`、`build/m25_t4_v21_vehicle_all.log`、`build/m25_t4_v21_debug.log`、`build/m25_t4_v21_release.log`、`build/m25_t4_v21_python.log`。Release 1280 双客户端烟测 `build/m25_t4_v21_pvp_smoke/`：A 上车撞击 B，服务器日志 `服务器载具撞玩家`（伤害 8、速度 5.3），B 生命 100→92、车况 100%→99%；6 张截图 `v21_a_ready.png`、`v21_b_target.png`、`v21_a_driving.png`、`v21_b_before_hit.png`、`v21_a_after_hit.png`、`v21_b_after_hit.png`；三份 stderr 为空。
+
+**限制/下一步**：只覆盖一个驾驶员/一个车外玩家，不覆盖乘客、致死/击杀归属、安全区或双客户端震屏；PvP 关闭时无玩家伤害；烟测为构造双客户端场景，不替代自然 PvP 试玩。未提交。
+
+## 2026-11-06 M25-T4 V20 危险动物反击载具
+
+**范围**：危险动物（`AnimalKind::Dangerous`）成功攻击驾驶位时，保留对驾驶员的原伤害，同时磨损车况并复用 V16/V18 反馈；单机与服务器权威同规则。不做被动/友方动物、玩家/乘客被撞、动物主动把车当目标、车辆爆炸/报废或物种专属伤害/经验/任务。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleAttackerKind` 与 `VehicleAttackerKindFor`；动物 AI 直接调用 `CombatSystem::ApplyDamage`，不进入玩家近战的 `CombatSystem::HitInfo`，所以 `AnimalSystem` 新增 `AttackInfo`/`GetAttacks()` 记录本 tick 成功攻击。`ApplyLocalVehicleZombieAttacks`/`ApplyServerVehicleZombieAttacks` 更名为 `ApplyLocalVehicleAttacks`/`ApplyServerVehicleAttacks`：先读动物攻击记录，再读 Combat 命中；目标是驾驶位且来源为危险动物/僵尸时扣 1.5% 车况，0.75s 全车冷却，复用 V16 火花/音效与 V18 镜头震动/金属碎片。动物分支日志为 `载具受动物攻击`/`服务器载具受动物攻击`；不新增命令、复制字段、`PlayerState`、协议或存档 schema，不改变动物对驾驶员伤害或 V9 僵尸爪/咬减伤。
+
+**测试/证据**：新增 `M25-T4-V20 VehicleAttackerKind：僵尸/危险动物攻击来源筛选` **1/1（9 assertions）**；扩展服务器集成用例构造 `boar`，断言服务器扣血、车况下降与客户端 `vehicle_hit`（新增 5 assertions）；`M25-T4*` **23/23（325 assertions）**；载具过滤 **37/37（503 assertions）**；全量 Debug **747/747（133181 assertions）**、Release **747/747（133195 assertions）**、Python **89/89**；日志 `build/m25_t4_v20_targeted.log`、`build/m25_t4_v20_all.log`、`build/m25_t4_v20_vehicle_all.log`、`build/m25_t4_v20_debug.log`、`build/m25_t4_v20_release.log`、`build/m25_t4_v20_python.log`。Release 1280 烟测 `build/m25_t4_v20_animal_attack_smoke/`：4 只 `smoke_boar`（200 HP、危险、1 伤害、1.0s 攻击冷却），玩家 100000 HP，真实 Enter 上车后动物靠近攻击；5 次 `载具受动物攻击`，车况 100%→93%，5 次火花/音效并出现镜头震动/金属碎片；4 张截图 `v20_ready.png`、`v20_driving.png`、`v20_animal_attack.png`、`v20_vehicle_damaged.png`；`--audio.device=null`，`game.err.log` 为空。
+
+**限制/下一步**：只支持危险动物攻击驾驶位，不覆盖被动/友方动物、乘客/车外玩家；动物攻击仍按原 `Blunt` 伤害结算给驾驶员，V9 仅对僵尸爪/咬减伤；车况磨损复用固定 1.5%/0.75s，不按物种质量或攻击伤害缩放；只有 `AnimalSystem` 攻击记录会触发；服务器测试仅单客户端，未做双客户端震屏/火花截图；烟测为自定义物种/传送起点，不替代自然动物围攻/平衡试玩。未提交。
+
+## 2026-11-06 M25-T4 V19 载具撞击动物
+
+**范围**：载具驾驶中撞击 `Animal` 实体，复用现有速度阈值、Blunt 伤害、击退、硬直与车况磨损；单机与服务器权威同规则，动物死亡继续走 `DeathSystem -> AnimalCorpse` 与既有剥取；不做玩家碾压、动物专属伤害/经验/任务归属、分部件撞击、血液/尸体物理或正式音效。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleRamTargetKind` 与 `VehicleRamTargetKindFor`，统一忽略玩家/友方/死亡/异层目标，同一实体同时带 `Animal` 与 `AiState` 时优先按动物处理。`ApplyLocalVehicleRam` 在既有 `AiState` 扫描后增加 `Animal + Position + Health` 扫描；`ApplyServerVehicleRam` 使用同一分类和权威扣血。动物受击后通过既有 `HitReaction` 逃跑/反击；`Vehicle` 车况磨损、`vehicle_ram` 音效、V16 火花与 V18 镜头震动/金属碎片复用。动物击杀不发 `Melee` 经验；不新增命令、复制字段、`PlayerState`、协议或存档 schema。
+
+**测试/证据**：新增 `M25-T4-V19 VehicleRamTargetKind：僵尸/动物目标筛选` **1/1（9 assertions）**；扩展服务器载具集成用例，构造 `deer` 并断言服务器扣血、客户端 `Animal`/`Health` 复制（新增 7 assertions）；`M25-T4*` **22/22（311 assertions）**；载具过滤 **36/36（494 assertions）**；全量 Debug **746/746（133167 assertions）**、Release **746/746（133181 assertions）**、Python **89/89**；日志 `build/m25_t4_v19_targeted.log`、`build/m25_t4_v19_all.log`、`build/m25_t4_v19_vehicle_all.log`、`build/m25_t4_v19_debug.log`、`build/m25_t4_v19_release.log`、`build/m25_t4_v19_python.log`。Release 1280 烟测 `build/m25_t4_v19_animal_smoke/`：临时 `animals.json` 加载 24 只低感知 `smoke_deer`，车辆生成于 (69,7)，真实 Enter 上车后 W+D 行驶约 3.6s，命中/撞杀各 2 只；日志 2 次 `载具撞动物`/2 次 `载具撞杀动物`，车况 100%→95%→90%，含金属碎片/镜头震动/受击火花；5 张截图 `v19_ready.png`、`v19_driving.png`、`v19_animal_hit.png`、`v19_animal_corpse.png`、`v19_animal_after.png`；`--audio.device=null`，`game.err.log` 为空。
+
+**限制/下一步**：不支持玩家/乘客被撞；动物与僵尸共用整车单值伤害/磨损，没有按物种质量、撞击部位或速度阈值分级；动物击杀不发经验、不单独归属任务；烟测使用低感知自定义物种与传送起点，未做自然动物分布、双客户端动物尸体/剥取截图或正式血液/尸体物理；玩家碾压、正式音效和更完整自然试玩待后续。未提交。
+
+## 2026-11-06 M25-T4 V18 载具受击镜头反馈与金属碎片
+
+**范围**：僵尸攻击扣车况、载具撞僵尸扣车况、撞墙造成车况损失时，本地驾驶客户端叠加短促世界视图震动并生成金属碎片。只改表现层，不改变伤害、车况、动力、碰撞、协议或存档；不做真实凹坑贴图、裂纹玻璃、爆炸/报废演出或正式音效。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleScreenShake`、`VehicleHitShakeStrength`、`VehicleCrashShakeStrength`、`VehicleShakeDuration`、`VehicleScreenShakeOffset`、`VehicleMetalDebrisCount`、`VehicleMetalDebrisLifetime`；受击沿用 5% 磨损满强度，撞墙按 3~10 格/秒映射 0.25~1.0，震动 0.18~0.36s/最大 5px、碎片 2~6 片/0.45~0.90s。`WorldDemoState::SpawnVehicleHitFeedback` 在既有火花/音效路径上生成碎片，并在驾驶中触发震动；`ApplyLocalVehicleRam` 的车况磨损与 `UpdateVehicle` 的碰撞受损路径复用；`DrawWorld` 只偏移世界视图矩阵，HUD/UI 不抖；碎片在车辆火花后绘制并按寿命上浮淡出。联机服务器仍只复制车况，客户端收到既有 `vehicle_hit` `WorldSound` 时生成碎片，仅本地驾驶震屏；`PlayerState`/ZLR1/协议/存档不变。
+
+**测试/证据**：新增 `M25-T4-V18 VehicleImpactFeedback：镜头震动与金属碎片` **1/1（28 assertions）**；`M25-T4*` **21/21（295 assertions）**；载具过滤 **35/35（485 assertions）**；全量 Debug **745/745（133151 assertions）**、Release **745/745（133165 assertions）**、Python **89/89**；日志 `build/m25_t4_v18_targeted.log`、`build/m25_t4_v18_all.log`、`build/m25_t4_v18_vehicle_all.log`、`build/m25_t4_v18_debug.log`、`build/m25_t4_v18_release.log`、`build/m25_t4_v18_python.log`。Release 1280 烟测 `build/m25_t4_v18_vehicle_impact_smoke/`：真实 Enter 上车，探针生成 1 个僵尸，临时每击 25% 车况磨损/0.5s 冷却，4 次攻击使 100%→75%→50%→25%→0%；日志 4 次 `载具金属碎片：强度 1.00，pieces=6，寿命 0.90s` 与 4 次 `载具镜头震动：强度 1.00，时长 0.36s`，保留 `marks=3/6/10` 与 0% 报废烟雾；7 张截图 `v18_vehicle_pristine.png`、`v18_vehicle_attack_start.png`、`v18_impact_debris.png`、`v18_vehicle_scuffed.png`、`v18_vehicle_dented.png`、`v18_vehicle_wrecked.png`、`v18_vehicle_zero.png`；`--audio.device=null`，`game.err.log` 为空。
+
+**限制/下一步**：震动是短暂世界视图偏移，不改变相机中心/鼠标拾取/调试叠层，截图无法完整表达体感；碎片是屏幕空间矩形占位，不随相机旋转/参与光照，不区分攻击部位与八向车身，也没有玻璃裂纹、凹坑贴图、爆炸或正式音效；撞墙反馈复用受击火花/撞击音，未单独做撞墙烟测；联机未单独做双客户端震屏截图；构造烟测，不替代自然尸群围攻平衡。未提交。
+
+## 2026-11-06 M25-T4 V17 载具破损外观
+
+**范围**：按车况 75%/50%/25% 三档在载具精灵上叠加划痕/凹陷/破损表现，让玩家不看 HUD 也能感知车辆状态。只改表现层，不改变耐久/动力/碰撞/协议/存档；不做真实贴图、分部件变形、爆炸/报废演出、镜头震动或正式音效。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleDamageVisualLevel`（None/Scuffed/Dented/Wrecked）、`VehicleDamageVisualLevelFor`（>75% 无、50~75% 划痕、25~50% 凹陷、≤25% 破损）、`VehicleDamageVisualMarkCount`（0/3/6/10）与标签；`WorldDemoState::UpdateVehicleDamageVisual` 在跨档时写 `载具破损外观：车况 X%，等级 ...（marks=N）`，`DrawVehicleDamageVisual` 找到载具 DrawItem 后在车辆精灵之后绘制深色描边+橙色划痕、深色软粒子凹陷与锈色芯。绘制按车辆排序位置插入，不覆盖后方物体；本地/网络客户端共用已复制车况，不写存档、不复制、不新增命令。
+
+**测试/证据**：新增 `M25-T4-V17 VehicleDamageVisual：车况分级与痕迹数量` **1/1（16 assertions）**；`M25-T4*` **20/20（267 assertions）**；载具过滤 **34/34（457 assertions）**；全量 Debug **744/744（133123 assertions）**、Release **744/744（133137 assertions）**、Python **89/89**；日志 `build/m25_t4_v17_targeted.log`、`build/m25_t4_v17_all.log`、`build/m25_t4_v17_vehicle_all.log`、`build/m25_t4_v17_debug.log`、`build/m25_t4_v17_release.log`、`build/m25_t4_v17_python.log`。Release 1280 烟测 `build/m25_t4_v17_vehicle_damage_smoke/`：真实 Enter 上车，探针生成 1 个僵尸，临时每击 25% 车况磨损/0.5s 冷却，4 次攻击使 100%→75%→50%→25%→0%；日志确认 75% 划痕（marks=3）、50% 凹陷（marks=6）、25% 破损（marks=10）与 0% 报废烟雾；6 张截图 `v17_vehicle_pristine.png`、`v17_vehicle_attack_start.png`、`v17_vehicle_scuffed.png`、`v17_vehicle_dented.png`、`v17_vehicle_wrecked.png`、`v17_vehicle_zero.png`；`--audio.device=null`，`game.err.log` 为空；构造烟测，不替代自然尸群围攻平衡。
+
+**限制/下一步**：划痕/凹陷是屏幕空间绘制，不随相机旋转/参与光照，不区分攻击部位与八向车身；25%/0% 共用“破损”档，0% 主要靠 V11/V13 报废烟雾区分；没有真实凹坑贴图、裂纹玻璃、金属碎片、爆炸或正式音效；联机未单独做双客户端破损截图；构造烟测，不替代自然尸群试玩。未提交。
+
+## 2026-11-06 M25-T4 V16 载具受击音效与火花
+
+**范围**：V15 僵尸攻击造成车况损耗时补短促受击音效与橙黄火花；单机直接播放，联机由服务器广播 `WorldSound` 给客户端统一播放/显示。不改变伤害、车况、驾驶防护、协议或存档；不做破损外观、爆炸/报废演出、镜头震动、正式音频或自然尸群调参。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleHitFeedbackStrength`（以 5% 磨损为满强度）、`VehicleHitSparkCount`（1.5% 默认 5 个、5% 8 个）与 `VehicleHitSparkLifetime`（0.50~0.90s）；`WorldDemoState` 新增 `VehicleHitSpark` 生命周期/绘制，1.5% 磨损寿命约 0.62s。单机 `ApplyLocalVehicleZombieAttacks` 扣车况后生成朝外扩散火花并用 `AudioEngine::Play3D` 播放 `vehicle_hit`，HUD 保留 `载具受击：车况 X%`；服务器 `ApplyServerVehicleZombieAttacks` 在权威扣车况后广播 `WorldSound`（`Impact`、`vehicle_hit`、半径 18），客户端 `ApplyNetworkWorldSounds` 播放音频并在事件位置生成火花。新增 `assets/audio/vehicle_hit.wav`（0.26s、22050Hz、单声道、金属短击占位）与 `audio::kVehicleHit`；不新增协议字段、存档字段或 `PlayerState` 字段。
+
+**测试/证据**：新增 `M25-T4-V16 VehicleHitFeedback：磨损强度/火花数量与寿命` **1/1（15 assertions）**；`M25-T4*` **19/19（251 assertions）**；载具过滤 **33/33（441 assertions）**；服务器 V15 集成用例追加“客户端收到 `vehicle_hit` WorldSound”断言；`test_audio` null-device 加载并播放新 clip；全量 Debug **743/743（133107 assertions）**、Release **743/743（133121 assertions）**、Python **89/89**；日志 `build/m25_t4_v16_targeted.log`、`build/m25_t4_v16_all.log`、`build/m25_t4_v16_vehicle_all.log`、`build/m25_t4_v16_debug.log`、`build/m25_t4_v16_release.log`、`build/m25_t4_v16_python.log`。Release 1280 烟测 `build/m25_t4_v16_vehicle_hit_smoke/`：真实 Enter 上车，探针生成 1 个僵尸，5 次攻击车况 95%→90%→85%→80%→75%；日志 5 次 `载具受击火花`（sparks=8，寿命 0.90s）与 5 次 `载具受击音效：vehicle_hit`；第二击截图可见橙黄火花与 HUD `车况 90%`；4 张 `v16_near_vehicle.png`、`v16_zombie_attack.png`、`v16_vehicle_hit.png`、`v16_condition_damaged.png`。`--audio.device=null`，玩家 100000 HP、地图 28 个既有僵尸保留、关闭 spawner 补充；构造烟测，不替代自然尸群试玩。
+
+**限制/下一步**：火花为屏幕空间软粒子占位，位置在车辆中心附近，不区分攻击部位；没有镜头震动、车身凹陷/破损贴图、金属碎片、正式混音/音量面板；联机只验证单客户端 WorldSound，未做双客户端受击截图；构造烟测不代表自然尸群围攻平衡。未提交。
+
+## 2026-11-06 M25-T4 V15 僵尸攻击载具与车况损耗
+
+**范围**：僵尸对驾驶位的成功爪/咬命中同时磨损车况；保留 V9 的 85% 驾驶位减伤。只改载具受击结算，不新增协议/存档/PlayerState；不做僵尸主动把车辆当目标、车辆被摧毁/爆炸、乘客或动物攻击载具、正式火花/音效。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleZombieAttackConditionDamage` / `VehicleApplyZombieAttackConditionDamage`、`kVehicleZombieAttackConditionDamage=0.015`、`kVehicleZombieAttackCooldownSeconds=0.75`，`VehicleTuning` 与客户端/服务器配置解析新增 `zombieAttackConditionDamage/zombieAttackCooldownSeconds`。单机 `WorldDemoState::ApplyLocalVehicleZombieAttacks` 在 `CombatSystem` 本 tick 命中记录中找“目标是驾驶中的本地玩家、来源带 `AiState` 且非友方 NPC”的爪/咬命中，扣 `VehicleMotion.condition` 并显示 `载具受击：车况 X%`；服务器 `ApplyServerVehicleZombieAttacks` 用同一命中记录和冷却权威扣 `ecs::Vehicle.condition`，回 `status`，客户端只读复制状态。动物/友方 NPC、未命中的攻击不扣车况。
+
+**测试/证据**：新增 `M25-T4-V15 VehicleZombieAttack：车况损耗与钳制` 与 `M25-T4-V15 服务器载具受僵尸攻击扣车况`，合计 **2/2（25 assertions）**；`M25-T4*` **18/18（234 assertions）**；载具过滤 **32/32（426 assertions）**；全量 Debug **742/742（133089 assertions）**、Release **742/742（133103 assertions）**、Python **89/89**；日志 `build/m25_t4_v15_targeted.log`、`build/m25_t4_v15_all.log`、`build/m25_t4_v15_vehicle_all.log`、`build/m25_t4_v15_debug.log`、`build/m25_t4_v15_release.log`、`build/m25_t4_v15_python.log`（targeted 同时含单元与服务器集成 V15 用例）。Release 1280 烟测 `build/m25_t4_v15_vehicle_attack_smoke/`：真实 Enter 上车后探针在车旁生成 1 个僵尸（约 `83.9,20.5`，距离约 0.97 格），日志 `载具受僵尸攻击` 3 次，车况 95%→90%→85%，HUD 同步；4 张 `v15_near_vehicle.png`、`v15_zombie_attack.png`、`v15_vehicle_hit.png`、`v15_condition_damaged.png`。烟测临时使用 5% 磨损/0.5s 冷却；玩家 100000 HP、地图既有 28 个僵尸保留、关闭 spawner 补充；构造烟测，不替代自然尸群试玩。
+
+**限制/下一步**：只有一个固定每击损耗与全车共用冷却，不区分攻击部位/僵尸变体/车身位置；只统计已成功进入 `CombatSystem` 的 AI 命中，不覆盖被闪避/未命中；动物/友方 NPC 不触发；不新增载具受击音效/火花/破损外观；车况归零沿用 V6 动力衰减，不触发爆炸/报废动画。正式音效和更完整自然试玩仍待后续。未提交。
+
+## 2026-11-06 M25-T4 V14 载具喇叭与主动噪音
+
+**范围**：驾驶中按 `H` 鸣笛，补足车辆主动制造噪音/引怪的操作；单机本地播放 `vehicle_horn` 并向 `OnSound` 投递 24 格载具噪音，联机由服务器权威限频、广播 `WorldSound` 并触发 AI 听觉。只改载具交互，不改车况/动力/碰撞/存档/PlayerState；不做多车、长按蓄力、独立键位面板、音量面板或正式音效。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleHornReady(condition, cooldown)`（有限值、车况 > 0、冷却 <= 0）、`kVehicleHornNoiseRadius=24`、`kVehicleHornCooldownSeconds=1.5`，`VehicleTuning`/客户端与服务器配置解析新增 `hornNoiseRadius/hornCooldownSeconds`。`WorldDemoState::HonkVehicleHorn` 在驾驶分支复用 `RepairStructure` 的 `H` 键，单机向事件总线发 `SoundEvent{type=Vehicle, clip=vehicle_horn, radius=24}`，联机发送 `CommandType::HonkHorn=44`；HUD 追加 `H 喇叭`。服务器 `HonkServerVehicleHorn` 校验驾驶位/车况/冷却，广播同一 clip 的 `WorldSound` 并投递 AI `OnSound`，冷却随车辆 tick 递减，无存档/复制字段。新增 `assets/audio/vehicle_horn.wav`（0.48s、22050Hz、单声道、双音占位）；旧服务器会拒绝未知命令，旧客户端不会主动发该命令。
+
+**测试/证据**：新增 `M25-T4-V14 VehicleHorn：可用性与冷却` **1/1（7 assertions）**；`M25-T4*` **16/16（209 assertions）**；载具过滤 **31/31（416 assertions）**；全量 Debug **740/740（133064 assertions）**、Release **740/740（133078 assertions）**、Python **89/89**；日志 `build/m25_t4_v14_targeted.log`、`build/m25_t4_v14_targeted_all.log`、`build/m25_t4_v14_vehicle_all.log`、`build/m25_t4_v14_debug.log`、`build/m25_t4_v14_release.log`、`build/m25_t4_v14_python.log`。服务器载具集成用例扩展 `HonkHorn` 并断言收到 `vehicle_horn`；`test_audio` null-device 用例加载并播放该 clip。Release 1280 烟测 `build/m25_t4_v14_horn_smoke/`：真实 Enter 上车后探针生成 1 个目标（约 10.58 格），按 `H` 后日志 `载具喇叭：吸引半径 24 格`，4 秒内目标距离降到约 1 格；1.5s 内第二次 `H` 只产生 1 条喇叭日志；4 张截图 `v14_near_vehicle.png`、`v14_driving_horn.png`、`v14_horn_cooldown.png`、`v14_zombie_attracted.png`，HUD 显示 `H 喇叭`。玩家 100000 HP、地图 27 个既有僵尸保留、关闭 spawner，`--audio.device=off`；构造烟测，不替代自然试听。
+
+**限制/下一步**：`H` 上下文复用维修键，未做独立键位面板项/冷却 UI/喇叭光环/车外声源；只有 0.48s 占位双音，不是正式喇叭音频；单机由 SoundManager 默认音量组播放，联机服务器权威但未单独做双客户端喇叭截图；只测 1 车 1 目标，多车/多人叠加与自然尸群体验未覆盖；烟测目标为探针生成且玩家高生命。正式音效和更完整自然试玩仍待后续。未提交。
+
+## 2026-11-06 M25-T4 V13 软粒子烟雾
+
+**范围**：把 V11 的屏幕空间矩形烟团升级为程序化软粒子，保留轻/重/报废三级与火星；只改表现，不改耐久/动力/碰撞/协议/存档，不做体积烟/风向/遮挡、焦黑车身、起火/爆炸或正式音效。
+
+**实现**：`render::SpriteBatch` 初始化时生成独立 96×96 RGBA 径向 alpha 纹理（中心高 alpha、边缘渐隐、轻微角度扰动），不写图集/manifest；`VehicleSpike.h` 新增 `VehicleSmokeParticleScale`（0.70×→1.60×）与 `VehicleSmokeParticleAlpha`（轻/重/报废峰值 0.75/0.85/0.95，寿命最后 35% 淡出）。`WorldDemoState::DrawVehicleDamageSmoke` 每团绘制 outer/core 两层软精灵，报废级加暖色软火星；纹理不可用时回退 V11 矩形；本地/网络共用已复制车况/位置，不写存档、不复制、不改协议。
+
+**测试/证据**：`M25-T4-V13 VehicleSoftSmoke：软粒子尺寸与淡出` **1/1（15 assertions）**；`M25-T4*` **15/15（198 assertions）**；载具过滤 **30/30（409 assertions）**；全量 Debug **739/739（133038 assertions）**、Release **739/739（133052 assertions）**、Python **89/89**；日志 `build/m25_t4_v13_targeted.log`、`build/m25_t4_v13_targeted_all.log`、`build/m25_t4_v13_vehicle_all.log`、`build/m25_t4_v13_debug.log`、`build/m25_t4_v13_release.log`、`build/m25_t4_v13_python.log`。Release 1280 软粒子烟测：构造起点，真实 Enter 上车，通过探针目标与 25%/5s 车况磨损参数依次得到 75%→50%→25%→0%，每档下车截图；5 张截图在 `build/m25_t4_v13_soft_smoke/`；日志含 `smoke level=1/2/3`、4 次 `撞击车况`、`载具烟雾：软粒子（程序纹理）`。玩家 100000 HP，地图既有 27 个僵尸保留，探针额外 1 个目标；关闭 spawner 补充/动物；构造烟测，不替代自然试玩。
+
+**限制/下一步**：软纹理是屏幕空间 billboard，不随相机旋转/参与光照，仍有少量点状缩放；烟源固定在车头前方，不随风向漂移；轻烟在浅色车身/遮挡下较淡；无体积烟/遮挡、焦黑车身、起火/爆炸与正式音效；联机未单独双端烟雾截图。未提交。
+
+## 2026-11-06 M25-T4 V12 八向皮卡外观
+
+**范围**：把 V10 的四向皮卡升级为八向，补东南/西南/西北/东北四帧；只改表现，不改碰撞/动力/耐久/协议/存档，不做轮胎转向、16 向、正式手绘/车身损伤、软粒子或正式音效。
+
+**实现**：`tools/gen_art_slice.py` 的 `_vehicle_axes` 增加四个对角方向，生成 160×128 八帧并更新 `assets/own/atlas_own.png/json`（188 帧）；manifest 新增 4 个 `object.vehicle_*` 逻辑名，`object.vehicle` 保持南向别名。`VehicleSpike.h` 把 `VehicleVisualDirection` 扩为 8 值；`VehicleVisualDirectionFor` 以 `atan2(vy,vx)` 落入 45° 扇区并保留 8° 额外滞回，零速度/非有限速度保持当前方向；`VehicleVisualSprite/Label` 覆盖八向。`WorldDemoState::UpdateVehicleVisual` 继续用本地/网络复制的 heading 更新 `SpriteRef`，生成/绑定/网络目标切换默认南向；不写存档、不复制、不新增命令。
+
+**测试/证据**：`M25-T4-V12 VehicleVisual：八向扇区与切换滞回` **1/1（29 assertions）**；`M25-T4*` **14/14（183 assertions）**；载具过滤 **29/29（394 assertions）**；全量 Debug **738/738（133024 assertions）**、Release **738/738（133037 assertions）**、Python **89/89**；日志 `build/m25_t4_v12_targeted.log`、`build/m25_t4_v12_targeted_all.log`、`build/m25_t4_v12_vehicle_all.log`、`build/m25_t4_v12_debug.log`、`build/m25_t4_v12_release.log`、`build/m25_t4_v12_python.log`。Release 1280 八向烟测：探针把玩家放到开阔地皮卡旁（车辆偏移 13,-3，约 82.5,20.5），真实 Enter 上车后八个短脉冲依次验证东/东南/南/西南/西/西北/北/东北，日志完整出现八向；11 张截图在 `build/m25_t4_v12_vehicle_visual_smoke/`。关闭 spawner 补充与动物，地图既有 27 个僵尸保留，玩家 100000 HP 仅防干扰；未使用 `Zombies.Spawn`，构造起点不替代自然行走试玩。
+
+**限制/下一步**：45° 扇区使部分斜向帧呈端视/窄侧视；8° 滞回在极慢斜向转向/贴墙时可能短暂保留上一方向；外观尺寸仍大于 0.65 碰撞半径；无轮胎转向、16 向、车身损伤分层和正式音效；联机外观只共用代码，未单独双端截图。未提交。
+
+## 2026-11-06 M25-T4 V11 低车况/归零烟雾
+
+**范围**：车况 50% 及以下由表现层分级冒烟，补足 V6 只有 HUD/日志“动力下降”的反馈缺口；不做真实粒子/起火/爆炸/焦黑贴图、软粒子、协议/存档或正式音效。
+
+**实现**：`VehicleSpike.h` 新增 `VehicleDamageSmokeLevelFor`（50/25/0% → None/Light/Heavy/Critical）、`VehicleDamageSmokeInterval`（0.55/0.28/0.14s）、`VehicleDamageSmokeLifetime`（1.5/1.9/2.4s）。`WorldDemoState` 增加烟团列表与计时器：每帧老化/补充，烟团包含世界位置、寿命、尺寸和漂移；`DrawVehicleDamageSmoke` 在车辆后绘制三层半透明矩形并上浮，报废级加橙色火星。烟级变化日志 `载具烟雾…（smoke level=n）`；本地与网络客户端共用已复制车况/位置，不写存档、不复制、不新增命令。
+
+**测试/证据**：新增 `M25-T4-V11 VehicleDamageSmoke：车况烟雾等级与间隔` **1/1（14 assertions）**；`M25-T4*` **14/14（167 assertions）**；载具过滤 **29/29（378 assertions）**；全量 Debug **738/738（133007 assertions）**、Release **738/738（133021 assertions）**、Python **89/89**；日志 `build/m25_t4_v11_targeted_all_final.log`、`build/m25_t4_v11_debug_final.log`、`build/m25_t4_v11_release_final2.log`、`build/m25_t4_v11_python_final.log`。Release 1280 烟雾烟测：默认出生点走到皮卡，构造 1 个僵尸撞两次，50% 轻烟截图、0% 黑烟/火星截图，日志 `smoke level=1`/`=3`；`build/m25_t4_v11_condition_smoke/` 4 张。默认游荡者/动物关闭，不替代自然试玩。
+
+**限制/下一步**：矩形烟团是占位表现，不是软粒子/体积烟；50% 轻烟在遮挡时较淡；无焦黑车身、起火/爆炸、风向/遮挡和正式音效；联机烟雾只共用代码，未单独双端截图。首跑 Release 全量在 `M23-F2b-T6` 动物剥取状态超时，单独复跑和二次全量均通过，判断为既有测试时序波动，与本切片无直接关系。未提交。
+
+## 2026-11-05 M25-T4 V10 皮卡四向外观
+
+**范围**：把木箱占位替换为四向程序化等距皮卡外观，按世界速度主轴选帧；不改碰撞/动力/载具状态/协议/存档，不做八向、轮胎转向、正式手绘/车身损伤分层/音效。
+
+**实现**：`tools/gen_art_slice.py` 新增 `make_vehicle` 与 `vehicle_north/east/south/west` 160×128 帧；manifest 新增四个 `object.vehicle_*` 资源，`object.vehicle` 保留 `vehicle_south` 兼容。`VehicleSpike.h` 新增 `VehicleVisualDirectionFor`（`|vx|/|vy|` 主轴 + 1.2 滞回）、`VehicleVisualSprite/Label`；`WorldDemoState::UpdateVehicleVisual` 在生成/绑定后按 heading 更新 `SpriteRef`，本地/网络客户端共用，初始/切换默认南向，不写存档、不复制、不新增命令。`SpriteScale` 1.7→1.0。
+
+**测试/证据**：`M25-T4-V10` **1/1（13 assertions）**，`M25-T4*` **13/13（153 assertions）**；全量 Debug **737/737（132993 assertions）**、Release **737/737（133008 assertions）**、Python **89/89**；日志 `build/m25_t4_v10_targeted_final.log`、`build/m25_t4_v10_targeted_all_final.log`、`build/m25_t4_v10_debug_final.log`、`build/m25_t4_v10_release_final.log`、`build/m25_t4_v10_python_final.log`。Release 1280 外观烟测：默认出生点走到皮卡、Enter 后四向驾驶，日志 `外观朝向：东/南/西/北`，8 张截图在 `build/m25_t4_v10_vehicle_visual_smoke/`，驾驶中生命 96；为专注外观关闭默认游荡者/动物，不替代自然试玩。
+
+**限制/下一步**：四向而非八向，斜向/贴墙仍可能按主轴翻向；外观尺寸大于 0.65 碰撞半径；无正式手绘、轮胎转向、车身损伤表现和正式音效；联机外观只共用代码，未单独双端截图；开阔地自动航点仍可能因建筑碰撞超时。未提交。
+
+## 2026-11-05 M25-T4 V9 自然试玩与驾驶员防护
+
+**范围**：用默认出生点、真实 WASD/Enter 和默认游荡者做自然驾驶，不传送/不刷僵尸；根据自然尸群压力补驾驶位爪/咬减伤与平衡收口。不做正式美术/音效、完整人工试玩、分部件耐久、多车或刚体。
+
+**实现**：新增运行时 `ecs::VehicleOccupant{damageReduction}`，单机上车/服务器 `SyncVehicleDriver` 挂载，下车/载具消失/`ReleaseServerVehicleDriver` 移除；`config/game.json` 新增 `vehicle.driverDamageReduction=0.85`，`VehicleTuning`/两端解析钳制。`CombatSystem::ApplyDamage` 仅对爪/咬应用车辆减伤，与护甲取最大值、上限 95%；火焰/钝击/调试/PvP 不吃。驾驶 HUD 显示 `防护 85%`，服务器上车状态/日志同步；护甲磨损改为仅在实际护甲减伤时触发。修单机车辆消失时的防护清理。
+
+**测试/证据**：`M25-T4-V9` **1/1（9 assertions）**，`M25-T4*` **12/12（140 assertions）**，T3 服务器上下车用例补 `VehicleOccupant` 挂载/移除断言；全量 Debug **736/736（132980 assertions）**、Release **736/736（132994 assertions）**、Python **88/88**；日志 `build/m25_t4_v9_targeted.log`、`build/m25_t4_v9_targeted_all.log`、`build/m25_t4_v9_debug.log`、`build/m25_t4_v9_release.log`、`build/m25_t4_v9_python.log`。Release 单机 1280×720 自然烟测：默认出生点走到皮卡，沿东侧开阔地驾驶，默认游荡者 id 10 追击；日志 `驾驶员防护 85%`、`撞击车况...剩余 84%`、`载具撞杀...+25 近战经验`，驾驶中剩 70.3 HP、3 次撞杀；6 张截图在 `build/m25_t4_v9_natural_smoke/`，脚本 `build/m25_t4_v9_natural_smoke.ps1`（临时）。
+
+**限制/下一步**：75% 减伤自然跑仅剩约 3 HP，最终取 85%；仍可能被围困致死，不做完全免疫/护甲耐久/乘客保护；自然路径曾触发移动超时回退，说明车辆仍会被建筑/地形卡住；正式美术/音效、动物/玩家碾压、多车/刚体/乘客仍待后续。未提交。
+
+## 2026-11-05 M25-T4 V8 远端载具引擎音
+
+**范围**：联机非驾驶客户端听到远端载具引擎循环；本地驾驶仍优先，不新增正式音效、轮胎音、多车混音或协议。
+
+**实现**：`VehicleEngineAudioSourceFor` 统一本地优先/远端/无源策略，车况归零不播放。`WorldDemoState::NetworkVehicleHasRemoteDriver` 从 ZLR1 `VHCL` 复制 actor 的 `vehicleDriverStableId` 判断远端驾驶员；`UpdateVehicleAudio` 在非本地驾驶但有远端驾驶员时复用同一条 `vehicle_engine` 3D 循环，位置/速度/车况来自已复制载具，音量/音高沿用 `VehicleEngineToneForSpeed`。远端下车、解绑/离开视野、断线、车况归零或本地重新驾驶时停止；绑定清除路径补 `StopVehicleAudio`。不新增命令、复制字段、协议或存档 schema。
+
+**测试/证据**：新增 `M25-T4-V8 VehicleEngineAudioSource` 六条策略断言；目标 **35/35（645 assertions）**；全量 Debug **735/735（132968 assertions）**、Release **735/735（132982 assertions）**、Python **88/88**；日志 `build/m25_t4_v8_targeted_all.log`、`build/m25_t4_v8_debug.log`、`build/m25_t4_v8_release.log`、`build/m25_t4_v8_python.log`。双客户端 1280×720 烟测（客户端 B `audio.device=null`）：A 上车后 B 日志 `引擎音效启动（远端，...）`，A 下车后 B 日志 `引擎音效停止`；截图 `b_remote_engine.png`、`b_remote_stopped.png`、`a_driving.png`、`a_remote_stopped.png`，目录 `build/m25_t4_v8_remote_audio_smoke/`，脚本为临时早期停止版。
+
+**限制/下一步**：只支持单服务器单车；不做多车实例化、远端撞击音重复播放、正式混音/遮挡/听感验收；远端引擎音依赖服务器复制频率；null device 只验证句柄/资源/状态，不代表实际听感；未提交。
+
+## 2026-11-05 M25-T4 V7 撞击击杀经验归属
+
+**范围**：载具撞杀僵尸后给驾驶员发放一次近战击杀经验；单机与服务器权威同规则。不做动物/玩家碾压、载具专属技能、撞击命中经验、任务专属协议或分部件结算。
+
+**实现**：`ApplyLocalVehicleRam` 在 `ApplyDamage` 成功后读取目标生命，致死才调用 `GrantProgressionXp(Melee, progression.meleeXpPerKill, "载具撞击")` 并写 `载具撞杀... +x 近战经验`；非致死不发。服务器 `ApplyServerVehicleRam` 按 `driverStableId` 找驾驶员与 Session，调用 `AwardProgressionXp`，由既有 PlayerState 同步；客户端不重复发放。沿用默认 `meleeXpPerKill=25`，不新增技能/配置/协议/存档字段。任务 `Kill any` 与随机事件目标继续使用现有 `CombatSystem.kills`/死亡检测，不新增任务协议。
+
+**测试/证据**：扩展 `M25-T4 服务器载具撞击/噪音与车灯复制`，在载具位置构造 1 HP 目标并断言驾驶员 Melee XP 上升；目标 **34/34（639 assertions）**；全量 Debug **734/734（132962 assertions）**、Release **734/734（132976 assertions）**、Python **88/88**；日志 `build/m25_t4_v7_targeted_all.log`、`build/m25_t4_v7_debug.log`、`build/m25_t4_v7_release.log`、`build/m25_t4_v7_python.log`。Release 单机 1280×720 构造烟测：临时 `ramBaseDamage=200`，1 个僵尸，速度 5.5 撞击日志 `伤害 200`、`载具撞杀：...+25 近战经验`、`撞击车况...剩余 96%`，HUD `XP 25/180`；4 张截图在 `build/m25_t4_v7_ram_xp_smoke/`，脚本 `build/m25_t4_v7_ram_xp_smoke.ps1`（临时）。
+
+**限制/下一步**：只对僵尸生效；近战经验是临时归类，没有驾驶技能；不发放撞击命中经验，不处理载具击杀的任务专属归属/分配；烟测为构造单目标撞击，不是自然战斗平衡；未提交。
+
+## 2026-11-05 M25-T4 V6 低车况动力衰减与失效反馈
+
+**范围**：车况低于 75% 后按车况线性降低极速与加速，HUD/日志提示“动力下降”；车况归零时停止本地引擎循环音，保留“车辆损坏/按 E 维修”。不做分部件耐久、轮胎/悬挂、起火/爆炸/报废演出、正式音效。
+
+**实现**：`VehicleConditionPerformanceScale` 返回 0..1 动力倍率（75% 以上 1.0，50% 0.85，25% 0.70，0% 0，0..75% 线性）；`VehicleStep` 把倍率乘到极速/加速，制动不变，`VehiclePredictStep` 复用同一规则。单机 `WorldDemoState` 首次跌破阈值显示“车况低：动力下降”并写 `[vehicle] 车况低：动力 x...`，HUD 追加“动力下降”；`UpdateVehicleAudio` 在车况归零时停止引擎循环，维修后恢复。服务器沿用同一 `VehicleStep`，不新增协议/复制字段/存档 schema；客户端预测与服务器同规则。新增 `m_vehicleLowConditionWarned` 仅用于单次提示，进入车辆时重置。
+
+**测试/证据**：新增 `M25-T4-V6 VehicleCondition：低车况动力倍率与极速衰减`（100/75/50/25/0%、非法值、极速/加速上限、预测复用）；目标 **34/34（634 assertions）**；全量 Debug **734/734（132957 assertions）**、Release **734/734（132971 assertions）**、Python **88/88**；日志 `build/m25_t4_v6_targeted_all.log`、`build/m25_t4_v6_debug.log`、`build/m25_t4_v6_release.log`、`build/m25_t4_v6_python.log`。Release 单机 1280×720 构造烟测：临时把单次撞击磨损调到 60%，1 个僵尸，速度 5.5 撞击后 `剩余 40%`、`车况低：动力 x0.79（车况 40%）`，HUD `车况 39% · 路面 草地 · 动力下降`；4 张截图在 `build/m25_t4_v6_low_condition_smoke/`，脚本 `build/m25_t4_v6_low_condition_smoke.ps1`（临时）。
+
+**限制/下一步**：动力衰减是整车单值且立即截断当前极速，不做分部件/渐进失速；75% 以上无手感变化；烟测为构造高磨损撞击，不是自然驾驶平衡；车况归零的引擎音停止为代码路径，未单独听感验收；未提交。
+
+## 2026-11-05 M25-T4 V5 撞击车况磨损
+
+**范围**：载具成功撞击僵尸后，按速度扣车况；单机与服务器权威同规则。不做动物/玩家碾压、撞击击杀 XP/任务归属、分部件耐久、车况归零后的起火/报废演出。
+
+**实现**：`VehicleRamConditionDamage` 返回基础 1.5% + 超过 `ramMinSpeed` 的速度 × 0.8%/格，上限 12%；`VehicleApplyRamConditionDamage` 按当前车况夹取并返回实际扣减。单机 `WorldDemoState::ApplyLocalVehicleRam` 在命中后扣车况并显示 `载具撞击：车况 xx%`；服务器 `ApplyServerVehicleRam` 改为返回是否命中，权威扣车况并回 `status` “撞击：车况 xx%”。两端各用 `ramWearCooldown`（重置为 `ramCooldownSeconds`）限制同一窗口内多目标只扣一次。配置新增 `vehicle.ramConditionDamageBase/PerSpeed/Max`；沿用 `ecs::Vehicle.condition` 存档与 ZLR1，不新增协议/schema。同时校正 `VehicleRamStagger` 单测期望为超过阈值的速度项，与实际实现一致。
+
+**测试/证据**：新增 `M25-T4-V5 VehicleRamCondition：速度映射与车况钳制`（阈值、基础/速度项、上限、NaN、车况夹取、空指针）；服务器集成用例追加撞击后 condition 下降断言。目标 **33/33（620 assertions）**；全量 Debug **733/733（132943 assertions）**、Release **733/733（132957 assertions）**、Python **88/88**；日志 `build/m25_t4_v5_targeted.log`、`build/m25_t4_v5_debug.log`、`build/m25_t4_v5_release.log`、`build/m25_t4_v5_python.log`。Release 单机 1280×720 构造烟测：12 个僵尸，`撞击车况：速度 2.1，扣车况 1.5%，剩余 98%`，HUD 98%；后续 2.7/4.2 速度命中共用冷却未重复扣；4 张截图在 `build/m25_t4_v5_ram_wear_smoke/`，脚本 `build/m25_t4_v5_ram_wear_smoke.ps1`（临时）。
+
+**限制/下一步**：只对载具当前撞击目标（僵尸）生效，不含动物/玩家；不结算击杀 XP/任务归属；车况磨损是整车单值，无分部件；烟测为低速构造撞击，未覆盖车况归零、连续尸群、自然驾驶与正式平衡；未提交。
+
+## 2026-11-05 M25-T4 V4 载具引擎与撞击占位音效
+
+**范围**：驾驶时本地引擎循环音（音量/音高随速度）、撞击僵尸的短促撞击音；不做正式车辆音效、远端车辆引擎声、路面材质音、音量面板与真实设备听感验收。
+
+**实现**：新增程序合成 `assets/audio/vehicle_engine.wav`（2s 循环）与 `vehicle_ram.wav`（0.3s）。`AudioEngine::Play3D` 增加 `allowPitch` 选项与 `SetVolume/SetPitch/SetPosition` 长音更新接口，默认音效仍禁用 pitch。`VehicleEngineToneForSpeed` 把速度映射到音量 0.18→0.62、音高倍率 x0.82→x1.28；`WorldDemoState::UpdateVehicleAudio` 在本地驾驶时启动/更新循环，下车、车辆失效、断线或退出时停止；单机撞击播放撞击音，服务器权威撞击后广播 `WorldSound`（`Impact` + `vehicle_ram` clip，半径 18）。配置新增 `vehicle.engineIdleVolume/engineMaxVolume/engineMinPitch/engineMaxPitch/ramSoundVolume`。
+
+**测试/证据**：新增 `M25-T4-V4 VehicleAudio` 速度映射/钳制用例；扩展 AudioEngine null device 用例验证引擎循环、位置/音量/音高和撞击 clip；服务器集成用例验证客户端收到 `vehicle_ram` 声音。目标 **32/32（607 assertions）**；全量 Debug **732/732（132931 assertions）**、Release **732/732（132944 assertions）**、Python **88/88**；日志 `build/m25_t4_v4_targeted.log`、`build/m25_t4_v4_debug.log`、`build/m25_t4_v4_release.log`、`build/m25_t4_v4_python.log`。Release 单机 1280×720、`audio.device=null` 冒烟：草地/泥土路各完成上车→引擎启动→下车停止→再次上车启动，日志各 2 次启动/1 次停止，并复跑路面距离（草地 3.16 格、泥土路 5.63 格），6 张截图在 `build/m25_t4_v4_audio_smoke/`，脚本 `build/m25_t4_v4_audio_smoke.ps1`（临时）。
+
+**限制/下一步**：引擎声仅本地驾驶者车辆，远端车辆无引擎循环；撞击音为合成占位，未做材质/速度分层、混响/遮挡和正式混音；null device 只验证句柄/资源/状态，不代表实际听感；正式车辆美术/音效与自然试玩仍待后续；未提交。
+
+## 2026-11-05 M25-T4 V3 载具路面附着
+
+**范围**：按车辆中心地面识别铺装/泥土路/草地，调整极速/加速/制动；不做四轮独立采样、真实漂移、坡道/湿度、正式路面美术。现有地图的 `tile.floor.dirt` 即泥土路。
+
+**实现**：`VehicleSpike` 增加 `VehicleSurface`/`VehicleSurfaceProfile`/`VehicleSurfaceForFloor`/`VehicleSurfaceProfileFor`/`VehicleSurfaceLabel`，`VehicleStep`/`VehiclePredictStep` 接受可选路面参数，默认铺装保持旧行为。铺装 x1.0/x1.0/x1.0，泥土路 x0.92/x0.88/x0.92，草地 x0.62/x0.55/x0.72；`config/game.json` 新增 6 个倍率并钳制 0..1。单机 `WorldDemoState::VehicleSurfaceAt` 取中心格，驾驶 HUD 追加 `路面 ...` 并在变化时写日志；服务器 `ServerVehicleSurfaceAt` 用同一规则权威步进并写 `服务器路面 ...`；客户端预测使用同一分类。不新增命令/复制字段/存档 schema。
+
+**测试/证据**：新增 `M25-T4-V3 VehicleSurface` 分类/倍率、极速/加速排序、制动/预测 3 个用例；目标 **29/29（576 assertions）**；全量 Debug **731/731（132913 assertions）**、Release **731/731（132927 assertions）**、Python **88/88**；日志 `build/m25_t4_v3_targeted.log`、`build/m25_t4_v3_debug.log`、`build/m25_t4_v3_release.log`、`build/m25_t4_v3_python.log`。Release 单机 1280×720 构造烟测：同方向各 1s，草地起点 (82.5,20.5) 移动 3.16 格、泥土路起点 (82.5,26.5) 移动 5.44 格；HUD/日志确认 `路面 草地`/`路面 泥土路`，6 张截图在 `build/m25_t4_v3_surface_smoke/`，脚本 `build/m25_t4_v3_surface_smoke.ps1`（临时）。
+
+**限制/下一步**：按中心单格判定，跨路缘/斜向可能提前降速；进入低附着路面时极速上限立即截断；不改变玩家步行；烟测为构造起点直行，不是自然试玩；正式车辆美术/音效仍待后续（V4 已补占位引擎/撞击音）；自然试玩仍待后续；未提交。
+
+## 2026-11-05 M25-T4 V2 载具车辆车灯
+
+**范围**：只做皮卡驾驶中车灯开关、占位光束、存档与联机同步；不做真实光照/阴影、道路附着、正式车辆美术/音效。驾驶中 `L` 切换；非驾驶 `L` 保持任务焦点。
+
+**实现**：`VehicleMotion`/`ecs::Vehicle` 增加 `headlights`；`Vehicle` 存档组件升 v2（`minimumVersion=1`，旧档缺失按 false），单机切换立即写 ECS。联机新增 `CommandType::ToggleHeadlights=43`，服务器校验驾驶位后权威切换并回 status，ZLR1 `VHCL` 从 16B 扩到 17B 复制车灯，客户端不本地切换。`WorldDemoState::DrawVehicleHeadlights` 以 18 条半透明射线、远端弧和双灯点绘制占位光束，夜间强度 1.0/白天 0.28，方向由速度保持；驾驶 HUD 显示 `L 车灯开/关`。
+
+**测试/证据**：新增 `M25-T4-V2 车灯状态在驾驶步进后保留`；扩展存档、ZLR1 车辆复制、CommandPacket 与服务器载具集成用例。目标用例 **26/26（544 assertions）**；全量 Debug **728/728（132881 assertions）**、Release **728/728（132895 assertions）**、Python **88/88**；日志 `build/m25_t4_v2_targeted.log`、`build/m25_t4_v2_debug.log`、`build/m25_t4_v2_release.log`、`build/m25_t4_v2_python.log`。Release 单机 1280×720、`game.startHour=22` 构造烟测：5 张截图（`build/m25_t4_v2_headlights_smoke/`）与 `game.log`，HUD/日志确认 `车灯：开`/`车灯：关`，脚本 `build/m25_t4_v2_headlights_smoke.ps1`（临时）。
+
+**限制/下一步**：光束是屏幕空间占位扇形，不改变世界亮度/阴影/碰撞；无正式车灯音效；路面附着由 V3 补齐；烟测为构造传送，不是自然试玩；未提交。
+
+## 2026-11-05 M25-T4 V1 载具撞击僵尸与噪音引怪
+
+**范围**：只做载具碾压/撞击僵尸与车辆噪音引怪，不做车灯、道路附着、动物/玩家碾压、正式美术/音效。
+
+**实现**：`VehicleSpike` 新增撞击伤害/击退/硬直/重叠与配置；单机 `WorldDemoState` 在驾驶 tick 后对同层 `AiState+Health` 目标走 `CombatSystem::ApplyDamage`（Blunt），按目标 0.75s 冷却避免每 tick 重复命中；速度超过阈值后按 0.45s 间隔发送 `OnSound`（新增 `SoundType::Vehicle`，半径 12）引怪。联机 `ServerHost` 执行同一套规则并权威扣血，Health 走 ZLR1 复制；服务器广播 `WorldSound` 供客户端播放，客户端不本地扣血。`config/game.json` 增加 ram/noise 参数，单机与服务器启动解析。
+
+**测试/证据**：`M25-T4 VehicleRam` 纯逻辑 + `M25-T4 服务器载具撞击僵尸、复制与噪音广播` 集成用例，共 **2/2（29 assertions）**；服务器测试验证撞击扣血复制、`worldSoundsSent` 广播与 AI `sinceHeard` 引怪。全量 Debug **726/726（132845 assertions）**、Release **726/726（132859 assertions）**、Python **88/88**；日志 `build/m25_t4_targeted.log`、`build/m25_t4_debug.log`、`build/m25_t4_release.log`、`build/m25_t4_python.log`。另做 Release 单机 1280×720 构造烟测：传送至皮卡旁、驾驶并脚本刷 12 个僵尸，日志 5 次 `载具撞僵尸`，4 张截图与 `game.log` 在 `build/m25_t4_vehicle_world_smoke/`，脚本 `build/m25_t4_smoke.ps1`。
+
+**限制/下一步**：1280 烟测为传送/构造刷僵尸，不是自然试玩；`SoundType::Vehicle` 暂用 Impact 占位音效；撞击不计车辆耐久损伤、不额外结算击杀 XP/任务归属；车灯由 V2、路面附着由 V3 补齐，正式音效后续。未提交。
+
+## 2026-11-05 M25-T3 V7 全量测试与文档收口
+
+**范围**：补齐 DoD 中载具上下车距离、层级、座位占用、死亡/睡眠校验；执行 Debug/Release/Python 全量回归；回填 `docs/12`、`docs/10`、`docs/11`、`docs/01`、`docs/05`、README 与本文。
+
+**实现/修复**：新增 `M25-T3-V7 载具上下车距离、层级、占用、睡眠与死亡校验` 集成用例，覆盖远距离上车拒绝、跨层上车拒绝、睡眠投票中车辆命令拒绝、A 驾驶时 B 抢座拒绝、A 驾驶中死亡释放座位且死亡状态上车拒绝；睡眠投票/睡眠中非睡眠命令现在写入 `PlayerState.status`（“睡眠投票或睡眠中无法行动”），此前只记录命令拒绝。
+
+**测试/证据**：目标 **1/1（47 assertions）**；全量 Debug **724/724（132817 assertions）**、Release **724/724（132830 assertions）**、Python **88/88**；日志 `build/m25_t3_v7_targeted.log`、`build/m25_t3_v7_debug.log`、`build/m25_t3_v7_release.log`、`build/m25_t3_v7_python.log`。V6 21 张 1280 截图与双客户端烟测证据仍保留在 `build/m25_t3_vehicle_mp_smoke/`。
+
+**限制/下一步**：30s 周期玩家档案同步保存仍可能阻塞心跳，V6 烟测临时关闭、正式服务器保持默认，后续异步化并补压力回归；V6 烟测使用临时存档/探针预装后备箱，不是自然多人试玩；用户以“继续下一步”确认 M25-T3 收口（2026-11-05）；M25-T4 V1 随后完成自动化+1280 构造烟测，V2 车灯、V3 路面附着、V4 引擎/撞击占位音效、V5 撞击车况磨损、V6 低车况动力衰减、V7 撞击击杀经验、V8 远端载具引擎音也已补齐；自然试玩/正式音效待后续；未提交。
+
+## 2026-11-05 M25-T3 V6 双客户端 1280 联机烟测
+
+**范围**：Release 服务器 + 两个 1280×720 客户端，A 从村庄出生点走到皮卡旁，先取后备箱预装物资再上车；B 近距离观察并尝试抢座。A 驾驶撞墙（车况 100%→0%）、下车维修（0%→100%）、加油（97%→100%），第二次打开后备箱存回剩余 5 件/3 堆；随后 A 在驾驶中触发服务器正常 shutdown，服务器释放座位并保存；A/B 自动重连，A 收到“驾驶位已释放”提示，车辆在服务器重启后恢复为燃料 97%、车况 100%、后备箱 3 堆，A 再次上车/下车成功。烟测关闭游荡者、动物与 POI 守军，临时单机存档生成器把维修包/燃料罐/绷带预装进车辆后备箱。
+
+**修复**：联机下社交聊天的打开键原为 `ENTER`，会在车辆交互前消费按键；改为 `Y` 打开聊天、`ENTER` 发送，`ENTER` 保留上下车（`UiSystem`/`SocialPanel`/`social.rml`/`multiplayer.rml` 同步）。`ScriptApi::FindPlayer` 在无 `PlayerTag` 的网络本地镜像上回退到 `NetworkClient::PlayerStableId()`，使联机探针的 `Player.GetPosition`/`Inventory.GetState` 可读；服务器权威不变。
+
+**测试/证据**：`m25-t3-v6-smoke-pass`；A 最终 HUD 燃料 96%/车况 100%，服务器重启恢复燃料 97%/车况 100%/后备箱 3 堆（5 件）；Run1/Run2 各 1 次载具恢复、0 次重复生成；21 张 1280 截图与 `server-run1.log`/`server-run2.log`/`a.log`/`b.log` 位于 `build/m25_t3_vehicle_mp_smoke/`，脚本 `build/m25_t3_v6_smoke.ps1`。全量 Debug **723/723（132770 assertions）**、Release **723/723（132784 assertions）**、Python **88/88**；日志 `build/m25_t3_v6_debug.log`、`build/m25_t3_v6_release.log`、`build/m25_t3_v6_python.log`。
+
+**限制/下一步**：烟测使用临时存档预装后备箱与窗口消息/探针定位，仍不是自然多人试玩；服务端显式关闭 30s 周期档案保存以避免同步保存阻塞心跳，正式服务器仍默认 30s；A 最终 HUD 与服务器恢复燃料相差 1% 属快照/采样间隔。V7 做最终全量回归、DoD 收口与用户确认；未提交。
+
+## 2026-11-05 M25-T3 V5 驾驶预测、重连与安全
+
+**范围**：`WorldDemoState` 新增驾驶客户端预测：首个服务器副本初始化，之后按帧用 `VehiclePredictStep` 积分（不改燃料/车况），仅在 `Replication().LastAppliedTick()` 前进时用 `VehicleCorrectPosition` 校正（>1 格吸附、否则 0.25 混合）；预测位置同步车辆/驾驶员实体、相机和本地渲染。断线时停用预测、清理绑定，显示一次断开提示；重连收到 owner 状态后提示驾驶位已释放/已恢复步行。服务器 `Enter/Exit/Service` 状态提示、同身份接管释放座位、B 接管与驾驶中操作/非驾驶员 Move 隔离均补自动验证。
+
+**测试/证据**：新增 `M25-T3-V5` 两用例，覆盖重复快照校正收敛且燃料/车况不变、A 驾驶时 B 上车被拒、A 驾驶中维修/攻击被拒且零副作用、B Move 不改车辆、A 同身份重连后步行/车辆位置/燃料/车况/后备箱保持、B 接管。目标 **2/2（93 assertions）**；全量 Debug **723/723（132769 assertions）**、Release **723/723（132783 assertions）**、Python **88/88**。日志 `build/m25_t3_v5_targeted.log`、`build/m25_t3_v5_debug.log`、`build/m25_t3_v5_release.log`、`build/m25_t3_v5_python.log`。
+
+**限制/下一步**：真实 1280 双客户端画面、预测手感与断线/重启烟测在 V6；未提交。
+
+## 2026-11-05 M25-T3 V4 车辆复制、客户端绑定与 HUD
+
+**范围**：ZLR1 新增 `VHCL` 组件（燃料/车况/驾驶员 StableId）；服务器车辆同步 `Velocity`；客户端按 `PlayerState.vehicle`/首个车辆副本绑定 `m_vehicle`，同步位置、速度、燃料、车况、视觉缩放与碰撞体；车辆驾驶员精灵在本地/远端隐藏；`FindNearbyStorage` 允许联机车辆，`I` 打开服务器权威后备箱；联机 `Enter/Exit/ServiceVehicle` 通过命令提交，驾驶中只发 `Move`；HUD 显示服务器镜像燃料/车况与操作提示。驾驶预测/吸附仍留 V5。
+
+**测试/证据**：新增 `M25-T3-V4` 复制单测与双客户端联机用例，覆盖燃料/车况/驾驶员 64 位 StableId、后备箱物品往返、A 驾驶后 B 收到位置/速度/燃料、A 下车后 driver=0、从车辆后备箱取物。目标 **2/2（57 assertions）**；全量 Debug **721/721（132676 assertions）**、Release **721/721（132690 assertions）**、Python **88/88**。日志 `build/m25_t3_v4_targeted.log`、`build/m25_t3_v4_debug.log`、`build/m25_t3_v4_release.log`、`build/m25_t3_v4_python.log`。
+
+**限制/下一步**：客户端绑定/隐藏/HUD 尚未做 1280 实机烟测；驾驶预测、断线重连、服务提示和安全补测在 V5，双客户端画面证据在 V6。未提交。
+
+## 2026-11-05 M25-T3 V3 服务器权威载具
+
+**范围**：`ServerHost` 增加 `ServerVehicleRuntime`、唯一载具生成/读档接管、`Enter/Exit/ServiceVehicle` 命令、驾驶 `Move` 的屏幕→世界方向转换、服务器 tick 推进与玩家/物理体同步、碰撞/燃料状态、世界存档与重启恢复；断线/死亡/同身份接管释放座位。座位仍只存在运行时，车辆 StableId/位置/燃料/车况/后备箱随世界存档。
+
+**测试**：新增服务器载具联调用例，覆盖上车/驾驶/下车/维修加油/缺物品回滚/非法下车/断线释放；重启用例覆盖 StableId/位置/燃料/车况/后备箱恢复、车辆不重复、座位为空、玩家在车外。全量 Debug **719/719（132619 assertions）**、Release **719/719（132633 assertions）**、Python **88/88**。日志 `build/m25_t3_v3_*.log`。
+
+**限制/下一步**：ZLR1 车辆/驾驶员复制、客户端绑定/HUD/预测与双客户端烟测仍在 V4/V5/V6。未提交。
+
+## 2026-11-05 M25-T3 V2 纯逻辑与协议
+
+**范围**：新增载具座位/退出格/客户端预测/校正纯逻辑；新增运行时 `VehicleDriver`；ZLC1 增加 `EnterVehicle/ExitVehicle/ServiceVehicle`；`PlayerState` 升 v17，尾部增加 owner-only 车辆驾驶态（车辆 ID/驾驶中/燃料/车况），保留 v16 尾部兼容。
+
+**验证**：`*Vehicle*` 18/18（233 assertions）、`*Command*` 5/5（269 assertions）、PlayerState 全量兼容用例通过；Debug **717/717（132539 assertions）**、Release **717/717（132553 assertions）**、Python **88/88**。日志 `build/m25_t3_v2_*.log`。
+
+**限制/下一步**：尚未接入服务器权威、客户端复制/UI；V3 开始服务器车辆实体与命令。未提交。
+
+## 2026-11-05 M25-T3 V1 载具联机设计
+
+**范围**：新增 `docs/12-M25T3载具联机.md`，定义单服务器单车单驾驶位、服务器权威位置/速度/燃料/车况、上下车与驾驶输入命令、ZLR1 车辆/驾驶员复制、owner-only `PlayerState v17` 驾驶态、客户端位置预测/吸附校正、联机维修/加油/后备箱、断线重连与服务器重启恢复。座位不持久化，重连从步行开始；不做多座位/多车/车辆战斗/刚体物理。
+
+**状态**：V1 设计待用户确认，确认后进入 V2；生产代码/测试未改动。未提交。
+
+## 2026-11-05 M25-T2 V6 文档收口
+
+**范围**：汇总 V1–V5 的范围、实现、测试计数、V5 1280 证据与已知限制；同步 `docs/11`、`docs/10`、`docs/01`、`docs/05`、README 与本文。生产代码与测试未再改动。
+
+**最终基线**：Debug **712/712（132327 assertions）**、Release **712/712（132341 assertions）**、Python **88/88**；V5 烟测存档 `20261105-040025`，重启读档后车辆位置/车况/燃料/后备箱 5 件均恢复。
+
+**已知限制**：单机单车；旧版本不保证读新档；驾驶中存档读档后从步行状态开始；占位美术；无僵尸攻击车辆/碾压/轮胎悬挂/乘客/联机同步。
+
+**状态**：V6 文档已收口；用户以“继续下一步”完成最终验收（2026-11-05），M25-T2 关闭。未提交。
+
+## 2026-11-05 M25-T2 V5 全量测试与实机烟测
+
+**范围**：Release 1280×720 实测自然撞墙、维修、加油、后备箱存入/取出、快速存档、关闭进程、主菜单“继续”读档；未改产品代码。烟测用独立 `save.root` 与临时 Lua 探针（发维修包/燃料罐/样本物品、近车传送、后备箱动作、触发 `Save.QuickSave`）。
+
+**结果/证据**：车辆生成 (82,20)，撞击速度 9.3 扣车况 50.1%，49%（日志 50%）→维修两次→100%（维修包 ×2）；燃料 99%→100%（燃料罐 ×1）；后备箱 0/40 kg→3/40 kg（5 堆），取出全部 5 堆后再存回 5 堆。快速存档 `20261105-040025`，重启“继续”日志 `载具恢复：格 (76.5, 18.7)，燃料 100%，车况 100%，后备箱 5 件`，读档后后备箱 UI 确认 5 堆并可取出。14 张截图与 `phase1.log`/`phase2.log` 位于 `build/m25_t2_vehicle_smoke_v5/`；脚本 `build/m25_t2_v5_smoke.ps1` 输出 `m25-t2-v5-smoke-pass savedLoot=5`。
+
+**验证**：Debug **712/712（132327 assertions）**、Release **712/712（132341 assertions）**、Python **88/88**；日志 `build/m25_t2_vehicle_debug_v5.log`、`build/m25_t2_vehicle_release_v5.log`、`build/m25_t2_vehicle_python_v5.log`。
+
+**限制/下一步**：V6 汇总文档、等待用户确认截图/实机；确认前不进入 M25-T3。未提交。
+
+## 2026-11-05 M25-T2 V4 E 维修/加油、I 后备箱与 HUD
+
+**范围**：`E` 在车辆 `enterRange` 内按车况优先维修/加油，消耗维修包/燃料罐；缺少对应物品时消费本次 E 并提示；`I` 优先打开车辆 40kg/6 堆后备箱，标题“后备箱：皮卡（x/40 kg）”；驾驶中关闭背包并禁止 E/I；HUD 显示燃料/车况、维修/加油/后备箱提示。新增 `PlanVehicleService` 纯逻辑。
+
+**结果/证据**：全量 Debug **712/712（132327 assertions）**、Release **712/712（132341 assertions）**、Python **88/88**；日志 `build/m25_t2_vehicle_debug_v4.log`、`build/m25_t2_vehicle_release_v4.log`、`build/m25_t2_vehicle_python_v4.log`。1280 烟测 `build/m25_t2_vehicle_smoke_v4/`：临时构造车况 50%，HUD/截图 `v4_near_vehicle.png`、`v4_driving.png`、`v4_after_service.png`、`v4_trunk.png`；`E` 维修 50%→90%→100%，`E` 加油 95%→100%，`I` 后备箱标题正确。临时构造代码已还原。
+
+**限制/下一步**：V5 补完整保存/读档、后备箱存取和全量实机烟测；未提交。
+
+## 2026-11-05 M25-T2 V3 车辆持久化与后备箱数据
+
+**范围**：新增 `game/VehicleComponents.h` 的 `ecs::Vehicle{condition,fuel}` 并注册为第 45 个存档组件；车辆实体不再过滤，保存位置/车况/燃料；读档按 `Vehicle` 绑定并补 `SpriteScale`/`Collider`；车辆增加 `Container` 40kg/6 堆 + `PlayerStorage` 后备箱；驾驶中存档路径临时恢复玩家 `SpriteRef`，读档从步行状态开始。`test_entity_save` 增加车辆/后备箱往返，组件数 44→45，相关测试同步更新。
+
+**结果/证据**：全量 Debug **711/711（132322 assertions）**、Release **711/711（132336 assertions）**、Python **88/88**；日志 `build/m25_t2_vehicle_debug_v3.log`、`build/m25_t2_vehicle_release_v3.log`、`build/m25_t2_vehicle_python_v3.log`。停车保存→主菜单继续：`save_root/20261105-014438`，`load_after_continue.png`，日志 `载具恢复：格 (74.5,28.5)`；驾驶中退出自动存档→读档：`drive_exit_root/20261105-014623`，`v3_drive_save_load.png`，日志 `载具恢复：格 (80.3,22.7)，燃料 99%`，玩家精灵可见。
+
+**限制/下一步**：F12 在驾驶中仍被 T1 驾驶输入屏蔽，驾驶存档走 `OnExit` 自动存档；V4 才接 E 维修/加油、I 后备箱命名/HUD。未提交。
+
+## 2026-11-05 M25-T2 V2 纯逻辑、配置与单测
+
+**范围**：`VehicleSpike.h` 新增 `VehicleTuning`、碰撞耐久/`crashLatched`、车况归零禁加速、维修/加油夹取；M25-T1 驾驶参数迁移到 `config/game.json` 的 `vehicle` 段；`WorldDemoState` 读取配置并使用统一 tuning。
+
+**结果/证据**：`test_vehicle` 12/12（58 assertions）；全量 Debug **710/710（132299 assertions）**、Release **710/710（132314 assertions）**、Python **88/88**；日志 `build/m25_t2_vehicle_debug_v2.log`、`build/m25_t2_vehicle_release_v2.log`、`build/m25_t2_vehicle_python_v2.log`。1280 启动烟测确认新配置可加载并生成车辆（格 74,28）。
+
+**限制/下一步**：V2 只接纯逻辑与配置，尚未接 `ecs::Vehicle` 存档、后备箱、E/I 交互和 HUD 车况显示；V3 待开始。未提交。
+
+## 2026-11-05 M25-T2 V1 载具耐久/维修/加油/后备箱文档
+
+**范围**：新增 `docs/11-M25T2载具耐久与后勤.md`，定义单机持久化车辆、碰撞车况、维修包/燃料罐、40kg/6 堆后备箱、E 维修/加油、I 后备箱与 4 张 1280 验收截图。**未写代码**，等待用户确认范围/键位/数值后从 V2 开始。
+
+## 2026-11-05 M25-T1 载具驾驶 Spike（V2–V6 已完成）
+
+**范围**：新增 `game/VehicleSpike.h` 纯逻辑（加速/制动/燃料/8 点圆形碰撞/轴滑动/3×3 生成搜索）与 7 个单测；`WorldDemoState` 单机生成一辆占位皮卡，`Enter` 上下车、`WASD` 屏幕方向驾驶、玩家精灵隐藏/位置跟随/物理体传送/下车恢复；车辆不写存档、无联机/耐久/座位/储物/僵尸碰撞。`object.vehicle` 复用 `crate_1`，新增运行时 `SpriteScale=1.7`；`Vehicle=ENTER` 写入默认键位与配置；HUD 复用 `actionHint`，不新增字段/RML。
+
+**结果/证据**：Debug 1280 烟测生成于 (74,28)，距玩家 1.92 时上车，驾驶后下车 (76.5,30.5)；Release 1280 烟测生成于 (75,29)，截图 `build/m25_t1_vehicle_smoke/release_near2.png`、`release_driving2.png`、`release_moved2.png`，摘要 `build/m25_t1_vehicle_smoke/SUMMARY.md`。载具单测 7/7（31 assertions）；全量 Debug **705/705（132272 assertions）**、Release **705/705（132286 assertions）**、Python **88/88**；日志 `build/m25_t1_vehicle_debug.log`、`build/m25_t1_vehicle_release.log`、`build/m25_t1_vehicle_python.log`。
+
+**限制/下一步**：占位木箱放大，不是正式车辆美术；车辆无物理体，僵尸可穿过；不存档、不联机、无耐久/储物/加油/音效。用户已确认进入 M25-T2；T2 设计见 `docs/11-M25T2载具耐久与后勤.md`，确认范围后再写代码。未提交。
+
+## 2026-11-05 M24 收口（T6 用户确认）
+
+**范围**：T6 自然试玩由用户实机确认通过（2026-11-05），用户明确不填写 `PLAYTEST.md` 逐段表；按用户意见不将构造烟测冒充自然记录，T6/C6 以用户确认签收。M24-T1–T7 全部完成，M24 收口。用户确认记录见 `build/m24_playtest/USER_CONFIRMATION.md`。
+
+**证据**：构造路线 `m24-t6-route-smoke-pass`（35 击杀/2 分 25 秒/16 张 1280 截图）、4 个主要食物容器实际掉落烟测（单次样本 1.88 日，`build/m24_t6_food_loot/`）、Debug **698/698（132241 assertions）**、Release **698/698（132255 assertions）**、Python **88/88**。逐段耗时、食物/弹药/医疗收支明细未留存，原因是用户明确不要求填写；后续新增内容仍按 DoD 要求记录可复现证据。
+
+## 2026-11-04 M24-T6 食物总量校准
+
+**范围**：T6 首轮平衡后六个新 POI 全清食物期望 4.29 日，超出规划“6 个 POI 全清 1.5~2.5 日”上限。本轮只调 `assets/loot.json` 食品表：超市食品架 rolls 3→1、`canned_soup` 随机权重 3→2；仓库食品区/教堂救济物资 rolls 3→1；旅馆客房 rolls 3→2。单 POI 食物期望降为超市 0.63、旅馆 0.49、警局 0.15、消防站 0、教堂 0.53、仓库 0.70 日，全清合计 **2.50 日**；保底汤/水保留，警察局/仓库弹药与武器/医疗取值不变。
+
+**验证**：`tools/tests/test_m24_balance.py` 新增全清 1.5~2.5 日断言，Python **88/88**；Release 构造路线按新掉落复跑 `m24-t6-route-smoke-pass`（35 击杀/2 分 25 秒/16 张 1280 截图，`build/m24_playtest/`）。Debug 全量 **698/698（132241 assertions）**、Release **698/698（132255 assertions）**、Python **88/88**，日志 `build/m24_t6_food_debug_full.log`、`build/m24_t6_food_release_full.log`、`build/m24_t6_food_python_full.log`。主构造路线只搜任务目标容器；追加 `build/m24_t6_food_loot_smoke.ps1` 实际搜索超市食品架/旅馆客房/教堂救济物资/仓库食品区，4 个容器均非空，单次样本 **1.88 日**（2.63 饥饿单位 / 1.4，期望 2.50），证据 `build/m24_t6_food_loot/SUMMARY.md` 与 4 张 1280 截图；该烟测仍使用 100000 HP/传送/F6，不是自然试玩。默认 100 HP、无探针的 30~60 分钟自然试玩仍需人工；T6/C6 未签收。
+
+## 2026-11-04 M23 间歇网络测试稳定化
+
+**范围**：定位长期偶发的 `M23-F1-T10`（联机远程武器）与 `M23-F2a-T6`（服务器权威觅食）失败并修正测试本身。F1-T10 的偶发失败是目标玩家被传送到射手 0.55 格后物理推挤导致朝向/距离漂移，子弹未命中；现改为 0.8 格并在每次开火前重新对齐目标、清零速度、以当前射手/目标位置计算方向。F2a-T6 的偶发失败是测试在旧规划列表选了节点后传送到节点中心，规划边界移动可能把该节点挤出列表；现改为传送后重选稳定节点，并把“同节点重复采集”改为断言服务器拒绝（耗尽或已不在规划范围）。未改生产逻辑/协议/存档。
+
+**验证**：Release 定向循环 `M23-F1-T10` 50/50、`M23-F2a-T6` 100/100 通过；Debug 全量 **698/698（132242 assertions）**、Release 全量 **698/698（132255 assertions）**、Python **87/87**；全量日志 `build/m24_t7_debug_full_final.log`、`build/m24_t7_release_full_final.log`。T6 自然试玩仍待人工，T6/C6 未签收。
+
+## 2026-11-04 M24-T7 联机、存档与全量回归
+
+**范围**：复用 T2/T3/T4 已落地的服务器权威路径，补 T7 验收：双客户端旅馆后仓搜索/取物同步、双方完成任务且奖励各一次；A 完成空投、B 不重复计数；A 击杀尸潮事件僵尸、B 击杀进度不增加；A/B 重连后事件箱不重复生成、完成态与奖励不重复。空存档完成旅馆任务/搜索 1 只空投箱后重启，POI 容器 `searched`/剩余物品、任务完成态、奖励、空投箱数量/搜索状态与任务进度均恢复，守军不因完成态重刷。
+
+**实现/修复**：内容指纹仍为 v13，KCP 握手对不一致指纹返回 `ContentMismatch`；`SaveWorld` 过滤无效 `Health` 实体，避免守军处于倒地 0.5 秒窗口时负 HP 导致整个世界快照失败。未改协议/存档 schema。
+
+**验证**：Debug **698/698（132242 assertions）**、Release **698/698（132255 assertions）**、Python **87/87**；新增 4 个 T7 用例（双客户端、重启恢复、指纹拒绝、版本锁定）。Release 全量首轮命中既有间歇 `M23-F2a-T6`/`M23-F1-T10`，单跑/复跑通过。T7 完成后复跑 T6 Release 构造路线 `m24-t6-route-smoke-pass`，确认存档过滤与测试改动未破坏村庄→6 POI→撤离链路。T6 默认 100 HP、无探针自然试玩仍待人工，T6/C6 未签收。
+
+## 2026-11-04 M24-T6 平衡与 30~60 分钟试玩
+
+**范围**：新增 `tools/tests/test_m24_balance.py`，按真实物品/掉落/配置计算每 POI 食物期望、警察局/仓库弹药区间、警棍/大锤/警用背心/消防服取舍与医疗保底/权重；校准超市食品架 rolls 4→3、仓库食品区 rolls 4→3 且罐头汤保底 2→1、警察局枪柜 9mm 保底 8→6、仓库贵重品柜霰弹 max 8→6。结果：超市/仓库食物 1.22/1.37 日、警局 9mm 23.31、仓库霰弹 9.33；六个新 POI 全清期望食物 4.29 日（每 POI ≤1.5 日，总量留自然试玩判断）。
+
+**路线/断点**：`build/m24_t6_route_smoke.ps1` 构造路线覆盖村庄电台→超市→警局→旅馆→消防站→教堂→仓库→撤离，完成 3 条支线、中继链、空投事件与消防服奖励；35 击杀、2 分 28 秒、16 张 1280 截图，日志/报告/人工路线在 `build/m24_playtest/`。发现撤离点先结束单机局会跳过 `relay_extract` 的完成判定；`WorldDemoState::RefreshHud` 改为 `UpdatePoiTasks → UpdateMissions → UpdateObjective`，现在先记录 `任务完成：准备撤离（relay_extract）` 再显示“成功撤离”。该修复不改变 HUD 字段或存档格式。
+
+**验证**：Debug **694/694（132084 assertions）**、Release **694/694（132097 assertions）**、Python **87/87**；Release 路线烟测 `m24-t6-route-smoke-pass`。待人工：默认 100 HP、无探针、无 F6 的 30~60 分钟自然试玩，逐段记录耗时/伤害/食物/弹药/医疗与自然随机事件；完成前 T6 不标完成，C6 不签收。
+
+## 2026-11-04 M24-T5 HUD、引导与日志
+
+**实现**：新增 `HudState.eventGuide/eventTone`，`RefreshEventGuide` 选择最近进行中的随机事件，显示事件名、目标进度、指向未搜索事件箱/事件站点的方向距离与奖励；空投目标优先未搜索箱，事件结束后自动隐藏。事件触发、事件箱发现（空投补给箱/感染者藏匿箱）、事件完成分别写入中央 notice 与 `events` 日志；非随机任务完成提示追加首目标叙事。`ui::HudNoticeSuppressed` 在背包/交易/对话打开时抑制 HUD notice，空投箱搜索结果显示在背包状态行，避免遮挡。任务焦点新增 `MissionFocusPriority`/`MissionFocusLess`，按随机事件（当日时限）→主线/支线→每日，再按目标距离、链顺序、ID 排序，`L` 循环与自动选择共用。`PoiGuideText` 覆盖 6 个新 POI 的名称/威胁/方向/距离/任务叙事；native HUD、`core_ui` Lua/Python 与 `Hud.GetState` 同步事件字段。
+
+**验证**：`test_missions` 新增事件指引与焦点排序，`test_poi` 扩展 6 个新 POI 叙事/范围/色调，`test_random_events` 覆盖事件箱名称；`test_ui` 覆盖双 HUD 长事件文本、1280/1920 布局与 notice 抑制规则，`test_script_ui`/`test_python_api` 覆盖 `eventGuide/eventTone`。Debug **694/694（132084 assertions）**、Release **694/694（132097 assertions）**、Python **84/84**。1280 五场景 `build/m24_t5_hud_smoke/`：事件触发通知、事件指引、完成通知、空投箱发现/背包打开抑制、寒潮天气均通过；`build/m24_t3_mission_smoke/` 在 31 任务下复跑通过。烟测为临时配置/传送，不替代 M24-T6 自然试玩。
+
+## 2026-11-04 M24-T4 随机事件与遭遇
+
+**实现**：`config/game.json` 新增 `event_wandering_horde`（第 3 天/0.50/8 杀）、`event_infected_house`（第 2 天/0.55/3 杀+污染箱）、`event_survivor_ambush`（第 4 天/0.40/2 名）、`event_cold_snap`（第 2 天/0.35/回村）；随机事件 4→8、任务 27→31、全局链 15→19。`event_supply_drop` 保持 `loot any×2`，生成 2 个 `event_supply_crate`。新增 `game/RandomEvents.*`：事件站点（尸潮按天轮换公路点、房屋/空投固定点、伏击按玩家位置）、`RandomEventStableId(mission,day,index)`、事件敌人/容器生成与幂等；`RandomEventActor` 记录事件 ID/index 并注册为第 44 个存档组件。单机在 `UpdateMissions` 激活后生成，服务器在 `TickServerMissions` 生成，客户端不本地生成；进度 >0/已完成跳过，跨日清理事件敌人。寒潮用 `WeatherSystem::SetOverride` 覆盖 15 游戏分钟；伏击因聚落 raider AI 只服务守卫战而降级为 Strong 僵尸变体。任务 HUD 对空投优先指向未搜索箱、对事件击杀/任意搜刮指向事件站点。
+
+**验证**：`test_missions` 更新 31 条/19 链/8 随机并检查四事件 minDay/chance/奖励；新增 `test_random_events` 覆盖分类/站点/StableId、空投双箱幂等、旧进度跳过、尸潮/伏击/房屋数量与寒潮无世界内容；`test_weather` 覆盖寒潮覆盖到期恢复；`test_entity_save` 覆盖 `RandomEventActor` 往返，`test_spawn_lod` 覆盖事件敌人不被虚拟化；Python `test_mission_data` 更新 31/19/8 与事件叙事/`extraItem`。Debug **693/693（131995 assertions）**、Release **693/693（132008 assertions）**、Python **84/84**。1280 五场景 `build/m24_t4_events_smoke/`：空投两箱搜刮、尸潮 8 杀、感染房屋 3 杀+搜箱、伏击 2 杀、寒潮天气与回村全部完成，事件名/目标/方向/奖励可见。首轮 Release 全量命中既有 `M23-F2a-T6` 觅食联机间歇失败，单跑/复跑通过。
+
+## 2026-11-04 M24-T3 支线、叙事与中继链
+
+**实现**：`config/game.json` 追加 8 条任务，形成 `super_stock→super_return`、`police_case→police_return`、`motel_guest→motel_return` 三条 POI 支线和 `relay_recover→relay_extract` 中继链；任务 19→27、全局链 11→15、once 链 6→10。目标只复用 `poi/loot/collect/reach`；`relay_recover` 前置 `radio_repair`，要求搜索 `poi_warehouse_relay` 且持有 `relay_part`，`relay_extract` 到达撤离点 `(66.5,28.5,r1.5)`。仓库增加第 4 个中继货架容器 `(109.5,88.5)` 和 `poi_warehouse_relay` 掉落表（保底 `relay_part`×1），掉落表总数 44→45；10 条叙事写入 7 个 POI 的 `task.description` 与 3 条任务目标描述。`MissionGuideText` 增加可选方向提示，`WorldDemoState` 按当前未完成目标解析 POI marker、匹配 loot 表容器、reach 坐标或电台坐标，追加“目标<方位> <距离>格”。
+
+**验证**：`test_missions` 更新 27 条/15 链/8 条新任务前置、奖励与完成判定；`test_entity_save` 新增旧档 `radio_repair` 完成/未完成两种 MissionLog 存档往返；`test_poi`/`test_loot`/Python `test_poi_data` 覆盖仓库第 4 容器与中继表；Python `test_mission_data` 更新 27 条/10 once 链并校验叙事、目标、奖励与撤离点可达性；`test_mod_content` 基线 27→28。Debug **686/686（131858 assertions）**、Release **686/686（131872 assertions）**、Python **84/84**。1280 任务 HUD 烟测 `build/m24_t3_mission_smoke/` 显示超市“目标西北 27格”和警局“目标东北 23格”；超市支线端到端 `build/m24_t3_sidequest_smoke/` 完成 `super_stock`、接取并完成 `super_return`，奖励经验与罐头汤/方便面实际入包。首轮全量 Debug 命中既有 `M23-F2a-T6` 觅食联机间歇失败，单跑及复跑通过。
+
+## 2026-11-04 M24-T1 内容密度包基座
+
+**实现**：`assets/items.json` 增加 20 件物品（警棍、大锤、警用防弹背心、消防防护服、工具箱、缝纫包、罐头汤、方便面、水果罐头、蛋白棒、急救包、草药膏、胡萝卜种子/产物、鸡肉/山羊肉、中继零件）；`assets/recipes.json` 增加 10 个配方（烤/炖胡萝卜、烤/炖鸡肉、烤/炖山羊肉、急救包、草药膏、大锤、消防防护服）；`assets/crops.json` 增加胡萝卜（5 作物）；`assets/animals.json` 增加鸡/山羊（5 动物）及 `animal_chicken` / `animal_goat` 掉落表；新增鸡/山羊占位轮廓（鸡冠/山羊角）和体型缩放，复用 `corpse.placeholder`。新增 M24 物品、配方、作物、动物与联机掉落断言，更新受影响硬编码。
+
+**验证**：`test_items`/`test_recipes`/`test_crops`/`test_animals`/`test_art_slice`/`test_crop_data`/`test_f5_balance`/`test_animal_data` 通过；`test_network_integration` 动物剥取接受鸡/山羊生肉。Debug **682/682（130899 assertions）**、Release **682/682（130913 assertions）**、Python **81/81**；内容指纹版本仍为 v13（未改 schema），数据变化会改变实际指纹。
+
+## 2026-11-04 M24-T2 六个新 POI 与地图 v5
+
+**实现**：`tools/gen_map.py` 升至 v5，新增超市 `(40,6,12,8)`、警察局 `(86,6,11,9)`、消防站 `(48,34,11,9)`、汽车旅馆 `(4,36,12,8)`、教堂 `(50,104,10,12)`、仓库 `(100,84,12,10)`，复用现有墙/门/家具图集并避开村庄/道路/池塘/旧 POI。`config/game.json` 的 `pois.defs` 扩到 11 个，新 POI 各 3 个容器、独立目标表与任务奖励；超市/旅馆 threat 1，警察局/消防站/教堂 threat 2 且各 1 重甲，仓库 threat 3/8 strong/2 重甲。`assets/loot.json` 新增 18 张 POI 表和 `event_supply_crate`/`event_infected_cache` 两张事件表（T4 再接任务）。重新生成 `village_demo`：134 个非空 chunk、814 对象、48 房间出现；两次临时生成 135 个文件 SHA-256 全一致，旧 chunk 变化仅在 6 个新 POI 清场/入口 apron 范围。
+
+**验证**：`test_poi_data` 扩到 8 用例（11 POI/版本 5/ID/3 容器/威胁梯度/18+2 表/BFS 路由）；`test_poi` 新增新 POI 契约，`test_loot` 新增 18+2 表引用完整性，`test_maploader` 更新 134/814/48 基线。Debug **684/684（131709 assertions）**、Release **684/684（131723 assertions）**、Python **83/83**。首轮 Debug/Release 全量曾命中既有 `M23-F1-T10` 联机远程武器间歇失败，单跑与复跑均通过；不影响上述最终计数。1280 构造烟测已传送至超市/仓库并截图（`build/m24_t2_poi_smoke/`），日志确认 11 POI、两处 3 容器、超市 5 堆/9 件与仓库 4 堆/36 件掉落；村庄步行可达由 BFS 覆盖。
+
+## 2026-11-04 尸体/世界容器“全部取出”
+
+**问题**：尸体容器原来只能逐堆拖拽或右键拾取，用户容易只看到“已剥取”提示而没有把战利品放进背包。
+
+**修改**：新增 `game::TakeAllLootContainerItems`（按背包容量循环取堆，保留剩余）；`InventoryState.lootCanTakeAll` 在单机尸体/世界 `LootContainer` 有物品时为真；背包面板对尸体显示“全部取出”（仓库仍显示存入/取出/整理，尸体只显示取出）；`take_all` 动作携带 `fromEntityId`，单机走尸体/世界容器，联机隐藏该入口。Lua/Python `Inventory.GetState()` 同步暴露 `lootCanTakeAll`。
+
+**验证**：`test_loot` 新增“容器全部取出按背包容量移动并保留剩余”（满包/无空间边界）。H2 单野猪流程剥取 4 堆/8 件后点击“全部取出”，日志 `容器全部取出：8 件，剩余 0 堆`，背包 5 堆、尸体“（空）0 堆”；截图 `build/f2b_h2_takeall/h2l-takeall-1280.png`。Debug **680/680（130555 assertions）**、Release **680/680（130569 assertions）**、Python **81/81**。
+
+## 2026-11-04 H2 真实行走单野猪（构造起点）
+
+**构造**：临时 `animals.json` 只保留农场仓野猪，`maxPerChunk=1`、全局 `maxLive=1`；玩家 100 HP，携带消防斧/厨刀。探针只把起点放在农场外 `(84,56)`，之后不再传送，使用实际 WASD 按视野方向走向野猪。
+
+**结果**：玩家从 `(84,56)` 走到 `(81.8,49.3)`，野猪进入警觉并反击 4 次，玩家 100→60 HP；斧击击杀后按 `E` 剥取实体 40，得到 3 堆/8 件，按 `I` 打开尸体容器确认生野猪肉/兽皮；无战斗传送。截图 `build/f2b_h2_walk_single/h2w-approach-1280.png`、`h2w-counter-1280.png`、`h2w-container-1280.png`，日志同目录 `app.log`。该用例仍使用构造起点，不替代从默认出生点自然行走与多野猪人工复验；未新增代码/测试，Debug **680/130555**、Release **680/130569**、Python **81/81**。
+
+## 2026-11-04 H2 双野猪 100 HP 同场构造
+
+**构造**：临时 `animals.json` 只保留农场仓野猪，`maxPerChunk=2`、全局 `maxLive=2`、`minPlayerDistance=4`；玩家 100 HP，携带消防斧/厨刀。探针先传送到农场仓触发生成，再在 2 秒后传送到野猪旁；战斗与剥取均为实际键鼠输入。
+
+**结果**：两只野猪同时反击，玩家 100→40 HP 后以斧击击杀两只；分别按 `E` 剥取实体 50/51，得到 3 堆/8 件与 2 堆/7 件，容器均正常显示。截图 `build/f2b_h2_multiboar/h2m-counter-1280.png`、`h2m-after-attack-1280.png`、`h2m-harvest-1280.png`，日志同目录 `app.log`。该用例仍是构造生成/传送，不替代自然多野猪与真实行走的人工复验；未新增代码/测试，Debug **680/130555**、Release **680/130569**、Python **81/81**。
+
+## 2026-11-04 H4 服务器重启双客户端回归
+
+**流程**：复制 `build/t8_h4_run`（含已剥取野猪尸体与 H4A/H4B 档案）到 `build/f2b_h4_run`，当前 Release 启动同一个 `server.saveId=20261031-053814`，两个 1280 客户端连接 7810 端口；服务器读档后截图，A/B 分别按 `E` 尝试重复剥取。
+
+**结果**：服务器日志 `已读取存档 '20261031-053814'：实体 88，玩家 0`，随后 `H4A`/`H4B` 均重连，会话=2；截图 `build/f2b_h4_reload/p1-h4-reload-a-1280.png`、`p1-h4-reload-b-1280.png` 仍显示同一具野猪尸体。自动窗口注入的重复 `E` 未触发（PostMessage 焦点/扫描码限制），因此本次只确认重启持久化与双客户端可见性；重复剥取判定仍以原 H4 构造日志（A 剥取 4 堆/11 件、B 重复 E 无第二份）和 T6 网络测试为准。未新增代码/测试，Debug 679/130541、Release 679/130555、Python 81/81。
+
+## 2026-11-04 H2 单野猪 100 HP 低伤害战斗与剥取
+
+**构造**：临时 `animals.json` 只保留农场仓野猪（鹿/兔生成权重 0），`--animals.spawn.maxLive=1 --animals.spawn.minPlayerDistance=4`；玩家 100 HP，携带消防斧/厨刀。探针先把玩家传到农场仓触发生成，再在 2 秒后传到野猪旁；战斗、受击、`E` 剥取和 `I` 容器均为实际游戏输入。
+
+**结果**：野猪反击 2 次，玩家 100→80 HP；斧击击杀后 `E` 剥取 4 堆/8 件（生野猪肉×3、生野猪肉×3、兽皮×1、生野猪肉×1），厨刀磨损 98%，容器标题“尸体：野猪”，提示“剥取了野猪尸体：…（战利品在尸体中，按 I 取走）”。截图 `build/f2b_h2_lowdamage_single/h2l-counter-1280.png`、`h2l-container-1280.png`，日志同目录 `app.log`。`--animals.spawn.logAnimals=true` 现在也输出危险动物（野猪）坐标，便于定位；仅调试日志，不影响生成/战斗。
+
+**验证**：Debug **679/679（130541 assertions）**、Release **679/679（130555 assertions）**、Python **81/81**。该用例仍是“构造生成/传送 + 真实战斗”，不替代自然多野猪与真实行走的人工复验。
+
+## 2026-11-03 H2 战利品存档排查与剥取提示
+
+**反馈**：用户报告“存档后读取，获得的野猪战利品没有保存下来”。
+
+**排查**：用临时观察 mod 重新加载 `build/h2_manual_saves/20261103-140948`，存档含 1 具已剥取野猪尸体，尸体容器仍有 `raw_boar_meat`、`animal_hide`、`bone`；玩家背包 4 件物品中没有野猪战利品，日志也没有任何 `拾取（容器）` 记录。`20261103-135903` 同样把 `animal_hide`/`bone` 留在尸体容器（该次剥取 2 堆/4 件，随机结果未出肉）。结论：战利品本身已存档，剥取只把战利品写入尸体容器，不会自动进背包；需要靠近尸体按 `I` 再取走。
+
+**修改**：剥取完成提示追加“（战利品在尸体中，按 I 取走）”；读档时新增 `读档动物尸体：N 具（已剥取 N），战利品 N 件` 与 `读档玩家背包：N 件` 日志；`test_entity_save` 新增动物尸体容器、`harvested` 状态与玩家背包战利品的存档往返用例。
+
+**验证**：Debug **679/679（130541 assertions）**、Release **679/679（130555 assertions）**、Python **81/81**；未提交。
+
+## 2026-11-03 H3 尸体战利品取入背包后的存档往返
+
+**流程**：复制 H2 构造存档（已剥取野猪尸体 3 堆：骨头×2/生野猪肉×2/兽皮×2），读档后打开尸体容器，把 3 堆全部取入背包（背包 1→4 堆），按 `F12` 快速存档，关闭进程后从主菜单“继续”。
+
+**结果**：重载日志 `读档动物尸体：1 具（已剥取 1），战利品 0 件`、`读档玩家背包：4 件`；镜头中背包仍有厨刀/骨头×2/生野猪肉×2/兽皮×2，尸体显示“尸体：野猪（空）0 堆”，无重复拾取或重复掉落。截图 `build/f2b_h3_loot_roundtrip/h3r-taken-1280.png`、`h3r-reload-1280.png`，日志 `app1.log`/`app2.log`。该用例为 1000 HP 构造存档，仍不替代自然流程/低伤害平衡的人工复验。
+
+## 2026-11-03 M23-F2b H2 动物尸体靠近高亮
+
+**范围**：`src/game/states/WorldDemoState.h/.cpp` 新增 `DrawAnimalCorpseHighlight`。玩家进入 `inventoryRange` 且最近未剥取动物尸体存在时，在 World view 绘制脉冲菱形：野猪橙色、鹿/兔黄色；背包/菜单/角色面板打开时隐藏。只影响表现，不改剥取判定、存档或联机复制。
+
+**验证**：Release 构建通过；`ZomboidLikeTests.exe` **678/678（130537 assertions）**；Release 1280 构造烟测 `build/f2b_h2_corpse_highlight/h2c-corpse-highlight-1280.png`（999 伤害/1000 HP 仅为快速留下尸体）。自然 H2 低伤害复验仍待用户执行。
+
+## 2026-11-03 H1 自然狩猎手动复验（用户确认，无截图）
+
+**范围**：按 `docs/07` P1-H H1 流程，新档自然拾取村庄地面木材、到商人处购买手枪/9mm、装备并换弹后远程击杀动物。用户手动操作后确认功能正常，未提供截图或日志。
+
+**结论**：H1 自然流程验收通过；口头确认不替代截图证据，自动观察截图仍见 `build/p1-h1-hunt-deer-1280.png` 与 `build/f2b_h1_natural_hunt/`。H2–H4 自然流程/低伤害平衡仍待复验。测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。未提交。
+
+**自动化补充**：`build/f2b_h1_natural_ranged_recon.ps1` 此前因 PowerShell 5.1 按 ANSI 读取无 BOM 脚本，Lua 中的“木材”比较串变成乱码，且 `E` 先被求助者对话拦截。改用 `\u{6728}\u{6750}` 比较并从商人侧接近（路点 `75.9,26.9`）后，Release 1280 自动通过：`拾取（地面）：木材 x12`、`商人交易：pistol`、`商人交易：ammo_9mm`、`装备：手枪`、`换弹完成：手枪，装填 8 发，剩余弹药 4`；截图 `build/f2b_h1_natural_ranged_recon/h1r-recon-wood-1280.png`、`h1r-recon-trade-1280.png`、`h1r-recon-equipped-1280.png`，日志同目录 `app.log`。脚本只到换弹，未自动击杀，H1 自然击杀仍以用户手动确认为准。
+
 ## 2026-10-16 M0 环境与工程骨架
 
 **完成**
@@ -209,10 +916,10 @@
   状态逻辑后再 m_ecs.Flush()（状态里入队的创建/销毁也 tick 末统一回收）。
 
 **踩坑 / 决策**
-- EnTT 3.16 的 
-egistry **没有 size()**（大量旧教程写 
+- EnTT 3.16 的
+egistry **没有 size()**（大量旧教程写
 egistry.size() 会编译失败）→ AliveCount 自维护 O(1) 计数；
-- Destroy 语义定为：Alive() **立即为假**（已入队），但内存延迟回收（本 tick 内 
+- Destroy 语义定为：Alive() **立即为假**（已入队），但内存延迟回收（本 tick 内
 egistry.valid() 仍真，
   别的系统读到的是本帧最后状态）——测试锁定这个边界，提醒后续系统一律用 Alive() 判断；
 - 固定更新链（docs/00 §6.1：Input→Ai→PathFollow→Movement→PhysicsSync→Perception→Combat→SpawnLod→RenderCollect）
@@ -890,7 +1597,7 @@ HUD `bag: 2 item(s) 0.2/20.0kg | ground=6` → 再按 F `Nothing to pick up` 负
 正值 = 减少需求）；严格校验（未知键/类型/越界全报 + 行号）。items.json：绷带
 `{heal:15}`、罐头豆子 `{hunger:0.35}`。
 
-**规则层**：`UseFirstConsumable`（消费第一个有效果物品 1 件，返回效果与剩余）+ 
+**规则层**：`UseFirstConsumable`（消费第一个有效果物品 1 件，返回效果与剩余）+
 `ApplyUseEffect`（纯函数：HP 钳到上限并返回**实际**回血；需求钳 [0,1]；空指针安全）。
 
 **接线**（WorldDemoState 临时按键，正式 UI 时迁移）：`E` 使用 / `R` 装备（主手武器
@@ -1919,7 +2626,7 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 **实现**：
 - vcpkg 接入 kcp 2.1.1（MIT），新增 src/net/Kcp.{h,cpp}：Windows 非阻塞 UDP socket、KCP 客户端/服务器、多客户端会话（conv 键）、服务器端口 0 自动分配、会话超时和最大连接数、收发统计；KCP 参数为低延迟模式（nodelay=1, interval=10ms, resend=2, nc=1）。
 - 新增 src/net/FrameCodec.{h,cpp}：8 字节长度前缀帧（magic ZLF1 + u32 payload size），处理 KCP 流式粘包/拆包，单帧上限 64KB；非法 magic/超长帧清空解码器并报错。
-- 新增 	ests/test_kcp.cpp：localhost 收发、服务器回包、8KB 大帧分片、双客户端隔离、非法帧丢弃后恢复、会话超时、未连接/解析失败错误路径；CMake 为应用与测试链接 kcp::kcp + ws2_32。
+- 新增 tests/test_kcp.cpp：localhost 收发、服务器回包、8KB 大帧分片、双客户端隔离、非法帧丢弃后恢复、会话超时、未连接/解析失败错误路径；CMake 为应用与测试链接 kcp::kcp + ws2_32。
 - M13 任务清单已建立；T1 尚未接入游戏主循环，CommandPipeline 继续使用 loopback。
 
 **验证**：Debug **277/277（120202 assertions）**、Release **277/277（120203 assertions）** 全绿；--test-case="M13*" 6/6 通过。未提交。
@@ -1930,7 +2637,7 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 - 新增 src/net/SessionProtocol.{h,cpp}：ZLM1 会话消息（Hello/Welcome/Reject/Disconnect/Data/Ping/Pong）；协议版本、magic、类型、长度、文本长度和 server sessionId 校验；Hello 带 client nonce + 内容 hash，Welcome 回 SessionId/serverTick/content hash/heartbeat。
 - 新增 src/net/KcpSession.{h,cpp}：KcpSessionClient 状态机（Disconnected/Connecting/Connected/Rejected）、KcpSessionServer SessionId 分配与会话表；内容 hash 不一致、协议版本不匹配、服务器满、握手/会话超时都返回明确原因；Ping/Pong 心跳保活，握手完成前不产生 Connected 事件。
 - 会话帧统一经 FrameCodec 再交给 KCP 传输；新增 KcpServer::Disconnect。所有错误路径不崩溃，客户端可读取 LastError/LastReason。
-- 新增 	ests/test_kcp_session.cpp：协议往返/版本/magic/长度校验、握手、双向 Data、内容 hash 拒绝、服务器满、协议版本拒绝、心跳保活、客户端断开、客户端/服务器握手超时；更新 M13 清单。
+- 新增 tests/test_kcp_session.cpp：协议往返/版本/magic/长度校验、握手、双向 Data、内容 hash 拒绝、服务器满、协议版本拒绝、心跳保活、客户端断开、客户端/服务器握手超时；更新 M13 清单。
 
 **验证**：Debug **286/286（120306 assertions）**、Release **286/286（120307 assertions）** 全绿；主程序 Debug 链接通过。尚未接入游戏主循环；未提交。
 
@@ -2215,4 +2922,1643 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 
 **边界**：不新开地图/POI，不做基地建造、完整感染/疾病树、枪械系统或全量美术音频；联机只保证不回归。新增组件需兼容旧存档/旧客户端缺省值。
 
-**前置**：M14 基线提交（当前未提交）；M0 跨机验收可并行。详细任务与验收见 `docs/01-里程碑与任务清单.md` 的 M15。
+**前置**：M14 已提交（`48379fd`）；M0 跨机验收可并行。详细任务与验收见 `docs/01-里程碑与任务清单.md` 的 M15。
+
+## 2026-10-23 M15-T1 武器数据化与装备驱动攻击
+
+**内容**：`items-v1` 的 weapon 条目新增可选 `combat{damage,range,arc,cooldown,knockback,stagger,wear}`（子字段可缺省）；`ItemRegistry` 严格校验仅 weapon 可用、字段类型/范围/未知键，`items::ResolveWeaponAttack` 以 `combat.player*` 为缺省值补齐空手与旧数据。内置消防斧/厨刀/锤子/螺丝刀/简易长矛参数已区分（斧高伤慢速、刀快速短距、矛长距窄扇、锤强击退、螺丝刀轻量低伤）。
+
+**攻击链**：`WorldDemoState::PlayerAttack` 与 `ServerHost` 都从主手 `Equipment` 解析攻击参数并写入 `AttackIntent`（新增 `weaponWearPerHit`）；自动瞄准仍为 3 格，单机冷却按固定 tick 递减，服务器每会话冷却按当前武器 cooldown 计算（`net.attackCooldownSeconds` 仅回退）。`CombatSystem` 在一次挥击至少命中一个目标后产生一条主手磨损请求，由 `WorldSimulation` 的 `WeaponWearSystem` 落到 `ItemInstance.condition`（多目标不叠加、空挥不磨损，且 `characters` 不反向依赖 `items`）；耐久为 0 时拒绝攻击并提示卸下/更换，维修包仍走 `items::Repair`。耐久随 `Equipment` 的 `ZLR1` 复制与 `ZLP1` 状态同步。
+
+**验证**：`test_items` 覆盖 combat 解析/部分缺省/非 weapon 拒绝/越界与内置武器差异；`test_combat` 覆盖多目标单次磨损、空挥不磨损、耐久钳制到 0；`test_server_security` 覆盖服务器按斧参数结算 65 伤害并扣 0.035 耐久。Debug **347/347（121522 assertions）**、Release **347/347（121523 assertions）**、Python 18/18。未提交。
+
+## 2026-10-23 M15-T2 伤口、流血与绷带
+
+**数据**：新增 `ecs::Wounds`（最多 4 处伤口）与 `WoundEntry`（来源 Blunt/Claw/Bite、severity、起始失血 HP/s、剩余/总时长、已包扎）；`DamageType` 增加 `Claw`。`CombatSystem::ApplyDamage` 在扣血后统一写入伤口，Debug/非正伤害忽略；`characters::WoundSystem` 放在 CombatSystem 之后、DeathSystem 之前，按 `bleedRate × remaining/duration × dt` 线性衰减失血，流血致死仍由 DeathSystem 转倒地/尸体。
+
+**包扎**：`items.json` 的 `use.bandage` 新增止血比例（绷带 0.7、破布 0.35，均保留原有回血/材料用途）；`characters::TreatWounds` 停止流血、按比例降低 severity 并移除 ≤0.05 的伤口。单机 `WorldDemoState` 的背包使用/快速使用与服务器 `PlayerInventoryService::UseBag` 都接入，提示会显示止血处数；HUD 新增 `woundStatus/woundTone` 与 `wound-status` 行，native/Lua/Python 三路同步，`Hud.GetState()` 暴露同名字段。
+
+**持久化与联机**：`WNDS` v1 存档组件（旧档无组件 = 无伤），`ZLR1` 注册同名复制组件并在客户端写入视觉实体；服务器复活/重连重置生命时清空伤口。新增 `wounds.*` 配置；测试覆盖类型映射、流血衰减与停止、止血/严重度、四层上限、旧档兼容、存档/复制往返与服务器背包使用。
+
+**验证**：Debug **353/353（121650 assertions）**、Release **353/353（121651 assertions）**、Python 18/18。未提交。
+
+## 2026-10-23 M15-T3 僵尸攻击前摇与命中反馈
+
+**攻击档案**：`AiSystem::AttackParams` 改为 normal/fast/strong 三套 `AttackProfile`（damage/knockback/stagger/range/arc/windup/cooldown/type），由 `WorldSimulation` 读取 `combat.zombieAttacks.*`；normal/fast 使用爪击，strong 使用撕咬。伤害直接由档案给出，不再乘 `ZombieVariant.damageScale`，避免双重缩放。
+
+**前摇/冷却**：`AiState.attackWindupLeft` 记录蓄力剩余；进入 Attack 且冷却归零后先写 `ActionState::Attacking`（渲染层画红色蓄力条），前摇结束才落 `AttackIntent`，随后进入变体独立冷却。受击硬直会清空前摇并累计 `Stats.interrupted`，硬直结束必须重新完成完整前摇；目标脱离攻击距离同样取消，避免“贴身无预警连续命中”。
+
+**受击反馈**：`CombatSystem::ApplyDamage` 向 `HitReaction` 写 `sourceDirX/Y`（受害者→攻击者）、`sourceType`、`hitSerial` 与 `restoreTint`；闪红结束恢复变体原 tint。`WorldDemoState::UpdateCombatFeedback` 按 `hitSerial` 去重播放 impact 音效，HUD 显示“受击：左/右/上/下（爪击/撕咬）”与对应屏幕边缘红条；字段 `threatStatus/threatDirection/threatRemaining/threatDuration` 在 native 与 Lua/Python HUD 三路同步。旧档恢复角色时补建缺失的 `ActionState`，避免前摇表现依赖存档字段。
+
+**HUD 双份文件**：core_ui 脚本 HUD 实际加载 `mods/core_ui/ui/hud.rml`，native fallback 加载 `assets/ui/hud.rml`；两份都需同步，否则脚本路径下新增行/边缘提示会静默缺失。本次已同步 M15-T2 的 `wound-status` 与 M15-T3 的 `threat-*`，并让 `test_ui` 同时加载两份 HUD 检查元素与边缘尺寸。
+
+**验证**：`test_combat` 覆盖前摇未结束不命中、冷却、硬直中断、变体伤害类型、来源方向/serial/tint 还原；`test_zombie_ai` 更新前摇/冷却节拍；`test_ui`/`test_script_ui` 覆盖两份 HUD 的威胁提示元素、边缘尺寸与脚本字段。Debug **356/356（121699 assertions）**、Release **356/356（121700 assertions）**、Python 18/18；无窗口服务器冒烟通过（18 个系统）。未提交。
+
+## 2026-10-23 M15-T4 医疗与疼痛
+
+**疼痛模型**：新增 `ecs::Pain` 与 `characters::PainSystem`（WoundSystem 之后、MovementSystem 之前）。伤口 severity 汇总后乘 `pain.perSeverity`，已包扎伤口乘 `pain.bandagedScale`，有效疼痛上限 `pain.maxLevel`；`moveScale`/`attackCooldownScale` 直接存进组件，默认满疼痛时移速 -35%、挥击冷却 +50%。`PainSystem` 每 tick 推进短时止痛；`ApplyPainRelief` 取较大强度、刷新时长、不叠加。
+
+**医疗分工**：绷带/破布仍通过 `use.bandage` 只负责止血；止痛药不再回血，改为 `use.painRelief=0.65 / painReliefSeconds=90`（0.05kg、堆叠 5）。单机 `WorldDemoState` 与服务器 `PlayerInventoryService::UseBag` 都接入；无疼痛时使用被拒绝且不消耗，重复使用刷新时长。木箱/储物柜增加止痛药权重。
+
+**玩法与表现**：`MovementSystem` 对 PlayerTag 应用 `moveScale`；单机挥击与服务器攻击冷却应用 `attackCooldownScale`，服务器仍为权威。HUD 新增 `pain-status` 与 `painStatus/painTone`，显示“疼痛：轻微/中度/严重 xx%（移速 -x%，挥击间隔 +x%）｜止痛 Ns”，native/Lua/Python 三路同步；`PAIN` v1 存档与 `ZLR1` 复制同步客户端。
+
+**验证**：`test_combat` 覆盖疼痛汇总/止痛衰减/重复使用；`test_items` 覆盖止痛字段与越界；`test_inventory_service` 覆盖有效/无效目标与不消耗；`test_ui`/`test_script_ui` 覆盖 HUD 结构与脚本字段；`test_entity_save`/`test_replication` 覆盖存档/复制往返。Debug **362/362（121803 assertions）**、Release **362/362（121804 assertions）**、Python 18/18；无窗口服务器冒烟通过（19 个系统）。未提交。
+
+## 2026-10-23 M15-T5 HUD、死亡结算与提示
+
+**死因链路**：新增 `ecs::LastDamage{DamageCause}`。`CombatSystem` 在直接命中扣血后写 Blunt/Bite/Claw/Debug，`WoundSystem` 在持续失血时写 Bleed，`NeedsSystem` 按饥饿/脱水实际失血速率写 Starvation/Dehydration；致死的直接命中不会再被同 tick 的流血覆盖（WoundSystem 对 HP≤0 直接跳过）。`WorldDemoState::UpdateRunStats` 每个固定 tick 读取玩家生命、`HitReaction.hitSerial` 与 `LastDamage`，累计存活时间、受伤次数、累计伤害和死因。
+
+**结算页**：`game/RunStats.h` 纯函数生成结算文案，包含死因（撕咬/爪击/钝击/流血/饥饿/脱水/调试/未知）、存活时长+第 X 天 HH:MM、击杀、受伤次数/累计伤害；`FinishRun` 仍走 native `menu.rml` 结算页，主菜单/暂停菜单返回路径保持原行为并继续由现有测试覆盖。
+
+**HUD 操作提示**：`HudState` 新增 `actionHint/actionTone`，`game/ActionHints.h` 统一文案：流血优先（有绷带提示 I 打开背包使用，无绷带提示寻找绷带/破布），其次疼痛/止痛药、附近容器 `I 搜刮`、地面物品 `F 拾取`，最后回退 `WASD/左键/SPACE/I`。native `hud.rml` 新增 `action-hint` 行，Lua/Python core_ui 同步读取 `Hud.GetState()` 同名字段；`assets/ui` 与 `mods/core_ui/ui` 两份 HUD 保持同结构。
+
+**验证**：`test_combat` 覆盖直接命中/流血/致死死因、玩家死亡不计击杀，`test_needs` 覆盖脱水来源；`test_ui` 覆盖结算文案、操作提示优先序及两份 HUD 的 `action-hint` 元素，`test_script_ui` 覆盖 Lua 字段。Debug **364/364（121837 assertions）**、Release **364/364（121838 assertions）**、Python 18/18；无窗口服务器冒烟通过（19 个系统）。未提交。
+
+**修复**：`CombatSystem` 原先把任何 HP 归零目标都计入 `kills`，玩家被僵尸打死也会让结算页显示“击杀 1 只僵尸”；现在 `PlayerTag` 目标只记录死亡日志，不计入击杀。HUD 的撕咬/爪击来自攻击档案：normal/fast 僵尸为 `claw`，strong 僵尸为 `bite`，由 `AiSystem` 写入 `AttackIntent.type`，`CombatSystem` 落到 `HitReaction.sourceType`（受击提示）与 `LastDamage.cause`（死因）。
+
+## 2026-10-23 M16-T1/T2 基地建造与防御（实现与验收）
+
+**资源与数据**：新增自制 `item_wood`/`object.barricade` 切片帧与 manifest 映射；`wood` 物品 0.4kg、堆叠 20，进入木箱/工坊搜刮与 demo 地面（12 个）。`config/game.json` 新增 `building.*`（范围 3.5、木材 id、僵尸伤害 12/1s、三种建造项）与 `BuildMode=B`。`BuildingRules.h` 提供可建造定义、按 sprite 查找与格子合法性（必须有地面、无阻挡对象）。
+
+**建造交互**：单机 `WorldDemoState` 增加建造模式、滚轮选项、半透明红/绿预览、左键放置、B/ESC 退出；放置前校验距离、chunk 已加载、ECS 实体占用与木材，成功后扣除木材、写入 `Furniture` 层 `SquareObject`，并对阻挡物重建 chunk 物理静态体与 A* passability。篝火/工作台复用现有 `HasStationNearby`，无需制作系统改动。联机模式拒绝建造。
+
+**防御与反馈**：`m_barricades` 记录已放置栅栏 HP（重载回满）；追击/攻击/搜索状态的僵尸在玩家 10 格内、距栅栏 1.5 格内按冷却攻击，播放 impact 并写 `ActionState::Attacking`；HP≤0 移除对象、重建碰撞/寻路并提示。`ActionHintState` 新增 `barricadeHp/barricadeMaxHp`，HUD 优先显示最近栅栏血量，建造模式显示当前选项、木材数量、合法性原因与操作提示。攻击目标选择/伤害/冷却/摧毁抽到 `BarricadeDefense.h`，`test_building` 直接驱动 ECS 实体回归。T2 验收期曾加单机 `F11` 临时刷怪入口，T3 完成后已移除。
+
+**左键被 UI 吞掉**：实机发现按 B 后预览为绿色但左键不能放置。日志显示点击帧 `gameplayBlocked=true`，根因是 core_ui 全屏 HUD 文档把世界点击的 body 背景事件也标记为 `scriptConsumed`，导致同一次左键在世界逻辑前被消费。修复两处：`ScriptUiHost` 不再把 body/文档背景点击算作 UI 消费；`Input` 增加 GLFW 鼠标回调按下锁存（避免低帧率下按下/松开同帧轮询丢失），建造模式在光标未悬停可交互 UI 时可用 raw 按下边沿绕过 UI 阻断。`UiSystem::IsPointerOverUi()` 区分 HUD 背景与真实控件。新增 `test_ui` 锁存回归与 `test_script_ui` 背景点击不消费断言。
+
+**验证**：Debug **369/369（121905 assertions）**、Release **369/369（121906 assertions）**、Python 18/18、无窗口服务器冒烟通过（19 个系统）。`test_building` 覆盖默认建造数据、格子规则、真实 config/items、HUD 文案，以及 T2 的最近栅栏选择、玩家 10 格过滤、伤害、每僵尸冷却和摧毁标记。2026-10-23 实际验收：B 进入建造模式、左键放置、僵尸拆栅栏、HUD 掉血与摧毁提示正常；三种建筑随 chunk 存档重载、阻挡/制作站正常（栅栏 HP 按已知限制回满）；联机模式拒绝建造且不破坏同步；用户确认功能正常，M16 关闭。
+
+## 2026-10-23 M17 基地守夜循环需求稿
+
+**背景**：M16 已能建造/拆栅栏，但 HP 重载回满、没有维修/拆除、没有夜间事件，基地循环不闭合。M15-T6 平衡验收暂缓，先完成基地循环。
+
+**需求文档**：新增 `docs/04-M17-基地守夜循环需求.md`，并在 `docs/01` 增加 M17 索引/任务/验收/风险；当前状态为规划中，未改代码。
+
+**范围**：T1 结构 HP/玩家建造标记持久化（`SquareObject`/`ChunkDiff` v2，兼容 v1）；T2 `H` 维修（1 木材 +30）与建造模式 `X` 拆除（返还 50%）；T3 22:00 预警 + 3 波夜间尸潮（最大 12 存活、HUD、结束/中止、读档取消）；T4 30~60 分钟闭环验收。
+
+**待确认**：`H`/`X` 键位、维修/拆除费用、守夜是否每晚触发、是否允许守夜中维修、是否给奖励。评审通过后再开始实现。
+
+## 2026-10-23 M17-T1 建筑耐久持久化
+
+**数据模型**：`SquareObject` 末尾增加 `float hp = -1`（<0 无耐久）和 `bool playerBuilt = false`；`Chunk` 格哈希纳入两个字段，HP 变化会进入 chunk diff。
+
+**存档**：`ChunkDiff` 段升 v2，对象追加 HP/玩家建造标记；解码支持 v1–v2。v1 耐久字段缺失时按 -1 读入，diff 内 Furniture 迁移为玩家建造，首次 `TrackNearbyBarricades` 回填 maxHp 并写回对象。
+
+**运行时**：建造统一走 `MakeBuiltObject`（玩家建造、栅栏满 HP）；僵尸命中后 `SyncBarricadeHp` 写回对象；`TrackNearbyBarricades` 只收集玩家建造结构并从对象恢复 HP；拆除只删除玩家建造对象。
+
+**验证**：新增 `test_building` 耐久/迁移辅助测试、`test_chunk_diff` v2 往返/v1 兼容/HP 变化/摧毁不复活测试。Debug **372/372（121967 assertions）**、Release **372/372（121968 assertions）**、Python 18/18、无窗口服务器冒烟 19 系统。2026-10-24 用户实机验收通过（快速存档/重载与 chunk 卸载重载）。
+
+## 2026-10-23 M17-T2 维修与拆除
+
+**配置/输入**：`building.actionRange=2.5`、`actionCooldownSeconds=0.5`、`repairWoodCost=1`、`repairAmount=30`、`demolishRefundRatio=0.5`；新增 `RepairStructure=H`、`DemolishStructure=X`。
+
+**维修**：`H` 优先找 2.5 格内最近受损己方栅栏，扣 1 木材、恢复 30 HP（不超过 maxHp），同步对象与 `m_barricades`；满血/无木材/无目标/目标未加载均给 HUD notice 与日志。
+
+**拆除**：仅建造模式 `X` 生效；找 2.5 格内最近己方结构（含篝火/工作台），移除对象、清理 `m_barricades` 元数据，阻挡结构重建碰撞/A*；按 `ceil(woodCost * 0.5)` 返还木材，背包满时走 `ReturnOrDropItem` 落地。
+
+**HUD**：受损栅栏显示 `H 维修（1 木材 +30）`；建造模式靠近己方结构追加 `X 拆除（返还 N 木材）`；动作共享 0.5 秒冷却。
+
+**验证**：`test_building` 新增维修上限、费用/返还、非己方对象与 HUD 文案测试；配置/键位测试同步。Debug **374/374（121990 assertions）**、Release **374/374（121991 assertions）**、Python 18/18、无窗口服务器冒烟 19 系统。2026-10-24 用户实机验收通过（H/X 与 HUD）。
+
+## 2026-10-23 M17-T3 夜间基地尸潮
+
+**状态机**：新增 `game/BaseSiege.h`，Idle/Warning/Waves/Finished 四阶段；仅单机、每晚一次、22:00 后触发、05:00 强制结束。默认预警 30 秒（暂停冻结）、3 波 4/6/8、波间隔 45 秒、最大同时存活 12。
+
+**生成**：以预警时玩家位置为基地中心，在 10~14 格环形范围寻找已加载可站立格，复用 `WorldSimulation::SpawnZombieAt`；事件僵尸记录 StableId，设置 Chase/目标玩家/最后已知位置，并持续刷新感知指向玩家。事件结束/中止按 StableId 清理，不影响原有僵尸。
+
+**HUD/中止**：新增 `siege-status`，预警显示倒计时与结构数，波次显示存活/栅栏；全毁提示基地失守，结束显示损失栅栏数。死亡、返回主菜单、读档、离开 25 格、快速/退出存档均先中止并清理事件僵尸；保存不写入事件僵尸或波次状态。
+
+**配置**：`baseEvent.enabled/minStructures/startHour/endHour/warningSeconds/waveIntervalSeconds/waves/maxAlive/triggerRadius/spawnRadiusMin/spawnRadiusMax/leaveRadius`。
+
+**验证**：新增 `test_base_siege` 覆盖触发、暂停、每晚防重、波次/最大存活、05:00、离开、基地失守、损失数与中止清理；`test_ui` 同步双份 HUD 元素。Debug **382/382（122081 assertions）**、Release **382/382（122082 assertions）**、Python 18/18、无窗口服务器冒烟 19 系统。2026-10-24 用户实机验收通过（22:00 预警、三波生成、栅栏受击与中止清理）。
+
+## 2026-10-24 M17-T4 闭环验收
+
+**实机验收**：用户确认 M17 基地守夜闭环通过：搜刮木材 → 建造栅栏/篝火 → 22:00 预警与三波僵尸 → 栅栏受击/摧毁 → `H` 维修/`X` 拆除 → 快速存档/重载保留 HP 且摧毁不复活；事件中保存会中止并清理事件僵尸，读档不恢复波次；联机模式按 `B` 仍拒绝建造。
+
+**LOD 收口**：事件僵尸新增 `BaseSiegeZombie` 标记，`SpawnLodSystem` 跳过其人口统计与虚拟化，避免事件僵尸被回收或扰动演示人口；`test_spawn_lod` 覆盖事件僵尸远离焦点仍保留、普通僵尸正常虚拟化。
+
+**验证**：Debug **382/382（122081 assertions）**、Release **382/382（122082 assertions）**、Python **18/18**、无窗口服务器冒烟通过（19 个系统）。文档已同步：M17 关闭，下一项为暂缓的 M15-T6 平衡与端到端验收。
+
+
+## 2026-10-24 M18-F1 玩家储物
+
+**实现**：新增可建造木箱（4 木材、50kg、6 堆）。仓库使用 ECS 实体（`Position/SpriteRef/Container/PlayerStorage`），实体 StableId 作为稳定标识，避免与 tile/chunk 生命周期耦合；新增 `PlayerStorage` 存档组件。靠近仓库时背包右侧显示仓库内容，支持拖拽、全部存入、全部取出、右键拾取/装备；拆除时内容优先回背包、剩余掉地，再销毁实体并返还木材。联机模式拒绝仓库建造与存取。
+
+**坑/取舍**：仓库不能直接挂 `SquareObject`，chunk 卸载会丢失内容；改为 ECS 实体 + StableId。F1 限制 6 堆，避免 UI 只显示前 6 堆导致隐藏物品；另提供“整理”按物品类型/defId/状态排序。
+
+**验证**：Debug **388/388（122155 assertions）**、Release **388/388（122156 assertions）**、Python **18/18**、无窗口服务器 19 系统。新增 `test_storage` 6 个用例（生成/查找、容量/堆数、全部转移、拆除清空、实体存档、整理排序），`test_ui` 覆盖仓库按钮，Lua/Python `Inventory` 覆盖 `store_all/take_all/sort_storage` 解析。未提交。
+
+## 2026-10-24 M18-F2 饮水、烹饪与食物保鲜
+
+**实现**：新增 `empty_bottle`/`dirty_water`，复用 `water_bottle` 作为净水（均 1L、`maxStack=1`）；`use.replaceWith` 让饮水后原位回收空瓶。新增可建造“雨水收集器”（5 木材，`object.locker` 占位，station `locker`）；`fill_bottle` 装脏水、`boil_water` 在篝火烧成净水。脏水恢复 0.25 口渴并扣 4 HP，净水恢复 0.4。
+
+**保鲜**：`ItemDef.spoilDays` 与 `ItemInstance.condition` 复用为新鲜度；`cooked_beans` 为 1 天。`WorldSimulation` 每累计 1 游戏分钟推进所有容器与地面物品，暂停不衰减，`food.spoilScale` 可调；新鲜度 ≤0.05 为变质，使用仍恢复饥饿但扣 `food.spoiledDamage`。背包/仓库显示“新鲜 %”/“[变质]”，HUD 在背包有将坏食物时追加“食物将坏×N”。新鲜度复用现有 condition 存档/复制字段，旧存档缺省 1。
+
+**验证**：`test_food` 4 个用例（字段解析、空瓶回收、腐败推进/变质使用、装水/烧水链）；`test_world` 覆盖 `locker` 站点；Python `test_food_data` 覆盖资源契约。Debug **392/392（122240 assertions）**、Release **392/392（122243 assertions）**、Python **21/21**、无窗口服务器 23 物品/6 配方/19 系统。未提交。
+
+## 2026-10-24 M18-F3 睡眠与休息
+
+**实现**：新增可建造“床”（4 木材、`object.bed` 单格家具、不阻挡移动，室内外均可），并补 `bed_1` 自制切片与 manifest。靠近床按 E 打开睡眠选择，滚轮在 1~8 小时与“睡到天亮”间切换，E 开始、ESC 取消；单机专用，联机隐藏/拒绝。
+
+**时间与 Needs**：新增 `SleepSession` 独立记录起点/目标/已睡分钟；固定 tick 继续运行，游戏时间按 `sleep.gameMinutesPerSecond`（默认 120 分钟/秒）跳转，结束时精确落到目标。睡眠期间 `ApplySleepNeeds` 推进饥饿/口渴、按 `sleep.fatigueRecoveryPerHour`（默认 0.15/小时）恢复疲劳；饥饿或口渴达到 0.95 时以“饥饿或脱水”中断。
+
+**中断**：生命下降（受伤，含需求伤害）、8 格内存活僵尸、守夜事件开始、ESC 主动取消、死亡。开始睡眠时若已有僵尸或守夜事件则拒绝；结束提示当前游戏时间、已睡/总小时、疲劳百分比、原因与损失 HP，并恢复入睡前倍速。
+
+**存档**：`SaveMetadata` 新增 `gameMinutes`，meta schema v1→v2 自动迁移；读档恢复到保存时刻。新档进入 WorldDemo 时重置总游戏分钟，避免沿用上一局时间；睡前/睡后存档不再重复推进或回退时间。
+
+**验证**：`test_sleep` 覆盖时间跳转、天亮计算、会话完成/停止、Needs 推进；`test_save_manager` 覆盖 gameMinutes 往返与 v1 迁移；Python `test_sleep_data`、`test_art_slice` 覆盖床/配置/图集。Debug **398/398（122305 assertions）**、Release **398/398（122306 assertions）**、Python **23/23**、无窗口服务器 23 物品/6 配方/19 系统。未提交。
+
+## 2026-10-24 M18-F4 建造扩展：门、墙、地板与批量维修
+
+**实现**：新增木墙（3 木材、200 HP、Wall 层）、木门（3 木材、120 HP、Wall 层、E 开关）、木地板（1 木材、Floor 层）；门/墙提供横向/竖向 sprite，`R` 在建造模式切换朝向。木门关闭时 `blocksMovement=true` 并进入僵尸攻击列表，打开时切到 open sprite 且可通行；开关、放置、拆除、摧毁都调用 `RebuildChunkCollision` 重建物理静态体与 A*。地图自带门/墙因 `playerBuilt=false` 不会被维修/拆除。
+
+**存档**：门状态不新增布尔字段，关闭/打开用不同 sprite + `blocksMovement` 表达，复用 chunk diff 对象字段；木地板新增 `SquareObject.underlay` 记录覆盖前地面，拆除时恢复。`ChunkDiff` 段升 v3，兼容读取 v1/v2。`test_chunk_diff` 覆盖开门 sprite、HP、`blocksMovement` 与 `underlay` 往返。
+
+**维修全部**：`J` 扫描 2.5 格内所有己方受损 Wall/Furniture 结构，先汇总数量与总木材；不足时直接拒绝，预检通过后一次扣料并逐个恢复，避免部分扣料。HUD 显示 `J 维修全部（N 个/M 木材）`。门/墙/栅栏继续共用 `H` 单个维修与 `X` 拆除（拆除仅建造模式）。
+
+**建造菜单**：`building.types` 按“防御结构（栅栏/墙/门/地板）→ 设施（篝火/工作台/雨水收集器/床）→ 仓库（木箱）”排序；HUD 显示分类、序号、木材、朝向、合法性与 `R 旋转`。新增 `object.wall_h/v`、`object.door_closed_h/v`、`object.door_open_h/v` 自制切片与 manifest 映射。
+
+**已知限制**：只做单格结构，不做多格墙连接；门无开关动画/音效；地板不可叠加；联机建造与门状态同步未开放。
+
+**验证**：Debug **401/401（122349 assertions）**、Release **401/401（122350 assertions）**、Python **25/25**、无窗口服务器 23 物品/6 配方/19 系统。未提交。
+
+## 2026-10-24 M18-F5 基地状态 HUD
+
+**实现**：`WorldDemoState::UpdateBaseHud` 每 0.25 秒以玩家为中心、16 格半径扫描已加载 chunk 的玩家建造物，并汇总范围内 `PlayerStorage` 仓库；有任意己方结构/仓库时显示，离开范围自动隐藏。统计仓库数量与总重量/总容量、床位、篝火、工作台，以及 `maxHp > 0` 防御结构的完好/受损数；仓库重量和容量来自 `Container` + `ItemRegistry`。
+
+**HUD**：`ui::HudState` 新增 `baseActive/baseStorageCount/baseStorageWeight/baseStorageCapacity/baseBeds/baseCampfires/baseWorkbenches/baseDefensesIntact/baseDefensesDamaged/baseStatus/baseTone`，`ui::BaseStatusText` 统一生成一行文案。任意受损结构为警告，受损数不少于完好数为危险，仓库 ≥ 90% 容量为警告。native `assets/ui/hud.rml` 与 `mods/core_ui/ui/hud.rml` 同步新增 `base-status`，顶部状态行按基地（74px）→守夜（98px）→受击提示（122px）排列。
+
+**三路同步**：`LuaRuntime`/`PythonRuntime` 的 `Hud.GetState()` 暴露全部 base 字段；Lua/Python 控制器读取同名字段，缺失时回退空串/`info`；旧脚本不读取新字段继续运行。联机模式不显示基地状态。
+
+**验证**：`test_base_hud` 覆盖文案/正常/警告/危险/隐藏；`test_ui` 覆盖两份 HUD 文档的 `base-status`；`test_script_ui`/`test_python_api` 覆盖 Lua/Python 字段。Debug **404/404（122368 assertions）**、Release **404/404（122369 assertions）**、Python **25/25**、无窗口服务器 23 物品/6 配方/19 系统。未提交，待实机验收。
+
+## 2026-10-24 M19-F1 技能、经验与 Perk
+
+**数据与配置**：新增 `ecs::Progression`（角色等级/XP、`perkPoints`、4 项技能等级/XP、已选 Perk）；新增 `PRGR` v1 存档组件，旧档缺组件时由玩家恢复逻辑补默认值。`config/game.json` 新增 `progression` 段：等级/技能曲线、近战命中/击杀、制作、建造、搜刮、生存小时经验、技能每级效果和 12 个 Perk；所有数值可配置，第一版不允许洗点。
+
+**经验与效果**：`CombatSystem` 额外记录本 tick 实际命中（`HitInfo{attacker,target,damage,lethal}`），`ProgressionRules::AwardCombatHits` 只给玩家发经验，空挥/未命中/调试击杀不发；制作在 `items::Craft` 成功后按产物发；建造只在放置成功发；搜刮只在 `LootContainer.searched` 首次翻真发；生存按完整游戏小时发，暂停不计。技能效果：近战伤害、建造维修量、制作耗时、生存负重/搜刮经验/需求衰减；Perk 覆盖伤害/冷却/移速/负重/制作/维修/需求/经验。`NeedsSystem` 读取 `Progression` 的派生需求倍率；单机与服务器共用 `game::ProgressionRules`。
+
+**升级与 UI**：角色每升一级 +1 Perk 点；`PerkChoiceIds` 从未拥有 Perk 中确定性三选一，`ChoosePerkByIndex` 校验点数/重复。HUD 左下 `hud-level` 显示等级/XP，`perk-prompt` 显示待选；`C` 打开 `character-panel` 查看技能、已选 Perk、候选。待选时 `1/2/3` 优先于快捷栏；ESC 关闭面板。native/Lua/Python 共用 `HudState.progression*`/`characterOpen` 字段。
+
+**存档与联机**：玩家组件随实体存档；服务器档案 `PlayerState` 升至 v3，新增 `progressionLevel/progressionXp/progressionXpNext/perkPoints/skills/perks/perkChoices`，客户端只读镜像到本地玩家；`ChoosePerk` 命令由服务器校验并回收点数。旧 v2 状态仍可解码为默认成长。服务器 `TickProgression` 结算近战/制作/生存经验，`PlayerInventoryService` 制作耗时读取服务器技能乘数。联机建造/搜刮仍沿用现有禁用边界。
+
+**验证**：新增 `tests/test_progression.cpp`（升级/上限/Perk 去重/效果/实际命中），`test_needs` 覆盖需求倍率；`test_entity_save` 覆盖 `Progression` 往返；`test_player_state` 覆盖 v3 字段与拒绝非法数据；`test_ui`/`test_script_ui`/`test_python_api` 覆盖 HUD/角色面板字段；`test_network_integration` 覆盖服务器命中经验与 ChoosePerk 命令。Debug **408/408（122509 assertions）**、Release **408/408（122510 assertions）**、Python **25/25**、无窗口服务器 23 物品/6 配方/19 系统；Release 实机启动与 `C` 角色面板截图检查通过。未提交，待实机完整验收。
+
+## 2026-10-24 M19-F2 地图与 POI 扩展
+
+**地图**：`tools/gen_map.py` 升至 v3，在 `village_demo`（12×12 chunks）村庄外固定生成 3 个 POI：废弃加油站、废弃诊所、废弃农场仓。三者复用现有 `wall.brick`/`wall.door`/`object.workbench`/`object.bed` 图集，房间名分别为 `poi_gas_station`/`poi_clinic`/`poi_farm_barn`；建筑外围清出 3 格树/草丛缓冲，门外铺泥地接入现有道路。新增 `tests` 外的 Python `test_poi_data.py` 校验房间、资源、容器/标记坐标与村庄到三个 POI 的 BFS 连通；`test_maploader` 确定性总数更新为 131 chunk / 471 对象 / 22 房间出现。
+
+**配置与搜刮**：`config/game.json` 新增 `pois` 段（开关、120 格指引范围、3 个 `defs`）。每个 POI 独立配置威胁 1~3、地图标记、2 个容器、守军数量/变体/半径和任务；`game/Poi.cpp` 严格解析并校验任务目标表属于自身容器。`assets/loot.json` 新增 6 张表（每区一张主物资表 + 一张附属表），容量/权重/保底独立。
+
+**运行时**：POI 目标 chunk 加载后，按“表 + 坐标”幂等生成 `LootContainer`，读档不会重复；守军通过 `WorldSimulation::SpawnZombieAt(x,y,variant)` 生成并带 `PoiGuard{poiId}`，`SpawnLodSystem` 对其跳过虚拟化，守军标记随存档保留。目标容器首次搜索且该 POI 守军清零后完成，玩家 `PoiTasks`（`POTS` v1）记录完成，按配置发放生存经验和物品（背包满落地）。旧档缺少 `PoiTasks`/`PoiGuard` 按未完成/无守军标记处理。
+
+**指引**：`HudState` 新增 `poiGuide/poiGuideTone`；native `poi-guide`、Lua/Python `Hud.GetState()` 同步。HUD 显示最近未完成 POI 的威胁、方向/距离、任务进度；世界菱形标记按威胁着色（低绿/中黄/高红，完成灰），离开视野后夹到屏幕边缘，打开背包/角色面板/菜单时隐藏。
+
+**验证**：`test_poi` 覆盖配置解析/任务规则/指引/完成去重；`test_spawn_lod` 覆盖 POI 守军不虚拟化；`test_entity_save` 覆盖 `PoiTasks`/`PoiGuard` 往返；`test_ui`/`test_script_ui`/`test_python_api` 覆盖 HUD 字段；Python `test_poi_data` 覆盖 3 个 POI、独立表、资源存在和路线连通。Debug **413/413（122672 assertions）**、Release **413/413（122673 assertions）**、Python **29/29**、无窗口服务器 23 物品/6 配方/19 系统；Debug 临时近 POI 启动 + 杀守军 + 开店搜刮冒烟确认任务完成与奖励，正式出生点已复原。未提交，待实机验收；联机 POI 内容暂未开放。
+
+## 2026-10-24 M19-F3 任务与事件系统
+
+**数据**：`config/game.json` 新增 `missions` 段（开关、随机种子、9 条 `defs`）。定义含 `id/name/chain/order/kind/source/prerequisite/minDay/chance/objectives/reward`；一次性链 3 条：电台（工具柜→修电台）、诊所（清剿+药柜→回营）、农场（清剿农场仓→工具柜）；另有每日巡逻和两个随机事件。目标类型 `collect/interact/kill/loot/poi/reach` 分别复用背包/电台交互/战斗击杀/首次搜刮/POI 完成/位置到达；来源 `radio/note/npc/base` 进入 HUD 文案。
+
+**运行**：`WorldDemoState::UpdateMissions` 自动接取根任务和前置完成后的下一阶段；击杀按 `CombatSystem` 击杀增量、搜刮/修理按实际事件、POI/到达/物品按实时状态推进。每日任务在游戏日变化时清零重开；随机事件按 `randomSeed + day + id` 的 FNV 哈希确定性判定，跨日移除并重新 roll。任务完成只发一次奖励：技能/角色经验、现有物品或直接写入 `KnownRecipes` 的图纸；`farm_tools` 完成同时解除 `rain_collector` 的 `requiresMission` 建造门槛，形成基地设施解锁。
+
+**存档与 UI**：玩家 `MissionLog`（`MSLG` v1）保存任务 id、各目标进度、状态、完成日、随机日与领奖标记；读档不会回退或重复发奖。HUD 目标框新增 `mission-guide`，显示来源/任务名/进度/奖励与 `L切换 K放弃`；`L` 循环焦点，`K` 将当前任务标为失败（一次性链永久锁定、每日/随机待下次刷新）。native/Lua/Python 共用 `missionGuide/missionTone`；完成/放弃/每日刷新/随机事件均走 notice。
+
+**验证**：新增 `test_missions`（配置 9 条/3 链/来源/目标/随机判定/放弃）、`test_mission_data.py`（链、来源、目标引用、奖励、返回点可达、基地设施门槛）；`test_entity_save` 增加 `MissionLog` 往返；`test_ui`/`test_script_ui`/`test_python_api` 覆盖 `mission-guide`；`test_building` 校验雨水收集器任务门槛。Debug **417/417（122780 assertions）**、Release **417/417（122781 assertions）**、Python **35/35**、无窗口服务器 23 物品/6 配方/19 系统；Debug 实机按键 F6 连杀完成每日巡逻并发放奖励，HUD 截图确认 `任务` 行与 POI 指引同屏。未提交，待实机验收；任务来源暂为数据/文案层，无实体 NPC，联机不同步任务。
+
+## 2026-10-24 M19-F4 装备与战斗扩展
+
+**数据**：`assets/items.json` 的 clothing 新增可选 `armor{claw,bite,blunt,wear,moveScale,insulation,waterproof}`，weapon/clothing 新增 `repairEfficiency`（0.1~3.0）。新增砍刀/棒球棍/撬棍与皮夹克/雨衣/防暴背心，共 29 条物品；全部复用现有图标/占位资源。`insulation/waterproof` 暂只作 M20-F2 天气接口，枪械未开启。
+
+**护甲运行**：`game/Armor.h` 从玩家躯干 `Equipment` 解析实际减伤，`WorldSimulation::ArmorSystem` 每 tick 重算 `ecs::DamageResist`。`CombatSystem::ApplyDamage` 在扣血/写伤口前按爪/咬/钝减伤，并按装备 `condition` 削弱；实际命中通过 `ArmorWearCallback` 调用 `items::WearEquippedArmor` 磨损躯干装备。重甲的 `moveScale` 由 `MovementSystem` 叠加到玩家速度，护甲损坏后减伤归零但重量惩罚仍保留。护甲组件是派生运行时数据，不新增存档字段，装备继续走 `Equipment`/`ZLR1`/`ZLP1`。
+
+**武器与维修**：三把新武器形成快速（砍刀）、击退/硬直（棒球棍）、低磨损高维修效率（撬棍）的取舍；衣物进入维修流程，恢复量乘物品 `repairEfficiency`，破损到 0 后不可维修。背包/装备槽仍显示耐久百分比，护甲可先卸下后维修。
+
+**UI 与验证**：HUD 新增 `armor-status`，显示爪/咬/钝减伤与移速，重甲/损坏走 warn/fail 色；native/Lua/Python 共用 `armorStatus/armorTone`。新增 `tests/test_armor.cpp` 覆盖装备解析/损坏/磨损；`test_combat` 增加类型减伤/实际伤害/磨损/移速；`test_items`/`test_recipes` 覆盖字段与衣物维修效率；`test_ui`/`test_script_ui`/`test_python_api` 覆盖 HUD；Python `test_gear_data.py` 校验武器取舍、护甲范围与掉落引用。Debug **424/424（122933 assertions）**、Release **424/424（122934 assertions）**、Python **38/38**、无窗口服务器 **29 物品 / 6 配方 / 20 系统**。未提交，待实机验收。
+
+## 2026-10-24 M20-F1 感染与疾病
+
+**规则**：`config/game.json` 新增 `infection` 段：爪击 6%、撕咬 20% 基础暴露，既有未包扎伤口按严重度提高概率（上限 75%）；病程 900 秒，30% 进入发热/疲劳、70% 进入重症、100% 死亡。未包扎伤口加速病程，发热增加疲劳，重症持续掉血；固定随机种子保证服务器/单机判定可复现。
+
+**运行**：`ecs::Infection` + `characters::InfectionSystem` 位于 Pain 之后；`CombatSystem::ApplyDamage` 在写入新伤口前调用 `InfectionExposureCallback`，只对 PlayerTag 生效，避免首次命中把本次新伤口计入概率。感染死亡写 `DamageCause::Infection`，单机结算标题/副标题与死因显示“感染”。
+
+**治疗**：新增 `antibiotics`（-35% 病程、50% 抑制 180s）和 `disinfectant`（-12%、25% 抑制 90s），诊所药柜与村庄储物柜保证抗生素；绷带保留止血并带 60s 弱抑制。无感染时治疗道具拒绝使用且不消耗；单机与服务器 `PlayerInventoryService` 共用同一效果路径。
+
+**存档/联机**：新增 `INFC` v1 存档组件（旧档无组件 = 未感染）、`ZLR1` 复制组件；`ZLP1` 升至 v4，携带阶段/病程/倒计时/抑制窗口，旧 v2/v3 仍可解码；服务器 `WorldSimulation` 权威推进，客户端只读镜像并更新 HUD。
+
+**UI/验证**：native 与 core_ui Lua/Python 新增 `infection-status`，显示阶段、病程、下一阶段/死亡倒计时和抑制剩余，严重阶段使用 fail 色。新增 `tests/test_infection.cpp`、Python `test_infection_data.py`，并扩展战斗/存档/复制/PlayerState/背包/网络/UI 测试；Debug **432/432（123079 assertions）**、Release **432/432（123080 assertions）**、Python **41/41**、无窗口服务器 **31 物品 / 6 配方 / 21 系统**。Release 实机启动加载 core_ui HUD，`InfectionSystem=0.00ms`，未发现脚本/运行时错误。未提交，待实机验收；随机种子固定但不随存档保存游标。
+
+## 2026-10-24 M20-F2 天气、温度与潮湿
+
+**目标**：用游戏时间驱动晴/雨/雾/寒潮，让衣物保温/防水、室内和篝火产生实际取舍；低体温影响疲劳/移速/生命，HUD 显示天气与体温/潮湿；天气只对僵尸感知/移动做轻量缩放。
+
+**实现**：新增 `game/Weather.h/.cpp`、`game/Climate.h/.cpp`、`game/WeatherStatus.h`。`WeatherSystem` 只读取累计游戏分钟与 `weather.seed`，每 `periodMinutes` 确定性选择天气，首块固定晴，块边界在 `transitionMinutes` 内平滑混合环境温度/雨雾/视距/尸速；读档按 `metadata.gameMinutes` 重建同一状态，不保存额外随机游标。`ecs::Climate` 只持久化 `bodyC/wetness`（`CLMT` v1），`WorldSimulation` 的 `ClimateSystem` 每 tick 从天气、`IsIndoors` 房间 ID、附近 `object.campfire` 和躯干衣物 `insulation/waterproof` 重算体感/潮湿/移速；低体温增加疲劳、乘玩家移速并按 `DamageCause::Hypothermia` 扣血。`WeatherSystem` 在 Lod 之后、Needs 之前，`ClimateSystem` 在 Infection 之后；固定链从 21 升到 23 个系统。`PerceptionSystem`/`PathFollowSystem` 增加环境缩放接口，分别影响僵尸视距与非本地控制移速。`WorldDemoState` 的 HUD 新增 `weather-status`/`weather-overlay` 与 `weatherStatus/weatherTone/weatherClass`，core_ui Lua/Python 同步；雨天/雾/寒潮仅用半透明全屏调色占位。`PlayerState` 升至 v5，服务器 owner 镜像体温/潮湿，v4 旧负载回退 37°C/0%。配置新增 `weather.*`/`climate.*`。
+
+**验证**：Debug **439/439（123146 assertions）**、Release **439/439（123147 assertions）**、Python **44/44**、无窗口服务器 **31 物品 / 6 配方 / 23 系统**。Release 实机启动 smoke 加载 core_ui HUD，`WeatherSystem=0.00ms`、`ClimateSystem=0.01ms`，无脚本/运行时错误；启动块为晴（日间 24°C/夜间 18°C）。未提交，待实机验收。
+
+**限制/风险**：第一版没有新增雨滴/雾粒子或天气音效，仅 HUD 调色；天气状态通过已保存的游戏时间确定性重建，不单独保存天气块随机游标；Client 只镜像 owner 体温/潮湿，不把 Climate 放进 ZLR1 远程实体；睡眠期间的体温变化仍沿用现有睡眠独立时间推进边界。
+
+## 2026-10-25 M20-F3 特殊僵尸与大规模尸潮
+
+**目标**：在既有普通/快速/强壮变体上增加两种可读、可反制的特殊行为，让夜间事件随生存天数和基地规模成长，同时保留性能硬上限与联机快照兼容。
+
+**实现**：新增 `ecs::ZombieSpecial{kind=Howler/Breaker,cooldown,windup,windupDuration,serial}`；`ai::ZombieSpecialSystem` 在 Ai 之后、PathFollow 之前运行。嚎叫者在玩家 12 格内蓄力 1.2 秒，完成时发 24 格 `ZombieGrowl` 声音并把半径内僵尸的可疑点改到玩家位置；硬直会打断，玩家离开 18 格取消，冷却 9 秒。破门者复用 `BarricadeDefense` 的玩家门/墙/栅栏耐久管线，2.2 格触及、0.9 秒蓄力、28 点伤害，蓄力条/预警环与音效提示，硬直会取消。`BaseSiege` 用生存天数（不是公历绝对日）和触发时结构数缩放每波数量，`maxWaveSize/maxAlive` 双层硬上限；第二波起按波次生成嚎叫者/破门者，`siegeStatus` 追加“特殊 嚎N 破N”和蓄力文本，事件僵尸继续跳过 LOD。`ZSPC` v1 存档与 `ZLR1` 复制组件同步 `kind/cooldown/windup/windupDuration/serial`，`ActionState` 追加 `Howling=6`。
+
+**验证**：`test_base_siege` 覆盖缩放/上限/特殊波次/HUD，`test_building` 覆盖破门蓄力/伤害/冷却，`test_special_zombies` 覆盖嚎叫、引怪、冷却、硬直打断和脱战，`test_entity_save`/`test_replication` 覆盖 `ZSPC`。Release 100 实体压力 smoke FPS 412–894，`ZombieSpecialSystem≈0.00ms`。Debug **445/445（123231 assertions）**、Release **445/445（123232 assertions）**、Python **44/44**、无窗口服务器 **31 物品 / 6 配方 / 24 系统**。加速事件 smoke 已验证第一波 4 只普通、第二波 6 只含嚎叫者、第三波 8 只含破门者；HUD 截图见 `build/m20f3-siege.png`。未提交，待实机验收。
+
+**限制/风险**：本版只做嚎叫者与破门者，不做冲锋；特殊行为只服务单机夜间事件，联机事件仍禁用但组件可复制；破门者只打玩家建造且进入 `m_barricades` 的墙/门/栅栏，不拆地图原生墙体；预警使用像素环/动作条/通知与声音，不新增正式美术或粒子。
+
+## 2026-10-25 M20-F4 农业、电力、陷阱与 NPC 交易
+
+**目标**：在 M18/M19 稳定的单机循环上补一组可持续的基地经营功能，同时保持每个系统可独立关闭，设施状态可存档、不复制。
+
+**实现**：新增 `game/HomesteadComponents.h`、`game/Homestead.h/.cpp` 与 `tests/test_homestead.cpp`。`FarmPlot`（`FARM` v1）通过 E 播种/浇水/收获，按累计游戏分钟成长，默认 240 分钟成熟、360 分钟/瓶水、720 水上限、1440 分钟干旱枯萎，收获 2 份白菜并返还 1 份种子。`Generator`（`GENR` v1）用燃料罐开关，燃料按游戏分钟消耗，8 格半径给 `ColdStorage`（`COLD` v1）供电；`WorldSimulation::AdvanceFoodSpoilage` 遇到供电冷藏柜跳过腐败，冷藏柜复用仓库 30kg/4 堆 UI。`SpikeTrap`（`TRAP` v1）在夜间 `BaseSiege` 激活后对 `BaseSiegeZombie` 触发，默认 45 伤害/1 格/1.5 秒冷却/6 次使用。固定商人不参与 AI，`MerchantStock`（`MRCH` v1）保存 5 档每日库存，物物交换药品/图纸/种子/燃料；交易用 `action-hint` 面板，滚轮选择、1–5 购买、E 关闭，最近设施提示优先于固定顺序。
+
+**数据/配置**：`config/game.json` 新增 `farming/power/traps/trading` 段，`building.types` 从 9 增至 13，新增 `object.farm_plot/generator/fridge/trap` 逻辑精灵别名；`assets/items.json` 从 31 增至 34，新增种子/白菜/燃料罐；农场/加油站搜刮表和 demo 地面补充种子/燃料。五个新组件登记到 `ComponentRegistry`，注册表从 26 增至 31；Lua/Python HUD 增加 `baseFarms/baseGenerators/baseGeneratorsOnline/baseFridges/baseFridgesPowered/baseTraps/baseTrapsArmed`。
+
+**验证**：Debug **453/453（123377 assertions）**、Release **453/453（123378 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**。Release 实机启动 smoke 无脚本/运行时错误，商人生成并显示“按 E 交易”提示；交易面板与商人截图见 `build/m20f4-trade2.png`。设施/农业/电力/陷阱的纯逻辑与组件往返由 `test_homestead`、`test_entity_save` 覆盖。未提交，待实机验收。
+
+**限制/风险**：M20-F4 为单机垂直切片，设施状态不进入 `ZLR1` 联机快照；发电机“照明”以供电/HUD 状态表示，未做动态光照；商人是固定报价与库存，不做完整 NPC 模拟；读档不按离线时间补算农场/燃料；设施拆除暂只返还木材，不返还内部作物/燃料。
+
+## 2026-10-25 X-F1 联机建筑只读同步（阶段 1）
+
+**目标**：先让服务器存档里已有的玩家建筑在两个客户端上可见，不开放联机写入命令；为后续服务器权威放置/拆除准备地图补丁通道。
+
+**实现**：服务器 `ServerHost::BroadcastStructureDiffs` 每 `net.structureSyncIntervalTicks`（默认 180 tick）遍历已加载 chunk，用 `CaptureChunkDiff` 取得玩家修改格，`SplitChunkDiffBySquare` 拆成单格 `ChunkDiff`，复用 `ZLCD` 段直接作为 KCP 数据消息下发。每格包含完整持久层状态，因此 HP、playerBuilt、木地板 underlay 和门开关 sprite 一并同步；周期重发覆盖晚连接与客户端 chunk 卸载/重载。客户端 `NetworkClient` 识别 `ZLCD` 并缓存，`WorldDemoState::ApplyNetworkChunkDiffs` 在目标 chunk Loaded 后 `ApplyChunkDiff`，未加载补丁暂存，按 `(chunkX,chunkY,z,lx,ly)` 去重后重建静态碰撞。
+
+**验证**：`test_chunk_diff` 新增单格拆分/编码/逐格应用；`test_network_integration` 新增双客户端只读同步，服务器加载 chunk 后放入 `object.wall_h` 玩家建筑格，两个客户端均收到含 100 HP、playerBuilt 的补丁。Debug **455/455（123443 assertions）**、Release **455/455（123444 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**。未提交，待实机验收。
+
+**限制/风险**：本阶段只读，客户端仍不能联机放置/拆除/维修，服务器不执行写入命令；结构删除不会主动发墓碑（下一阶段需要稳定结构 ID/removal 列表）；补丁按周期全量重发已修改格，尚未做增量哈希/带宽预算；客户端应用后只重建本地碰撞与寻路缓存，不把补丁写入存档。
+
+## 2026-10-25 X-F1 联机建筑服务器权威写入（阶段 2a）
+
+**目标**：在只读同步通道上开放放置/拆除/维修/开关门，让客户端只发命令、服务器扣木材并改世界，同时保持双客户端结构一致。
+
+**实现**：`CommandType` 新增 `PlaceStructure/DemolishStructure/RepairStructure/ToggleDoor`；`PlaceStructure` 携带格坐标、`building.types` 索引和竖向 flags。`ServerHost` 校验会话/范围/已加载 chunk/格子占用/木材/`building.actionCooldownSeconds` 后执行：静态结构用 `MakeBuiltObject` 写地图；仓库用 `SpawnPlayerStorage`，农田/发电机/冷藏柜/陷阱用 Homestead 工厂生成 ECS；拆除返还 `demolishRefundRatio` 木材、掉落仓库存物；维修扣除 `repairWoodCost`；门开关校验门口活体阻挡。成功写入后 `MarkStructureSyncDirty` 让所有会话在本 tick 收到单格 `ZLCD`；设施/仓库通过新增 `kReplicationArchetypeProp` 复制位置/sprite。客户端建造模式在联机模式开放，维修/拆除/门/放置发送命令并显示服务器回传状态，不再本地改图或扣物。
+
+**数据/协议**：新增共享 `game/BuildingRules.cpp::LoadBuildableDefs`，客户端与服务器共用目录解析，避免索引漂移；`CommandCodec` 只扩类型上限，线格式仍为 `ZLC1` v1 固定 56B；`EntityReplication` Prop archetype 不改变 `ZLR1` 版本，只复制 Position/Sprite。
+
+**验证**：`test_net` 覆盖四条新命令的定长往返；`test_network_integration` 新增服务器权威流程：放墙→重复放置拒绝→维修→远距离拒绝→放门/开门→拆墙返还→放仓库并确认客户端收到 Prop→拆仓库。Debug **456/456（123532 assertions）**、Release **456/456（123533 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**。未提交，待实机验收。
+
+**限制/风险**：仓库存取、农田/发电机/陷阱交互仍只单机；没有稳定结构 ID/所有权，任何玩家可拆任何玩家结构；删除没有墓碑/增量哈希，仍靠周期全量补丁；Prop 只有位置/sprite，无库存摘要/HP；并发拆建仅靠服务器串行执行与格子校验，未做多客户端实机压力验收。
+
+## 2026-10-25 X-F1 稳定结构 ID / 所有权 / 删除墓碑（阶段 2b-1）
+
+**目标**：让服务器权威建筑具备可持久化的结构身份与所有者，并修复“拆除后该格回到母地图状态，客户端永远收不到删除补丁”的同步漏洞。
+
+**实现**：`SquareObject` 新增 `structureId`/`ownerStableId`；地图结构用 `game::MakeStructureId(wx,wy,z,layer)` 生成确定性 ID，`ZLCD` 升到 v4 编码身份字段并兼容 v1/v2/v3。设施用可存档 `ecs::StructureOwner`（`STRO` v1），Prop 复制携带 owner。服务器 `DemolishStructure/RepairStructure/ToggleDoor` 统一校验 owner：0 表示旧档无主结构，保持可操作；否则只允许建造者。拆除地图结构后记录短期墓碑，`CaptureChunkSquareDiff` 无条件采集当前完整四层状态，在 2 个同步周期内补发，避免客户端残留旧墙/门。
+
+**验证**：`test_chunk_diff` 覆盖 v4 身份字段、v3 旧档默认值、无基线单格采集；`test_entity_save` 覆盖 `StructureOwner` 往返；`test_network_integration` 覆盖第二/第三客户端越权拆墙/拆仓库被拒、结构 ID/owner 到达客户端、拆墙后收到无墙完整格补丁。Debug **458/458（123604 assertions）**、Release **458/458（123605 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**。未提交，待实机验收。
+
+**限制/风险**：仓库存取、农田/发电机/陷阱交互仍只单机；设施 owner 未在 UI 展示；墓碑无 per-session 确认，极端断线重连仍需验收；并发拆建与服务端重启后的跨存档恢复待 2b-2。
+
+## 2026-10-25 X-F1 仓库存取与设施交互（阶段 2b-2a）
+
+**目标**：在不新增 UI 协议的前提下，让联机客户端复用现有背包/仓库面板存取仓库，并把农田/发电机/陷阱的 E 交互改为服务器权威，同时避免非所有者读取仓库内容。
+
+**实现**：`ZLR1` 新增 `PlayerStorage` 组件（maxStacks/capacity/最多 6 堆物品），服务器 producer 按会话 `viewerStableId` 过滤：仓库 owner 或 owner=0 的旧设施才收到内容；非 owner 仍能收到 Prop 的位置/sprite/owner 元数据但不泄露库存。客户端把该组件还原成本地 `PlayerStorage`/`Container`，因此现有仓库标题、重量、槽位和拖拽 UI 无需改协议。`PlayerInventoryService::Dispatch` 为 StoreAll/TakeAll/SortStorage、背包↔仓库拖拽和 `Pickup` 增加仓库分支：按 StableId 或 `inventory.lootRange` 最近仓库定位，校验 `StructureOwner` 后调用既有 `StorePlayerStorageItem`/`TakePlayerStorageItem`。冷藏柜同样走 `PlayerStorage`，联机存取自动可用。
+
+`CommandType` 新增 `InteractFacility=20`，payload.entityId 为设施 StableId；`ServerHost::InteractFacility` 校验存活、同层、`building.actionRange`、owner 后执行农田播种/浇水/收获/清理、发电机加油/开关、陷阱布防/解除。`TickHomestead` 在服务器按累计游戏分钟推进 `FarmPlot`/`Generator`、按 tick 推进 `SpikeTrap` 冷却并刷新 `ColdStorage.powered`；`ZLR1` 新增 `FarmPlot/Generator/SpikeTrap` 状态组件，客户端 E 交互在联机模式只提交命令，提示与目标选择使用复制状态。
+
+**验证**：`test_inventory_service` 覆盖 StoreAll/TakeAll/拖拽/owner 拒绝；`test_replication` 覆盖仓库内容 owner-only 过滤和设施组件；`test_network_inventory` 覆盖联机仓库 StoreAll/TakeAll、农田种植/浇水/收获、发电机加油和陷阱解除；`test_net` 覆盖 `InteractFacility` 往返。Debug **461/461（123694 assertions）**、Release **461/461（123695 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**。未提交，待实机验收。
+
+**限制/风险**：并发拆建/维修冲突、chunk 卸载重载与服务端重启后的仓库/设施持久化仍需 2b-2b 端到端验收；陷阱伤害/触发仍只在单机（联机只同步布防状态）；商人交易、设施 owner UI、per-session 删除确认未做；仓库内容 6 堆上限复用单机规则。
+
+## 2026-10-25 X-F1 并发拆建、chunk 重载与服务端世界存档（阶段 2b-2b）
+
+**目标**：补上服务器重启后结构/仓库/设施丢失的问题，并用双客户端自动化覆盖同格并发放置/维修/拆除冲突、服务端 chunk 卸载/重载，以及重启后的客户端结构补丁。
+
+**实现**：`ServerHost` 新增 `SaveWorld`，在正常退出且 `server.saveId` 非空、`save.autoSaveOnExit=true` 时执行。它先 `Flush`，用 `CaptureEntities` 采集实体并过滤 `PlayerTag`（玩家位置/背包继续由 `PlayerProfileStore` 独立保存），再遍历已加载 chunk 用 `CaptureChunkDiff` 采集结构 diff，通过 `SaveManager::Save` 原子写回同一存档；从备份读档的会话禁止回写主档。chunk 卸载仍由 `WorldSimulation` 的卸载回调先 `SaveChunk`，因此未加载 chunk 的修改不会丢。
+
+重启时 `WorldSimulation::LoadSave` 先恢复实体快照，再在 chunk 加载回调叠加 `ZLCD` v4 diff；仓库/农田/发电机以 ECS 实体恢复 `PlayerStorage`/`Container`/`StructureOwner`/`FarmPlot` 等组件，地图墙由 chunk diff 恢复，客户端重连同 identity 后 owner 重新匹配并收到结构补丁。服务器仍单线程处理命令，同一格的并发放置/维修/拆除按 tick 顺序执行：第一个成功后，后续因占用、已满或目标消失被拒绝，不会重复扣/返木材。
+
+**验证**：新增 `test_network_world_persistence`：双客户端同格并发放置/维修/拆除各只允许一次成功；服务端强制玩家离开使 chunk 卸载、返回后墙从存档恢复；正常退出后同一 saveId 重启，验证地图墙/owner、仓库 owner/bandage 内容、农田状态、客户端结构补丁和仓库 TakeAll。Debug **463/463（123776 assertions）**、Release **463/463（123777 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**。未提交，待实机验收。
+
+**限制/风险**：世界保存只覆盖正常退出与 chunk 卸载，不含崩溃/强制终止的周期快照；未配置 `server.saveId` 的新服务器不会自动创建世界存档；并发安全依赖服务器单线程命令顺序，未实现多线程/跨进程锁；陷阱伤害/触发仍只在单机，商人交易与设施 owner UI 未接入联机。
+
+## 2026-10-25 X-F1 联机陷阱伤害（阶段 2b-3）
+
+**目标**：把尖刺陷阱从“联机只同步布防状态”推进到服务器权威伤害，确保僵尸扣血、陷阱次数/冷却/耗尽和客户端表现都由服务器结算。
+
+**实现**：`ServerHost::Tick` 在 `TickHomestead` 之后调用 `TickTrapTriggers`。服务器遍历 `SpikeTrap + Position`，为每个可触发陷阱选择同层、半径内最近的可受伤 `AiState` 僵尸，排除 `PlayerTag`/`Dying`/已倒地目标；选目标与结算分离，避免在 ECS view 遍历中修改组件。命中通过 `CombatSystem::ApplyDamage` 扣血，再 `ConsumeTrapUse` 消耗一次、写入冷却，耗尽自动解除；伤害事件 sourceId 取 `StructureOwner`。命中生成 `TransientEffect` 光效，并向 12 格内会话下发剩余次数提示；陷阱用量/冷却/布防与目标 `Health` 继续走 `ZLR1` 增量复制，未新增命令或客户端预测。
+
+单机 `WorldDemoState::UpdateTraps` 保持只对夜间 `BaseSiegeZombie` 触发；联机服务器当前没有 BaseSiege 夜袭事件，因此 2b-3 对权威 AI 僵尸触发，后续接入服务器尸潮时可收窄目标。
+
+**验证**：`test_network_inventory` 新增 `X-F1 2b-3`：验证 45×3 伤害、1.5 秒冷却内不重复、次数耗尽解除、客户端收到陷阱次数/布防与目标血量、12 格状态提示。Debug **464/464（123801 assertions）**、Release **464/464（123802 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**。未提交，待实机验收。
+
+**限制/风险**：联机陷阱对任意权威 AI 僵尸触发，不等同单机 BaseSiege；没有客户端本地音效/命中预测，反馈依赖服务器状态与复制光效；设施 owner UI、per-session 删除确认仍未接入。
+
+## 2026-10-25 X-F1 联机商人交易（阶段 2b-4）
+
+**目标**：把 M20-F4 的商人交易接入联机，商人库存、报价校验、扣料发奖和图纸学习全部由服务器权威执行，同时复用现有商人面板和背包 UI。
+
+**实现**：`CommandType` 新增 `TradeOffer=21`，payload.entityId 为商人 StableId、index 为报价索引。`MerchantStock`（5 档库存 + restockDay）注册为 `ZLR1` 组件（`MRCH`，复制注册数 18→19）；`EntityReplication` 将其归入 Prop archetype，客户端 `SyncNetworkReplicas` 还原组件，`FindNearbyMerchant`/`TradePanelText` 直接复用。服务器 `EnsureServerMerchant` 在首个权威玩家生成后，以玩家 +2/+1 附近的安全格生成商人（玩家位置不可用时以 `trading.merchantX/Y` 回退），避免与建筑/角色重叠；`TickHomestead` 按生存日补货。
+
+`ServerHost::PurchaseMerchantOffer` 校验商人存活、同层、`trading.range`、库存与背包容量；复制玩家 `Container`，先扣 cost、再发 reward，只有全部成功才写回，避免失败时扣物。图纸交易在确认未学会后写 `KnownRecipes`（排序去重），成功后扣库存并通过服务器状态提示。客户端联机 E 打开商人面板，1–5 只发送 `TradeOffer`，不本地扣物/加物；库存经 `ZLR1`、背包与图纸经 `PlayerState` 回收。单机交易路径保持不变。
+
+**验证**：`test_network_inventory` 新增 `X-F1 2b-4`：验证商人自动生成、`MerchantStock` 复制、wood→bandage 交易、库存递减、物资不足拒绝，以及图纸写入 `KnownRecipes` 并同步客户端；`test_net` 覆盖 `TradeOffer` 往返，`test_replication` 注册数更新为 19。Debug **465/465（123836 assertions）**、Release **465/465（123837 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**。未提交，待实机验收。
+
+**限制/风险**：固定报价、无移动/NPC 模拟；首个权威玩家决定商人落点，后续玩家共享同一商人与库存；设施 owner UI、per-session 删除确认仍未接入。
+
+## 2026-10-25 X-F1 设施 owner UI 与拆除二次确认（阶段 2b-5）
+
+**目标**：让联机玩家能看出设施/结构归属，避免误操作他人设施，并给拆除增加 per-session 二次确认；不改变既有服务器权威所有权校验。
+
+**实现**：客户端 `SyncNetworkReplicas` 从复制 Prop 的 `ownerStableId` 还原 `StructureOwner`；`WorldDemoState` 增加统一 `LocalPlayerStableId`/`StructureOwnerLabel`/`StructureOwnerSuffix`/`CanEditLocalStructure`。农田/发电机/陷阱提示、结构维修/开门提示、建造模式拆除提示与仓库标题显示 `归属：你/玩家名/无主`，非所有者显示只读或仅所有者可操作；单机拆除入口也补 owner 校验。`HomesteadHint` 对非所有者不再提示 E 操作。
+
+`Command.h` 新增拆除确认 flags：`kDemolishConfirmRequestFlag`（bit0）与 `kDemolishConfirmAcceptFlag`（bit1）。服务器 `SessionPlayer` 保存待确认目标的格/层/结构 ID 或设施 StableId，`ServerConfirmDemolish` 处理 request/accept：request 只写 3 秒（180 tick）待确认状态并回提示，accept 校验同格/同层/token 未过期且 owner 仍可编辑后才继续删除；换目标、过期、owner 变化均拒绝。`flags=0` 保持旧客户端立即拆除兼容。
+
+客户端单机/联机统一维护 3 秒 `PendingDemolish`，第一次按 X 只记录目标并提示“再次按 X 确认拆除”，第二次同目标才执行；退出建造模式或玩家切换时清空。联机首次请求只发 request，第二次发 accept，服务端状态提示覆盖本地提示。
+
+**验证**：`test_network_integration` 的拆除流程改为 request/accept：request 后断言墙体和木材不变，accept 后墙体移除并返还木材；既有越权拆墙/拆仓库、`test_network_inventory`/`test_net`/`test_replication` 继续通过。Debug **465/465（123840 assertions）**、Release **465/465（123843 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**。未提交，待实机验收。
+
+**限制/风险**：owner 标签优先使用 `SocialState` 玩家名，名单未到前回退 `玩家 <StableId>`；非 owner 的仓库内容仍按 2b-2a owner-only 过滤，因此无主/自有仓库标题可显示归属，未复制的他人仓库无法显示完整标题；确认状态仅存于会话内存，服务端重启或断线后需重新确认；旧客户端 `flags=0` 仍立即拆除。
+
+## 2026-10-25 X-F1 服务器守夜事件与陷阱收窄（阶段 2b-6）
+
+**目标**：让服务器具备与单机一致的夜间 BaseSiege 事件，把联机陷阱从“任意权威 AI 僵尸”收窄到带 `BaseSiegeZombie` 标记的事件僵尸，并保持服务器权威结算。
+
+**实现**：`ServerHost` 复用 `game::BaseSiege`，在 `Init` 中读取 `baseEvent.*` 并配置回调；`Tick` 顺序改为游戏时间推进 → `TickServerBaseSiege` → ECS 固定链，使新生成的事件僵尸同 tick 进入 AI/战斗。锚点优先取本地玩家，否则取已生成会话中 StableId 最小的存活玩家并缓存；玩家死亡、离开 `leaveRadius`、天亮或波次结束时由 `BaseSiege` 中止并清理事件僵尸。结构计数遍历已加载 chunk 的 Wall/Furniture 玩家结构，生成 Howler→Fast、Breaker→Strong，普通事件僵尸走默认变体，并附加 `BaseSiegeZombie`（继续跳过 LOD 回收）；预警/波次/结束通过会话状态广播并写 `siege` 日志。`TickTrapTriggers` 的候选查询改为 `BaseSiegeZombie + AiState + Health + Position`，不再对普通权威 AI 僵尸触发。
+
+**验证**：`test_network_inventory` 新增 `X-F1 2b-6`：以 22:00、0 秒预警、单波和 4~6 格生成半径启动，先放置玩家墙使结构计数达标；连接玩家后断言生成 `BaseSiegeZombie`，将陷阱放到事件僵尸位置并同时放置无标签 AI 目标，验证事件僵尸扣血/陷阱消耗一次、无标签目标保持满血。2b-3 测试也改为事件目标并增加无标签目标断言。Debug **466/466（123859 assertions）**、Release **466/466（123860 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**。未提交，待实机验收。
+
+**限制/风险**：联机暂无独立守夜 HUD，只有状态栏文案；多玩家共享一个锚点/基地中心，不支持每玩家独立基地；事件状态不写入世界存档，服务器关闭/玩家离开会中止并清理事件僵尸；陷阱仍无客户端本地音效/命中预测。
+
+## 2026-10-25 M21-F1a 基地防御 2.0：夜袭导演
+
+**目标**：把 M17 的“固定环形刷怪”升级成有主攻方向、有薄弱破口、有战后评级的单机守夜循环；不新增僵尸种类、不做完整动态光照，先完成 M21-F1a，联机 F1b 和电力 F2 后续推进。
+
+**实现**：新增 `game/BaseSiegeDirector.h`，用八方向扇区、剩余 HP 比例、距基地中心距离和门标记评分，选择主攻/备用方向与薄弱破口；`MakeBaseSiegeAttackPlan` 保持确定性，并避免连续两晚选择完全相同方向。`BaseSiege` 保留 Idle/Warning/Waves/Finished 状态机，新增 `structureList` 回调在预警时锁定目标、波次中每 0.5 秒复核 HP；目标被摧毁后先在同一方向找次弱结构，找不到才最多切换一次备用方向。`WorldDemoState` 从已加载 chunk 收集玩家墙/门/栅栏，按当前方向扇区生成事件僵尸；`BaseSiegeResult` 记录破口、基地失守、击杀、完成波次和结构存活率，正常结束按 S/A/B/C 发一次木材/燃料/维修包/药品，`Abort`/保存/退出/死亡不结算。
+
+**AI 收口**：新增 `ecs::SiegeAssaultTarget`，`DriveBaseSiegeZombies` 给 Breaker 写入破口外侧的可走点、给 Howler 写入后排点；`AiSystem` 在该组件激活时忽略可见玩家并固定 `lastKnown`，避免 `PerceptionSystem` 每 tick 把目标改回玩家。事件期间结构扫描半径扩到 16 格、破门玩家范围扩到 24 格，使 12 格线上破口可被攻击；普通事件僵尸仍按原逻辑追玩家，只从主攻扇区进入。`TickZombieBarricadeAttack` 和 `BarricadeDefense` 的原有伤害/冷却/蓄力逻辑不变。
+
+**验证**：`test_base_siege` 新增 5 个 M21-F1a 用例，覆盖弱侧选择/方向与破口 HUD/主攻扇区生成/同方向换靶/备用方向切换/一次性奖励/无成型防线；`test_zombie_ai` 新增破口目标覆盖可见玩家。Debug **472/472（123924 assertions）**、Release **472/472（123925 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**；`ZomboidLike` Debug/Release 已构建，未提交，待实机验收。
+
+**限制/风险**：F1a 仅单机；服务器 2b-6 不提供 `structureList`，继续使用旧环形生成；联机 F1b 尚未同步方向/破口；攻击计划/破口/评级不写入存档，保存/退出/死亡仍中止事件；多玩家共享锚点；HUD 仍是一行状态文本，没有独立战报面板或方向箭头；破口目标路线依赖现有 A*，寻路失败时只能回退追玩家。
+
+## 2026-10-25 M21-F2a 单机电力防御 2.0
+
+**目标**：让发电机从“冷藏柜电源”升级为守夜资源：基础/设备负载决定燃料消耗，泛光灯提供夜间照明与事件诱饵，电网只在供电时对事件僵尸放电；F2b 联机放到后续，不阻塞单机。
+
+**实现**：`PowerConfig` 增加 `baseLoad/coldStorageLoad/floodlightLoad/electricFenceLoad/floodlightRadius/attractRadius/electricFenceDamage/electricFenceCooldownSeconds/electricFenceStaggerSeconds/lowFuelWarningMinutes/deviceRequiresNight`。`ecs::Generator` 增加运行时 `load`（不入 `GENR`），`AdvanceGenerator` 按 `baseLoad + 设备负载` 消耗燃料；`WorldDemoState::UpdatePowerDevices` 每 tick 取最近运行发电机分配供电，燃料耗尽立即重算并停电，加燃料恢复。扫描限制 8 电源/12 格/256 电网格、0.5 秒节流。
+
+**泛光灯**：新增 `floodlight` 建造项、`ecs::Floodlight{on,powered}`、`SpawnFloodlight` 与 `FLDL` 存档；E 开关，HUD 显示供电/关闭/待夜间/照明半径；夜间按 `attractRadius` 选最近供电灯作为 `SiegeAssaultTarget` 诱饵，已直接看见玩家的僵尸不覆盖其追击，不瞬移。光晕用等距圆环/放射线程序化绘制。
+
+**电网**：新增 `electric_fence` 建造项（100 HP、阻挡、结构层），复用现有结构 HP/owner/维修/拆除/碰撞/存档；只在供电且夜间事件对 `BaseSiegeZombie` 走 `CombatSystem::ApplyDamage`，25 伤害/0.5 秒硬直/1.2 秒冷却，按格记录；无标签普通僵尸、断电/白天不触发，断电仍阻挡。
+
+**HUD/验证**：`HudState`/`BaseStatusText` 与 Lua/Python 输出增加电力摘要、泛光灯/电网计数和低燃料/停电状态。扩展 `test_homestead`、`test_base_hud`、`test_building`、`test_entity_save` 与 Python 建造数据。Debug **475/475（123965 assertions）**、Release **475/475（123966 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**；`ZomboidLike` Debug/Release 已构建，未提交，待实机验收。
+
+**限制/风险**：仅单机 F2a；F2b 服务器权威供电/设备复制未实现，联机仍只有旧发电机/冷藏逻辑。泛光灯首版无独立耐久，不参与被摧毁/维修；电网已走结构层。真实动态光照未实现，仅光晕/玩法半径。负载数值需实机调参；设备扫描已有硬上限和节流，但更多发电机会线性增加扫描成本。
+
+## 2026-10-25 M21-F1b 联机守夜状态广播
+
+**目标**：让服务器沿用 F1a 的方向/破口导演，把同一场守夜的主攻方向、破口、波次和结束状态同步给所有客户端；客户端只读展示，不本地推进事件，也不新增独立网络包。
+
+**实现**：`ServerHost` 补齐 `baseEvent.director.*` 配置和 `structureList`，新增 `ListServerPlayerStructuresNear` 从已加载 chunk 收集墙/门/栅栏；`BaseSiege` 服务器实例因此生成主攻/备用方向与破口。`FindBaseSiegeApproachPoint` 抽到 `BaseSiegeDirector.h`，单机与服务器共用；服务器 Breaker 写 `SiegeAssaultTarget` 去破口外侧、Howler 写后排点，普通事件僵尸回锚点，事件清理仍由服务器负责。
+
+**状态广播**：`PlayerState` 升 v6，新增 `PlayerSiegeState`（phase、主/备/当前方向、破口、波次、色调、服务器 HUD 文本）；`FillPlayerState` 每 tick 填入，客户端 `WorldDemoState` 把文本/色调镜像到联机 HUD。旧 v5/v4/v3 解码回退 Idle；联机结束只广播评级/提示，暂不发每玩家物资奖励。
+
+**验证**：`test_player_state` 覆盖 v6 字段与 v5/v4/v3 回退、非法方向/波次；`test_network_integration` 新增双客户端守夜测试，验证两端方向/波次/状态文本一致、服务器 Breaker 持有破口目标。Debug **476/476（124006 assertions）**、Release **476/476（124007 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**；Debug/Release 已构建，未提交，待实机验收。
+
+**限制/风险**：多玩家仍共享最小 StableId 的守夜锚点；联机不发每玩家奖励，无独立战报面板/地图破口高亮；`PlayerState` v6 需要客户端与服务端同版本；F2b 电力设备服务器权威/复制见下一条。
+
+## 2026-10-26 M21-F2b 联机电力防御
+
+**目标**：把 F2a 的单机电力设备接入服务器权威与复制链路，让双客户端看到同一供电、负载、泛光灯状态和电网伤害；不新增独立电力协议。
+
+**服务器**：`ServerHost::TickServerPower` 复用单机规则：最多 8 个运行电源、每电源 12 格扫描、256 个电网格、0.5 秒节流，按 `power.baseLoad + 冷藏/泛光/电网负载` 扣燃料；燃料耗尽停电并重算，加燃料恢复。`TickElectricFences` 只在夜间 `BaseSiege` 且电网供电时对 `BaseSiegeZombie` 走 `CombatSystem::ApplyDamage`，普通 AI 不触发；电网被摧毁/拆除后从供电集合移除。`PlaceStructure` 支持泛光灯/电网，`InteractFacility` 支持泛光灯 E 开关；服务器泛光灯/发电机噪声作为事件诱饵，已直接看见玩家的僵尸优先追玩家。
+
+**复制/客户端**：`EntityReplication` 组件版本升至 2，`Generator` 增加 `load`，新增 `ColdStorage`/`Floodlight` 组件；电网 HP/owner 继续走 `ZLCD`。`PlayerState` 升至 v7，新增 `PlayerPowerState`（燃料/负载/低燃料/停电）；客户端联机 HUD 读取服务器摘要，设备计数/供电标志来自复制实体，电网光晕只按复制电源/结构重建，不本地扣燃料或结算电击。旧 v6/v5/v4/v3 状态解码回退 0/无告警。
+
+**验证**：`test_replication` 覆盖 Generator.load/ColdStorage/Floodlight 全量/增量；`test_player_state` 覆盖 v7、旧版本回退和非法电力字段；`test_network_integration` 覆盖联机放置发电机/泛光灯/电网、服务器供电负载、泛光灯开关，以及服务器电网对事件僵尸电击、普通僵尸不触发。Debug **479/479（124100 assertions）**、Release **479/479（124101 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**；Debug/Release 已构建，未提交，待实机验收。
+
+**限制/风险**：电力摘要是服务器全局值，不按玩家基地分别计算；客户端电网供电显示是只读重建，真实伤害/燃料仍完全由服务器决定；泛光灯仍无独立耐久；F2b 跨机、断线重连、chunk 卸载/服务端重启组合验收待实机。
+
+## 2026-10-26 M21-F2b 组合场景自动化
+
+**目标**：补齐 F2b 只覆盖“在线双客户端”之外的持久化路径，验证同一玩家重连、基地 chunk 被卸载/重载、服务器正常退出并用同一 saveId 重启后，电力设备不会回零或丢失。
+
+**实现**：`tests/test_network_world_persistence.cpp` 新增单客户端端到端场景：放置发电机/泛光灯/电网并加燃料启动，确认 `PlayerState.power.load=2.5`、`Generator.load=1.5`、泛光灯 `on/powered`；关闭客户端后用同一 `playerIdentity` 重连，确认同一 `stableId`、电力摘要和复制实体恢复；把服务器玩家位置移到地图远角触发 base chunk 卸载（墙/电网格消失），再移回，确认发电机燃料、运行状态、泛光灯开关/供电、电网 HP/owner 和电力摘要从存档/复制恢复；最后关闭并 `Shutdown` 保存世界，新建 `ServerHost` 用同一 `saveId` 重启，确认设备与电力摘要再次恢复。测试同时验证客户端副本的 `generator.running`、`floodlight.on/powered`。
+
+**验证**：Debug **480/480（124170 assertions）**、Release **480/480（124171 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**；未提交，跨机/双客户端组合实机验收仍待完成。
+
+**限制/风险**：该场景仍为 localhost 单客户端；没有覆盖跨机 NAT/丢包、双客户端同时重连、事件进行中重启和 chunk 卸载期间并发命令。电力摘要仍是服务器全局值，不按玩家基地分别计算。
+
+## 2026-10-26 M21-F1b 联机每玩家奖励
+
+**目标**：补齐 F1b 遗留的“联机结束只广播评级/提示”问题，让共享基地的每名在线存活玩家都拿到同一份战后物资，同时保证单机/联机奖励表一致、只发一次。
+
+**实现**：把 S/A/B/C 奖励表抽到 `game/BaseSiegeRewardsFor`，B/C 木材沿用 `building.woodItem`；单机 `WorldDemoState::GrantBaseSiegeReward` 改为复用该表。服务器给 `BaseSiege.onResult` 接入 `ServerHost::GrantServerBaseSiegeRewards`：正常结束且满足奖励条件时，由 `BaseSiege::m_resultAwarded` 保证只调用一次；遍历在线、已生成且未死亡的会话玩家，每人发放同一组物品。物品通过 `ReturnServerItem` 优先进背包，装不下时掉到玩家脚下；发放后标记会话状态脏位，客户端下一帧即可看到背包变化。结束广播继续使用 `EndText()`，因此所有客户端看到相同评级和奖励文本。
+
+**验证**：`test_base_siege` 新增奖励表各评级/自定义木材检查；`test_network_integration` 双客户端守夜测试在 Breaker 出现后清空事件僵尸，验证事件正常结束、两名玩家各获得一份 S 奖励（燃料罐/维修包/抗生素各 +1）、结束文本一致，并在后续 120 tick 内不重复发放。Debug **481/481（124201 assertions）**、Release **481/481（124202 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**；未提交。
+
+**限制/风险**：奖励按“所有在线存活会话”发放，不区分距离/参战贡献，适合当前共享基地模型；背包满时只保证掉在玩家脚下，不保证地面/容器容量；独立战报面板和地图破口高亮仍未实现。
+
+## 2026-10-26 M21-F1c 独立战报面板与破口高亮
+
+**目标**：补齐 F1a/F1b 遗留的战后反馈与地图可读性：结束提示不再只有一行文本，玩家能一眼看到评级、波次、击杀、结构损失、是否破口和奖励；预警/波次中的预计破口与实际破口在场景内可见。联机保持服务器权威，客户端只读。
+
+**结束文本/面板**：`BaseSiege::EndText` 在原有“栅栏损失/评级/击杀/奖励/来袭方向”上补充波次完成数、结构损失与存活比例、防线完好/已破口（含破口方向）和基地失守。`ui::BuildSiegeReportLines` 按 ` | ` 拆行，评级单独放大；`HudState.siegeReportOpen/title/rating/tone/hint/lines[8]` 驱动 native 与脚本 HUD 的 `siege-report` 覆盖层。单机在 `ShowBaseSiegeNotice` 收到“守夜结束”时打开，联机在 `PlayerState.statusSequence` 变化且 status 以“守夜结束”开头时打开；`ESC` 关闭，新一晚预警自动收起。面板固定 8 行，脚本路径逐行 `SetText`，不拼接不可信 InnerRML。
+
+**破口高亮**：`BaseSiege` 在首次破口时记录 `BreachPoint/BreachDirection`，并写入 `BaseSiegeResult`；单机预警/波次用橙黄菱形标记 `AttackPlan` 预计破口，破口后保留红色 X + 脉动圆环。联机 `PlayerSiegeState` 升到 v8，尾部追加 `targetValid/targetX/targetY/breachValid/breachX/breachY`；`ServerHost::FillPlayerState` 只在事件进行中或正常结束时填充，中途中止不残留标记。v7 及更旧负载解码后坐标无效，HUD/事件流程不受影响。
+
+**验证**：`test_base_siege` 覆盖破口坐标/方向、结果结构计数与扩展结束文本；`test_base_hud` 覆盖结束文本解析与评级色调；`test_player_state` 覆盖 v8 坐标往返、v7/v6/v5/v4/v3 回退和非法坐标；`test_network_integration` 验证双客户端收到相同预计破口坐标；`test_ui` 验证 native/脚本 HUD 面板结构；Lua/Python API 烟测新增字段。Debug **483/483（124281 assertions）**、Release **483/483（124282 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**；未提交，实机视觉/分辨率仍待验收。
+
+**限制/风险**：战报面板是 HUD 覆盖层而非暂停菜单，只展示结束文本能提供的信息，没有逐波伤害/击杀明细；场景高亮只有菱形/X/圆环，没有小地图或方向箭头；联机坐标属于会话内状态，不写入存档，重连后不会再打开已结束事件的战报。
+
+## 2026-10-26 M21-F2b 补充：泛光灯独立耐久与维修
+
+**目标**：补齐 F2b 最后一个功能缺口：泛光灯不再只是“无敌诱饵”，事件僵尸能砸灯，玩家能维修；单机与服务器都保持权威一致。
+
+**实现**：`floodlight.maxHp` 设为 80；`SpawnFloodlight` 附带 `Health` 与 `NoCombatTarget`，旧档由 `EnsureFloodlightHealth` 补满。新增 `TickZombieFloodlightAttacks`：只对 `BaseSiegeZombie` 生效，按僵尸独立冷却（普通 12/1.0s，Breaker 28/1.2s），只扣 HP 并播放攻击动作，不写伤口。单机在 `UpdateBuilding` 结算；服务器在 `Simulation::Tick` 后结算并广播“泛光灯被摧毁”，客户端通过 `ZLR1 Health` 只读同步。H 维修复用木材/冷却/owner 校验，单机同时支持结构与泛光灯，联机 `RepairStructure` 找不到地图结构时按格回退到泛光灯。通用战斗、投射物与 `DeathSystem` 跳过 `NoCombatTarget`，避免误伤/尸体化。
+
+**验证**：`test_homestead` 覆盖专用伤害冷却、摧毁与旧档迁移；`test_entity_save` 覆盖 HP 存档；`test_replication` 覆盖 `ZLR1 Health` 全量/增量；`test_network_integration` 覆盖服务器权威维修；`test_network_world_persistence` 覆盖重连/chunk 重载/重启后 HP 保持；`test_building` 与 Python 建造数据检查 80 HP。Debug **484/484（124316 assertions）**、Release **484/484（124317 assertions）**、Python **46/46**、无窗口服务器 **34 物品 / 6 配方 / 24 系统**；未提交，实机视觉仍待验收。
+
+**限制/风险**：泛光灯被摧毁后不返还木材、不生成残骸；维修一次固定 30 HP，不做分段/材料差异；僵尸只按距离砸灯，不检查墙体遮挡；多人同时维修仍受服务器 tick 冷却串行化。
+
+## 2026-10-26 X-F2a Mod 内容文件与 World.GetSquare
+
+**目标**：让 mod 不改 C++ 就能新增物品、烹饪配方和可建造仓库，并补一个只读世界格查询 API。
+
+**实现**：新增 `game/ModContent`，在 `GameApp`/`ServerHost` 启动时按 `loadOrder` 扫描 `mods/*/content/` 的 items/recipes/buildings。items 使用 `items-v1`，recipes 兼容 `recipes-v3/v2/v1`，buildings 使用新 `buildings-v1`；items+recipes 以 mod 为事务，失败只跳过当前 mod。`BuildableDef` 抽出 `ParseBuildableDefs`/`AppendBuildableDefs`，重复 id 与非存储 sprite 冲突拒绝，存储项允许同 sprite 但容量/堆数必须不同；客户端 `StorageBuildable` 与服务器 `FindServerBuildEntityAt` 用容量/堆数区分。`GameContext::modBuildables` 缓存客户端内容，服务器 `m_modBuildables` 追加到建造目录，保证 PlaceStructure 索引顺序一致。`ScriptApi::GetSquare` 读取已加载格并绑定 Lua/Python 为 `{loaded,hasFloor,floor,wall,furniture,item}`。
+
+**示例**：`mods/example_content` 添加 `camp_stew`、`cook_camp_stew`（篝火）与 `mod_supply_crate`（35kg/4 堆仓库），启动日志显示物品 +1/配方 +1/建造 +1。
+
+**验证**：新增 `test_mod_content` 覆盖合并、重复物品 mod 回滚、后续 mod 继续、建造冲突和示例内容；`test_script_api` 覆盖 GetSquare 快照，Lua/Python API 烟测覆盖返回表/dict。Debug **487/487（124374 assertions）**、Release **487/487（124375 assertions）**、Python **46/46**、无窗口服务器 **35 物品 / 7 配方 / 24 系统**；未提交，待实机验收。
+
+**限制/风险**：内容只在启动时加载，改 JSON 需重启；暂不支持 mod 新贴图/图集、POI、搜刮表、任务、事件、HUD 字段或动态注册；联机双方必须安装相同内容 mod，内容哈希当时未纳入握手（已由 X-F2b-1 补齐）；新设施行为仍要 C++。
+
+## 2026-10-26 X-F2b-1 自动内容指纹握手
+
+**目标**：把 X-F2a 的“双方必须安装相同内容 mod”从文档约定变成启动时握手校验，避免物品/配方/建造 Index 或数值不一致造成联机错位。
+
+**实现**：新增 `game::ComputeContentHash`，以版本盐 + 最终物品/配方/建造定义（全部字段与顺序）做确定性 FNV-1a，明确按小端写整数并归一化 +0/-0。`GameApp` 在内容合并后、`ServerHost` 在服务器建造目录构建后各自计算；`net.contentHash=0`（默认）时自动使用计算值，非 0 仍作为手动覆盖。自动值注入现有 KCP `Hello/Welcome` 的 contentHash，不一致由会话层拒绝。内嵌服务器新增 `ContentHash()` 供测试/入口读取，`test_embedded_server` 改为 `options.contentHash=0` 并以服务器返回值连接，同时按客户端加载路径重算指纹比对，验证自动链路。
+
+**验证**：新增 `test_content_hash` 覆盖确定性、物品重量/配方时长变化、建造字段/顺序变化；`test_embedded_server` 覆盖自动指纹下启动、客户端路径哈希比对与连接。Debug **490/490（124390 assertions）**、Release **490/490（124391 assertions）**、Python **46/46**、无窗口服务器 **35 物品 / 7 配方 / 24 系统**；未提交，待实机验收。
+
+**限制/风险**：指纹当时只覆盖有效 items/recipes/buildings；脚本、图集/贴图、地图、POI、任务/事件内容未纳入，仍需双方使用同一份游戏内容（2026-10-28 内容指纹 v2 已纳入 loot/POI/任务）。FNV-1a 不是密码学校验，只用于一致性/误配检测。`net.contentHash` 手动覆盖时仍需客户端/服务器一致。
+
+## 2026-10-26 X-F2b-2a Mod 图集与资源绑定
+
+**目标**：允许 mod 在不改 C++ 的前提下声明新的逻辑资源名和图集，让新增物品/建造项使用自己的图标与精灵。
+
+**实现**：新增 `game/AssetManifest` 的 `LoadMergedAssetManifest`：先加载基础 `assets/asset_manifest.json`，再按 mod 顺序合并 `mods/<id>/assets/asset_manifest.json`；只允许新增 logical 名称，与基础/更早 mod 重名或 binding/provider/frames 非法时跳过并告警。mod 清单中的 `atlas` 优先相对清单所在目录解析，找不到再回退根目录；`Atlas` 的 image 路径做 `lexically_normal`，避免 mod 通过 `..` 引用基础 PNG 时重复加载纹理。`LoadModContent` 收集资源清单（asset-only mod 也可应用），content 失败的 mod 不加入；`GameApp` 将路径放入 `GameContext::modAssetManifests`，`WorldDemoState`/`RenderDemoState` 传给 `AssetProvider::Init`。
+
+**示例**：`mods/example_content` 新增 `assets/asset_manifest.json` 和本地 `atlas_example.atlas.json`，提供 `mod.camp_stew`、`mod.supply_crate`；物品 icon 与建造 sprite 改用新逻辑名；示例图集复用 `assets/own/atlas_own.png` 帧以控制仓库体积，实际 mod 可替换为自己的 PNG。
+
+**验证**：新增 `test_mod_assets` 覆盖 mod 新逻辑名/本地图集路径、重复逻辑名、坏清单、asset-only 收集和示例资源；`test_mod_content` 校验示例图标/精灵与资源清单。Debug **493/493（124428 assertions）**、Release **493/493（124429 assertions）**、Python **46/46**、无窗口服务器 **35 物品 / 7 配方 / 24 系统**；实际窗口启动日志确认基础图集与 `mods/example_content/assets/atlas_example.atlas.json` 加载（资源清单 1、新增绑定 2）；未提交，摆件/图标视觉与实机长时运行待验收。
+
+**限制/风险**：资源只支持新增逻辑名，不能覆盖基础逻辑名；asset-only mod 无物品/配方/建造增量；资源不参与内容指纹（2026-10-28 起 mod 文件树纳入指纹，基础 assets 仍未纳入），服务器不加载贴图；资源修改需重启；图集加载路径未在无渲染单测中真实创建 GPU 纹理，需实机确认图标/建造精灵。
+
+## 2026-10-26 X-F2b-2b Mod 搜刮表与 POI
+
+**目标**：让 mod 在已有物品/配方/建造/图集之外，继续用纯数据追加搜刮表和 POI，复用现有容器、守军、任务奖励与 HUD 指引。
+
+**实现**：`LootTableRegistry` 新增 `MergeFile`/`MergeFromString`：先用临时注册表完整解析 `loot-v1`，再检查与基础/更早 mod 的表 id 冲突；冲突时整份文件拒绝，不修改已有表，基础 `seed` 保持不变。`game::MergePoiFile` 读取 `pois-v1`，通过临时 `Config` 复用现有 POI 严格解析，再只追加新 id；基础 `enabled/guideRange` 不被 mod 覆盖。`LoadModContent` 收集 `content/loot.json`/`content/pois.json`，缺失/格式错误按现有 per-mod 规则跳过；`GameApp` 在物品加载后合并战利品表、加载基础 POI 后按 mod 顺序合并，并写入 `GameContext::poiConfig`；`WorldDemoState` 复制该配置，不再重复解析基础 `config`。
+
+**示例**：`mods/example_content` 新增 `mod_camp_cache`（引用 mod 物品 `camp_stew`）与 `mod_depot`（坐标 54.5/28.5，容器使用 `mod.supply_crate`，任务奖励 `camp_stew`）。启动时自动生成容器与 1 名守军，HUD 复用现有 POI 指引。
+
+**验证**：`test_loot` 覆盖 mod 表追加、基础 seed 保持、冲突整份拒绝；`test_poi` 覆盖 mod POI 追加、重复 id 跳过、错误 format 拒绝；`test_mod_content` 覆盖 loot/POI 文件收集、示例和实际合并。Debug **497/497（124492 assertions）**、Release **497/497（124493 assertions）**、Python **46/46**、无窗口服务器 **35 物品 / 7 配方 / 24 系统**；实际窗口启动确认战利品表合并 1/1、POI 4 个区域，并生成 `mod_depot` 容器/守军；未提交，POI 视觉/搜刮交互待实机验收。
+
+**限制/风险**：搜刮表/POI 当时不参与内容指纹，服务器不加载 POI/容器（2026-10-28 内容指纹 v2 已纳入 loot/POI）；POI 只追加定义，不生成地图房间，坐标与容器可达性由作者保证；mod POI 与基础 POI 使用同一套任务完成规则（目标表首次搜索 + 守军清空）；错误 format/语法会跳过该 mod 的整份内容文件，但战利品表语义错误不会回滚已加载的物品/配方/建造。
+
+## 2026-10-26 X-F2b-2c Mod 任务与事件
+
+**目标**：让 mod 用数据追加任务链、每日任务和随机事件，复用 M19-F3 已有的目标、奖励、HUD、存档与放弃逻辑。
+
+**实现**：新增 `game::MergeMissionFiles`，读取 `mods/<id>/content/missions.json`（`missions-v1`）。每个文件先与基础 `missions.defs` 及同批次已接受任务合并到候选 `Config`，再复用 `LoadMissionConfig` 做完整解析和前置/成环校验；任务 id 重复、条目非法、前置缺失或成环时整份文件跳过，已有任务不变。基础 `enabled/randomSeed` 不变；`LoadModContent` 收集 `missionFiles`，`GameApp` 合并后写入 `GameContext::missionConfig`，`WorldDemoState` 复制该配置，未注入时仍回退基础解析。服务器只读取 mod 内容，不合并/运行任务。
+
+**示例**：`mods/example_content` 新增 `mod_depot_supply`（`poi` 目标 `mod_depot`，奖励 `camp_stew`），启动任务数由 9 增至 10，并自动接取到 HUD。
+
+**验证**：`test_missions` 覆盖同批次跨文件前置、重复 id、坏 format、坏前置与原子回滚；`test_mod_content` 覆盖 `missions.json` 收集、示例合并和非法 format 跳过。Debug **498/498（124524 assertions）**、Release **498/498（124525 assertions）**、Python **46/46**、无窗口服务器 **35 物品 / 7 配方 / 24 系统**；实际窗口启动确认任务 10 条、`mod_depot_supply` 自动接取，POI 容器/守军正常生成；未提交，任务视觉/交互待实机验收。
+
+**限制/风险**：任务只在基础 `missions.enabled=true` 时追加，且只在单机运行；前置只能引用基础或同批次更早文件/同文件任意任务，不能引用更晚 mod；任务当时不参与内容指纹（2026-10-28 v2 已纳入），服务器不执行；没有新增任务目标类型或 HUD 字段。
+
+## 2026-10-26 X-F2b-2d Mod HUD 字段
+
+**目标**：补齐 Mod API 的 HUD 扩展点，让 mod 不改 C++、不替换核心 HUD 就能向内置 HUD 追加自己的状态行，并让 Lua/Python 保持一致。
+
+**实现**：`ui::HudState` 新增 `HudModField`（`modId/id/label/text/tone`）与 `modFields[8]/modFieldCount`；`GameContext::modHudFields` 保存字段定义和运行时值。`ScriptApi` 新增 `RegisterHudField/SetHudField/ClearHudField/RemoveHudFields`，Lua/Python 绑定为 `Hud.RegisterField/SetField/ClearField`，按 mod id 隔离、最多 8 个，`tone` 限定 `info/warn/ok/fail`；`Hud.GetState()` 始终从 `GameContext` 叠加最新字段，而不依赖上一帧 HUD 快照。`WorldDemoState::RefreshHud` 每帧复制字段；native `UiSystem` 与 `mods/core_ui` Lua/Python 都新增右侧 `mod-fields` 面板和 8 行固定槽位，空文本隐藏行，native 对文本做 RML 转义。mod 禁用时 GameApp 清掉其字段。
+
+**示例/验证**：`example_content` 注册 `depot_status` 并显示“补给站 / 就绪”。新增 `test_script_api` 覆盖注册幂等、更新、非法 tone、未知字段、清空、8 个上限和按 mod 移除；Lua/Python 烟测覆盖三个接口及 `modFields` 快照；`test_ui` 校验 native/`core_ui` HUD 的 8 行结构。Debug **499/499（124611 assertions）**、Release **499/499（124612 assertions）**、Python **46/46**、无窗口服务器 **35 物品 / 7 配方 / 24 系统**；实际窗口启动确认 `example_content.depot_status` 注册、core_ui HUD 加载且无脚本错误，窗口截图确认右侧“模组 / 补给站 就绪”面板显示。
+
+**限制/风险**：字段仅客户端会话 UI 状态，不写存档、不参与内容指纹/联机同步；不支持图标、进度条或交互控件，复杂 HUD 仍应使用 `UI` 文档；字段文本过长时由布局自然换行，未做截断；注册字段在 mod 正常卸载后可能保留到进程结束，只有禁用回调会主动清理。
+
+## 2026-10-26 X-F2b-2e 动态内容（物品/配方/建造/POI/任务）
+
+**目标**：在 X-F2a 启动期内容文件之外，给脚本提供单机运行时追加物品、配方、建造、POI 和任务定义的入口，同时保持注册表原子性、建造目录/POI/任务配置一致性和内容指纹可刷新。
+
+**实现**：`ItemRegistry::MergeFromString`/`RecipeRegistry::MergeFromString` 保存最后一次成功加载的源文档，追加时复制源文档 + 新条目并完整重跑现有校验，成功才替换注册表；`game::MergePoiJson` 复用 POI 校验并只追加新 id；`MergeMissionFiles` 额外输出已接受任务源，`ScriptApi::RegisterMissions` 在源文档上追加候选并复用 `LoadMissionConfig` 校验前置/成环。`ScriptApi` 新增 `RegisterItems/RegisterRecipes/RegisterBuildings/RegisterPois/RegisterMissions`，Lua/Python 绑定为 `Content.RegisterItems/RegisterRecipes/RegisterBuildings/RegisterPois/RegisterMissions(json)`，接收完整对应格式文档字符串并返回新增数；建造项复用 `ParseBuildableDefs`/`AppendBuildableDefs` 的 id/sprite 冲突规则。成功注册累加 `GameContext::dynamicContentCount`；物品/配方/建造调用 `contentChanged` 刷新内容指纹，`WorldDemoState` 发现计数变化时重建建造目录并复制最新 POI/任务配置。动态入口只在 `net.mode=direct` 单机可用，建立客户端或主机连接后关闭，避免内容指纹不一致。
+
+**验证**：`test_items`/`test_recipes` 覆盖动态追加、重复、坏引用、部分文档回滚；`test_missions` 覆盖已接受任务源输出；`test_script_api` 覆盖五个 `Content` 接口、回调、禁用模式、重复/坏前置和建造冲突；Lua 烟测覆盖动态物品注册；Debug **508/508（124911 assertions）**、Release **508/508（124924 assertions）**、Python **46/46**、无窗口服务器 **35 物品 / 7 配方 / 24 系统**。临时单机 mod 启动验证动态物品/配方/建造/POI/任务各 +1、内容指纹连续刷新；在 `OnTick` 注册建造后建造目录 15→16。
+
+**限制/风险**：动态内容不写存档，禁用 mod 不回滚已注册定义；动态物品/建造的图标和 sprite 仍需资源清单可解析；动态 POI 不生成地图房间，动态任务复用现有任务系统；联机客户端/服务器不感知动态内容。
+
+## 2026-10-26 M15-T6 自动化验收链路
+
+**目标**：在实机 15~30 分钟验收之前，把战斗/生存主链路的自动化覆盖补成一条可重复的端到端用例，减少只靠分散单测拼装的盲区。
+
+**实现**：`test_combat` 新增 M15-T6 验收链路，使用真实 `assets/items.json` 装备消防斧，覆盖命中/击杀与主手磨损；再用撕咬伤害写入伤口，推进 `WoundSystem` 验证流血；从背包使用绷带，经 `TreatWounds` 止血并确认后续 tick 不再掉血；最后以致死撕咬进入 `DeathSystem` 倒地窗口并生成尸体，同时检查 `LastDamage` 死因。
+
+**验证**：Debug **508/508（124911 assertions）**、Release **508/508（124924 assertions）**、Python **46/46**、无窗口服务器 **180 tick 正常退出（35 物品 / 7 配方 / 24 系统）**。该用例只覆盖自动化逻辑链，不替代新存档无 F6/F7/控制台 15~30 分钟实机流程、截图和死亡重开观感验收。
+
+## 2026-10-26 X-F3 性能基线：12/50/100 僵尸
+
+**目标**：给 X-F3 质量债补一个可重复的低/中/高压力基线，避免只看 500 人口极限场景，无法判断常规战斗规模是否退化。
+
+**实现**：`test_boids` 新增 `X-F3 性能基线：12/50/100 僵尸模拟 tick`，每档 120 tick，使用与 M5 500 人口基准相同的模拟链（空间索引、LOD、感知、AI、Boids、战斗、移动、刷怪/虚拟化扫描与 Flush），不含物理步进和寻路后台。Debug 用 40ms 宽松哨兵，Release 断言 <4ms。
+
+**验证**：Release 12/50/100 分别约 **0.005–0.008 / 0.019–0.030 / 0.043–0.070 ms/tick**；Debug 约 **0.43–0.53 / 1.66–2.21 / 3.37–4.59 ms/tick**。Debug 100 僵尸可接近 4ms，仅作开发参考。全量 Debug **508/508（124911 assertions）**、Release **508/508（124924 assertions）**、Python **46/46**。
+
+**限制/风险**：基准未固定 CPU 亲和性，Debug 数据受开发机负载影响；仓库数量与 chunk 卸载/重载的独立基线见下一节。
+
+## 2026-10-26 X-F3 仓库/chunk 基线与旧档/复制审计
+
+**目标**：补齐 X-F3 剩余两类独立基线，并审计“每次新增字段补旧档兼容、每次新增组件补复制/服务器测试”的执行情况。
+
+**实现**：`test_storage` 新增 1/16/64 仓库基准（2000 次最近查找 + 30 轮全部仓库 TakeAll→StoreAll，每仓 6 栈×10 rag）；`test_chunkmanager` 新增 3 轮 49 chunk 卸载/稀疏加载/文件重载基准，分别记录同步 `Update` 卸载耗时与 `PumpUntil` 全窗口墙钟；`test_replication` 新增 FarmPlot/SpikeTrap/MerchantStock/ZombieVariant 全量往返，补齐此前未覆盖的复制类型。
+
+**验证**：Release 64 仓库 nearest **0.0010–0.0014 ms/query**、transfer **0.47–0.68 ms/round**；chunk 卸载 **4.7–6.5 ms**、加载 **173–181 ms**。Debug 64 仓库 nearest 0.063–0.124 ms、transfer 20–29 ms；chunk 卸载 58–84 ms、加载 180–242 ms。全量 Debug **508/508（124911 assertions）**、Release **508/508（124924 assertions）**、Python **46/46**。
+
+**审计结论**：旧档侧已有 v1 元数据迁移、未知组件跳过、Wounds/Pain/Climate/Infection/ZombieSpecial 旧档缺省、chunk diff v1/v3 兼容与同 saveId 重启持久化覆盖，未发现需补的缺口；复制侧 21/21 注册类型现均有全量往返覆盖。已知 `Generator::load` 为运行期重算字段，不写入存档，重启后由电力系统恢复，属于既有设计。
+
+**限制/风险**：仓库/chunk 基准未固定 CPU 亲和性，chunk 加载包含 1ms 轮询与后台调度，不能当作单块解析耗时；Windows 调度抖动可能导致 Debug 数值波动。
+
+## 2026-10-26 P1 视觉与交互验收清单
+
+**目标**：把散落在 `docs/01`/`docs/05`/`docs/06` 的视觉验收点收成一份可执行的 P1 清单，明确 1280×720/1920×1080 双分辨率、native/Lua 双路径、长文本与组合状态，避免实机时只抽查“正常画面”。
+
+**内容**：新增 `docs/07-视觉与交互验收.md`，覆盖基础 HUD、POI/任务、电力/泛光灯、守夜/破口/战报、Mod HUD、操作提示与归属确认；规定 Release 启动命令、隔离存档、截图命名、构造状态与自然流程的边界、失败记录格式和通过标准。README 文档索引、`docs/01` P1 小节、`docs/05` X-F3、`docs/06` 状态行已加入链接。
+
+**验证**：仅新增文档与索引链接，未改动代码、资源或配置，未运行测试；P1 实机项全部待验。当前自动化只能证明字段/结构存在，不能替代窗口截图和人工操作。
+
+**限制/风险**：HUD 使用固定像素定位，1280 下右侧目标区与 `mod-fields` 在长文本时可能重叠；战报 8 行长文本可能裁切；1920 下面板不会等比放大；native 与 Lua 必须分别启动验证。
+
+## 2026-10-26 P1 HUD 1280/1920 自动布局断言
+
+**目标**：把 P1 清单里的双分辨率、长文本、8 个 Mod 字段和 8 行战报从纯人工抽查变成可重复的布局断言，先覆盖最容易出问题的右侧目标区与 Mod 面板。
+
+**实现**：`tests/test_ui.cpp` 新增 `P1 HUD 1280x720 与 1920x1080 布局`，分别加载 native `assets/ui/hud.rml` 与 `mods/core_ui/ui/hud.rml`。测试填充长目标/POI/任务文案、8 个 Mod 字段和 8 行战报，检查目标区与 Mod 面板不重叠、面板不越出视口、滚动高度不超客户区、战报卡片在视口内且末行不被卡片裁切。`assets/ui/hud.rml` 与 `mods/core_ui/ui/hud.rml` 的战报卡片补 `siege-report-card` id，便于稳定取布局盒。
+
+**验证**：Debug **509/509（125280 assertions）**、Release **509/509（125293 assertions）**、Python **46/46**。1280 下目标区 bottom 约 155.2px、Mod 面板 top 160px，固定样本有约 4.8px 间隙；1920 下同样通过。该用例不替代真实字体/DPI/截图验收。
+
+**限制/风险**：测试文案是固定样本，未覆盖系统 DPI 缩放、字体回退和任意长度 mod 文案；`base-status`/`siege-status` 的视觉压字仍需人工确认；1280 下目标区再增加一行就可能与 Mod 面板接触，后续实机若发现更长文案需调整布局。该 4.8px 风险已由下一节的同列流式布局修复。
+
+## 2026-10-26 P1 右侧与顶部中央 HUD 流式布局
+
+**问题**：原 `hud-objective` 固定 `top:12px`、`mod-fields` 固定 `top:160px`，1280 下长目标区 bottom 约 155px，只剩约 4.8px；目标再多一行或字体略宽就会重叠。中央 `base-status` 固定 700px 宽，与右侧目标区横向重叠；`base-status`/`siege-status`/`threat-status` 固定 74/98/122px，长文本换行后也会互相压住，A3/A6/E2 的“长文本组合”不可靠。
+
+**实现**：两份 `hud.rml` 新增 `#hud-right` 与 `#hud-alerts` 两个透明列容器。`#hud-right` 绝对定位在右上、宽 332px、`min-height:136px`，目标区改为流内相对定位，Mod 面板 `margin-top:12px`、`margin-left:50px`；目标变高时 Mod 面板自动下移，目标隐藏时仍保持最小 top 160px。`#hud-alerts` 绝对定位在顶部中央、宽 700px，基地状态收窄到 560px，基地/守夜/威胁按 DOM 顺序流式排列；`perk-prompt` 下移到 top 200px，避免与状态列重叠。两个容器均显式 `display:block`（避免 RmlUi `div` 默认 inline 导致绝对定位子元素以 body 为包含块）并 `pointer-events:none`，右侧保留 16px 屏幕边距。
+
+**验证**：`test_ui` P1 用例把目标文案加长到三行、Mod 值改为长文本，同时显示完整基地状态、守夜状态、受击状态和 Perk 提示；新增目标/Mod 间距至少 8px、右侧至少 15px 边距、中央状态互不重叠、Perk 位于状态列下方等断言。P1 用例 465 assertions；全量 Debug **509/509（125376 assertions）**、Release **509/509（125389 assertions）**、Python **46/46**。
+
+**限制/风险**：右侧和中央面板会随内容高度下移，极长文案叠加 8 个长 Mod 字段时仍需实机确认不遮挡底部提示；`pointer-events:none` 只用于透明列容器，不承载交互；未覆盖 1024 宽或系统 DPI 缩放。
+
+## 2026-10-26 P1 1280/1920 窗口烟测
+
+**环境**：Release，Direct3D 11，`--game.startState=world --game.startHour=8 --audio.device=off --save.root=saves/p1_smoke`，桌面 1920×1080；截图保存在 `build/`（不入库）。
+
+**结果**：1280×720 客户区分别启动 Lua core_ui 与 native HUD，右侧目标/Mod 面板均保留 16px 边距，目标与 Mod 面板无重叠，底部快捷栏和左侧状态栏完整；默认 core_ui 显示 1 行“补给站 / 就绪”。1920×1080 窗口化外框为 1936×1119，在 1080p 桌面底部被任务栏/标题栏裁切，顶部时钟、目标/Mod 面板和世界区域正常；1920 底部 HUD 未完成实机确认（后续全屏已补，见下节）。WorldDemo 左上调试文本常驻，`F9` 只切网格，不隐藏文本。
+
+**限制/风险**：1920 验收需要桌面可用高度大于约 1120，或增加全屏/无边框启动；当前无独立调试文本开关；截图仍不替代 P1 的 POI/任务、电力/泛光灯、守夜/战报和交互抽查。
+
+## 2026-10-26 全屏启动与 1920 客户区验收
+
+**实现**：`Window::Desc` 新增 `fullscreen`，`config/game.json` 新增 `window.fullscreen`（默认 `false`）；启动时用主显示器全屏创建，失败自动回退窗口化。`Window::ToggleFullscreen()` 保存/恢复窗口位置与尺寸，`Alt+Enter` 在 `GameApp` 原始按键回调中切换；`Window::Create` 记录实际客户区尺寸，`ToggleFullscreen` 切换后同步 `m_width/m_height` 并触发 render/UI resize；过滤窗口创建/模式切换期间 Windows 发出的 0×0 尺寸回调，避免客户区尺寸被瞬时清零。全屏启动后 `Alt+Enter` 恢复窗口时，若原请求尺寸超过工作区则回退到 1280×720。
+
+**验证**：Release 全屏 1920×1080 分别启动 Lua core_ui 与 native HUD，客户区均为 1920×1080，右侧目标/Mod 面板保留 16px 边距、无重叠，底部快捷栏和左侧状态栏完整；`Alt+Enter` 实测 1280×720 → 1920×1080 → 1280×720，日志依次记录 `窗口缩放至 1920x1080`、`全屏切换: 开 1920x1080`、`窗口缩放至 1280x720`、`全屏切换: 关 1280x720`；另测全屏启动后 `Alt+Enter` 恢复为 1280×720（请求 1920×1080 超过 1080p 工作区），未再出现 0×0 尺寸回调。截图：`build/p1-smoke-1920-fullscreen-lua.png`、`build/p1-smoke-1920-fullscreen-native.png`、`build/p1-toggle-02-fullscreen.png`。全量 Debug **509/509（125376 assertions）**、Release **509/509（125389 assertions）**、Python **46/46**。
+
+**限制/风险**：全屏请求分辨率由 GLFW/显示器决定，实际尺寸以日志和客户区截图为准；1080p 桌面全屏可完成 1920 底部 HUD 验收，其他 DPI/多显示器组合仍需实机确认；`Alt+Enter` 在文本输入框中也会触发，后续若需要可改为菜单项或可配置键位。
+
+## 2026-10-26 P1 调试文本开关
+
+**目标**：让 P1 截图能隐藏左上角 `bgfx::dbgText` 统计文本，同时保留 POI/电力/破口等世界标记，避免截图时必须裁剪或保留大段调试信息。
+
+**实现**：`WorldDemoState` 新增 `m_showDebugText`，进入世界时读取 `render.debugText`（默认 `true`）；`DrawDebugText()` 关闭时清空调试文本并直接返回，`DrawDebugOverlay()` 的世界标记不受影响。`config/game.json` 的 `render` 段新增 `debugText`，命令行可用 `--render.debugText=false`。该配置在进入世界时读取，运行中热重载不会切换；`F9` 仍只控制网格线。
+
+**验证**：Release 全屏 1920×1080、Lua core_ui、`--render.debugText=false` 截图确认左上调试文本消失，右侧目标/Mod 面板、底部快捷栏、左侧生命/体力面板和 POI 菱形标记保持正常；该截图同时显示受击/流血 HUD，布局仍正常，路径 `build/p1-hud-1920-lua-debugtext-off.png`。全量 Debug **509/509（125376 assertions）**、Release **509/509（125389 assertions）**、Python **46/46**。
+
+**限制/风险**：仍无运行中按键开关；系统通知可能叠加在屏幕截图上，正式验收应关闭系统通知以免遮挡；本次游戏内缩略图截图在房屋上方出现半透明楼层叠层，屏幕截图未复现，P1 布局证据统一用屏幕截图，不以缩略图代替。
+
+## 2026-10-27 P1 左侧状态堆叠与底部提示布局
+
+**问题**：`hud-level` 固定在 bottom 130px，`hud-vitals` 固定在 bottom 16px 并向上扩展；显示饥饿/流血/疼痛/护甲/感染/天气 6 条状态时，vitals 高度超过 180px，1280/1920 下都会压住等级面板。`notice` 固定 bottom 116px，长 `action-hint` 换行后两者也会重叠。
+
+**实现**：两份 `hud.rml` 新增 `#hud-left` 容器，把等级面板与生命/体力面板改为同列流式排列，容器锚定 left 16px/bottom 16px，vitals 随状态行数向上扩展，等级面板保持 8px 间距；`#notice` 上移到 bottom 130px，避免压住两行操作提示。native 与 `mods/core_ui` 两份 HUD 结构/CSS 保持一致。
+
+**验证**：`test_ui` 新增 `P1 HUD 左侧状态堆叠与底部提示布局`，在 1280×720/1920×1080 下同时显示 6 条长状态、长 `action-hint` 和两行 `notice`；检查等级/vitals 不重叠且间距至少 8px、状态面板不越界、操作提示不压快捷栏、notice 不压操作提示。P1 两项布局用例 562 assertions；全量 Debug **510/510（125473 assertions）**、Release **510/510（125486 assertions）**、Python **46/46**。1280 Lua/native 与 1920 全屏烟测截图：`build/p1-hud-left-1280.png`、`build/p1-hud-left-1280-native.png`、`build/p1-hud-left-1920.png`。
+
+**限制/风险**：左侧容器按内容向上扩展，极长状态行仍可能把等级面板推到屏幕上方；当前只验证 6 条固定长文本，未覆盖系统 DPI 缩放和任意 mod 状态文案；底部 notice 与 action-hint 仍为固定像素定位，三行以上提示组合需实机复核。
+
+## 2026-10-27 P1 世界标记压 HUD 修复
+
+**问题**：1280×720 Release 实机截图中，高危农场仓红色 POI 菱形边缘标记压在左下“饥饿/口渴/疲劳”和天气状态文本上。原因是 POI/电力/破口/寻路标记在 Debug view 提交，而 RmlUi HUD 在 UI view，bgfx 按 view id 先 UI 后 Debug 合成；底边夹取也只考虑屏幕边距，没有避让左下状态面板和底部快捷栏。
+
+**实现**：`WorldDemoState::DrawDebugOverlay` 拆成两段：POI/电力/破口/寻路标记改在 World view 提交，紧接世界精灵之后、RmlUi HUD 之前；Debug view 仅保留网格、悬停格和物理线框。POI 标记保留屏幕边缘夹取，并新增 HUD 安全位：底边避让左侧状态区、中央快捷栏/操作提示、右下背包；顶边避让时钟和右上目标/Mod 区；左右边避让底部状态区与右上目标区。
+
+**验证**：Release 1280×720/1920×1080 全屏烟测，红色农场仓 POI 标记落到 x≈340 的底部安全位，仍在屏幕边缘可见，且不压左下状态文本、快捷栏和操作提示；RmlUi 无错误。截图：`build/p1-poi-edge-safe-1280.png`、`build/p1-poi-edge-safe-1920.png`、native `build/p1-poi-edge-native-1280.png`。全量 Debug **510/510（125473 assertions）**、Release **510/510（125486 assertions）**、Python **46/46**。
+
+**限制/风险**：HUD 安全位按当前固定像素面板尺寸设定，若后续调整状态面板/快捷栏尺寸或加入更多底部提示，需要同步更新；标记在底部安全位会横向平移约 200px，方向仍保持边缘指引但不再严格等于原始夹取点。
+
+## 2026-10-27 P1 A4 面板遮挡与输入恢复烟测
+
+**结果**：Release 1280×720、Lua core_ui，无暂停自然流程。`I` 打开背包时 HUD、POI 世界标记和调试文本隐藏，关闭后 HUD/标记恢复；`C` 打开角色面板（580px 卡片 + 全屏 50% 半透明遮罩，HUD 在遮罩下仍可见），`ESC` 关闭；`ESC` 打开暂停菜单时 HUD 全部隐藏，关闭后恢复；关闭后 `F1` 仍能切换暂停/继续，未出现永久输入锁。截图：`build/p1-a4-inventory-1280.png`、`build/p1-a4-character-1280.png`、`build/p1-a4-pause-1280.png`、`build/p1-a4-input-restored-1280.png`。
+
+**限制/风险**：角色面板不是全屏不透明模态，HUD 在 50% 遮罩下仍可见，是否符合最终观感留待用户确认。`F1` 时间暂停时打开 `C` 的 HUD 刷新限制已在后续 `OnUiFrame` 提交中修复。全量 Debug **510/510（125473 assertions）**、Release **510/510（125486 assertions）**、Python **46/46**（当次快照）。
+
+## 2026-10-27 P1-A4 暂停态 HUD 帧刷新
+
+**问题**：`F1` 暂停后模拟 tick 停止，core_ui 的 `refresh_hud` 只绑定 `OnTick`，因此暂停时按 `C` 虽已更新 HUD 缓存，角色面板仍不即时出现；暂停菜单/状态文本也停在旧值。
+
+**实现**：新增事件 `OnUiFrame`，在 `WorldDemoState::OnFrame` 之后、`UiSystem::Render` 之前每个 UI 渲染帧派发；`EventBridge` 按无载荷事件桥接；core_ui Lua/Python 的 HUD 刷新由 `OnTick` 改为 `OnUiFrame`。正常游玩仍按帧刷新，暂停时 HUD 也能反映最新状态。
+
+**验证**：`test_event_bridge` 增加 `OnUiFrame` 无字段翻译断言；Debug **510/510（125476 assertions）**、Release **510/510（125489 assertions）**、Python **46/46**。Release 1280×720 + `debugText=true` 实机复测：`F1` 暂停后 HUD speed=暂停，`C` 角色面板即时显示，`ESC` 关闭后 `F1` 恢复、输入正常；截图 `build/p1-a4-paused-hud-1280.png`、`build/p1-a4-paused-character-1280.png`、`build/p1-a4-input-restored-1280.png`。
+
+## 2026-10-27 P1 A1/A2/A5 基础 HUD 烟测
+
+**结果**：Release、`debugText=false`、独立存档。A1 1280×720 Lua 站桩 10 秒，顶部时钟、右侧目标/POI/任务/Mod、左下等级/生命/需求、底部操作提示/快捷栏/背包完整；A2 1920×1080 全屏同场景，四角锚点、面板间距与文字均保持，自然僵尸伤害导致生命 28，但不影响布局判定；A5 `--script.enabled=false` native HUD 在 1280/1920 下无空 `mod-fields` 面板，核心等级/生命/体力/需求/天气/目标/POI/任务/快捷栏/操作提示与 Lua 字段、色调一致。native 因关闭 `example_hello` 热键物品为空，属预期差异。
+
+**截图**：`build/p1-a1-base-1280-normal.png`、`build/p1-a2-base-1920-normal.png`、`build/p1-a5-native-1280.png`、`build/p1-a5-native-1920.png`。
+
+## 2026-10-27 P1 A3 + B1-B6 POI/任务 HUD 烟测
+
+**结果**：Release、`debugText=false`、独立存档。A3 用临时长任务名/长目标文案在 1280 Lua 确认右侧目标区自动换行且不压 `mod-fields`；B1 用临时探针定位到加油站东南侧，`poi-guide` 显示威胁/方向/距离/清剿+搜索进度，绿色边缘标记可见；B2 出生点边缘标记夹在屏幕左侧且不压快捷栏。B3 在安全位清 3 名守军后进入加油站，脚本打开背包搜索目标容器：完成 notice、维修包奖励、指引切到诊所、加油站完成标记缩小变灰。B4 默认存档验证一次性任务链与每日任务；随机事件用临时 `dayLengthMinutes=1`、`minDay=1/chance=1` 配置在次日触发，显示 `[幸存者] 空投回收 · 随机事件 · 0/2 · 奖励... · L切换 K放弃`。B5 用 `L` 从电台切到诊所、`K` 放弃诊所并确认其他任务保留、再 `L` 切到农场。B6 用临时长任务名/长目标文案在 1920×1080 全屏确认右侧目标区换行且 `L/K` 未挤出。
+
+**截图**：`build/p1-a3-longtext-1280.png`、`build/p1-b1-poi-guide-1280.png`、`build/p1-b2-poi-edge-1280.png`、`build/p1-b3-poi-complete-1280.png`、`build/p1-b4-mission-guide-1280.png`、`build/p1-b4-once-1280.png`、`build/p1-b4-daily-1280.png`、`build/p1-b5-mission-switch-1280.png`、`build/p1-b5-mission-abandon-1280.png`、`build/p1-b6-mission-1920.png`。
+
+**限制/风险**：B1/B3 的定位/开背包使用临时 Lua 探针，B4 随机事件与 B6 长文案使用临时 config；默认参数下的自然随机、长文案仍应再跑一次。输入自动化在部分窗口切换时偶发丢键，截图前用标题栏点击恢复焦点；不影响游戏逻辑。
+
+## 2026-10-27 P1 C1-C4 电力/泛光灯烟测
+
+**结果**：Release、`debugText=false`、临时探针/建造。C1 在村庄南侧空地建造发电机/泛光灯/冷藏柜，站发电机旁按 `E` 加燃料启动，`base-status` 显示“燃料：479分 · 负载1.5 · 供电中”，底部提示同步为“发电机：供电中 · 负载1.5 · 燃料479分钟”。C2 用临时 `power.fuelMinutesPerCan=2` 验证低燃料黄色警告、耗尽红色“停电”及再次加燃料恢复“供电中”。C3 验证白天“供电中 · 待夜间”、`E` 关闭“泛光灯：关闭”，以及无发电机时“泛光灯：未供电”；照明半径和 HP 均显示。C4 以 `--game.startHour=21` 启动，夜间泛光灯显示可见照明圈和“照明中”提示。
+
+**截图**：`build/p1-c1-power-1280.png`、`build/p1-c2-power-low-1280.png`、`build/p1-c2-power-outage-1280.png`、`build/p1-c2-power-recovery-1280.png`、`build/p1-c3-floodlight-prompt-1280.png`、`build/p1-c3-floodlight-off-1280.png`、`build/p1-c3-floodlight-unpowered-1280.png`、`build/p1-c4-floodlight-night-1280.png`。
+
+**限制/风险**：C1–C3 的建造位置通过临时探针 mod 定位，C2 用临时电源参数；C4 只验证夜间光晕，泛光灯受损/维修/摧毁和 C5/C6 尚未实机。暂停时 `E` 启动后的 notice 与 base-status 存在短暂旧值，等待 2 秒后一致；HUD 刷新本身正常。
+
+## 2026-10-27 P1 A6 组合 HUD 烟测
+
+**结果**：Release、1280×720、Lua、`debugText=false`。临时 Mod 注册 8 个字段（电力/防御/庇护/储水/农田/交易/天气/小队），临时探针传送到村庄空地并建造木墙；临时 `baseEvent.minStructures=0` 使 22:00 直接进入守夜预警，避免首夜结构检查把当夜标记为已处理。截图同时显示顶部中央基地状态（防御 1 完好）与守夜预警（结构 1）、右侧目标/POI/任务和 8 行模组字段；目标区与模组面板无重叠，底部仅保留建造提示。进入波次后再次截图，守夜状态显示“第1/3波 · 存活4 · 栅栏1/0”。
+
+**截图**：`build/p1-a6-combined-1280.png`、`build/p1-a6-siege-waves-1280.png`。
+
+**限制/风险**：A6 使用临时 8 字段 Mod、临时探针/建造和临时 `minStructures=0`，只验证组合布局与可读性；守夜自然触发仍由默认 `baseEvent` 参数覆盖。
+
+## 2026-10-27 P1 C4 泛光灯受损/维修/摧毁烟测
+
+**结果**：Release、1280×720、Lua、`debugText=false`。临时探针传送至村庄空地，建造发电机 `(59,17)`、泛光灯 `(61,18)`、木墙 `(62,18)`；发电机 `E` 启动，泛光灯默认开启（不要再按 `E`，否则会关闭）。临时 `baseEvent.minStructures=0`、`warningSeconds=25`、`waves=[1]`、`maxAlive=1`、`spawnRadius=2`、`building.zombieDamage=2`，事件僵尸攻击泛光灯：夜间照明圈可见、`base-status` 负载 1.5；受损后按 `H` 出现“维修泛光灯：HP 72/80（-1 木材）”；继续攻击后泛光灯被摧毁，照明圈消失、负载回到 1.0。另用临时 `building.zombieDamage=4`、僵尸攻击伤害 0、发电机先启动再建泛光灯，截到受损态提示“泛光灯：供电中 · 照明中 · HP 76/80 · 照明6格 · E开关 · H维修”。
+
+**截图**：`build/p1-c4-built-1280.png`、`build/p1-c4-damaged-1280.png`、`build/p1-c4-damaged-hp-1280.png`、`build/p1-c4-repaired-1280.png`、`build/p1-c4-destroyed-1280.png`。
+
+**限制/风险**：用临时探针/建造与临时事件攻击参数；`building.zombieDamage=2/4` 和僵尸零伤害只为延长观察窗口，不代表默认战斗伤害。C4 已完成；C6 单机 owner=0 归属/只读仍需联机。
+## 2026-10-27 P1 C6 归属/拆除二次确认烟测
+
+**结果**：Release、1280×720、Lua、`debugText=false`。临时探针建造木墙 `(59,17)` 和木箱 `(60,19)`。木墙 `X` 首次提示“再次按 X 确认拆除 木墙（3 秒内）”；等待 4 秒后确认提示消失，再按 `X` 重新出现同样的确认提示，墙体仍在，验证 3 秒过期。仓库标题能显示 `仓库：木箱（0/50 kg）（空）`。单机结构 `ownerStableId=0`，`StructureOwnerSuffix` 按设计隐藏归属，因此木墙/仓库标题都未显示“归属：你/无主”；owner 文案与非 owner 只读需要联机双客户端验证。
+
+**截图**：`build/p1-c6-owner-confirm-1280.png`、`build/p1-c6-expired-1280.png`、`build/p1-c6-reconfirm-1280.png`、`build/p1-c6-warehouse-1280.png`。
+
+**限制/风险**：C6 只完成单机二次确认/3 秒过期/仓库标题；单机 owner=0 隐藏归属是有意行为，但无法覆盖“你/其他玩家/无主”和非 owner 只读，需联机补齐。
+## 2026-10-27 P1 C5 电网供电/断电/拆除烟测
+
+**结果**：Release、1280×720、Lua、`debugText=false`。临时探针在村庄空地建造发电机 `(59,17)` 与 3 面电网 `(59,16)`、`(61,18)`、`(62,19)`；发电机 `E` 启动后 HUD 显示 `电网 3/3`、负载 4.0。临时 `baseEvent.minStructures=0`、`warningSeconds=20`、`waves=[2]`、`maxAlive=2`、`spawnRadius=2`、`building.zombieDamage=1` 驱动夜间事件；事件僵尸触碰电网时出现可见电弧与“电网电击：夜间事件僵尸受到 25 伤害”，两只僵尸中一只死亡，电网显示 `1 完好/2 损坏`。关闭发电机后提示“停电：发电机已停止供电”，电弧消失、电网仍阻挡。另用关闭事件的临时配置单独验证拆除：建造模式按 `X` 两次拆除后 HUD 回到 `防御 0/0`、负载 1.0，无残留电网或电弧。
+
+**截图**：`build/p1-c5-built-1280.png`、`build/p1-c5-powered-b-1280.png`、`build/p1-c5-off-1280.png`、`build/p1-c5-removed-1280.png`。
+
+**限制/风险**：使用临时电网/事件配置和 3 面电网；电击伤害 25 为默认值，事件波次与僵尸伤害为测试参数。C4 已完成；C6 联机归属/只读仍未完成。
+
+## 2026-10-27 P1 D1–D7 守夜/破口/战报烟测
+
+**结果**：Release，1280×720（D7 1920×1080），Lua，`debugText=false`。临时探针建造木墙，并以临时 `game.dayLengthMinutes=1` 加速等待；D1 在 22:00 前建好木墙 `(61,18)`，预警 HUD 显示“守夜将至 | 来袭 北 | 预计破口 北侧木墙 200/200 | 结构 1”。D2 临时 `baseEvent.minStructures=0`、无玩家结构，HUD 显示“来袭 南 | 无成型防线 | 结构 0”，事件正常开始。D3/D4 建 `(61,18)`、`(58,17)` 两面木墙，东侧木墙被破口后 HUD 出现“已破口 / 新目标 200/200”，日志“尸潮转向：西北”，红色 X 与实际缺口一致；预警目标为橙黄菱形。D5 单墙守住，事件僵尸被击杀后 S 评级结束；`ESC` 关闭战报后时间继续至 04:39、1x，未暂停/结算。D6 让战报跨天保留，下一次预警出现时自动收起（本轮报告为 S；另验证 S/B/C 三评级颜色为绿/黄/红）。D7 用 1920×1080、基地失守的最长结束文本，战报 8 行（损失/波次/结构损失/破口/基地失守/击杀/奖励/来袭）完整可读，卡片不越界，`ESC` 提示可见。
+
+**截图**：`build/p1-d1-siege-warning-1280.png`、`build/p1-d2-no-defense-1280.png`、`build/p1-d3-breach-1280.png`、`build/p1-d3-report-1280.png`、`build/p1-d4-warning-marker-1280.png`、`build/p1-d4-breach-marker-1280.png`、`build/p1-d5-report-1280.png`、`build/p1-d5-report-closed-1280.png`、`build/p1-d6-report-next-night-1280.png`、`build/p1-d7-report-1920.png`。
+
+**限制/风险**：使用临时探针、加速时间与事件/建筑伤害参数；D3 的备用方向切换发生在同一波破口后，未再构造第三次切换（实现上限为一次）；D7 采用基地失守 C 评级的最长 8 行文本，不代表自然流程所有战报都有 8 行。C6 联机归属/只读仍未完成。
+
+## 2026-10-27 P1 E1–E5 Mod HUD 烟测
+
+**结果**：Release、1280×720（E2 另测 1920×1080 窗口化客户区）、Lua/`--script.enabled=false` 各一路、`debugText=false`。E1 默认 `mods` 加载 `core_ui`/`example_content` 等，右侧显示“模组 / 补给站 就绪”单行，目标/POI/任务未被遮挡，日志无脚本错误。E2 用只含 `core_ui`+`p1_e2_hud` 的临时 mods 目录注册 8 个长 label/text 字段，1280/1920 下 8 行全部可见，长行在 260px 面板内换行、未溢出右边界；配合临时长任务配置，右侧长目标/POI/任务与模组面板留有空隙、无重叠。E3 四字段 `info/warn/ok/fail` 分别显示白/黄/绿/红；非法 tone `bogus` 的 `SetField` 返回 false，INFO 文本保持原值。E4 临时 mods 目录排除 `example_content`，初始显示 3 行，`ClearField` 后右侧模组面板整体隐藏且无旧行，重新 `RegisterField`+`SetField` 后 3 行恢复、标签更新为“补给一恢复/…”。E5 `--script.enabled=false` 的 native HUD 无 `mod-fields` 和“模组”标题，无残留行。
+
+**截图**：`build/p1-e1-mod-one-1280.png`、`build/p1-e2-mod-eight-1280.png`、`build/p1-e2-mod-eight-1920.png`、`build/p1-e3-mod-tones-1280.png`、`build/p1-e4-mod-before-1280.png`、`build/p1-e4-mod-empty-1280.png`、`build/p1-e4-mod-restored-1280.png`、`build/p1-e5-mod-native-1280.png`。
+
+**限制/风险**：E2 的 1920 截图使用窗口化客户区，非全屏；E2/E3/E4 使用临时 mod，E4 用 `Game.SetTimer(300/600)` 游戏秒安排清空/恢复（默认 60 分钟/天，实际约 12/25 秒）；E1 默认 mods 还加载 example_hello/example_reactive/example_ui，不参与 HUD 字段断言。未改源码，未重跑测试计数。C6 联机归属/只读仍未完成。
+
+## 2026-10-27 P1 F1–F4 操作提示与边界烟测
+
+**结果**：Release，1280×720，Lua `core_ui`，`debugText=false`，临时探针/配置构造状态。F1 在村庄空地建仓库 `(62,18)`，站到 `(61.3,19.3)` 时提示“按 I 打开仓库：木箱”；泛光灯 E 提示与 C3 一致，受损泛光灯 H 提示与 C4 一致；随后让僵尸近身造成流血，提示切为“流血中：寻找绷带或破布止血”，验证流血优先。墙/门 H 未单独重跑，沿用 C4 受损泛光灯的 H 维修路径。F2 用临时每日巡逻任务、50 木材填满背包（实际 42 木材/3 堆），3 次 F6 击杀后能量棒掉在脚下；修复前 notice 没有掉落说明，修复后为“任务完成：每日巡逻 · 30 生存经验 + 能量棒×1（背包已满，奖励掉落脚下）”。F3 用临时 `game.dayLengthMinutes=1`、100% 需求衰减、寒潮固定 -6°C、`climate.bodyResponseSeconds=1`、1000 HP 与低伤咬击，同屏显示“危险 饥饿 100% 口渴 100% 疲劳 100%”“流血：4 处（3.2 HP/s）”“疼痛：严重 90%”“感染：潜伏 2%”“天气：寒潮 -6°C · 体温 20.0°C · 潮湿 2%”。F4 打开背包后按住 W 1.5 秒，探针位置保持 `69.20,24.34`；关闭背包后 W 移动到 `68.16,23.30`→`66.75,21.88`；暂停菜单下无 tick 位移，点击“继续游戏”后 W 继续到 `64.80,18.52`，输入恢复。
+
+**修复**：F2 暴露出背包满时任务奖励已掉落但 notice 未说明。`WorldDemoState::ReturnOrDropItem` 增加 `bool* dropped` 输出；`GrantMissionReward` 返回是否掉落；`CompleteMission`、POI 完成和单机守夜奖励在装不下时追加“（背包已满，奖励掉落脚下）”。服务端守夜奖励文案未改。Debug **510/510（125476 assertions）**、Release **510/510（125489 assertions）**、Python **46/46**；无窗口服务器计数未重跑。
+
+**截图**：`build/p1-f1-action-hint-1280.png`、`build/p1-f1-storage-1280.png`、`build/p1-f2-reward-drop-1280.png`、`build/p1-f3-status-stack-1280.png`、`build/p1-f4-inventory-open-1280.png`、`build/p1-f4-inventory-block-1280.png`、`build/p1-f4-menu-block-1280.png`、`build/p1-f4-restored-1280.png`；F1 的 E/H 复用 `build/p1-c3-floodlight-prompt-1280.png`、`build/p1-c4-damaged-hp-1280.png`。
+
+**限制/风险**：F1 的墙/门 H 未单独构造，泛光灯 E/H 与仓库 I 已覆盖；F4 单机无社交面板，聊天输入框与 owner/只读仍待联机/补充项；F2 仅验证单机任务奖励，服务端守夜奖励 notice 未改。临时配置/探针不改变正式数值。C6 联机 owner 归属/只读仍未完成。
+
+## 2026-10-27 M19-F2/F3 联机 POI 与任务同步
+
+**结果**：服务器加载 `pois/missions/loot` 及 mod 合并，按玩家附近已加载 chunk 生成 POI 容器与 `PoiGuard` 守军；`LootContainer` 新增 `ZLR1` 复制组件（表/搜索状态/容量/最多 8 堆内容），`SearchLootContainer` 由服务器校验距离并首次 roll，客户端拖拽/拾取改走服务器 `InventoryAction`。服务器按玩家维护 `PoiTasks`/`MissionLog`，推进搜刮、击杀归属、POI 完成、收集、到达和电台交互，奖励由服务器发放；`ZLP1 v9` 增加 `poiProgress`、任务日志/日期和 `AbandonMission`/`InteractRadio` 命令，客户端只读镜像并恢复 `poi-guide`/`mission-guide`/世界标记。旧存档缺房屋容器只补缺失项，不叠加演示容器；旧 v2–v8 状态仍可解码。
+
+**验证**：新增 `test_network_inventory` 两个联机场景（POI 容器/守军/搜索/取物/完成；房屋搜刮推进无线电任务链与电台修复，服务器任务/POI 奖励满包时追加掉落提示），`test_player_state` 覆盖 v9 POI/任务往返，`test_replication` 覆盖 `LootContainer` 复制。Debug **514/514（125533 assertions）**、Release **514/514（125546 assertions）**、Python **46/46**。联机实机和旧存档实机兼容仍待验收。
+## 2026-10-27 M22-F1 联机睡眠与时间投票
+
+**目标**：补齐 M18-F3 唯一仍单机专用的睡眠玩法，让联机时间跳过必须经过全队同意，避免任何玩家单方面推进服务器时间。
+
+**实现**：服务器新增 `SleepRequest`、`SleepVote`、`SleepCancel` 命令。床边发起后记录提议时长/天亮目标与在线存活投票集合，默认 `sleep.voteSeconds=30`；所有在线存活会话同意才进入 `ServerSleepPhase::Sleeping`，拒绝、超时、发起者离开/死亡会取消。睡眠开始时重新计算目标时间，按 `sleep.gameMinutesPerSecond` 推进 `GameTime`，逐玩家 `ApplySleepNeeds`，并在受伤、范围内僵尸、守夜开始、饥饿/脱水、死亡时中断；投票/睡眠期间服务器拒绝同会话的非睡眠命令，客户端锁移动并显示服务器状态。`PlayerState` 升 v10：新增 `PlayerNeedsState`（联机 HUD 显示饥饿/口渴/疲劳）与 `PlayerSleepState`（phase/发起者/目标/投票数/进度/文本），旧 v9 及更旧负载回退默认；客户端 `WorldDemoState` 用 `Y/N` 投票、`ESC` 取消。`config/game.json` 新增 `sleep.voteSeconds` 与 `SleepVoteYes/No` 键位。
+
+**测试**：`test_network_integration` 双客户端覆盖投票拒绝、重新同意、全队睡眠、服务器时间推进、完成、受伤中断、投票超时与取消；`test_player_state` 覆盖 v10 需求/睡眠往返、v9 兼容和非法状态；`test_net` 覆盖三个新命令的定长往返。Debug **519/519（125714 assertions）**、Release **519/519（125727 assertions）**、Python **46/46**。
+
+**限制**：投票集合在发起时固定，新加入玩家不参与本次投票；睡眠为会话运行时状态，不写入玩家存档；未做真实双客户端实机验收与断线重连中途睡眠组合。
+
+## 2026-10-27 联机 HUD 补齐
+
+**结果**：`UpdateBaseHud` 不再在网络模式清空快照，客户端按复制实体/chunk 过滤 16 格内玩家建造物、仓库、农田、发电机、冷藏、泛光灯和陷阱，生成只读基地汇总；联机 HUD 同时调用 `RefreshPoiGuide`/`RefreshMissionGuide`，恢复 `poi-guide`、`mission-guide` 与 `base-status`。服务器仍只下发复制状态/电力摘要，客户端不参与结算。
+
+**验证**：Debug **519/519（125714 assertions）**、Release **519/519（125727 assertions）**、Python **46/46**；真实双客户端 HUD 视觉验收待补。
+
+## 2026-10-28 M14 联机主目标 HUD
+
+**结果**：`PlayerState` 升 v11，新增 `PlayerObjectiveState{valid,step}`；服务器 `TickServerObjectives` 为每个会话维护 `ecs::Objective`，按零件、电台修复和撤离点推进，`FillPlayerState` 下发；客户端 `ApplyNetworkPlayerState` 只读镜像，`RefreshObjectiveHud` 单机/联机共用。v10 及更旧负载回退 invalid，客户端不再在联机模式隐藏目标行。
+
+**测试**：`test_network_inventory` 断言主目标 0→1→2→3，`test_player_state` 覆盖 v11 往返与 v10 回退；Debug **519/519（125714 assertions）**、Release **519/519（125727 assertions）**、Python **46/46**。
+
+**限制**：真实双客户端视觉验收待补。
+
+## 2026-10-28 联机撤离结算
+
+**结果**：客户端 `ApplyNetworkPlayerState` 收到服务器主目标 `Complete` 后调用 `FinishRun(true)`；联机模式不暂停服务器时间，结算页显示“成功撤离”并提示其他幸存者仍在废土。`MenuPanel::ShowEndScreen` 新增 `showRestart`，联机结算隐藏“重新开始”（避免误开单机新局），只保留返回主菜单以退出会话。
+
+**测试**：`test_network_inventory` 将服务器玩家传送到撤离点并断言 `PlayerState.objective.step == 3`；`test_ui` 断言联机结算隐藏 `end-restart`、保留 `end-main-menu`。Debug **519/519（125714 assertions）**、Release **519/519（125727 assertions）**、Python **46/46**。
+
+## 2026-10-28 搜刮容器 8 槽复制
+
+**结果**：库存右侧搜刮区 `kInventoryLootSlots` 从 6 提升到 8，`assets/ui/inventory.rml` 与 `mods/core_ui/ui/inventory.rml` 各补 2 个槽位（仍为 2 行 4 列，不改变面板高度）；`ZLR1` 的 `LootContainer` 复制上限同步从 6 堆提升到 8 堆，超出仍由 UI/协议上限截断。`PlayerStorage` 的 6 堆仓库规则不变。
+
+**测试**：`test_replication` 改为 8 堆内容往返并断言第 8 槽；`test_ui` 覆盖 native/core_ui 两份 inventory.rml 的 `loot-slot-7`，并在 1280×720/1920×1080 断言第 8 槽位于面板内；Lua/Python Inventory API 断言同步为 8。Debug **519/519（125714 assertions）**、Release **519/519（125727 assertions）**、Python **46/46**。
+
+## 2026-10-28 ModWatcher 内容指纹
+
+**问题**：Release 全量偶发 `M7-T6` 失败，根因是热重载只比较文件数 + 最大 mtime；测试快速覆盖同尺寸脚本时 mtime 粒度可能不变，热重载漏报。
+
+**修复**：`ModWatcher::Signature` 增加总字节和文件内容指纹；对 ≤256KB 的文件读取内容做 FNV-1a，路径/大小/mtime 一并混入且 XOR 组合，避免目录遍历顺序造成误报。大文件仍依赖 mtime/大小，不额外整文件哈希。
+
+**测试**：`test_hot_reload` 新增“同尺寸同 mtime 覆盖仍触发”用例（写入后恢复原 mtime），并连续跑 20 次；Debug **519/519（125714 assertions）**、Release **519/519（125727 assertions）**、Python **46/46**。同时把 M21-F2b 电网测试的固定 RunForTicks(120) 改为 PumpHostUntil 等待异步 chunk/本地玩家（8s 上限），消除 Release 快速循环下玩家尚未生成就断言的竞态。Release 全量连续 5 次通过。
+
+## 2026-10-28 内容指纹覆盖 loot/POI/任务
+
+**目标**：让联机握手校验覆盖 mod 可追加的搜刮表、POI 与任务定义，避免双方物品/配方一致但掉落、POI 或任务不同导致联机错位。
+
+**实现**：`ComputeContentHash` 升 v2，在 items/recipes/buildings 后追加 loot seed 与表定义（容量/rolls/guaranteed/entries/权重/min/max）、POI（启用/范围/容器/守军/任务奖励）、任务（启用/随机种子/链/目标/奖励/前置）。客户端改为在 loot/POI/任务全部加载后调用 `RefreshContentHash`，服务器在同一批内容加载后计算；动态 `Content.RegisterPois/RegisterMissions` 也触发单机指纹刷新。
+
+**测试**：`test_content_hash` 新增 loot 权重、POI 威胁、任务目标数量变化用例；`test_embedded_server` 按客户端完整加载路径重建 loot/POI/任务并比对服务器指纹。Debug **520/520（125727 assertions）**、Release **520/520（125740 assertions）**、Python **46/46**。
+
+## 2026-10-28 C6 非 owner 只读提示与客户端前置拦截
+
+- `ActionHintState` 新增 `structureReadOnly`：非 owner 门提示改为“无法开门/关门”，受损结构显示“仅所有者”且不再显示 `H 维修`，仓库交互提示追加“（只读）”；联机不再显示 `J 维修全部`。
+- `WorldDemoState` 将结构/门/仓库 owner 写入提示（`归属：你/玩家名/无主`）；`TryRepairNearestBarricade` 与 `TryToggleNearestDoor` 在发送 `RepairStructure`/`ToggleDoor` 前按本地 StableId 拦截并提示“只有所有者可…”，避免把必败命令发到服务器。
+- 保持单机 `ownerStableId=0` 可操作；拆除继续走既有 request/accept 二次确认与服务器 owner 校验。
+- 测试：新增 `C6 owner read-only hints hide edit actions`，覆盖非 owner 开门/关门、受损结构隐藏 H、仓库只读提示；`test_network_integration` 扩展非 owner 维修请求，断言服务器拒绝且墙体 HP 不变、状态提示“属于其他玩家”；Debug **521/521（125740 assertions）**、Release **521/521（125753 assertions）**、Python **46/46**。
+- 限制/风险：这是无窗口 UI/规则自动化，未替代真实双客户端视觉验收；owner 名称来自 `SocialState`，未收到名单时仍回退 `玩家 <StableId>`。
+
+## 2026-10-28 F1 受损门 H 维修提示
+
+- `ActionHintText` 的门提示分支在 `canRepairBarricade=true` 时追加 `H 维修（木材 +维修量）`，受损门不再只显示 HP/开关；非 owner 只读门仍不显示 H，保留“仅所有者”。
+- 测试：`M18-F4 door hint and repair all count` 新增受损门 H/cost 断言；Debug **521/521（125743 assertions）**、Release **521/521（125754 assertions）**、Python **46/46**。
+- 限制/风险：自动化覆盖提示文本，未替代真实门受损后按 H 的实机视觉验收；若门与更近的其他受损结构同时存在，H 仍按“最近可修结构”选择目标。
+
+## 2026-10-28 C6 非 owner 开门服务器回归
+
+- `test_network_integration` 的 X-F1 阶段 2 增加非 owner `ToggleDoor`：将第二客户端移到门前，发送开门请求后断言 `ownershipRejected` 增长且门仍保持打开。
+- 与已有非 owner 维修断言共同覆盖 C6 的服务器权威拒绝路径；客户端仍由 `WorldDemoState` 前置拦截。
+- 验证：Debug **521/521（125747 assertions）**、Release **521/521（125760 assertions）**、Python **46/46**；Release 首次全量曾出现既有 KCP 丢包代理用例偶发失败，重跑通过。
+- 限制/风险：仍是无窗口自动化，真实双客户端 owner 归属/只读视觉未替代。
+
+## 2026-10-28 F4 聊天输入焦点阻断
+
+- 抽出 `ui::IsInputFocusBlocking(Rml::Context*)`，`UiSystem::HasInputFocus` 复用；`M13-T9` 断言打开聊天后焦点为输入框、W 输入被 `SetGameplayBlocked` 清空，提交后焦点解除。
+- 修复 `SocialPanel::OpenChat`：输入行从 `display:none` 切为可见后先 `Context::Update()` 完成布局再 `Focus()`；此前直接 Focus 失败，焦点落在 body，聊天期间游戏按键不会被阻断。
+- 验证：Debug **521/521（125752 assertions）**、Release **521/521（125765 assertions）**、Python **46/46**。
+- 限制/风险：自动化覆盖焦点与输入阻断，未替代真实联机聊天发送/输入视觉验收。
+
+## 2026-10-28 C6 非 owner 仓库读取回归
+
+- `test_network_integration` 在 owner 仓库放入 2 木材，将非 owner 客户端移到仓库旁并发送 `TakeAll`；断言状态提示“附近没有可访问的仓库”，仓库槽位/木材数量不变。
+- 覆盖 C6 “仓库只读”的服务器权威路径；客户端仍由 `WorldDemoState` 的 `（只读）` 提示和本地 owner 校验共同约束。
+- 验证：Debug **521/521（125758 assertions）**、Release **521/521（125771 assertions）**、Python **46/46**。
+- 限制/风险：非 owner 仓库 UI 在真实双客户端中的视觉/拖拽反馈仍待验收。
+
+## 2026-10-28 C6 非 owner 设施交互回归
+
+- `test_network_inventory` 在 owner 农田/发电机/陷阱/泛光灯旁接入第二客户端，把玩家位置同步到设施并 `TeleportBody`，分别发送 `InteractFacility`。
+- 断言四次请求都只增加 `ownershipRejected`，农田阶段、发电机运行状态、陷阱布防状态、泛光灯开关均不变；覆盖设施只读的服务器权威路径。
+- 验证：Debug **521/521（125779 assertions）**、Release **521/521（125792 assertions）**、Python **46/46**。
+- 限制/风险：真实双客户端设施只读提示/视觉仍待验收；测试未覆盖设施 owner 名称在 UI 中的显示。
+
+## 2026-10-28 C6 非 owner 仓库写入回归
+
+- `test_network_integration` 在非 owner `TakeAll` 被拒绝后，向非 owner 服务器背包注入 1 个绷带，先用非法 `UseBag` 刷新状态，再发送 `StoreAll`。
+- 断言状态提示“附近没有可访问的仓库”，owner 仓库槽位/木材数量不变，非 owner 背包中的绷带仍在；覆盖只读仓库的写入方向。
+- 验证：Debug **521/521（125787 assertions）**、Release **521/521（125800 assertions）**、Python **46/46**。
+- 限制/风险：真实双客户端仓库拖拽/写入只读视觉仍待验收。
+
+## 2026-10-28 C6 非 owner 仓库内容不复制回归
+
+- `test_network_integration` 在非 owner 已收到 owner 仓库 Prop 后，检查复制 actor：`hasSprite=true`、`ownerStableId` 正确，但 `hasStorage=false`。
+- 覆盖仓库内容只在 owner 视图下编码的隐私边界，避免非 owner 通过复制数据读取库存。
+- 验证：Debug **521/521（125791 assertions）**、Release **521/521（125804 assertions）**、Python **46/46**。
+- 限制/风险：真实双客户端仓库 UI 的只读视觉仍待验收；测试不覆盖所有复制组件过滤规则。
+
+## 2026-10-28 C6 非 owner 单件拖拽回归
+
+- `test_network_integration` 在 owner 仓库放入 2 木材后，由非 owner 发送 Loot→Backpack 的单件 `Transfer`。
+- 断言提示“仓库距离太远或无权访问”，仓库槽位/木材不变，非 owner 背包不会获得木材；覆盖拖拽读路径与 `StorageAccessible` 校验。
+- 验证：Debug **521/521（125796 assertions）**、Release **521/521（125809 assertions）**、Python **46/46**。
+- 限制/风险：真实双客户端拖拽只读视觉仍待验收。
+
+## 2026-10-28 X-F2b 内容指纹 v3：mod 文件树
+
+- 新增 `game::ComputeTreeHash(script.modsDir)`：递归哈希 mods 文件树，按相对路径排序，哈希文件大小与内容；忽略 `.log/.tmp/.swp/.bak`、尾部 `~` 与 `.DS_Store`，缺失目录返回 0。
+- `ComputeContentHash` 升 v3，追加 `extraHash`；`GameApp::RefreshContentHash` 与 `ServerHost` 使用同一 `script.modsDir` 文件树哈希，内嵌服务器测试按完整客户端路径重算并比对。
+- 覆盖 mod 脚本/图集/地图/事件等文件变化；`test_content_hash` 断言文件树确定性、文件内容变化、缺失目录与 content hash 敏感性。
+- 验证：Debug **522/522（125803 assertions）**、Release **522/522（125816 assertions）**、Python **46/46**。
+- 限制/风险：基础 `assets` 图集/地图/事件仍未纳入；mods 文件变更需重启/重连握手，不触发热重载指纹刷新。
+
+## 2026-10-28 C6 单机本地 owner 门控
+
+- 抽出 `game::CanEditStructure(owner, localId)`：无主结构允许操作，有主结构只允许同一稳定 ID，本地 ID 为 0 时拒绝有主结构；客户端本地、`PlayerInventoryService` 与 `ServerCanEditStructure` 复用同一规则。
+- `WorldDemoState` 单机仓库存取补门控：单件存入、取物、取物装备、全部存入/取出、整理都先校验仓库 owner；非 owner 只提示“该仓库属于…只有所有者可存取”，不改库存。
+- 单机设施 E 交互按 owner 前置拦截；维修全部候选与受损结构计数排除非己方结构，避免绕过单件维修限制消耗木材。
+- 测试：`test_building` 新增 owner 规则边界（无主/本人/他人/本地 ID 缺失），Debug **523/523（125808 assertions）**、Release **523/523（125821 assertions）**、Python **46/46**。
+- 限制/风险：单机完整 UI 路径仍待实机验收；真实双客户端 owner 视觉仍待补。
+
+## 2026-10-28 内容指纹 v4：忽略 mod 生成文件
+
+- 实际 mods 下存在 `core_ui/scripts/__pycache__/main.cpython-39.pyc`；v3 会把 Python 版本相关字节码纳入指纹，导致相同 mod 源码在不同 Python/运行环境下握手失败。
+- `ComputeTreeHash` 跳过 `.git/.svn/.hg/__pycache__/.pytest_cache/.mypy_cache/.ruff_cache/.vs/.idea/node_modules` 目录，并忽略 `.pyc/.pyo`、编辑器临时文件、OS 缩略图与 `~$` 临时文件；目录在递归迭代器中直接 `disable_recursion_pending`。
+- 内容指纹版本升至 v4；`test_content_hash` 覆盖新增/修改 `.pyc`、`.git/index`、`.pytest_cache` 与 `Thumbs.db` 后指纹不变，真实脚本改动仍改变指纹。
+- 验证：Debug **523/523（125810 assertions）**、Release **523/523（125823 assertions）**、Python **46/46**。
+- 限制/风险：基础 `assets` 仍未纳入；mods 文件变更需重启或重新握手，v4 与旧 v3 自动指纹不兼容。
+
+## 2026-10-28 C6 维修/开门目标避开非己方结构
+
+- `FindNearestPlayerBuiltStructure`、`FindNearestFloodlight`、`FindNearbyDoor` 新增 `editableOnly` 过滤；H 维修、受损泛光灯维修和 E 开关门使用该过滤，优先选择己方/无主目标。
+- 提示仍扫描最近任意归属结构以显示只读；仅当范围内没有己方可操作门时，开关门才回退显示归属提示，避免最近他人门抢占行动。
+- 验证：Debug **523/523（125810 assertions）**、Release **523/523（125823 assertions）**、Python **46/46**；本地 UI 路径仍待实机验证。
+
+## 2026-10-28 M23-F1-T1 远程武器数据契约
+
+- `ItemDef` 新增 `RangedCombat` 可选对象：damage/range/spreadDegrees/pellets/cooldownSeconds/magazine/reloadSeconds/ammoDefId/noiseRadius/wearPerShot/projectileSpeed/falloffStart/falloffEnd/falloffScale；仅 weapon 可用，14 个字段全部必填。
+- `ItemRegistry` 校验类型、范围、`pellets`/`magazine` 整数、`falloffStart <= falloffEnd <= range`、弹药 id 字符集，并在完整表加载后校验 `ammoDefId` 已注册；错误仍整体拒绝。
+- `ContentHash` 升 v5，包含 ranged 存在标志与全部字段；`assets/items.json` 从 34 增至 38，新增 `pistol`/`shotgun`/`ammo_9mm`/`ammo_shells`（占位图标，弹药暂为 generic）。
+- `test_items` 覆盖合法解析、缺省、非 weapon、未知/缺字段、越界、非整数、falloff 顺序与坏弹药引用；`test_content_hash` 覆盖 ranged 字段变化；Python `test_gear_data` 覆盖数据契约与引用。
+- 验证：Debug **525/525（125882 assertions）**、Release **525/525（125895 assertions）**、Python **47/47**、无窗口服务器 **39 物品 / 7 配方 / 24 系统**。
+- 限制：射击/换弹/噪声引怪/联机同步尚未接线；枪械与弹药尚未加入 loot、商人和任务奖励；v5 与旧 v4 自动指纹不兼容。
+
+## 2026-10-28 M23-F1-T2 弹匣状态与旧档兼容
+
+- `ecs::ItemInstance` 新增 `loadedAmmo`（0=空，非远程物品忽略）；`Valid()` 拒绝负数。`InventoryOps` 的加物品、取物、装备/卸下、堆叠移动均保留该字段，合并要求弹匣状态一致。
+- Item/Container/Equipment 存档组件升 v2，物品负载追加 `int32 loadedAmmo`（0~200）；`ComponentCodec` 增加最低兼容版本，`EntityStore` 对这三个组件接受 v1，旧档按空弹匣读取，其他组件仍精确匹配。
+- `test_inventory` 覆盖背包→取出→装备→卸下→放回背包的弹匣状态保留；`test_entity_save` 覆盖玩家背包/主手/地面三种状态往返，以及旧 v1 Item/Container/Equipment 默认 0。
+- 验证：Debug **528/528（125942 assertions）**、Release **528/528（125955 assertions）**、Python **47/47**。
+- 限制：枪械仍不可射击/装填；`PlayerState`/`ZLR1` 网络复制、服务器扣弹和 HUD 后续任务处理。
+
+## 2026-10-28 M23-F1-T3 单机射击状态机
+
+- 新增 `items::RangedWeaponRuntime`：开火前置检查、冷却递减、换弹计时/装填量锁定，以及切枪/损坏取消；运行时状态不入存档。
+- 单机 `V` 朝鼠标格方向开火，`R` 在主手为远程武器时优先换弹；开火扣 `loadedAmmo`、按 `wearPerShot` 磨损 `condition`，并写窄扇区 `AttackIntent` 占位命中。
+- 换弹从背包扣 `ammoDefId`，按缺口/存量/空间最小值装填；移动不打断，切枪/卸下/丢弃/损坏/受击打断；空仓不自动换弹。
+- 新增 `test_ranged_weapon` 覆盖开火条件、冷却、换弹计时/装填量/中断；Debug/Release/Python 全绿。
+- 验证：Debug **531/531（125982 assertions）**、Release **531/531（125995 assertions）**、Python **47/47**。
+- 限制：T4 才接投射物、散布/多弹丸、距离衰减和表现；T5 枪声引怪、T8 HUD、T6/T7 服务器权威与联机复制尚未开始。
+
+## 2026-10-28 M23-F1-T4 投射物与表现
+
+- 单机开火从 `AttackIntent` 窄扇区占位改为本地 `ecs::Projectile`：按 `spreadDegrees` 生成 `pellets` 条弹道，复用 Position/Velocity 积分与 `projectile.bullet` 渲染；弹丸按 `range`/寿命/撞墙/首个目标销毁。
+- `ecs::Projectile` 增加起点/最大距离/falloff 字段；`items::RangedDamageAtDistance` 按飞行距离插值伤害，`RangedSpreadOffsetDegrees` 用 shotSerial+pelletIndex 生成可复现散布。服务器投射物保留默认不启用衰减。
+- 表现：枪口短闪光、枪声音频、命中/撞墙 impact 特效与音效；命中仍走 `CombatSystem::ApplyDamage`，无穿透、无弹壳。F7 降级为调试枪声，V 单机为正式开火、联机暂保留演示投射物。临时 Projectile/TransientEffect 不写入单机/服务器世界存档。
+- 新增 T4 纯函数测试；Debug **532/532（125993 assertions）**、Release **532/532（126006 assertions）**、Python **47/47**。
+- 限制：枪声未走 `OnSound`/AI 引怪（T5）；HUD、服务器权威/联机弹道（T6/T7）、loot/商人获取（T9）未接；移动散布、后坐力、弹壳未做。
+
+## 2026-10-28 M23-F1-T5 声音引怪
+
+- 新增 `game/RangedSound.h::MakeRangedGunshot`，从 `ranged.noiseRadius` 生成 `Gunshot` `SoundEvent`；单机开火经 `SoundManager::EmitWorldSound` 进入 `OnSound`，同时驱动音频与 `PerceptionSystem`，移除 T4 的直接枪声播放，避免双播。
+- 复用既有 `CountBlockingCells`/`IsSoundAudible` 隔墙衰减；范围内 Idle/Wander AI 进入 `SearchLastKnown`，以声源为 lastKnown，已有视觉目标时保持 Chase。手枪 28、霰弹枪 40 均由数据驱动；消音器暂不支持。
+- `test_ranged_weapon` 覆盖枪声事件类型/半径/坐标；`test_perception` 覆盖远程枪声经事件总线吸引僵尸搜索；既有隔墙衰减/全链测试继续通过。
+- 验证：Debug **534/534（126002 assertions）**、Release **534/534（126015 assertions）**、Python **47/47**。
+- 限制：单机本地事件；服务器权威枪声/弹道、联机复制、HUD、消音器和实际枪械获取（T9）未接。
+
+## 2026-10-28 M23-F1-T6 服务器权威
+
+- ZLC1 新增 `FireRanged`/`ReloadRanged`；旧 `FireProjectile` 命令号保留（T7 起安全转换为 `FireRanged`）。客户端网络模式 V 发送瞄准方向、R 发送换弹/装备请求；服务端不信任客户端弹匣、伤害或冷却。
+- `ServerHost` 新增服务器侧 `RangedWeaponRuntime`，按主手物品校验耐久/`loadedAmmo`/换弹/冷却/方向，按 `pellets/spread/speed/range/falloff` 生成弹丸并扣弹/磨损；`TickServerRangedWeapons` 推进换弹，完成时从背包扣弹，切枪/卸下/死亡/损坏取消。
+- `UpdateProjectiles` 增加最大距离与距离衰减；`combat.pvp` 默认 false，弹丸 `hitPlayers` 默认 false，开启后才会命中其他玩家。枪声用物品 `noiseRadius` 进入服务器 `OnSound`。
+- 新增联机权威测试：拒绝无武器射击→装备手枪/弹药→命中且扣弹→冷却拒绝→默认 PvP 下玩家目标不受伤害→换弹回满并扣背包。
+- 验证：Debug **535/535（126022 assertions）**、Release **535/535（126035 assertions）**、Python **47/47**。
+- 限制：弹匣/换弹进度由 T7 补齐；客户端 HUD、旧负载回退、双客户端/服务器枪声广播待 T7/T10；测试为直接注入装备/背包。
+
+## 2026-10-29 M23-F1-T7 联机复制与反作弊
+
+- `PlayerState` 升 v12：装备槽尾部添加 `loadedAmmo`，新增 owner-only `PlayerRangedState`（弹匣/备弹/换弹进度/本次装填量/服务器发号）；服务器从主手 `Equipment`、`RangedWeaponRuntime` 和背包备弹填充，客户端写回装备镜像并缓存只读状态。
+- 反作弊与兼容：负弹匣在 `CanFire` 拒绝；重复开火/超射速由 per-session 冷却拒绝；零方向 `FireRanged` 回退服务器 `Facing`，旧 `FireProjectile` 目标 StableId 转方向后仍走 `FireRanged`；旧 v11 `ZLP1` 缺尾时弹匣 0/远程状态 invalid。
+- 投射物 `ownerStableId` 继续随 `ZLR1` 实体头复制；T7 联机测试捕获并校验 shooter owner。
+- 新增测试：`test_network_inventory` 覆盖弹匣/备弹/换弹进度/换弹完成扣弹/投射物 owner/冷却/零方向回退；`test_player_state` 覆盖 v12 往返、非法弹匣/换弹字段与 v11 回退；`test_ranged_weapon` 覆盖负弹匣拒绝。
+- 验证：Debug **537/537（126070 assertions）**、Release **537/537（126083 assertions）**、Python **47/47**。
+- 限制：远程玩家弹匣仍为 owner-only，不进入 `ZLR1`；HUD 待 T8；网络枪声广播/双客户端/实机验收待 T10/T11。
+
+## 2026-10-29 M23-F1-T8 HUD/输入/提示
+
+- HUD 左下新增 `ranged-status`：显示武器名/弹匣/备弹，换弹时显示百分比进度，空仓提示 R 换弹，无备弹显示失败色；低弹匣/备弹耗尽切警告色。`ui::RangedStatusText` 统一文案和 tone。
+- 单机从主手 `Equipment.loadedAmmo`、`RangedWeaponRuntime.reloadLeft` 与背包弹药数量刷新；联机从 T7 的 owner-only `m_networkRanged` 刷新，远程玩家仍不广播弹匣。
+- `HudState` 新增 `rangedValid/rangedName/rangedLoaded/rangedMagazine/rangedReserve/rangedReloading/rangedReloadProgress/rangedReloadRemaining/rangedStatus/rangedTone`；native `UiSystem`、`mods/core_ui` 的 Lua/Python HUD 与 `Hud.GetState()` 同步。
+- 输入提示：装备枪械时默认提示显示 V 开火/R 换弹；空仓显示“空仓：按 R 换弹”；建造模式 R 明确显示“建造优先，不换弹”，实际仍是建造旋转优先。
+- 测试：`test_ui` 覆盖文案/tone、双 HUD 元素与 1280/1920 左侧 7 条状态布局；`test_script_ui`/`test_python_api` 覆盖脚本新字段。Debug **538/538（126091 assertions）**、Release **538/538（126104 assertions）**、Python **47/47**。
+- 限制：仅文本行，无弹匣图标/进度条；实机视觉验收、枪械 loot/商人（T9）、网络枪声广播/双客户端验收（T10/T11）未完成。
+
+## 2026-10-29 M23-F1-T9 搜刮/交易/平衡
+
+- `loot.json` 新增枪械/弹药获取：加油站储物柜 `pistol` 权重 1 + 9mm 8–12 发，农场仓物资箱 `shotgun` 权重 1 + 霰弹 4–6 发；村庄储物柜、房屋工具柜、农场工具柜补充少量对应弹药。枪械单件、权重低于常用物资，以 loot 权重表达稀有度。
+- 商人保留绷带/抗生素/烤豆子图纸，新增 9mm×12（2 木材、库存 2）与手枪×1（8 木材、库存 1）；种子/燃料改由农田、农场 POI 与加油站取得。`MerchantStock` 仍 5 档，`ClampMerchantStock` 在单机/服务器补货前把旧档库存限制到新报价上限，避免旧档索引映射导致手枪超库存。
+- 加油站 POI 完成奖励改为 9mm×12，农场仓改为霰弹×6，描述与配置同步；诊所奖励不变。单机/服务器 POI 奖励复用同一字段，开局背包不生成枪械/弹药。
+- 伤害/噪声沿用 `items.json`：手枪 18/28、霰弹枪 11×6/40；手枪商人价 8 木材、霰弹枪仅在农场 POI 随机掉落，避免默认开局送枪。
+- 测试：`test_loot` 覆盖 loot 条目/权重/数量、枪械伤害/噪声与商人报价物品引用；`test_homestead` 覆盖新报价成本/库存与旧档库存钳制；`test_poi` 覆盖加油站/农场奖励。Debug **539/539（126181 assertions）**、Release **539/539（126194 assertions）**、Python **47/47**。
+- 限制：枪械无保底获取，需多次搜刮/开新档；实机拾取/交易与双客户端验收留 T10/T11。
+
+## 2026-10-29 M23-F1-T10 测试与验收
+
+- 单机新增 T10 用例：手枪逐发磨损到损坏，第二发后 condition=0，开火与换弹都以“weapon broken”拒绝。
+- 联机新增真实双客户端用例：`--combat.pvp=true`，A 装备 8 发手枪，B 为第二玩家；A 开火后服务器扣弹 8→7，B 服务器/客户端生命同步 100→82，第二发后 64；常驻投射物验证两个客户端都收到 owner 与 projectile archetype。
+- 反作弊/重连：武器损坏后再开火不扣弹、不追加枪声/投射物；A 断线后同 identity 重连复用 StableId，恢复 `loadedAmmo=6`、`condition=0`、备弹 8，`profileRestores>0`。PvP 关闭路径继续由 T6 玩家目标不掉血用例覆盖。
+- 测试：`test_ranged_weapon`、`test_network_inventory` 新增 T10 用例；Debug **541/541（126238 assertions）**、Release **541/541（126251 assertions）**、Python **47/47**。
+- 限制：双客户端测试用物理传送保证弹道可重复；真实鼠标瞄准、拾取/交易、客户端枪声/枪口画面和 HUD 观感留 T11 实机验收。
+## 2026-11-01 M23-F1-T11 文档与实机烟测
+
+**文档**：README 新增远程武器/近战取舍；`docs/07` 新增 P1-K 两把枪的 1280 验收用例；`docs/05`/`docs/08`/`docs/01` 更新 F1-T11 状态与限制。
+
+**截图**：Release 1280×720 隔离存档，临时探针添加并装备枪械、生成 1 名靶子僵尸；`build/p1-f1-pistol-1280.png` 显示 `手枪 7/8 · 备弹 8`、`fire: 手枪 7/8`，日志记录 1 弹丸/18 伤害/噪声 28；`build/p1-f1-shotgun-1280.png` 显示 `霰弹枪 4/5 · 备弹 7`、`fire: 霰弹枪 4/5`，日志记录 6 弹丸/11 伤害/噪声 40。日志：`build/f1-t11-pistol-os.out.log`、`build/f1-t11-shotgun-os.out.log`。
+
+**取舍**：手枪 18 伤害/0.45 秒/8 发/噪声 28，中距离点射；霰弹枪 11×6/0.9 秒/5 发/噪声 40，近距爆发但散布/衰减大；两者换弹 2/3 秒、弹药有限且引怪。厨刀 42/0.32 秒、消防斧 65/0.7 秒无需弹药且安静，但必须贴身。
+
+**验证**：单机日志确认装备、换弹完成、逐发扣弹、枪声计数与 HUD；不新增运行时逻辑，基线保持 Debug **638/638（129656 assertions）**、Release **638/638（129670 assertions）**、Python **78/78**。
+
+**限制**：临时探针添加物品/生成僵尸，不是自然拾取、交易或战斗；未覆盖双客户端枪声/枪口/投射物画面；1920 未单独留证。未提交。
+
+## 2026-10-29 M23-F2a-T1 觅食/钓鱼资源节点数据
+
+- 新增 `assets/forage.json`（`forage-v1`）：森林/草地按 `tile.floor.grass` + 邻近 `object.tree` 区分，密度/间距/单区上限/刷新分钟/战利品表均可配；钓鱼点按 `waterFloors` 记录水格，并从岸边可走格生成。
+- 新增 `game::ForageRegistry`：严格校验字段范围、重复 id、地块/邻近物体/POI/战利品表引用；支持 `content/forage.json` 原子追加，接入 `LoadModContent` 与 `GameApp` 启动加载。
+- 新增确定性规划：`PlanForageNodes/PlanFishingSpots` 读取已加载 World，跳过房间/阻挡/水面自身，遵守周边物体、POI 半径、密度、间距和上限；节点不写地图母文件。
+- 产出先行：新增树枝/石块/野果/野蘑菇/草药/小鱼/鱼饵/鱼竿/河漂杂物与 `forage_forest/forage_meadow/forage_shore/fish_water` 四张表；烹饪/腐败深化仍留 T4。当前地图没有 `tile.floor.water`，实际水岸留 T3。
+- 测试：`test_forage` 覆盖内置数据、解析/校验、mod 追加、地形/树木/水面/房间/阻挡/POI 确定性规划；`test_mod_content` 覆盖 forage 文件进入结果；Python `test_forage_data` 交叉校验物品/表。Debug **546/546（126529 assertions）**、Release **546/546（126542 assertions）**、Python **52/52**。
+- 限制：仅数据与规划，不含 E 搜索、耗尽/刷新、鱼竿/鱼饵、HUD、联机权威；内容指纹暂未覆盖 forage，联机一致性留 T6/T7。F1-T11 实机烟测按约定暂缓。
+
+## 2026-10-29 M23-F2a-T2 觅食交互
+
+- `forage-v1` 区域增加 `searchSeconds/survivalXp/toolDefId/toolWear`；基础森林 2.6 秒，草地 2.0 秒且需要一根 `forage_stick`（成功搜索磨损 0.02）。
+- 新增 `ForageRuntime`：`ForageSearchSeconds` 叠乘生存技能、雨/雾/寒潮/夜晚修正；`ForageNodeReady/ForageMarkHarvested/ForagePrune` 用 `TotalGameMinutes` 管理节点耗尽与刷新；`ForageLootSeed` 提供节点确定性 roll 盐。
+- `WorldDemoState` 每 1 秒或移动超过 1 格重规划玩家周围 10 格节点；E 在门/床/设施后、电台与使用背包前触发，搜索期间锁移动，E/攻击/受击/开背包/离开范围中断。完成时按 loot 表 roll，背包满则剩余掉落脚下，成功后发生存经验并存 `ecs::ForageState`（`FRGS` v1，最多 256 条）。
+- 临近节点绘制绿色菱形，耗尽灰色、搜索目标黄色；HUD 提示可搜索/需要工具/已耗尽/进度百分比。搜索目标/节点不写地图母文件；独立 HUD 留 T5，联机权威留 T6。
+- 测试：`test_forage` 新增耗时/天气/技能、耗尽/刷新/种子、提示文案；`test_entity_save` 新增 `ForageState` 往返；Python 数据测试校验新增字段与工具引用。Debug **550/550（126581 assertions）**、Release **550/550（126594 assertions）**、Python **52/52**。
+- 限制：单机闭环；钓鱼水岸、鱼竿/鱼饵、烹饪联动、服务器重复领取/距离反作弊和产出率调参分别留 T3/T4/T6/T7/T8。
+
+## 2026-10-29 M23-F2a-T3 钓鱼闭环
+
+- `forage-v1` 钓鱼点增加 `trashTableId/waitSeconds/biteWindowSeconds/catchChance/survivalXp/rodDefId/rodWear/baitDefId/baitCost`；基础静水点等待 5 秒、咬钩窗口 2 秒、基础成功率 0.62，成功鱼获与 `fish_water_trash` 杂物分表。
+- 新增 `FishingRuntime`：等待时间按生存技能与雨/雾/寒潮/夜晚修正；成功率按技能/天气/夜晚修正并钳制 0.05~0.95；`FishingLootSeed/FishingAttemptSucceeds` 提供确定性成败与鱼获 roll 盐。
+- `WorldDemoState` 复用资源扫描缓存生成岸边钓鱼点；E 优先钓鱼再觅食，抛竿立即消耗鱼饵并锁移动，等待结束进入咬钩窗口，E 收杆结算；主动取消/攻击/受击/开背包/离开范围中断。成功发经验，失败从垃圾表取物或空手；鱼竿按 `rodWear` 磨损并在耗尽时移除。
+- 地图新增 `tile.floor.water` 图集帧与村庄南侧池塘：`gen_map.py` 生成水面与可走泥岸，`ApplyChunkData` 将水面地块标记为阻挡，`PlanFishingSpots` 只选可走岸格。HUD 显示需要鱼竿/鱼饵、等待/咬钩进度，场景内蓝色菱形标记钓鱼点。
+- 测试：`test_forage` 新增钓鱼数据、等待/成功率、种子/成败/水面校验、提示文案与真实池塘规划；`test_maploader` 新增池塘水面阻挡/泥岸可走；Python 校验新字段、鱼获/杂物分表与实际地图水面。Debug **556/556（126656 assertions）**、Release **556/556（126669 assertions）**、Python **53/53**。
+- 限制：仅单机；钓鱼点耗尽/刷新（`respawnMinutes` 预留）、鱼/垃圾产出率、烹饪联动、联机服务器权威/重复领取与距离反作弊留 T4/T6/T7/T8。
+
+## 2026-10-29 M23-F2a-T4 产物与烹饪
+
+- `assets/items.json` 新增 `cooked_small_fish/cooked_wild_berries/cooked_wild_mushroom/herbal_tea`：熟食提升饥饿恢复并按 `spoilDays` 腐败；生蘑菇 2 点生命惩罚在烤熟后移除；草药茶消耗净水煮制，饮用回收空瓶并提供 90 秒弱感染抑制。
+- `assets/recipes.json` 新增四个篝火配方与无站点 `craft_fishing_rod`（2 树枝 + 1 破布）、`craft_fish_bait`（1 小鱼 → 3 鱼饵）；`forage_meadow` 增加鱼饵掉落，闭合 T3 钓鱼的普通获取路径，小鱼可在食物与鱼饵之间取舍。
+- 沿用现有 `ItemRegistry/RecipeRegistry/Crafting/Spoilage`，无新存档组件；重量、堆叠、腐败和空瓶回收全部由数据驱动。
+- 测试：`test_food` 新增实际资源链（烹饪、茶、鱼竿、鱼饵、空瓶回收、重量/堆叠/腐败）；`test_items`/`test_recipes` 校验内置 51 物品/12 配方；Python `test_food_data` 与 `test_forage_data` 校验新成品、配方和草地鱼饵。Debug **557/557（126797 assertions）**、Release **557/557（126810 assertions）**、Python **54/54**。
+- 限制：仅基础烹饪数据接入，未新增食物中毒/营养/批量烹饪（F5）；钓鱼点刷新与服务器权威留 T6/T7；产出率平衡留 T8。
+
+## 2026-10-29 M23-F2a-T5 HUD/提示
+
+- `HudState` 新增觅食/钓鱼结构化字段与 `forageStatus/forageTone`、`fishingStatus/fishingTone`；`ui::ForageStatusText`/`FishingStatusText` 统一“可觅食/觅食中/已耗尽”和“可钓鱼/钓鱼中/咬钩”文案、耗时、缺工具/鱼竿/鱼饵、耗尽刷新与咬钩剩余秒数。
+- `WorldDemoState` 复用现有最近节点/钓鱼点评估和 `ForageAction`/`FishingAction`，活动状态优先；完成采集/钓鱼的收获、垃圾、背包满掉落、错过收杆继续由中央 notice 提示。
+- native 与 core_ui 两份 `hud.rml` 增加 `forage-status`/`fishing-status`，RCSS 与 Lua/Python core_ui 控制器同步；Lua/Python `Hud.GetState()` 暴露同名字段，空状态隐藏。
+- 测试：`test_ui` 新增文案/色调、双 HUD 元素与 1280/1920 九行左侧布局；`test_script_ui`/`test_python_api` 覆盖字段。Debug **558/558（126830 assertions）**、Release **558/558（126843 assertions）**、Python **54/54**。
+- 限制：仅单机 HUD；联机 forage/fishing 状态留 T6；文本行未做图标/进度条，实机视觉验收未做。
+
+## 2026-10-29 M23-F2a-T6 联机权威
+
+- `ServerHost` 新增 `ForageRegistry` 加载（基础 + mod）与附近节点/钓点规划，使用全局 `ForageState` 管理耗尽/刷新；`ComputeContentHash` 升 v6，纳入 forage seed、区域和钓点全部字段。
+- `PlayerState` 升 v13：owner-only `PlayerSurvivalState`（模式/阶段/坐标/进度/耗时/咬钩剩余）及最多 32 个觅食节点、12 个钓鱼点；v12 及更早回退空闲/空列表。客户端网络模式只镜像列表与进度，不本地 tick 动作。
+- 新增 `ForageStart/ForageCancel/FishingStart/FishingReel/FishingCancel`。服务器校验规划身份、交互距离、工具/鱼竿/鱼饵、节点耗尽和重复预约；推进等待/咬钩，确定性 roll 产出，处理鱼饵消耗、工具/鱼竿磨损、背包满掉落与生存经验。双客户端同节点采集由预约+全局耗尽状态拒绝。
+- 测试：`test_player_state` 覆盖 v13 往返与 v12/v11 回退；`test_network_integration` 覆盖双客户端真实地图觅食/重复拒绝/耗尽/距离拒绝与钓鱼扣饵/等待/咬钩/收杆；`test_content_hash` 校验 forage 纳入指纹，`test_embedded_server` 客户端按 forage 数据重算指纹。Debug **561/561（126886 assertions）**、Release **561/561（126899 assertions）**、Python **54/54**。
+- 限制：服务器全局觅食耗尽状态尚未写入世界存档；钓鱼点仍未耗尽/刷新；远程玩家不显示采集动作；实机双客户端视觉验收未做。
+
+## 2026-10-29 M23-F2a-T7 测试
+
+- `WorldSimulation::LoadSave` 恢复存档 `gameMinutes` 到 `GameTime`，服务器重启后绝对刷新时间保持一致。服务器全局 `ecs::ForageState` 改由保留 StableId 的世界实体承载，`SaveWorld` 前同步、读档后恢复并清理过期节点；旧档没有该实体时创建空状态。
+- 新增 `test_network_integration` T7：真实地图草地觅食检查工具磨损、节点耗尽，快进服务器时间后节点刷新；钓鱼覆盖等待中取消（扣饵不磨竿）、未咬钩收杆拒绝、错过咬钩自动中断并磨损鱼竿。
+- 新增 `test_network_world_persistence` T7：真实采集后关闭服务器，全局耗尽节点、工具耐久与游戏时间随存档恢复；快进 200 分钟后同一节点重新可采。
+- 节点确定性、节点耗尽/刷新、烹饪联动、双客户端和 v12/v11 旧状态继续由 T1/T2/T4/T6 与 `test_player_state` 覆盖。
+- 验证：Debug **564/564（126961 assertions）**、Release **564/564（126974 assertions）**、Python **54/54**。
+- 限制：钓鱼点自身仍未耗尽/刷新；远程玩家不显示采集动作；实机双客户端视觉验收未做。
+
+## 2026-10-29 M23-F2a-T8 文档与平衡
+
+- 按基础数据计算并记录产出率（游戏日 60 现实分钟、`needs.hungerPerDay=1.4`，不含行走/烹饪）：森林每次 2.6 秒搜索期望 2.85 件、1.00 件食物，生食 0.066 饥饿、熟制 0.172；草地 2.0 秒约 2.92 件、1.00 件食物，0.060/0.160；静水钓鱼每次尝试（5 秒等待 + 2 秒咬钩窗口）按 0.62 成功率约 0.93 条小鱼，生食 0.112、熟制 0.298，消耗 1 鱼饵、鱼竿磨损 0.03。
+- 平衡结论：食物可持续但不提供工具/药品/弹药，钓鱼仍需鱼竿/鱼饵、觅食有工具与刷新限制；第一版不改数值，实机若过易优先降低浆果权重或鱼获 rolls，不改物品饥饿值。
+- `docs/modding.md` 更新产出率前提与 T7 世界实体持久化说明；README 增加产出率摘要；`tools/tests/test_forage_data.py` 新增期望产出率回归并锁定上述值。
+- 验证：无 C++ 逻辑变更；Debug **564/564（126961 assertions）**、Release **564/564（126974 assertions）**、Python **55/55**。
+
+## 2026-10-29 M23-F3-T1 可燃数据与火源组件
+
+- 新增 `assets/fire.json`（`fire-v1`）与 `game::FireRegistry`：材料按 sprite 唯一映射，`flammability` 定义 `ignitionThreshold/burnSeconds/smokePerSecond/heatRadius`；严格拒绝重复 id/sprite、越界值与未知字段，整份数据原子加载。`FindFireMaterial` 可按格层查询。
+- 基础覆盖篝火 `object.campfire`、木墙横/竖、木地板 `tile.floor.wood`、树木 `object.tree` 与草丛 `decor.grass_tuft`；客户端与服务器启动加载 `fire.file`。
+- 新增 `ecs::FireSource`（`FirePhase`、材料 id、点燃进度、剩余/总燃烧时长、烟量、热半径）与配置 `fire.file`；本阶段不创建活跃火源，状态机/蔓延/存档/联机分别留 T2/T3/T6。
+- 测试：`test_fire` 覆盖数据契约、重复/非法字段、基础 sprite 覆盖、格层查询与组件字段；Python `test_fire_data` 覆盖 JSON 契约和默认材料差异。Debug **569/569（127040 assertions）**、Release **569/569（127053 assertions）**、Python **57/57**。
+- 限制：无点燃/燃烧/熄灭、温度/伤害、蔓延、存档或联机；火焰数据暂未纳入内容指纹 v6。
+
+## 2026-10-29 M23-F3-T2 单机火源状态机
+
+- 新增 `game::FireSystem`：点燃进度按 `fire.ignitionSeconds × (1 + ignitionThreshold)`，燃烧扣燃料，耗尽后阴燃 `fire.smolderSeconds` 再熄灭；点燃失败/主动熄灭清空燃料，熄灭源可在同格重新点燃。
+- 点燃率按 `1 - ignitionThreshold - wetness × wetnessPenalty` 计算，受 `minIgnitionChance` 约束；`WorldDemoState` 用当前天气湿度点火，雨天/潮湿降低成功率。配置新增 `fire.ignitionSeconds/wetnessPenalty/minIgnitionChance/smolderSeconds/seed`。
+- 火源用 ECS `Position + FireAnchor + FireSource` 表示；Climate 只对燃烧/阴燃且位于 `heatRadius` 内的火源标记“火边”，点燃中/熄灭不升温。无 FireRegistry 的服务器路径仍回退旧篝火范围查询，T6 接权威火源。
+- 单机 E 在门/床后切换最近篝火，点燃/燃烧/阴燃时按 E 熄灭；HUD 显示点燃、燃烧、阴燃与熄灭提示，联机不本地操作。
+- 测试：4 个 T2 用例（51 assertions）覆盖点燃进度、燃料→阴燃→熄灭、潮湿点火率、热半径、熄灭失效与篝火源创建；另补 HUD 文案与篝火查询断言。全量 Debug **573/573（127099 assertions）**、Release **573/573（127112 assertions）**、Python **57/57**。
+- 限制：无 T3 蔓延、T4 灭火物品/资源、T5 僵尸燃烧/伤害、T6 存档/联机；仅篝火可交互点燃，尚无燃料物品补给。
+
+
+## 2026-10-29 M23-F3-T3 蔓延规则
+
+- `FireSystem::Update` 对 `Burning` 源按 `FireSpreadInterval(burnSeconds)` 累计四邻接脉冲；间隔 `spreadIntervalSeconds × (0.5 + clamp(burnSeconds/60,0,3))`，木地板/木墙/树/草丛各不相同。只检查同层、已加载 chunk，不跨 chunk、不做垂直/斜向传播。
+- 目标先按 `FindFireMaterial` 选材并进入 `Igniting`；整格默认选材改为 Furniture→Wall→Floor→Item，避免木地板遮住同格篝火/树。蔓延概率 `clamp((1 - ignitionThreshold - ambientWetness × wetnessPenalty) × spreadChanceScale,0,1)`，`WorldSimulation` 传入当前天气 `wetnessIntensity`。
+- 每 tick 最多成功新建 `fire.maxSpreadsPerTick`（默认 2）个火源，活跃源上限 `fire.maxActiveSources`（默认 128）；达到上限提前停止扫描。候选按 `fire.seed` shuffle、同格去重，已熄灭源复用。新增 `ecs::FireSource.spreadAccumulator` 与 `FireSystem::ActiveSourceCount`。
+- 配置新增 `fire.spreadIntervalSeconds/spreadChanceScale/maxActiveSources/maxSpreadsPerTick`。
+- 测试：3 个 T3 用例（38 assertions）覆盖木地板/木墙间隔与概率差异、四邻接蔓延、每 tick 预算、活跃源上限、未加载 chunk 阻断；Python `test_fire_data` 增加蔓延配置边界断言。Debug **576/576（127139 assertions）**、Release **576/576（127152 assertions）**、Python **58/58**。
+- 限制：火源不随 chunk 卸载清理、烧毁结构/掉落、雨天自动衰减、存档/联机权威蔓延均未接（T6/T7）；蔓延累计时间不存档；未做实机火焰视觉/性能验收。
+
+
+## 2026-10-29 M23-F3-T4 灭火与火焰伤害
+
+- `use.extinguish/extinguishWear` 接入 `items.json`；新增 `fire_extinguisher`（0.95/0.2）、`wet_rag`（0.55/0.5），净水/脏水 0.55/0.40 灭火并替换空瓶；新增 `craft_wet_rag`（破布 + 脏水），灭火器加入村庄/加油站储物柜。`UseEffect.Any()` 不包含灭火字段，避免普通使用误消耗。
+- `FireSystem::FindNearestActiveFire` 与 `PlanFireExtinguish`/`ConsumeFireExtinguishItem`/`FireExtinguishSucceeds`：单机 E 优先灭火，选择最高成功率物品；失败也消耗物品，水替换空瓶、灭火器/湿布扣耐久；无物品徒手拍打按 `bareHandsChance` 判定，失败受 `bareHandsSelfDamage` 火焰伤害。
+- 新增 `DamageType::Fire`/`DamageCause::Fire`；`ApplyFireDamage` 每 0.5 秒对燃烧源 1 格内所有 `Health` 走 `CombatSystem::ApplyDamage`，每秒 6 点，不写伤口；WorldSimulation 在 Fire 槽内累加结算，玩家/僵尸共用。
+- HUD `ActionHintState` 新增火灾、灭火物品、成功率与徒手提示；配置新增 `fire.extinguishRange/bareHandsChance/bareHandsSelfDamage/fireDamagePerSecond/fireDamageRadius/fireDamageIntervalSeconds`。
+- 测试：3 个 T4 用例（48 assertions）覆盖物品选择/消耗/耐久、最近火源与玩家/僵尸生命伤害；HUD 文案断言扩展；`test_items`/`test_recipes` 物品总数更新为 53，Python `test_fire_data` 新增灭火物品/配方/配置校验。Debug **579/579（127222 assertions）**、Release **579/579（127235 assertions）**、Python **59/59**。
+- 限制：单机灭火/伤害；服务器权威、存档/联机在 T6；僵尸燃烧状态与 AI 在 T5；雨天衰减/结构烧毁在 T7；伤害暂不按护甲减伤；实机视觉验收未做。
+
+
+## 2026-10-29 M23-F3-T5 僵尸燃烧与 AI
+
+- 新增 `ecs::BurningZombie` 运行时状态：剩余燃烧、伤害累计、传播累计、恐慌剩余、恐慌速度倍率与追逐半径。`ApplyFireDamage` 只给燃烧源范围内带 `ZombieVariant` 的僵尸附加状态，玩家不获得。
+- `ApplyBurningZombieDamage` 每帧推进燃烧/恐慌计时，按 `zombieBurnDamageIntervalSeconds` 用 `Fire` 伤害结算 `zombieBurnDamagePerSecond`；默认 3 HP/s、8 秒结束，离开火源仍会燃烧，但不会瞬间清空整群僵尸。
+- `FireSystem::SpreadFromBurningZombies` 在燃烧僵尸脚下按间隔/概率调用 `IgniteAt`，继续受每 tick 新建上限和全局活跃源上限约束；燃烧僵尸会一路留下潜在火源。
+- `AiSystem` 收集存活玩家，燃烧恐慌期内无视视野追逐 `panicChaseRadius` 内最近玩家；`PathFollowSystem`/`BoidsSystem` 应用 `panicSpeedScale` 加速；`RenderCollectSystem` 用橙色 tint 表示燃烧，受击闪红优先。
+- 配置新增 `fire.zombieBurnSeconds/zombieBurnDamagePerSecond/zombieBurnDamageIntervalSeconds/zombieSpreadIntervalSeconds/zombieSpreadChance/zombiePanicSeconds/zombiePanicSpeedScale/zombiePanicChaseRadius`；Python 数据测试补边界断言。
+- 测试新增 3 个 T5 用例（27 assertions）：燃烧附加/玩家排除/持续伤害/到期移除、脚下可燃格传播与上限、燃烧僵尸追逐玩家并加速。Debug **582/582（127249 assertions）**、Release **582/582（127262 assertions）**、Python **59/59**。
+- 限制：燃烧状态、恐慌与传播仍为单机；T6 接存档/联机；T7 结构烧毁/掉落；T9 火焰视觉/音效；伤害不按护甲减伤。
+
+## 2026-10-29 M23-F3-T6 火焰存档与联机
+
+- 存档组件新增 `FireAnchor`/`FireSource`/`BurningZombie`：火源格、材料 id、阶段、点燃进度、剩余/总燃烧、烟量、热半径、蔓延累计和僵尸燃烧/恐慌计时均可往返；燃烧结束或手动熄灭的源保留为 `Extinguished`，作为已烧毁格标记；旧档无组件按无火/无燃烧处理。
+- `ServerHost` 将 `FireRegistry` 注入 `WorldSimulation`，服务器权威推进点燃、四邻接蔓延、阴燃/熄灭、火焰伤害与燃烧僵尸传播；网络客户端保持不 tick 本地模拟。
+- 新增 ZLC1 `IgniteFire`/`ExtinguishFire`：服务器校验附近篝火、目标格、层数、距离、背包容器与灭火物品/徒手判定，物品消耗/耐久/自伤/成功 roll 全在服务器结算；客户端网络模式只发送命令。
+- `ZLR1` 新增 `FireSource`（含 FireAnchor）与 `BurningZombie`；复制生产器允许无 `SpriteRef` 的火源实体进入 AOI，客户端同步为只读 ECS 并绘制脉冲火焰菱形/熄灭格，HUD 显示复制火源的灭火提示。
+- 测试：T6 存档往返 1 用例（FireSource 燃烧进度/熄灭格 + BurningZombie）、复制 1 用例（无 Sprite 火源 + 燃烧状态）、联机集成 1 用例（伪造目标被拒绝、服务器点火复制、服务器灭火、客户端只读相位）；全量 Debug **585/585（127332 assertions）**、Release **585/585（127345 assertions）**、Python **59/59**（Release 首次运行命中已知 KCP/网络时序 flake，定向复跑与全量重跑通过）。
+- 限制：火烧结构删除/掉落、火源 chunk 卸载清理、雨天自动衰减、100 火源压力与实机视觉验收留 T7/T8/T9；火源复制按 AOI 快照全量比较，未做独立降采样。
+
+## 2026-10-30 M23-F3-T7 火焰性能与安全
+
+- `FireSystem::IgniteAt` 与蔓延/僵尸传播共用 `fire.maxActiveSources` 上限，满额返回新增 `FireIgnitionResult::AtCapacity`；单机/服务器都显示“活跃火源已达上限”。未加载 chunk 的火源在 `Update` 中冻结推进，避免离屏持续燃烧。
+- `WorldSimulation` 的 chunk 卸载回调调用 `FireSystem::UnloadChunk`，删除该 chunk 内活跃火源并保留 `Extinguished` 烧毁格；卸载后火源上限和后续 tick 不再被远处火源占用。
+- 新增 `fire.rainBurnDecayScale`（默认 1.0，0~10）。`AdvanceFire` 把当前 `wetnessIntensity` 乘入燃料消耗，雨天燃烧更快进入阴燃/熄灭，同时保留原有雨天降低点燃/蔓延概率。
+- `FireMaterialDef` 新增可选 `charredDrops`（`{item,count}`，最多 8 项，重复/未知字段/越界拒绝）。自然燃尽后 `ResolveBurnedCell` 删除可燃结构：母地图地面保留、玩家木地板恢复 `underlay`、篝火设施保留；`WorldSimulation` 生成掉落并 `BuildChunkStatics + OnChunkLoaded` 重建碰撞/A*。主动灭火不触发删除/掉落。
+- 默认掉落：木墙 2 木材，树木 2 木材 + 2 树枝，玩家木地板 1 木材，草丛/篝火无掉落；数据与掉落 item 由 Python 测试交叉校验。
+- 测试新增 5 个 T7 用例（61 assertions）：直接点火上限、雨天加速衰减、chunk 卸载清理与未加载冻结、自然燃尽删除墙体/掉落、母地图地面/篝火/玩家地板 underlay 恢复。全量 Debug **590/590（127398 assertions）**、Release **590/590（127411 assertions）**、Python **59/59**。
+- 限制：雨天只加速燃料消耗，不做独立灭火概率；只处理 `fire.json` 已知可燃 sprite，不做结构坍塌/多格建筑；100 火源压力测试与实机火焰/烟雾验收留 T8/T9。
+
+
+
+
+
+## 2026-10-30 M23-F3-T8 火焰测试与验收
+
+- 新增 `M23-F3-T8 100 火源压力：上限内点燃/推进/熄灭`：100 个已加载木地板格全部点燃，连续推进 100 帧后仍全部 `Burning`，再全部主动熄灭并检查活跃火源归零；Debug 实测约 50–70ms，测试阈值 2000ms。
+- 新增 `M23-F3-T8 双客户端火焰：复制状态一致与权威灭火`：真实服务器启动两个客户端；服务器权威点燃篝火后两端收到同一稳定 ID/火源格/材料/阶段，第二客户端伪造远处目标被拒绝；第一客户端消耗灭火器后服务器与两端复制状态同步为 `Extinguished`。
+- 点燃/熄灭/蔓延/伤害/存档继续由 T2–T7 用例覆盖：T2 状态机与潮湿、T3 四邻接/边界/上限、T4 灭火资源与火焰伤害、T5 僵尸燃烧/传播/恐慌、T6 存档组件与 ZLR1/权威命令、T7 自然燃尽结构与 chunk 安全。
+- 新增 `M23-F3-T8 燃尽墙体经 ChunkDiff 重载后不复活`：含木墙母地图基线经 `ResolveBurnedCell` 燃尽删除后抓取 ChunkDiff，再应用回重载母地图，确认墙层为空。
+- 3 个 T8 用例共 746 assertions；全量 Debug **593/593（128144 assertions）**、Release **593/593（128157 assertions）**、Python **59/59**（Release 首次运行再次命中已知 `M23-F1-T10` 网络时序 flake，定向复跑与全量重跑通过）。
+- 限制：100 火源压力直接驱动 `FireSystem`，不做渲染/音效压力；双客户端走同机回环，真实网络抖动与实机视觉/烟雾验收留 T9。
+
+
+
+
+
+## 2026-10-30 M23-F3-T9 文档与实机烟测（完成）
+
+- 配置/数据文档：`docs/02` 记录 `fire.*` 全部运行参数及 `assets/fire.json` 的 `flammability/charredDrops`；`docs/modding.md` 说明 `fire.file` 当前直接加载、不参与 mod `content/` 合并；README 增加点火/灭火/蔓延/烟雾概要。
+
+- 视觉：`WorldDemoState::DrawFireOverlay` 在原有橙色脉冲菱形/熄灭叉之外，按 `FireSmokePerSecond` 绘制最多 5 组灰色烟雾团（每组 2 圈），随时间上升、横向摆动并随 `smokePerSecond` 调整密度；同时把火焰阶段色和燃烧僵尸 tint 修正为 ABGR 橙色系，不引入粒子系统。
+
+- 验收步骤已写入 `docs/07` G1/G2：使用临时 `build/t9_mods/t9_fire_probe` 传送至村庄篝火，按 `E` 点燃后截图；临时探针/存档不入库。
+
+- 用户实机确认橙色火焰、灰色烟雾团与火灾/灭火提示可用（2026-10-30）；用户未提供截图，1920 未单独留证。
+- 正式基线仍为 Debug **593/593（128144 assertions）**、Release **593/593（128157 assertions）**、Python **59/59**。
+
+## 2026-10-30 M23-F2b-T1 动物组件与数据
+
+**目标**：为狩猎循环先定动物数据契约、ECS 组件、尸体/掉落表与存档形态，不生成实体、不做 AI/交互/联机。
+
+**实现**：
+- 新增 `assets/animals.json`（`animals-v1`）与 `game::AnimalRegistry`：鹿/兔/野猪，严格校验物种 id/kind、生命/游荡/逃跑/警觉/听觉/逃跑时长、伤害/攻击距离/冷却、尸体 sprite/搜索耗时/工具磨损/战利品表；被动动物伤害字段必须为 0，危险动物必须为正，未知物品/战利品表整份拒绝且不替换旧表。
+- 新增 `ecs::AnimalKind/Animal/Flee/AnimalCorpse`：`Animal` 只保存物种与 kind，数值运行时查注册表；`Flee` 保存逃跑方向/剩余/威胁点/警觉度；`AnimalCorpse` 保存物种与已剥取标记。`Animal/Flee/AnimalCorpse` 注册 `ANML/FLEE/ACRP` 存档段，内置组件 37→40。
+- 新增 5 个动物产物（生鹿肉/生兔肉/生野猪肉/兽皮/骨头）与 3 张战利品表（`animal_deer/animal_rabbit/animal_boar`）；尸体搜索工具默认 `kitchen_knife`，供 T4/T5 使用。
+- `GameApp` 与 `ServerHost` 在物品/战利品表之后加载 `animals.file`；`ComputeContentHash` 升 v7，纳入全部 AnimalDef 字段，客户端/服务器同路径加载并参与握手。
+- 顺带修复 `LootTable::ParseEntry` 在调用方不传 error 指针时的空指针解引用（无效战利品数据现在返回 false，不崩溃）。
+
+**验证**：
+- `tests/test_animals.cpp` 覆盖内置数据契约、非法数据原子拒绝、Animal/Flee/AnimalCorpse 存档往返；`test_content_hash` 覆盖动物指纹；`tools/tests/test_animal_data.py` 校验 JSON/物品/战利品引用。
+- T1 4 个 C++ 用例 72 assertions；全量 Debug **597/597（128278 assertions）**、Release **597/597（128291 assertions）**、Python **62/62**。Debug/Release 首轮均命中已知网络时序 flake（`test_network_integration.cpp:1858`），定向复跑与全量重跑通过。
+
+**限制**：T1 只做数据/组件/存档/掉落表，无生成、游荡、感知、逃跑/反击、击杀、剥取、掉落生成或联机复制；T2 接生成与游荡，T3 接感知逃跑，T4 接尸体收获，T5 接烹饪/制作，T6 接联机。
+
+## 2026-10-30 M23-F2b-T2 动物生成与游荡
+
+**目标**：让鹿/兔/野猪按森林、草地和 POI 出现在单机世界，能游荡、远离玩家降频，并在 chunk 卸载/重载时保持状态；暂不接感知、战斗、剥取与联机。
+
+**实现**：
+- `AnimalDef` 新增 `spawn`（forest/meadow/poi 权重、maxPerChunk、poiIds），鹿偏森林、兔偏草地、野猪偏农场仓 POI；新增 `config/game.json` 的 `animals.spawn` 全局参数（enabled/maxLive/minPlayerDistance/poiRadius/seed），单机上限 36。
+- 新增 `game::AnimalSystem`：chunk Loaded 后扫描室外草地/泥地可站立格，用 `object.tree` 判定森林、无树判定草地、POI marker 半径判定 POI；按 seed/区块/物种/类别/槽位确定性滚动，单区块 `maxPerChunk` 与全局 `maxLive` 双封顶，已生成区块不重复播种。
+- 新增运行时 `ecs::AnimalWander`：动物选择 2~6 格目标、待机后重选；移动前检查脚下与四周地面/房间/阻挡，撞墙按 X/Y 轴回退，完全阻塞则放弃目标；`LodState` 非更新 tick 跳过，远距离按既有 30Hz/10Hz 降频。
+- chunk 卸载时把动物物种/位置/生命/Flee 保存到 `AnimalSystem` 内存快照并销毁；重载原位恢复，已生成区块不重复生成。已加载动物随实体快照存档；未加载 chunk 的动物快照尚未落盘，留 T7。
+- 新增 `animal.deer/animal.rabbit/animal.boar` 占位资源绑定（复用角色帧 + 物种 tint）；HUD 增加动物 live/seeded/pending/spawned/restored/far 调试行。服务器 `spawnAnimals=false`，T6 接权威生成/复制。
+
+**验证**：
+- `tests/test_animal_spawn.cpp` 4 个用例 45 assertions：森林/草地/POI 生成与重复加载去重、全局上限/确定性、chunk 卸载/重载恢复、LodState 远端降频；扩展 `test_animals` 的 spawn 契约与非法权重校验、`test_content_hash`、Python `test_spawn_contract`。
+- 全量 Debug **601/601（128332 assertions）**、Release **601/601（128345 assertions）**、Python **63/63**；Release 首轮分别命中既有网络时序 flake（`test_network_inventory.cpp:672`、`test_network_integration.cpp:1858`），定向/全量复跑通过。
+- Debug 窗口烟测 `--game.startState=world`：生成 36 只活跃动物，卸载 3 个 chunk 的动物快照待恢复；`AnimalSystem` 约 0.36ms/tick（Debug），无崩溃/错误日志。未做真实视觉截图，留 T8/用户验收。
+
+**限制**：T2 不接感知、枪声/脚步、逃跑、野猪反击、击杀/尸体/剥取、动物间/玩家碰撞或联机复制；chunk 卸载快照只在当前进程内存，未落的 chunk 记录不跨游戏存档。占位动物复用角色帧，动画/专用美术留 T8。
+
+## 2026-10-30 M23-F2b-T3 动物感知与逃跑
+
+**实现**：
+- `AnimalSystem` 新增玩家感知：`alertRadius` + 0.5 格阻挡采样视线，`fleeRadius` 作为近距离压迫半径；`WorldSimulation` 的 `OnSound` 同时推给僵尸感知与动物系统，动物用 `min(hearingRadius, SoundEvent.radius)` 和 `core::SoundPropagation` 隔墙衰减听枪声/脚步/撞击，忽略 UI 声音。
+- 被动动物受惊或受击后进入 `Flee`，威胁反方向逃跑并在 `fleeSeconds` 后结束；野猪受击/看见/听见威胁后进入运行时 `AnimalWander.retaliating`，追击玩家并用 `CombatSystem::ApplyDamage` 按 `damage/attackCooldown` 反击，火焰伤害仍走逃跑。
+- `CombatSystem` 的 AI 攻击候选跳过 `Animal`，僵尸 `Perception/Ai` 仍只认玩家；单机玩家近战自动瞄准和显式目标允许动物；读档时为动物补 `AnimalWander/Flee/LodState` 但不补 AI。
+- HUD 动物行追加 `flee/retaliate/heard/attacks`；chunk 卸载保存 `Flee`，但 `retaliating/attackCooldown` 不保留。
+
+**验证**：
+- `tests/test_animal_spawn.cpp` 新增 4 个 T3 用例 44 assertions：视野发现与墙体遮挡、枪声逃跑方向及结束、受击逃跑/野猪反击、僵尸攻击隔离/玩家攻击命中。
+- 全量 Debug **605/605（128376 assertions）**、Release **605/605（128389 assertions）**、Python **63/63**；Debug 窗口烟测 `--game.startState=world --audio.device=off` 运行 9 秒：36 只活跃动物、AnimalSystem 约 0.88ms/tick，无崩溃/错误日志。
+- 未做真实视觉截图；野猪/动物攻击动画、攻击音效留 T8。
+
+**限制**：T3 不生成尸体/掉落、不接击杀收获（T4）、不接联机复制（T6）；感知为全向，不含动物朝向视锥；声音事件没有来源 ID，仅按声源位置反应。
+
+## 2026-10-30 M23-F2b-T4 动物击杀与收获
+
+**目标**：把 T3 的动物生命链接到可剥取尸体、工具需求/磨损和肉/皮/骨头掉落，形成单机狩猎闭环；联机权威与并发剥取留 T6。
+
+**实现**：
+- `DeathSystem` 在动物倒地窗口结束后创建通用 `Corpse` 并附加 `AnimalCorpse{speciesId,false}`；动物不再派发 `OnZombieDead`，避免任务/统计误算僵尸击杀。`AnimalSystem` 每 tick 按 `AnimalDef.corpseSprite` 刷新尸体 `SpriteRef`，运行时和读档尸体都走同一路径。
+- 新增 `game::AnimalHarvest`：检查 `corpseTool` 在背包或装备槽且 condition>0；按 `corpseSearchSeconds` 计时，完成后用尸体 StableId + `lootTableId` 派生 seed 确定性 roll 到尸体 `Container`，写 `LootContainer{searched=true}` 和 `AnimalCorpse.harvested=true`，按 `corpseToolWear` 磨损/损坏移除工具；重复剥取不重 roll。
+- `WorldDemoState` 新增 E 剥取动作：范围选择最近的未剥取尸体，移动/受击/打开背包中断；HUD 显示“按 E 剥取（N 秒）”、缺工具/进行中进度；完成后打开背包看到“尸体：物种”和战利品堆叠，可拿入玩家背包。
+- 尸体作为普通容器复用现有搜刮 UI；不自动把掉落塞入背包。`Container`/`LootContainer`/`AnimalCorpse` 均已有存档段，无新存档组件/内容指纹变化。
+
+**验证**：
+- 新增 `tests/test_animal_harvest.cpp` 3 个用例 46 assertions：DeathSystem 动物尸体/物种/来源 ID 且不派发僵尸击杀事件；确定性掉落、工具磨损、重复剥取拒绝；缺工具/工具耗尽移除与提示。
+- 全量 Debug **608/608（128422 assertions）**、Release **608/608（128435 assertions）**、Python **63/63**；Release 首轮命中既有网络时序 flake（`test_network_inventory.cpp:672`），定向/全量复跑通过。
+- 未做真实视觉截图；尸体 Sprite 当前仍是占位资源，专用动画/音效留 T8/用户验收。
+
+**限制**：T4 仅单机；不接服务器权威生成/受伤/死亡/掉落/并发防剥取（T6）；工具只有可用/磨损，无独立品质等级；尸体肉/皮/骨头尚未进入烹饪/制作（T5）；打开背包后需手动拿取尸体容器物品。
+
+## 2026-10-30 M23-F2b-T5 动物肉烹饪与皮革/骨头制作
+
+**目标**：让 T4 获得的生肉、兽皮和骨头进入现有烹饪/制作面板，闭合“狩猎 → 剥取 → 熟食/装备”的单机循环；食物中毒/营养深化留 F5。
+
+**实现**：
+- `assets/items.json` 新增 `cooked_venison/cooked_rabbit_meat/cooked_boar_meat`，熟肉饥饿恢复为 0.42/0.30/0.55（生肉 0.12/0.08/0.18），重量按失水下调，保留 3 堆叠与 `spoilDays`；新增 `bone_spear`（46 伤害、2.15 距离、48° 扇形），复用 `item.makeshift_spear` 图标。
+- `assets/recipes.json` 新增 `cook_venison/cook_rabbit_meat/cook_boar_meat`（篝火）与 `craft_leather_jacket`（3 兽皮 + 2 破布，厨刀 wear 0.05，工作台）和 `craft_bone_spear`（2 骨头 + 2 木材 + 1 破布，工作台）。所有配方继续走 `recipes-v3` 校验、制作站范围、队列、批次与工具磨损。
+- 内置内容由 58 物品/13 配方变为 62/18；无新增 C++ 规则、存档组件或内容指纹版本，熟肉腐败继续复用 `Spoilage`。
+
+**验证**：
+- `tests/test_food.cpp` 新增 T5 用例 93 assertions：三种生熟肉恢复/重量/堆叠/腐败与篝火配方；皮革夹克扣料/厨刀磨损；骨制长矛材料与产出。`tests/test_items.cpp`/`tests/test_recipes.cpp` 更新内置物品数 62；Python `test_food_data.py` 新增生熟肉链与皮革/骨头配方检查。
+- 全量 Debug **609/609（128595 assertions）**、Release **609/609（128608 assertions）**、Python **65/65**；Debug 首轮命中既有网络时序 flake（`test_network_integration.cpp:1858`），定向复跑后全量通过。
+
+**限制**：未做食物中毒/营养/批量烹饪（F5）；熟肉只校验附近有篝火对象，不要求火焰正在燃烧；皮革夹克/骨制长矛无专用制作动画/音效；联机沿用服务器权威制作链，动物专属 T5 联机逻辑留 T6。
+
+## 2026-10-30 M23-F2b-T6 动物联机
+
+**目标**：把 T3/T4 的单机动物生成、受伤、死亡、掉落和剥取搬到服务器权威，客户端只读复制，并阻止双客户端重复剥取同一尸体。
+
+**实现**：
+- `ServerHost::Options` 新增 `spawnAnimals`；正式 `ServerHost::Run` 与 `EmbeddedServer` 默认开启，网络单测默认关闭，T6 双客户端测试显式开启。服务器 `WorldSimulation` 创建 `AnimalSystem`，按焦点生成/游荡/感知；客户端联机模式不 tick 动物 AI。
+- `EntityReplication` 注册 26 个组件：新增 `Animal`（物种/危险类型）与 `AnimalCorpse`（物种/已剥取）。活体走 Character 原型，尸体走 Prop 原型；客户端 `SyncNetworkReplicas` 写入/移除对应组件，位置/生命/精灵/尸体战利品容器沿用现有复制。
+- 服务器 `Attack` 的显式 StableId 和自动瞄准接受 `Animal`，伤害仍走 `CombatSystem::ApplyDamage`；`DeathSystem` 生成 `AnimalCorpse` 并刷新尸体外观，不派发僵尸击杀事件；投射物保持原生命/位置命中逻辑。
+- 新增 `AnimalHarvestStart=37`（payload.entityId=尸体 StableId）与 `AnimalHarvestCancel=38`。服务器校验会话空闲、尸体未剥取、层级/距离（`inventory.lootRange`）、工具、会话尸体预约；按 `corpseSearchSeconds` 推进，移动/受击/攻击/死亡/离开范围/目标失效取消；完成调用 `HarvestAnimalCorpse` 磨损工具、写 `harvested` 和确定性尸体 `Container`。预约期间第二玩家收到“其他玩家”，已剥取后再次请求被拒绝。
+- `PlayerState` 升 v14，新增 owner-only `PlayerAnimalHarvestState{active,corpseStableId,speciesId,name,x,y,z,progress,duration}`；`FillPlayerState` 推进进度，客户端网络模式映射到现有剥取 HUD，E/攻击/打开背包只发开始或取消命令，不本地结算。v13 及更旧负载跳过新尾部并保持空闲。
+
+**验证**：
+- `tests/test_network_integration` 新增 T6 双客户端场景：服务器生成且客户端看到 `Animal`、客户端 Attack 造成服务器伤害、死亡复制 `AnimalCorpse`、超距拒绝、第一玩家剥取、第二玩家预约拒绝、完成掉落/工具磨损、客户端 `LootContainer` 复制、重复剥取拒绝。
+- `tests/test_player_state` 新增 v14 动物剥取状态往返与非法尸体 ID 拒绝；`tests/test_replication` 组件注册数 24→26。旧网络背包/远程武器测试改用位置拷贝，避免动物实体增长导致组件池重排后悬垂 `Position&`；该问题由 T6 的服务器动物生成暴露。
+- T6 定向 2 用例 50 assertions；全量 Debug **611/611（128648 assertions）**、Release **611/611（128662 assertions）**、Python **65/65**。
+
+**限制**：T6 不复制 Flee/AnimalWander 细节，客户端只显示位置/生命/精灵/尸体状态；服务器生成焦点为首个在线玩家，双人远距离时生成覆盖偏向前者；未加载 chunk 的动物快照/服务器重启持久化、动物数量上限压力和长时间双客户端狩猎留 T7；尸体掉落仍需打开容器手动拿取；正式服务器默认生成动物，轻量 `ServerHost` 测试需显式 `spawnAnimals=true`。
+
+## 2026-10-31 M23-F2b-T7 动物测试与平衡
+
+**目标**：补齐 T2 留下的“未加载 chunk 动物快照不落盘”缺口，并用自动化覆盖 36 只上限、墙体和更新预算，锁定狩猎肉量平衡；不新增动物行为或美术。
+
+**实现**：
+- 新增 `ecs::AnimalWorldState`（`AWST` v1），保存未加载 chunk 的动物物种/位置/生命/Flee 和已播种 chunk 标记；内置存档组件 40→41，旧档缺失时按空状态。状态写入稳定实体 `0x4D323342414E4D53`，单机快速存档与服务器 `SaveWorld` 调用 `AnimalSystem::StoreState`，`WorldSimulation::LoadSave` 与单机读档调用 `LoadState`；状态实体无 Position，不进入 `ZLR1` 复制。
+- 快照上限 4096 chunk、单 chunk 16 条、全局 2048 条，超出部分下次加载按种子重新播种；这样既保留跨存档狩猎状态，也避免长时间巡航无限膨胀存档。`LoadState` 恢复后把 chunk 标记为已播种，重载不会重复生成。
+- 测试补充：真实 EntityStore 编码/解码后恢复生命 7.5、Flee 4.25s，并验证重复 `OnChunkLoaded` 不增加动物；20 chunk/36 只上限与墙体阻挡；240 tick 性能；T6 双客户端服务器 `live<=36`；Python 锁定鹿/兔/野猪期望肉量与生熟肉收益。
+
+**验证**：
+- T7 2 用例 214 assertions；36 只 Debug 约 0.62ms/tick、Release 约 0.017ms/tick。
+- 全量 Debug **613/613（128863 assertions）**、Release **613/613（128877 assertions）**、Python **66/66**。
+- 首轮 Debug/Release 分别命中既有网络时序 flake（F2a 觅食与 F1 远程武器），定向/重跑后全量通过。
+
+**限制**：`AnimalWorldState` 是截断快照，超出上限的远处未加载 chunk 会按种子重新播种；未做真实服务器重启后的长时间狩猎/双客户端视觉验收，留 T8；动物视觉与专用动画仍为占位。
+
+## 2026-10-31 M23-F2b-T8 动物文档与烟测
+
+**目标**：补齐动物/狩猎的玩家文档、Mod 契约、平衡口径和实机验收矩阵；修复首轮烟测暴露的占位辨识问题。
+
+**文档**：
+- `docs/modding.md` 更新动物数据契约：说明 T7 `AnimalWorldState`（AWST v1）已把未加载 chunk 快照与已播种区块写入单机/服务器存档，上限 4096 chunk、单 chunk 16、全局 2048；补充 `SPACE` 近战、`V` 远程、`E` 剥取/厨刀要求、`I` 尸体容器、枪声/树木遮挡与“无独立潜行键”。
+- README 新增动物与狩猎段落，记录联机尸体预约、T7 持久化、占位动画、36 只上限/每区块每物种 1 只/18 格最小生成距离；`docs/07` 新增 P1-H H1–H4 矩阵（1280/1920/读档重启/双客户端）。
+- 平衡按 `assets/loot.json` 的 rolls/权重/min 计算期望下限：鹿约 2.82 肉、兔 1.23、野猪 3.76；熟制饥饿约 1.19/0.37/2.07（日需求 1.4，约 0.85/0.26/1.48 日）。数值未改，Python 回归继续锁定。
+- 更新 `docs/05`、`docs/08`、`docs/01` 状态：T8 文档完成，P1-H 截图/视频和用户视觉确认未完成，不提前勾选。
+
+**视觉修补**：新增 `animal_deer/rabbit/boar_*` 独立占位轮廓（鹿角/兔耳/野猪吻部）与 `AnimalVisualScale` 物种缩放；`animal.deer/rabbit/boar` manifest 不再复用 `character_zombie_*` 帧，tint 保留资源接口但默认白。新增 T8 视觉缩放用例 1 个/6 assertions。
+
+**验证**：Debug **614/614（128869 assertions）**、Release **614/614（128883 assertions）**、Python **66/66**；首轮网络时序 flake 复跑通过。未伪造截图/视频；自动观察截图见 `build/p1-h1-hunt-deer-1280.png`；动物视觉可辨性经自动观察通过；H2 野猪反击/剥取/1920 容器、H3 F12 读档和 H4 双客户端/服务器重启已补自动构造证据；自然流程/低伤害平衡仍建议按 P1-H 复验。
+
+**自动观察（2026-10-31）**：Release 1280，临时 `build/t8_probe_mods/t8_probe` 在 OnTick 传送玩家到森林 `(62.5,40.5)`，临时 `minPlayerDistance=4`；日志 `live=36/已生成=52/种子区块=65`。首轮截图 `build/t8-hunt-close-08s/12s/16s.png` 显示复用僵尸帧的占位人形，H1 不通过；补独立轮廓后 `build/t8-hunt-natural-16s.png` 中鹿、兔、野猪已可辨（H1 视觉自动观察通过）。接近逃跑/击杀/尸体与 H2–H4 仍需人工；临时探针/存档未入库，默认生成距离仍为 18。
+
+**H2/H3 自动构造（2026-10-31）**：临时 `build/t8_boar_probe_mods` 将玩家传送到农场仓 `(78.5,62.5)`，用 `--combat.playerDamage=999 --combat.playerRange=3 --combat.playerCooldownSeconds=0.1 --health.playerMaxHp=1000` 清掉 POI 守军并击杀野猪；日志 `build/t8-boar-h2-1920.out.log` 记录 HP 从 1000 降到 742、boar 剥取 4 堆/10 件，1920 截图 `build/p1-h2-boar-counter-1920.png`、`p1-h2-boar-harvest-1920.png`、`p1-h2-boar-container-1920.png` 中 HUD/尸体容器不越界。随后 F12 存档，退出进程并从主菜单继续 `20261031-042716`；日志 `build/t8-h3-load.out.log` 读取 68 实体/1 玩家，重载后动物 `live=33/已生成=0`，截图 `build/p1-h3-before-restart-1280.png`、`p1-h3-hunt-reload-1280.png`。这些都是构造状态，不替代 H4 真实双客户端、服务器退出重启和自然流程复验；已剥取容器“不重新掉落”仍需用户打开尸体确认。
+
+**H4 双客户端与服务端重启（2026-10-31）**：用 `build/t8_h4_animals.json` 临时移除野猪剥取工具要求；服务器加载 H2 新档副本 `build/t8_h4_run`，启用 999 伤害/1000 HP，`H4A`/`H4B` 两个真实客户端连接同一 UDP 服务器。A 击杀并剥取 boar（4 堆/11 件），截图 `build/p1-h4-harvest-1280.png`；服务器正常退出 `SaveWorld` 写回 88 实体。同一 `server.saveId` 重启后读取 88 实体/0 玩家，两个客户端恢复并仍看到尸体，截图 `build/p1-h4-reload-a-1280.png`；B 再次按 E 未获得第二份战利品（客户端按 `harvested` 抑制，服务器拒绝重复交互）。证据在 `build/t8_h4_full_out/`；这是构造状态，不替代自然低伤害平衡/真实玩家手感复验。
+## 2026-10-31 F5-T1 作物数据
+
+**实现**：新增 `assets/crops.json`（`crops-v1`）与白菜/土豆/番茄/玉米 4 种作物；`CropRegistry` 严格校验物品引用、阶段阈值、种子唯一、id/数量上限，并支持 `content/crops.json` 原子追加。客户端 `GameApp` 与 `ServerHost` 在物品/mod/战利品之后加载基础/ mod 作物；单机/服务器农田种植从背包选择首个可用作物种子，浇水/生长/收获使用 CropDef 的 `waterMinutes/maxWaterMinutes/waterUsePerMinute/witherMinutes/harvestYield/seedYield`，旧 `farming.*` 仅作作物数据缺失回退。内容指纹升 v9 并纳入全部 CropDef 字段（含阶段）；新增土豆/番茄/玉米种子与产物、农场掉落，`mods/example_content` 追加南瓜示例。
+
+**验证**：新增 `tests/test_crops.cpp` 6 用例与 `tools/tests/test_crop_data.py` 3 用例；`test_content_hash`/`test_embedded_server`/`test_mod_content` 覆盖作物哈希与 mod 追加。Debug **620/620（129014 assertions）**、Release **620/620（129028 assertions）**、Python **69/69**；未提交。
+
+**限制**：T1 只做数据与基础农田接入；同一农田多个种子时按注册顺序自动选择，未做选择 UI；肥料/灌溉/病害实际结算/季节/HUD 阶段留 F5-T2，烹饪分类/批量/中毒与完整存档联机留 T3/T4。
+
+## 2026-10-31 M23-F5-T2 农田扩展
+
+**实现**：新增 `fertilizer`/`fungicide` 与农场掉落；空田 `Q` 循环可用种子，`T` 施肥/杀菌，E 继续播种/浇水/收获/清理。`FarmSeasonFromMonth` 把月份映射为春夏秋冬，`AdvanceFarmPlot` 接收季节/降雨上下文：雨天按 `rainWaterPerMinute` 自动补水，夏季病害阈值更低、冬季生长倍率更慢；缺水累计到 `witherMinutes × diseaseDryFraction` 后进入病害并降低产量，堆肥一次性增产，杀菌剂清除病害。`FarmPlot.diseased/fertilized` 写入 `FARM` v2（旧 v1 默认 false）与 `ZLR1` v3；服务器新增 `kFarmActionPlant`（`payload.index` 作物索引）和 `kFarmActionCare`，校验种子/阶段/物品/索引。HUD 状态行显示阶段、缺水/水分钟、施肥、病害与季节，基地摘要显示生长/成熟/缺水/病害计数，Lua/Python 同步 `baseFarm*`。
+
+**验证**：`test_homestead` 增加季节/降雨/肥料/病害/治愈 2 用例；`test_base_hud` 增加农田摘要；`test_network_inventory` 覆盖服务器选种/施肥/杀菌与复制；`test_entity_save`/`test_replication` 覆盖新标记；Python 增加农场配置/物品契约。Debug **623/623（129080 assertions）**、Release **623/623（129094 assertions）**、Python **70/70**；未提交。
+
+**限制**：病害为低水确定性触发（`diseaseChance` 调阈值，不做真实随机），无温室/喷灌设施；作物/病害状态已存档并复制，烹饪分类/批量/中毒与完整烹饪状态由 T3/T4 补齐。
+
+## 2026-10-31 M23-F5-T3 烹饪扩展
+
+**实现**：`assets/recipes.json` 升 `recipes-v4`，为全部配方补 `category`（cooking/preservation/medical/crafting/general），并新增可选 `cookware`（不消耗、需可用锅具）与 `fuel`（每次制作消耗）。新增烹饪锅、丰盛炖菜、熏野猪肉：炖菜需锅+木材，熏肉消耗 2 木材并延长保鲜。`CanCraft/Craft/MaxCraftCount` 校验并扣除锅具/燃料，工具效率纳入锅具耐久；背包制作面板增加分类循环筛选，保留批量数量、分页与 FIFO 队列；`InventoryRecipe` 与 Lua/Python 状态暴露 `category/categoryLabel/cookware/fuel`。
+
+食物 `use` 新增 `nutrition`（0~1）与 `foodPoisonChance`（0~1）；新增运行时 `FoodState` 与 `game::FoodSafety`，营养降低中毒概率/饥饿增速/饥饿伤害，腐败食物保底高中毒概率，中毒按固定 tick 扣血并写入 `LastDamage` 死因。单机 Needs HUD 显示营养/中毒剩余秒数；服务器食用由 `PlayerInventoryService` 权威写入 `FoodState`。`HashUseEffect`/`HashRecipeDef` 纳入新字段并将 `kContentHashVersion` 升到 v10；旧 recipes/物品数据继续兼容。
+
+**验证**：`test_recipes` 增加 v4 分类/锅具/燃料/批量用例；`test_food` 增加营养/中毒纯函数与炖菜锅具燃料链；`test_inventory_service` 覆盖服务器食用写入 FoodState；`test_python_api` 覆盖新背包字段；Python `test_food_data` 锁定 73 物品/recipes-v4/新配方。Debug **627/627（129203 assertions）**、Release **627/627（129218 assertions）**、Python **71/71**；未提交。
+
+**限制**：营养只提供饥饿/伤害缓冲与中毒减免，没有独立营养条；食物状态由 F5-T4 接入存档/联机。
+
+## 2026-10-31 M23-F5-T4 保存与联机
+
+**实现**：`FoodState` 注册 `FOOD` v1 存档组件（营养/中毒剩余/每秒伤害/总时长），内置存档组件 41→42；单机快速存档、服务器世界存档和玩家档案实体快照均可保存/读档，旧档无组件按 0。`PlayerState` 升 v15，尾部新增 owner-only `PlayerFoodState{valid,nutrition,poisonRemaining,poisonDamagePerSecond}`；`FillPlayerState` 从服务器 ECS 读取，客户端 `ApplyNetworkPlayerState` 只读镜像到 `m_networkFood` 并驱动 Needs HUD，不在本地推进中毒。服务器 `FoodStateSystem`/`TickHomestead` 继续权威推进中毒与农田生长；服务器复活时清空 `FoodState`，避免带毒重生。
+
+**验证**：`test_entity_save` 覆盖 `FOOD` 往返与旧档缺省；`test_player_state` 覆盖 v15 往返、v14 回退与非法营养/中毒；`test_player_profile` 覆盖档案食物状态；`test_network_inventory` 覆盖服务器食物状态复制与服务器权威农田成熟/复制。Debug **627/627（129224 assertions）**、Release **627/627（129238 assertions）**、Python **71/71**；未提交。
+
+**限制**：营养只影响饥饿/伤害缓冲/中毒概率，无独立心情或营养 HUD；中毒仅走 owner-only PlayerState，不广播为 ZLR1 实体组件；真实双客户端长时间挂机/重启视觉验收未单独执行。
+
+## 2026-10-31 M23-F5-T5 测试与平衡
+
+**实现**：新增真实作物整周期测试，用 `assets/items.json`、`assets/crops.json` 与 `config/game.json` 的 `farming` 参数跑完白菜/土豆/番茄/玉米夏季与冬季周期：按作物水量反复浇水可按时成熟，夏季耗时接近 `growMinutes`，冬季约 4 倍且需更多次浇水，无意外病害，收获量等于 `harvestYield`。病害测试让番茄缺水越过阈值，验证停止生长、产量 3→2、病中拒绝施肥；杀菌后清零缺水、允许补肥并恢复至成熟收获 3。新增批量烹饪测试：3 份炖菜耗尽 3 木材、每份消耗 1 木材、锅具保留，燃料耗尽后 `CanCraft/MaxCraftCount` 归零。Python 新增 `test_f5_balance.py`，锁定作物速度/产量/病害/耗水取舍、炖菜/熏肉价值、腐败时间与中毒参数上界。
+
+**平衡**：`hearty_stew` 从饥饿 0.7/营养 0.9/治疗 2/保鲜 1.5 天调整为饥饿 **0.85**/营养 **1.0**/治疗 **3**/保鲜 **2.5 天**，高于新鲜土豆+白菜的合计饥饿（0.75）、不低于营养合计（1.0），但仍消耗水、木材和锅具；熏肉继续优于烤野猪且无中毒概率。作物与安全参数未改。
+
+**验证**：T5 新增 4 个 C++ 用例/126 assertions、3 个 Python 用例；全量 Debug **631/631（129350 assertions）**、Release **631/631（129364 assertions）**、Python **74/74**；存档/联机沿用 T4 用例。未提交。
+
+**限制**：未做真实玩家长时间游玩与自然流程双客户端挂机/重启视觉验收；病害仍是确定性缺水阈值；批量测试使用合成背包，未重复覆盖 UI 队列交互。
+
+## 2026-10-31 M23-F5-T6 文档
+
+**实现**：`docs/modding.md` 的 mod 内容目录加入 `content/crops.json`，3.6.3.2 扩为作物字段表与生长/浇水/病害阈值公式、季节/施肥/收获规则；新增 3.6.3.3 说明 `recipes-v4` 的分类/锅具/燃料、批量燃料与锅具保留、食物营养/中毒/腐败、`FoodState` 与 `PlayerState v15` 存档联机边界。示例 mod 的 `mod_pumpkin` 现在通过 `pumpkin_soup`/`cook_pumpkin_soup` 接到锅具+木材烹饪，`mod_camp_cache` 保留南瓜种子，形成搜刮种子→种植→收获→烹饪闭环。
+
+**验证**：`test_mod_content.cpp` 增加示例浓汤、营养、锅具/燃料断言；新增 `tools/tests/test_f5_mod_example.py` 校验示例 mod 物品/作物/配方/战利品引用和烹饪收益。全量 Debug **631/631（129359 assertions）**、Release **631/631（129373 assertions）**、Python **75/75**；未提交。
+
+**限制**：示例只覆盖数据链，不替代真实模组制作与实机；作物/配方修改需重启，运行时 `Content` API 不注册作物。
+
+## 2026-11-01 M23-F6-T1 地图与 POI 数据
+
+**地图**：`tools/gen_map.py` 升至 v4，`village_demo` 新增圣玛丽医院 `(40,80,12,9)` 与军事检查站 `(100,18,10,7)`。医院南门进入双 ward 走廊，`x=44/47` 的隔墙在 `y=84` 留门洞，布置 6 张病床与南侧泥地通道；军事检查站为南门院落，四角 `object.barricade`、工作台与补给箱构成入口缓冲，`object.barricade` 纳入生成器 solid 集合。两处均复用现有图集，不新增 tile 集或 PZ 资源。
+
+**配置与搜刮**：`config/game.json` 的 `pois.defs` 从 3 个扩到 5 个：医院威胁 2/6 名 mixed 守军、药房与物资箱、奖励抗生素×2；军事检查站威胁 3/8 名 strong 守军、军械柜与补给箱、奖励 9mm×18。`assets/loot.json` 新增 `poi_hospital_pharmacy/poi_hospital_supplies/poi_military_armory/poi_military_supplies` 四张独立表，军械表保底 12 发 9mm/6 发霰弹但受容量/权重约束，不提供无限弹药。
+
+**地图统计与测试**：生成器输出 132 个非默认 chunk、555 个对象、26 个房间出现；`test_maploader` 计数、`test_poi` 的 5 POI 配置断言、Python `test_poi_data` 的医院隔墙/病床、军械路障、容器/标记 BFS 连通断言同步。全量 Debug **631/631（129451 assertions）**、Release **631/631（129465 assertions）**、Python **76/76**；全量首跑偶发已知 `M23-F1-T10` 网络时序 flake，隔离/重跑通过，非 F6 回归；未提交。
+
+**限制**：医院感染风险物品/军械威胁细调留给 F6-T2；任务链/随机事件留给 F6-T4；未做真实实机截图。
+
+## 2026-11-01 M23-F6-T2 搜刮与威胁
+
+**感染物资**：`UseEffect`/`items-v1` 新增 `use.infectionRisk` 0~1，进入 `ContentHash` 与注册表校验；新增 `tainted_bandage`（污染绷带，`bandage=0.35`、`infectionRisk=0.35`），医院药房与物资箱产出。使用时有伤口才会按 `DeriveFoodPoisonSeed` 子种子调用 `characters::TryInfectWithRisk`，单机 UI/E 使用与服务器 `PlayerInventoryService` 共用；无伤口不触发，概率受 `infection.maxChance` 上限约束，满风险仍保证感染（测试用）。
+
+**军械与威胁**：`poi_military_armory` 容量 24、rolls 4，保底手枪 1 + 9mm 16 + 霰弹 8，散落弹药受 item maxStack/容量约束，不提供无限弹药；医院守军 7 名 mixed（威胁 2），军事检查站 9 名 strong（威胁 3）。内置物品数 73→74。
+
+**验证**：`test_items` 覆盖 `infectionRisk` 解析/越界；`test_infection` 覆盖污染风险确定性/满风险；`test_inventory_service` 覆盖服务器污染绷带使用并进入 Incubating；`test_loot` 覆盖医院污染物资、军械保底枪械与弹药上界；Python `test_infection_data/test_poi_data` 同步。全量 Debug **634/634（129498 assertions）**、Release **634/634（129512 assertions）**、Python **77/77**；未提交。
+
+**限制**：污染绷带只对已有伤口生效，未做真实实机截图；任务链/随机事件留给 F6-T4。
+
+## 2026-11-01 M23-F6-T3 独特敌人
+
+**军械守卫**：`ZombieVariantKind` 追加 `Armored`（2.0 HP/0.62 速度/1.22 视觉，tint `0xFF9FB8C8`），复用现有 AI 并新增独立 `combat.zombieAttacks.armored` 咬击（14.5 伤害/3.0 击退/0.75s 前摇/1.35s 冷却）；`CombatSystem` 对爪/咬/钝减伤 35%，火焰/调试不减免，击退乘 0.35。减伤/抗击退由 kind 派生，不新增组件、存档或复制字段，旧档 kind 0~2 照常读取。
+
+**生成**：`PoiEnemyDef.armoredCount` 指定前 N 名守军替换为重甲变体；军事检查站配置为 9 名 strong + `armoredCount=2`（2 精英 + 7 strong），单机与服务器共用。`armoredCount` 进入内容指纹；地图/搜刮不变。
+
+**验证**：`test_combat` 覆盖减伤/抗击退/火焰与调试例外；`test_zombie_variants` 覆盖属性/生成/存档往返；`test_poi` 覆盖精英分配与内置配置；`test_content_hash` 覆盖精英数量进入指纹；Python `test_poi_data` 校验边界。全量 Debug **635/635（129529 assertions）**、Release **635/635（129543 assertions）**、Python **77/77**；未提交。
+
+**限制**：不新增独立精灵/动画，仅缩放与 tint；未做真实实机截图；专属掉落与任务留 F6-T4/T5。
+
+## 2026-11-01 M23-F6-T4 任务/事件
+
+**任务链**：新增医院链 `hospital_supply`（医院 POI 完成 → 110 生存经验+止痛药×2）→ `hospital_quarantine`（搜索医院物资箱 + 返回村庄 → 80 生存经验+简易绷带图纸）；军事链 `military_armory`（检查站 POI 完成 → 150 近战经验+霰弹×8）→ `military_extract`（搜索检查站补给箱 + 返回村庄 → 90 近战经验+加固夹克图纸）。链首读取 `PoiTasks.completed`，链尾检测特定搜刮表并复用 `reach` 到 `(70,24)`。
+
+**随机事件**：`event_hospital_outbreak`（第 2 天起、55%、击杀 5）奖励抗生素×1；`event_military_patrol`（第 4 天起、40%、击杀 6）奖励 9mm×12。任务总数 9→15，一次性链 3→5，随机事件 2→4；无新任务系统、存档字段或协议，复用 `UpdateMissions`/前置/奖励/每日随机刷新。
+
+**验证**：`test_missions` 覆盖 15 条/5 链/4 随机与新链前置/目标；Python `test_mission_data` 同步数量、奖励引用与到达点可达性；`test_mod_content` 的 mod 任务基线更新为 15→16。全量 Debug **635/635（129563 assertions）**、Release **635/635（129577 assertions）**、Python **77/77**；未提交。
+
+**限制**：随机事件仍为 `kill any`，无专属事件敌人；未做真实实机任务流程截图；完成/失败/旧档验收留 F6-T5。
+
+## 2026-11-01 M23-F6-T5 测试与平衡
+
+**失败/重试**：新增 `game::MissionCanActivate` 统一单机/服务器 once 接取；进行中/已完成不重复接取，前置必须完成，失败任务记录放弃日并只在次日重试，避免放弃后立即重接或任务链永久卡死。单机 K 放弃与服务器 `AbandonMission` 命令提示一次性任务“次日可重新接取”。
+
+**完成/标记/旧档**：`test_missions` 覆盖失败当天/次日、前置解锁、每日随机不适用；`test_poi` 校验医院/检查站完成条件、`ok/warn` 提示、5 个标记坐标/间距；Python `test_poi_data` 继续校验标记可达与不阻挡；`test_entity_save` 覆盖旧日志空进度/短进度/已移除任务 id，缺失进度按 0 处理。
+
+**平衡**：Python `test_mission_data` 锁定医院链 190 XP、军事链 240 XP（≤260）、单步 once 40–160 XP、随机事件 0.35–0.65 概率且 ≤6 击杀、每日巡逻 30 XP。
+
+**验证**：Debug **638/638（129656 assertions）**、Release **638/638（129670 assertions）**、Python **78/78**；Debug/Release 应用构建通过，Debug 无窗口服务器 180 tick 通过。未提交。
+
+**限制**：未做真实实机任务流程截图；F6-T6 仍需地图/POI/任务文档与截图。
+
+## 2026-11-01 M23-F6-T6 文档与烟测
+
+**地图文档**：`docs/mapformat.md` 补圣玛丽医院 `x=40..51,y=80..88`、南门 `(46,88)`、两道室内隔墙在 `y=84` 留门洞、6 张病床、标记 `(46.5,84.5)`；军事检查站 `x=100..109,y=18..24`、南门 `(105,24)`、四角路障/工作台/军械柜、标记 `(105.5,21.5)`。
+
+**内容文档**：`docs/modding.md` 的 POI/任务段确认 5 个内置区域、armored 守军、15 条任务/5 链/4 随机与 F6 两段链；`README.md` 更新玩家说明为 5 条链、15 条任务/事件和 once 次日重试；`docs/07` 新增 P1-J 医院/检查站验收项。
+
+**截图**：Release 1280×720，临时探针 `Player.Teleport` 到医院 `(46.5,85.5)`、检查站 `(105.5,21.5)`，用窗口消息按 `L` 切到“医院补给”/“军械回收”。`build/p1-f6-hospital-1280.png` 显示医院布局、POI 行和任务 0/1/奖励；`build/p1-f6-military-1280.png` 显示检查站院墙/路障/军械柜、POI 行和任务 0/1/奖励。日志 `build/f6-t6-hospital-os.out.log`、`build/f6-t6-military-os.out.log`。
+
+**验证**：Debug/Release 测试 **638/638**、Python **78/78**；Debug 无窗口服务器 180 tick 通过；应用 Debug/Release 构建通过。截图使用隔离存档、关闭游荡者生成、1000 HP，属构造视觉状态。
+
+**限制**：未走自然到达/战斗/搜刮/奖励流程；1920 未单独留证，沿用 B6 长文案布局结论；F6 整体实机验收由用户按 `docs/07` P1-J 确认。F6 全部任务完成，未提交。
+
+## 2026-11-01 M23-F4-T1 聚落数据与生成
+
+**数据**：新增 `assets/settlements.json`（`settlements-v1`）与 `game::SettlementConfig`；内置 `village_haven` 村庄营地，中心 `(75.0,26.5)`、安全半径 8 格，商人/守卫/求助者点位分别为 `(75.5,26.5)`/`(76.5,25.5)`/`(73.5,27.5)`，5 档库存 `[4,2,1,2,1]`、补货 1 天、4 条任务池。解析要求三类 NPC 齐全、点位在安全区内、库存/任务池合法；mod `content/settlements.json` 只追加新 id。
+
+**生成**：单机/服务器商人优先使用聚落 merchant 点并应用聚落初始库存，`restockDays` 覆盖交易补货配置；无聚落时回退旧 `trading.merchantX/Y` 或玩家附近。`SettlementConfig` 同时挂到 `GameContext`，为后续 NPC 实体/日程/对话提供只读数据。
+
+**指纹**：`kContentHashVersion` 升 v11，覆盖安全区、三类 NPC 点位、库存、补货日与任务池；`GameApp`/`ServerHost` 加载同一文件并比对，内嵌服务器测试补聚落路径。
+
+**验证**：新增 `test_settlements` 3 用例与 Python `test_settlement_data` 3 用例；`test_content_hash`/`test_mod_content`/`test_embedded_server` 同步。Debug **643/643（129705 assertions）**、Release **643/643（129719 assertions）**、Python **81/81**；Debug 无窗口服务器 180 tick、Release 单机 1280 烟测通过，日志 `build/f4-t1-app-smoke.log` 显示聚落 1、商人 `(75,26)`。应用 Debug/Release 构建通过。未提交。
+
+**限制**：当前只有数据和商人生成；守卫/求助者实体、日程、对话/任务入口、聚落防御与联机权威状态分别留 F4-T2–T6。
+
+## 2026-11-01 M23-F4-T2 NPC 实体与日程
+
+**组件**：新增 `game::SettlementNpc` 与 `game/SettlementNpc.*`。商人复用现有实体挂日程组件，守卫/求助者按 `settlements.json` 点位精确生成；三类 NPC 共用 Position/Velocity/SpriteRef/Facing/AnimState/ActionState/MoveIntent/PathRequest/PathFollow，头顶色条显示当前活动。未加载或阻挡格逐帧重试，不生成在错误位置。
+
+**日程/威胁**：`SettlementNpcSystem` 在 AiSystem 之后、PathFollow 之前。守卫 08–18 巡逻、18–22 站岗、22–08 休息；商人/求助者 08–20 驻点、20–08 休息。巡逻使用确定性选点，到点停 2.5–5.5 秒。活僵尸进入聚落中心 `safeRadius+4` 时统一切 Shelter 并走安全区中心，威胁解除后保留 4 秒再恢复。NPC 距焦点超过 36 格清空路径/移动意图并冻结，回到范围后按当前时段重排。
+
+**存档边界**：T2 不新增存档组件。单机/服务器世界快照排除守卫/求助者临时实体，商人继续保存 `MerchantStock`，读档后由 `EnsureSettlementNpcs` 重新挂日程，避免旧档重复 NPC。专用 NPC 状态、服务器权威交互与客户端只读复制留 F4-T6。
+
+**验证**：新增 `test_settlement_npc` 4 用例 43 assertions（昼夜日程、威胁躲避/解除、远程冻结恢复、生成组件）。Debug **647/647（129748 assertions）**、Release **647/647（129762 assertions）**、Python **81/81**；Debug 无窗口服务器（网络关闭+本地玩家）180 tick 三类 NPC 就位（`build/f4-t2-server-local-smoke.log`），Release 单机 1280 截图 `build/f4-t2-settlement-1280.png`（`build/f4-t2-app-capture-release.log`）。应用 Debug/Release 构建通过。未提交。
+
+**限制**：对话/任务入口、守卫战斗/死亡、正式美术与 NPC 状态存档/联机留 F4-T3–T6；截图使用关闭 POI/游荡者的构造场景。
+
+## 2026-11-02 M23-F4-T3 聚落对话/交互 UI
+
+**运行时**：新增 `game::Dialogue`（`DialogueTree/DialogueNode/DialogueOption/DialogueContext`）。条件支持 Always/MissionAvailable/MissionActive/MissionNone/ItemAtLeast（可取反），结果支持 Goto/Close/OpenTrade/AcceptSettlementMission/FocusSettlementMission；条件只读聚落 `missionPool`、`MissionLog`、天数和背包，不新增 ECS/存档字段。
+
+**对话树/接入**：代码内置商人/守卫/求助者三棵树。商人“看看你的货”直接打开现有商人面板，“最近消息”进入子节点；守卫提供营地安全问答；求助者提供“看看我现在的委托/接一件委托/现在没有委托”，焦点复用 Mission HUD，接取走 `ActivateMission`。E 交互优先于门/床/篝火；对话中 1–5 直接选择、滚轮定位、E 确认、ESC 关闭，离开范围/结束一局/关闭时清理。native 与 core_ui Lua/Python 都渲染 `dialogue-panel`，`HudState`/脚本 API 新增 open/speaker/text/options/selected/hint。
+
+**修复**：首次实现中 E 被篝火交互抢占，已改为 NPC 优先；对话卡片曾同时使用绝对定位 `hud-box` 导致宽度收缩，已移除并固定在热键栏上方。
+
+**验证**：新增 `test_dialogue` 3 用例 45 assertions（树入口、任务/物品条件、选项过滤）；`test_ui` 在 native/core_ui、1280/1920 下校验面板宽度、屏幕边界、热键栏不重叠。Debug **650/650（129897 assertions）**、Release **650/650（129911 assertions）**、Python **81/81**；Release 1280 截图 `build/f4-t3-dialogue-1280.png`（商人对话，`build/f4-t3-dialogue-capture-release2.log`）与 `build/f4-t3-trade-1280.png`（选项 1 打开现有交易面板，`build/f4-t3-trade-capture.log`）。应用 Debug/Release 构建通过。未提交。
+
+**限制**：对话树为代码内置，数据化/mod 扩展留 T8；任务接取受现有自动接取策略影响，任务类型/奖励/放弃/重复限制留 T4；联机权威交互与 NPC 状态存档留 T6。截图关闭 POI/游荡者。
+
+## 2026-11-02 M23-F4-T4 聚落任务与奖励
+
+**数据/链**：`MissionDef` 新增 `MissionTaskKind`（generic/help/escort/clear/supply）与 `autoActivate/timeLimitDays/retryDays`。`config/game.json` 新增 `settlement_help→settlement_escort→settlement_clear→settlement_supply` 四段 once 链：收集绷带×2 → 医院南门接应并回村 → 击杀 6 名感染者 → 搜索医院物资箱并回村；`assets/settlements.json` 的求助者 `missionPool` 指向这四条。四段均 source=npc、autoActivate=false、限时 2/3/2/3 天、retryDays=1，奖励 70/80/90/100 XP + 既有物资。
+
+**接取/失败**：自动接取、每日刷新、随机事件循环均跳过 `autoActivate=false`；只有求助者对话 Accept 写入 MissionLog。聚落已有进行中委托时 `MissionAvailable` 返回 false，避免同时接多件；完成 once 后 `MissionCanActivate` 永假。`MissionDeadlineDay = 接取日 + timeLimitDays`，到期当天由 `MissionIsExpired` 判定失败，单机 `FailMission`/服务器 tick 都清焦点、把失败日写回 state.day；超时与 `K` 放弃都按 `retryDays` 冷却后重试。奖励继续复用 `MissionRewardDef`/`GrantMissionReward`，只在 Active→Completed 发放一次。
+
+**UI/指纹**：任务 HUD 对非 generic 类型显示 `[求助]/[护送]/[清剿]/[物资]` 与 `限N天`；`MissionTaskKindName/Label` 提供稳定 token。`HashMissionDef` 纳入 task/autoActivate/timeLimitDays/retryDays，`kContentHashVersion` 升 v12；基础任务 15→19 条、一次性链 5→6 条。
+
+**验证**：`test_missions` 更新 19 条并新增聚落手动接取/时限失败/重试冷却/完成防重/前置链/类型标签用例；`test_mod_content` 基线 19→20；`test_content_hash` 覆盖 task/autoActivate/timeLimitDays/retryDays；Python `test_mission_data`/`test_settlement_data` 同步。Debug **651/651（129967 assertions）**、Release **651/651（129981 assertions）**、Python **81/81**；应用 Debug/Release 构建通过。未提交。
+
+**限制**：护送为接应点+回村路线，不生成跟随 NPC；联机委托接取/服务器权威奖励与 NPC 状态存档留 F4-T6，独立任务链截图与完整烟测留 F4-T7。Debug 网络/性能用例偶发时序或负载 flake，隔离与全量重跑通过。
+
+## 2026-11-02 M23-F4-T5 聚落防御
+
+**数据/触发**：`settlements-v1` 新增可选 `defense`，覆盖夜袭窗口、激活/生成半径、基础/每晚/上限人数、守卫/夜袭者生命、伤害、攻击距离/间隔、移动速度与 `guardBehavior=defend|retreat`；基础村庄显式开启，旧数据/未配置 mod 默认关闭。22:00–05:00、玩家进入营地 24 格内且当晚未触发时开战；从安全区外环生成 2 名起、每晚递增至 4 名，黎明或玩家远离后清理，当晚不重复。
+
+**行为/失守**：守卫在 `defend` 下切 `Defend` 追击并近战，商人/求助者切 `Shelter` 撤到中心；`retreat` 时守卫也撤离。守卫新增独立 `Health`、`FriendlyNpc` 标记与战斗生命值，夜袭期间临时移除 `NoCombatTarget`，可被击倒并走尸体流程但不会计入僵尸击杀/任务清剿；战斗结束清除伤口/硬直并保留损失生命。存活守卫归零后聚落 `fallen`，清空夜袭者、停止后续夜袭、暂停交易/委托并阻止补生守卫。夜袭由 `SettlementNpcSystem` 独立维护，不读写 `BaseSiege`，与玩家基地守夜分别结算。
+
+**数据/隔离**：`SettlementRaidZombie` 不进入世界快照；守卫/求助者仍按 T2 临时 NPC 处理，NPC 生命/失守状态与网络权威留 T6。客户端通用复制排除聚落临时 NPC，夜袭者作为普通角色复制；T5 未新增专用 HUD 行，通过中央提示、NPC 活动色条与交互提示表达状态。防御字段进入内容指纹 v13。
+
+**验证**：新增 `test_settlement_defense` 4 用例 35 assertions（夜袭触发/分工、守卫击杀修复、守卫死亡失守、撤退与远离不触发）；`test_settlements` 增加防御数据与非法小时校验；`test_content_hash` 覆盖防御字段；Python `test_settlement_data` 校验防御契约。Debug **656/656（130015 assertions）**、Release **656/656（130030 assertions）**、Python **81/81**；应用 Debug/Release 构建通过；Release 无窗口服务器 1800 tick（`startDay=10/startHour=22`）日志 `build/f4-t5-server-raid-long-smoke.log` 显示守卫迎战并击杀 2 名夜袭者后正常结束。Release 首轮 A* 性能阈值偶发超时（隔离重跑 0.3ms），全量重跑通过。
+
+**限制**：无独立 1280 夜袭截图与自然流程烟测，视觉验收并入 T7；守卫不使用武器/远程攻击，不治疗/补给；NPC/失守持久化与客户端权威交互留 T6。
+
+## 2026-11-02 M23-F4-T6 聚落存档与联机
+
+**存档**：新增 `SettlementState`（`STLS` v1，固定 StableId `0x4D32334634535441`），保存防御聚落的 `fallen/guardHealth/lastNightKey`。单机 F12 与服务器 `SaveWorld` 在实体快照前写入；`WorldSimulation::LoadSave` 与单机读档恢复实体后应用。守卫仍是临时实体，读档按保存生命重建，失守时不补生；夜袭中的感染者不入档，active 不跨档恢复，但保留当晚已触发标记，避免同晚重复夜袭。
+
+**联机**：`ZLR1` 新增 `SettlementNpc`（聚落/类型/activity/home），商人、守卫、求助者都复制；客户端只显示，不调度日程/战斗。`PlayerState` 升 v16，追加 owner-only `PlayerSettlementProgress{id,fallen,raidActive,guardHealth,guardHealthMax}` 与聚落提示序号/文本/色调；客户端只读映射并据此拦截对话/交易。新增 `AcceptSettlementMission=39`，客户端只发求助者 StableId，服务器校验实体/类型/同层/距离/失守或夜袭/无进行中委托/可接任务后写服务器 MissionLog；`TradeOffer` 额外拒绝失守/夜袭聚落。
+
+**保存覆盖**：商人库存继续由 `MerchantStock` 世界实体保存，任务进度继续由 `MissionLog` 进入单机世界快照与服务器玩家档案。服务器重启测试实际把守卫生命改为 61、商人首档库存改为 0，退出并同存档重启后恢复守卫生命、库存和进行中 `settlement_help`。
+
+**验证**：新增 4 用例 81 assertions（`SettlementState` 组件经 `EntityStore` 往返与失守重建、`PlayerState v16` 往返、联机 NPC 复制与服务器权威接取、服务器同存档重启恢复）。`test_replication` 更新为 27 个组件，内置存档组件 43，`test_player_state` 增加 v15 旧负载回退。Debug **660/660（130108 assertions）**、Release **660/660（130122 assertions）**、Python **81/81**；应用 Debug/Release 构建通过；Release 无窗口服务器 180 tick 烟测通过。Release 首轮既有远程武器时序 flake，隔离重跑通过。
+
+**限制**：夜袭进行中不跨存档恢复；守卫位置/巡逻目标不单独持久化；客户端聚落联机视觉/双客户端自然流程并入 F4-T7。
+
+## 2026-11-02 M23-F4-T7 聚落测试与烟测
+
+**自动化**：新增 `test_settlement_integration` 2 用例（内置四段委托链对话接取/完成/不重复、库存配置与夹紧），`test_settlement_npc` 1 用例（巡逻/躲避目标避开阻挡格），`test_settlement_defense` 1 用例（同晚读档不重复夜袭），`test_settlement_network` 1 用例（双客户端 NPC 复制、A 接取后重复拒绝、B 独立接取、失守交易拒绝）。T7 共 5 用例 167 assertions。
+
+**回归/烟测**：全量 Debug **665/665（130275 assertions）**、Release **665/665（130290 assertions）**、Python **81/81**；应用 Debug/Release 构建通过；Release 无窗口服务器 180 tick 烟测通过。Release 1280 自动构造 `build/p1-f4-t7-dialogue-1280.png`、`build/p1-f4-t7-mission-1280.png`、`build/p1-f4-t7-raid-1280.png`；日志 `build/f4-t7-dialogue.log`、`mission.log`、`raid.log` 显示聚落夜袭触发、守卫迎战与 49/49 寻路查询完成、0 失败。临时探针/临时防御配置不入库。
+
+**限制**：真实自然流程（无探针/无临时配置）、双客户端画面/声音和 1920 聚落布局仍建议人工复验；T7 不新增运行时/存档/协议字段。
+
+## 2026-11-02 M23-F4-T8 聚落/NPC 文档
+
+**文档**：新增 `docs/settlementformat.md`，记录 `settlements-v1` 完整字段/范围/默认值、文件合并与内容指纹、NPC 点位生成、日程/威胁、5 档交易与补货、`missionPool`/求助者对话、`defense` 触发/数量/结束公式、`STLS`/`ZLR1`/`PlayerState v16` 存档联机边界、mod 目录/示例/检查清单。
+
+**扩展边界**：`docs/modding.md` 3.6.3.4 改为最小契约并链接完整文档；明确当前只有 `defs[0]` 主聚落生成 NPC/交易入口，追加聚落只有数据/指纹/防御状态、没有独立 NPC 或对话；对话树仍为代码内置，不提供对话 JSON；交易固定 5 档；守卫策略只有 `defend/retreat`。
+
+**回填**：README 文档索引/聚落段/M23 里程碑、docs/01、docs/05、docs/08 与本节同步；修正 T1 记录中错误的任务池引用（应为四段聚落链），并将“对话数据化留 T8”改为“T8 记录当前边界，不提供对话 JSON”。
+
+**验证**：T8 仅文档变更，不新增运行时/存档/协议字段；沿用 T7 基线 Debug **665/665（130275 assertions）**、Release **665/665（130290 assertions）**、Python **81/81**；文档 BOM/CRLF/尾随空格/`git diff --check` 通过。
+
+## 2026-11-02 X-F3-T1 内容文件监听
+
+**监听**：`script::ModWatcher` 改为按 `scripts`+`mod.json`、`content`、`assets`、`other` 四类计算签名（文件数/最新 mtime/总字节/≤256KB 内容指纹）；脚本/metadata/other 变更继续立即触发脚本重载，content/assets 变更合并后等待防抖静默期，新增 `PollContentChanges()` 返回 `{modId,content,assets}`。扫描不可读时保留旧基线，避免编辑中途误触发。
+
+**来源/接线**：`ModContentResult.sources` 暴露所有有效 mod 清单的 id/根目录，含仅 content、无脚本或当前内容解析失败的 mod；GameApp 用该列表创建监听（脚本禁用时也可监听），主循环消费 content/assets 通知并记录 `[content]` 日志。配置新增 `script.contentHotReloadDebounceSeconds`（默认 0.5s）。T1 不替换注册表、不刷新指纹；事务重载/失败回滚留 X3-T2，指纹/联机策略留 X3-T3/T4。
+
+**测试/烟测**：新增 4 用例（content/assets 分类隔离、连续写入防抖合并、仅 content mod、sources 覆盖），热重载相关 7 用例 56 assertions；全量 Debug **669/669（130305 assertions）**、Release **669/669（130319 assertions）**、Python **81/81**；应用 Debug/Release 构建通过。Release 临时 `watch_mod` 烟测：启动日志显示监控轮询 0.2s/防抖 0.3s，修改 `content/items.json` 后输出 `检测到 mod 内容文件变更：[watch_mod] content=是 assets=否`；临时 mod/日志不入库。
+
+**限制**：T1 只监听/分类/防抖，内容修改仍不改变游戏内注册表；assets 热替换、内容事务替换与失败回滚、指纹刷新、联机拒绝/重连和 UI 提示均待后续任务。新增 mod 目录不会动态加入监听。
+
+## 2026-11-02 X-F3-T2 事务式内容重载
+
+**候选事务**：新增 `game::ContentBundle`/`LoadContentBundle`，在独立 registries 重新加载基础+mod 的 items/recipes/buildings/loot/forage/animals/crops/POI/missions/settlements，并执行完整交叉引用校验；`LoadModContent` 增加基础错误与建造冲突计数，任一 mod 被跳过、任务文件未全部通过、POI/聚落定义被跳过均判失败。运行中注册表在候选成功前不触碰。
+
+**提交/刷新**：`GameApp::ReloadContentFromDisk` 只在成功后 move 到成员注册表，更新 `missionSourceJson`/`modBuildables`，`contentReloadCount++` 并重算内容指纹；`WorldDemoState` 下一次 tick 重建建造目录、复制新 POI/任务/聚落配置并清理已删除任务焦点。失败日志为 `mod 内容热重载失败，保留旧内容：…`。
+
+**守卫/边界**：联机客户端/主机、`dynamicContentCount>0` 时拒绝；`assets/` 仍只通知，整目录新增/删除仍要重启；已生成实体/容器/NPC 与旧档中已删除物品 id 不回溯迁移。
+
+**测试/烟测**：新增 `tests/test_content_reload.cpp` 3 用例 86 assertions（全类型成功、成功替换并移除旧定义、items/recipes/buildings/loot/POI/missions 任一失败旧候选不变）；定向 X3-T1/T2/M7-T6 11 用例 148 assertions；全量 Debug **672/672（130391 assertions）**、Release **672/672（130405 assertions）**、Python **81/81**；应用 Debug/Release 构建通过。Release 临时 `watch_mod` 合法→非法→合法烟测：2 次重载成功、1 次失败保留旧内容、2 次世界状态刷新，失败时无指纹刷新；日志 `build/x3-t2-smoke.log`，临时文件不入库。
+
+## 2026-11-03 M23-F2a-T5 自然行走觅食与房屋工具柜搜刮烟测
+
+**范围**：新增 `build/f2a_t5_natural_forage_smoke.ps1`。从出生点开始，用实际窗口按键（W+D/D+S 组合 + 位置反馈）走到草地节点；不使用 `Player.Teleport`，仅用临时探针添加 `forage_stick`。
+
+**结果**：玩家从 `(69.42,23.50)` 走到草地节点旁（约 `(72,18.2)`），HUD 显示“可觅食 · 草地（2.0 秒）”；按 `E` 后日志“开始觅食/完成觅食，获得 3 件”。随后按 `I` 打开实际“房屋工具柜”，日志无线电零件×1/螺丝刀×1、`take actions=12`，任务“无线电求救”完成（40 经验），容器清空、背包出现无线电零件/螺丝刀。截图 `build/f2a_t5_natural_forage/f2a-t5-natural-forage-approach-1280.png`、`f2a-t5-natural-forage-after-1280.png`、`f2a-t5-natural-forage-loot-1280.png`、`f2a-t5-natural-forage-loot-taken-1280.png`。测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：工具由探针添加；鼠标拖拽已由 K10 覆盖，自然战斗已由 K11（高生命）与 K12（100 HP 低生命）覆盖（高生命；低伤害平衡待补）。未提交。
+
+## 2026-11-03 M23-F1-T11 真实鼠标拖拽取物烟测
+
+**范围**：新增 `build/f1_t11_drag_smoke.ps1`。临时探针仅把玩家传送到实际房屋工具柜旁 `(72.0,18.2)`、设 100000 HP，且不自动取物；按 `I` 打开容器后使用真实 OS 鼠标事件（`SetCursorPos` + `mouse_event`）完成拖放。
+
+**结果**：先从容器槽 0（720,196）拖到背包槽 5（324,365），日志 `拾取（容器）：无线电零件 x1`，`lootStacks 2→1`、`bagStacks 0→1`；再把剩余物品拖到槽 6（394,365），日志 `拾取（容器）：螺丝刀 x1`，`lootStacks 1→0`、`bagStacks 1→2`。截图 `build/f1_t11_drag/f1-t11-drag-before-1280.png`、`f1-t11-drag-after-first-1280.png`、`f1-t11-drag-after-second-1280.png` 显示容器 2 堆→1 堆→空，背包出现两件；未调用 `Inventory.Action`。测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：传送/高生命来自临时探针；此前的失败尝试使用 `PostMessage`，不会移动 OS 光标或更新 GLFW 轮询位置，真实鼠标事件才触发 RmlUi `dragstart/dragdrop`；自然战斗已由 K11（高生命）与 K12（100 HP 低生命）覆盖（高生命；低伤害平衡待补）。未提交。
+
+## 2026-11-03 M23-F1-T11 实际地图僵尸自然战斗烟测
+
+**范围**：新增 `build/f1_t11_natural_combat_smoke.ps1`。单机新档，窗口按键从出生点 `(69.42,23.50)` 走到实际地图僵尸 id 42 附近；不调用 `Player.Teleport` 或 `Zombies.Spawn`，临时探针只监听 `OnZombieSpawn/OnZombieDead` 与位置。启动参数保留一只 demo 僵尸、1000 HP、关闭动物；实际目标为地图僵尸。
+
+**结果**：日志 5 次 `玩家挥击（SPACE）`，拳头伤害 40、距离约 1.0–1.5 格；`实体死亡：稳定 ID 42（格 33.9,11.9）→ 尸体（稳定 ID 43）`，探针收到 `OnZombieDead id=42`。截图 `build/f1_t11_natural_combat/f1-t11-natural-combat-spawn-1280.png`、`...-approach-1280.png`、`...-engage-1280.png`、`...-after-1280.png` 显示接近、近身交战与尸体。测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：高生命与 demo 僵尸数量来自启动参数；实际目标为地图僵尸，不是 `Zombies.Spawn` 注入，也无传送；低伤害由后续 K12 的 100 HP 独立烟测补齐。未提交。
+
+## 2026-11-03 M23-F1-T11 100 HP 低生命自然战斗烟测
+
+**范围**：新增 `build/f1_t11_lowdamage_combat_smoke.ps1`，从 K11 脚本复制，仅把玩家生命改为 100、独立输出目录。仍从出生点仅用窗口按键走到实际地图僵尸附近，不调用 `Player.Teleport`/`Zombies.Spawn`，临时探针只监听 `OnZombieSpawn/OnZombieDead` 与位置；`demoZombies=1`、关闭动物。
+
+**结果**：与实际地图僵尸 id 41/42 交战，日志记录玩家受到 6.4/12.4 伤害，生命 87.0→67.3 HP、流血 2 处；多次 `玩家挥击（SPACE）`（拳头 40 伤害）击杀 id 41/42，`实体死亡：稳定 ID 41→尸体 43`、`ID 42→尸体 44`，探针收到 `OnZombieDead id=42`。截图 `build/f1_t11_lowdamage_combat/f1-t11-lowdamage-combat-spawn-1280.png`、`...-approach-1280.png`、`...-engage-1280.png`、`...-after-1280.png` 显示低生命/流血 HUD、接近、交战与尸体。测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：100 HP 与 demo 僵尸数量来自启动参数；实际目标为地图僵尸，无传送/探针生成；自然枪械画面与真实玩家手感仍待实机。未提交。
+
+## 2026-11-03 M23-F2a-T5 实际水岸钓鱼烟测
+
+**范围**：新增 `build/f2a_t5_fishing_smoke.ps1`。临时探针添加 `fishing_rod×1`/`fish_bait×5`，把玩家传送到实际地图静水岸边 `(81.5,30.2)`，按 `E` 抛竿；不直接发鱼获。
+
+**结果**：HUD 从“可钓鱼 · 静水岸边（5.0 秒）”进入钓鱼中；咬钩截图显示“咬钩！按 E 收杆：静水岸边（1.9 秒）”，再按 `E` 后日志“完成钓鱼：still_water，成功=true，获得 2 件”。截图 `build/f2a_t5_fishing/f2a-t5-fishing-after-1280.png` 显示小鱼×2、鱼饵 5→4、生存经验 10。测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：鱼竿/鱼饵由探针添加；未提交。
+
+## 2026-11-03 M23-F2a-T5 真实草地节点烟测
+
+**范围**：新增 `build/f2a_t5_forage_smoke.ps1`。临时探针添加 `forage_stick`，把玩家传送到实际地图草地节点 `(73,18)`，按 `E` 搜索；不生成节点、不直接发产出。
+
+**结果**：日志“开始觅食：meadow_grass (73,18)，耗时 2.00s”“完成觅食：meadow_grass (73,18)，获得 3 件”；截图 `build/f2a_t5_forage/f2a-t5-forage-after-1280.png` 显示“采集了草地：野果×2、草药×1”和左侧“觅食 · 草地（已耗尽，约 180 分钟刷新）”。测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：工具由探针添加；水岸钓鱼/咬钩已由下节补验。未提交。
+
+## 2026-11-03 M23-F1-T11 实际地图开火链路烟测
+
+**范围**：新增 `build/f1_t11_combat_smoke.ps1`。实际军事检查站军械柜（101.5,20.5）搜索后，用 `Inventory.Action` 取出手枪与 9mm，装备手枪，关闭背包按 `R` 换弹，再按 `V` 开火；9/9 守军在场，玩家 100000 HP。
+
+**结果**：日志“装备（背包槽 0）：手枪”“换弹完成：手枪，装填 8 发”“远程开火：手枪 弹药 7/8，弹丸 1，伤害 18，射程 18.0，弹速 20.0，噪声半径 28”；截图 `build/f1_t11_combat/f1-t11-combat-equipped-1280.png`、`f1-t11-combat-fire-1280.png` 显示装备槽、HUD 7/8/备弹 8 与检查站守军交火/流血。测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：传送与高生命来自临时探针；取物/装备走 `Inventory.Action`，不是鼠标拖拽；未覆盖自然探索/自然战斗流程。未提交。
+
+## 2026-11-03 M23-F1-T11 实际军械柜烟测
+
+**范围**：新增 `build/f1_t11_armory_loot_smoke.ps1`。探针把玩家传送到实际军事检查站军械柜 (101.5, 20.5) 旁的 (101.5, 21.5)，保留 9/9 守军并设 100000 HP；按 `I` 触发实际地图容器搜索，再用 `Inventory.Action` 取出物品并截图；不注入物品、不修改掉落表，脚本断言日志含“手枪”。
+
+**结果**：日志 `搜索容器：表=poi_military_armory…结果 3 堆/54 件（手枪×1/9mm×26/霰弹×27）`；`Inventory.Action` 20 次后背包手枪×1/9mm×19，容器剩余 9mm×7/霰弹×27。截图 `build/f1_t11_armory_loot/f1-t11-armory-loot-1280.png`，日志 `build/f1_t11_armory_loot/app.log`。该用例证明实际地图容器可获得枪械；测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：传送与高生命来自临时探针；取物使用 `Inventory.Action`，不是鼠标拖拽；未覆盖自然探索/战斗；只取出 20 件，容器未完全清空。未提交。
+
+## 2026-11-03 M23-F1-T11 实际地图容器烟测
+
+**范围**：新增 `build/f1_t11_map_loot_smoke.ps1`。探针只把玩家传送到实际废弃加油站储物柜 (33.5, 20.5) 旁并设高生命，保留 3 名守军；靠近按 `I` 触发实际地图容器搜索，再用 `Inventory.Action` 取出物品并截图，不注入物品、不修改掉落表。
+
+**结果**：日志 `搜索容器：表=poi_gas_station…结果 5 堆/5 件`；本次随机结果为维修包/燃料罐/防暴背心/灭火器/螺丝刀各 1，取出后容器“（空）0 堆”。截图 `build/f1_t11_map_loot/f1-t11-map-loot-1280.png`，日志 `build/f1_t11_map_loot/app.log`。测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：传送与高生命来自临时探针；取物使用 `Inventory.Action`，不是鼠标拖拽；未覆盖自然探索/战斗。未提交。
+
+## 2026-11-03 M23-F1-T11 搜刮容器 UI 烟测
+
+**范围**：新增 `build/f1_t11_loot_ui_smoke.ps1` 与临时 mod。临时 POI 在空地 (78.5, 62.5) 放置固定 `pistol×1 + ammo_9mm×8` 的战利品容器；探针只传送玩家，不直接添加物品。靠近容器按 `I` 触发 UI 搜索，随后通过 `Inventory.Action` 从容器取出全部物品并截图。
+
+**结果**：日志 `搜索容器：表=f1_t11_pickup_loot…结果 2 堆/9 件`；取出后容器显示“（空）0 堆”，背包手枪×1、9mm×8。截图 `build/f1_t11_loot_ui/f1-t11-loot-picked-1280.png`，日志 `build/f1_t11_loot_ui/app.log`。测试基线不变（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：K5 的 POI/容器为临时 mod 构造；实际地图容器另由 K6 覆盖。取物使用 `Inventory.Action`，不是鼠标拖拽。未提交。
+
+## 2026-11-03 M23-F1-T11 商人交易 UI 烟测
+
+**范围**：新增 `build/f1_t11_trade_ui_smoke.ps1` 与临时探针 mod。探针只提供 `wood×10` 并把玩家传送到村庄商人附近，不直接添加枪械；窗口按键 `E` 打开商人对话、`1` 进入交易、`5` 购买手枪、`4` 购买 9mm，最后关闭交易打开背包截图。
+
+**结果**：日志记录 `商人交易：pistol，库存 0` 与 `商人交易：ammo_9mm，库存 1`；交易截图提示“交易完成：手枪 ×1”“交易完成：9mm 弹药 ×12”，木材 10→0，背包截图显示手枪×1、9mm×12。截图 `build/f1_t11_trade_ui/f1-t11-trade-*.png`，日志 `build/f1_t11_trade_ui/app.log`。该烟测不改变测试基线（Debug 678/130523、Release 678/130537、Python 81/81）。
+
+**限制**：木材与传送来自临时探针，不是自然搜刮/探索；未覆盖搜刮容器拾取。未提交。
+
+## 2026-11-03 M23-F1-T9 枪械交易获取回归
+
+**范围**：扩展 `tests/test_network_inventory.cpp` 的 X-F1 2b-4 商人用例。在真实服务器/客户端会话中购买 `pistol×1`（8 木材）与 `ammo_9mm×12`（2 木材），同步到 owner `PlayerState` 后按背包索引装备手枪，再发 `ReloadRanged` 完成装填 8 发、备弹 4。
+
+**结果**：商人库存、服务器背包、客户端背包/装备/弹匣逐项断言；该用例 33 assertions。全量 Debug **678/678（130523 assertions）**、Release **678/678（130537 assertions）**、Python **81/81**。证明服务器权威交易可获得枪械并直接进入装备/换弹链路；自然探索仍待实机。未提交。
+
+## 2026-11-03 M23-F1-T11 双客户端网络枪声
+
+**问题**：网络模式下客户端 `FireRanged` 只发命令，本地不预测枪声；服务器 `EmitGunshot` 只把 `OnSound` 投递给服务器 AI，没有网络广播，因此其他客户端听不到枪声，射手也没有声音回放。
+
+**实现**：新增 `net/WorldSound` `ZLW1` v1 消息（34B 头 + clip ≤64B；来源 StableId、x/y/z、半径、type、clip），严格校验 magic/version/保留位/类型/有限坐标/半径/clip。`ServerHost::EmitGunshot` 在服务器 AI 事件后向所有已分配会话广播（含射手）；`NetworkClient` 解码入队，`WorldDemoState::ApplyNetworkWorldSounds` 播放 3D 声音并生成枪口 `effect.impact`。KCP 丢包时该次远端表现可缺失，服务器 AI 听觉不受影响。
+
+**测试/烟测**：`test_net` 新增 1 用例 25 assertions；`test_network_inventory` T10 真实手枪双客户端断言双方收到同一 `source=射手`、位置/层/半径、`clip=gunshot`，服务器 `worldSoundsSent` 增加。全量 Debug **678/678（130512 assertions）**、Release **678/678（130526 assertions）**、Python **81/81**。Release 1280 双客户端 + 无窗口服务器，A 按 F7 三次；A/B 日志各 3 条 `网络枪声` 与脚本 `gunshot at`，截图 `build/f1_t11_dualsound/f1-t11-dual-*-1280.png`。
+
+**限制**：只同步枪声，脚步/命中/低吼仍本地；ZLW1 不重发/不排序；F7 为调试枪声，真实枪械拾取/交易与自然战斗画面仍待人工。未提交。
+
+## 2026-11-03 X-F3-T6 文档收口
+
+**范围**：回填 `docs/modding.md` 的内容管线/热重载边界，`README.md` 的功能说明与 M23 状态，`docs/01/02/03/05/08` 的 X-F3 T5/T6 结果、677/130475 与 677/130489 基线及最终限制，并在 `docs/08` 增加 X3-T6 收口记录。
+
+**最终边界**：仅单机 `net.mode=direct` 且无脚本动态内容时，`content/*.json` 可事务热重载；失败保留旧内容，成功记录旧→新指纹并刷新世界定义。`assets/*.json` 仍只通知并需重启；新增/删除整个 mod 目录需重启；联机/主机拒绝热重载并提示重启服务器+所有客户端重连；动态内容仅单机，联机 API/启动拒绝并显示 HUD 提示；旧档已删除 mod 物品保留 `defId`，但名称/重量/图标不可用。
+
+**验证**：Debug **677/677（130475 assertions）**、Release **677/677（130489 assertions）**、Python **81/81**；文档 UTF-8 无 BOM、CRLF、链接、`config/game.json`、尾随空格与 `git diff --check` 检查通过。T6 无新增生产代码、协议或测试。
+
+**结论**：X-F3 T1–T6 全部完成；联机动态内容、assets 热替换与旧档 id 迁移不在当前范围内。
+
+## 2026-11-03 X-F3-T5 热重载、联机动态内容与旧档测试
+
+**失败/原子性**：在合法 `hot` mod 基础上分别写入空 `forage-v1`、`crops-v1`、`settlements-v1` 文件；`LoadContentBundle` 均失败并保留旧候选的物品/POI/任务。移除非法文件后旧候选指纹恢复等于基线，随后相同字节重载得到相同指纹，锁定“失败不提交、未变内容指纹稳定”。注意 `ComputeTreeHash` 包含 mods 文件树，非法文件存在时它会变化，因此失败后指纹断言在清理文件后比较。
+
+**动态内容联机**：`allowDynamicContent=false` 时五个 `Content.Register*` 全部返回 0，统一错误“动态内容仅支持单机；请移除动态注册后重启”；物品/配方/建造/POI/任务、`dynamicContentCount` 和 `contentChanged` 均不变。
+
+**旧档**：构造 `hot_item×2 + rag×1` 的 `Container` 快照，删除 mod 后重新加载内容并解码/应用；`hot_item` 仍保留，`CountOf` 为 2，`TotalWeight` 对未知定义记 0kg 且只统计 `rag`。旧档不会崩溃或静默删除未知物品，但名称/重量/图标在缺失 mod 时不可用。
+
+**测试**：新增 `X3-T5` 3 用例 72 assertions；X3-T1~T5 共 12 用例 200 assertions；全量 Debug **677/677（130475 assertions）**、Release **677/677（130489 assertions）**、Python **81/81**。无新增生产代码或协议；T6 文档收口见下条。
+
+## 2026-11-03 X-F3-T4 动态内容联机策略
+
+**决策**：保留“仅单机”边界，不实现“服务器注册、客户端校验”。运行时动态内容需要同步 JSON、引用资源、脚本状态与晚加入/重连回滚，成本和攻击面高于本阶段收益；联机双方继续依赖启动时内容指纹，必须安装相同静态内容。
+
+**策略/提示**：新增 `game::DynamicContentBlockedReason` 与统一文案“动态内容仅支持单机；请移除动态注册后重启”。`Content.Register*` 在 `allowDynamicContent=false` 时返回 0；`StartClientOnly`/`StartHosting` 在 `dynamicContentCount>0` 时拒绝并记录“联机启动被拒绝”；脚本加载后若注册了动态内容，GameApp 记录“动态内容 N 项：仅单机可用；联机连接/主机启动将拒绝”。T3 的联机热重载拒绝不再只有日志：GameApp 写入 `GameContext::contentNotice`，`WorldDemoState::RefreshHud` 消费为 5 秒 fail 色 HUD notice，并记录“内容策略提示已显示”。
+
+**测试/烟测**：新增 `X3-T4` 1 用例 4 assertions（单机允许、动态内容拒绝、联机热重载/动态提示文案统一），`test_script_api` 对齐同一文案；X3-T1~T4 共 9 用例 128 assertions；全量 Debug **674/674（130403 assertions）**、Release **674/674（130417 assertions）**、Python **81/81**；应用 Debug/Release 构建通过。联机客户端（无服务器）改 content 后日志出现拒绝与“内容策略提示已显示”，无成功热重载；单机临时 mod 调 `Content.RegisterItems` 后出现动态注册与“仅单机可用”范围提示。日志 `build/x3-t4-online-smoke.log`、`build/x3-t4-dynamic-smoke.log`，临时文件不入库。限制：不支持联机动态内容/服务器下发/回滚，assets 热替换、动态内容存档与旧档删除 id 迁移仍不在本任务内；T5/T6 待做。
+
+## 2026-11-02 X-F3-T3 指纹刷新与联机策略
+
+**指纹**：`GameApp::ReloadContentFromDisk` 在 move 提交前保存旧 `contentHash`，成功后经 `RefreshContentHash` 重算，并输出 `mod 内容指纹刷新：0x旧→0x新`；候选字节未变时允许指纹相同，但仍重建注册表。成功日志仍保留物品/配方/建造/战利品/POI/任务数量变化。
+
+**策略**：新增 `game::ContentReloadBlockedReason`。仅 `net.mode=direct` 且 `dynamicContentCount==0` 返回空；联机客户端/主机返回“联机中不支持 mod 内容热重载；请重启服务器和所有客户端后重连”；存在脚本动态内容返回“脚本已动态注册内容，需重启游戏后应用 mod 内容变更”。主循环先检查并记录 `mod 内容变更未应用：…`，不构建候选、不替换注册表、不刷新指纹、不推进 `contentReloadCount`；`ReloadContentFromDisk` 保留同一守卫。
+
+**测试/烟测**：新增 1 用例 8 assertions（候选内容变化改变指纹、单机允许、联机/主机拒绝、动态内容拒绝）；X3-T2/T3 共 4 用例 94 assertions；定向 X3-T1/T2/T3/M7-T6 12 用例 156 assertions；全量 Debug **673/673（130399 assertions）**、Release **673/673（130413 assertions）**、Python **81/81**；应用 Debug/Release 构建通过。单机 Release 合法→非法→合法烟测出现 2 次指纹旧→新、失败不刷新；联机客户端改 content 只出现 `mod 内容变更未应用：联机中不支持 mod 内容热重载；请重启服务器和所有客户端后重连`，无成功/刷新。日志 `build/x3-t3-single-smoke.log`、`build/x3-t3-online-smoke.log`，临时文件不入库。限制：T3 当时仅日志告警，无 HUD toast；T4 已补 HUD notice 并确认动态内容仅单机；T5 测试、T6 文档收口待做。

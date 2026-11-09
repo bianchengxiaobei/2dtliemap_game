@@ -31,8 +31,8 @@ RepairResult Repair(ecs::Container& container, const ItemRegistry& registry,
         result.error = "物品定义不存在：" + entry.defId;
         return result;
     }
-    if (target->type != ItemType::Weapon) {
-        result.error = "该物品不是可维修工具";
+    if (target->type != ItemType::Weapon && target->type != ItemType::Clothing) {
+        result.error = "该物品不可维修";
         return result;
     }
     if (target->maxStack != 1) {
@@ -78,8 +78,10 @@ RepairResult Repair(ecs::Container& container, const ItemRegistry& registry,
 
     // 在副本上完成耐久修改与材料扣除，避免 RemoveItem 失败时留下半完成状态。
     ecs::Container attempt = container;
+    const float efficiency =
+        std::clamp(target->repairEfficiency, 0.1f, 3.0f);
     const float repaired =
-        std::min(1.0f, attempt.items[index].condition + restore);
+        std::min(1.0f, attempt.items[index].condition + restore * efficiency);
     attempt.items[index].condition = repaired;
     if (RemoveItem(attempt, materialDefId, materialCount) != materialCount) {
         result.error = "维修材料扣除失败";

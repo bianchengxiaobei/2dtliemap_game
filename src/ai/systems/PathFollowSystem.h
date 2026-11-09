@@ -20,8 +20,12 @@ public:
 
     void Update(ecs::EcsWorld& world, float dt);
 
+    // M20-F2：天气对非本地控制实体（僵尸）的轻量移速缩放。
+    void SetEnvironmentMoveScale(float scale);
+
 private:
     PathfindingService* m_service = nullptr;
+    float m_environmentMoveScale = 1.0f;
 };
 
 }  // namespace zl::ai

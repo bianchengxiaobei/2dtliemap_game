@@ -46,9 +46,14 @@ bool CheckKeys(const nlohmann::json& entry, const std::unordered_set<std::string
 
 bool ParseEntry(const nlohmann::json& node, const ItemRegistry& items, bool guaranteed,
                 const std::string& where, LootEntry* out, std::string* error) {
-    if (!node.is_object()) {
-        *error = where + " 必须是对象";
+    const auto fail = [&](std::string message) {
+        if (error != nullptr) {
+            *error = std::move(message);
+        }
         return false;
+    };
+    if (!node.is_object()) {
+        return fail(where + " 必须是对象");
     }
     const std::string hint =
         guaranteed ? "defId/count" : "defId/weight/min/max";
@@ -59,47 +64,41 @@ bool ParseEntry(const nlohmann::json& node, const ItemRegistry& items, bool guar
         return false;
     }
     if (!node.contains("defId") || !node["defId"].is_string()) {
-        *error = where + " 缺少字符串字段 'defId'";
-        return false;
+        return fail(where + " 缺少字符串字段 'defId'");
     }
     const std::string defId = node["defId"].get<std::string>();
     const ItemDef* def = items.Find(defId);
     if (def == nullptr) {
-        *error = where + " 引用了未知物品 '" + defId + "'";
-        return false;
+        return fail(where + " 引用了未知物品 '" + defId + "'");
     }
     LootEntry entry;
     entry.defId = defId;
     if (guaranteed) {
         if (!node.contains("count") || !node["count"].is_number_integer()) {
-            *error = where + " 缺少整数字段 'count'";
-            return false;
+            return fail(where + " 缺少整数字段 'count'");
         }
         entry.minCount = node["count"].get<int>();
         entry.maxCount = entry.minCount;
     } else {
         if (!node.contains("weight") || !node["weight"].is_number_integer()) {
-            *error = where + " 缺少整数字段 'weight'";
-            return false;
+            return fail(where + " 缺少整数字段 'weight'");
         }
         entry.weight = node["weight"].get<int>();
         if (entry.weight < 1 || entry.weight > kMaxWeight) {
-            *error = where + " weight 必须是 1~" + std::to_string(kMaxWeight);
-            return false;
+            return fail(where + " weight 必须是 1~" +
+                        std::to_string(kMaxWeight));
         }
         if (!node.contains("min") || !node.contains("max") ||
             !node["min"].is_number_integer() || !node["max"].is_number_integer()) {
-            *error = where + " 缺少整数字段 'min'/'max'";
-            return false;
+            return fail(where + " 缺少整数字段 'min'/'max'");
         }
         entry.minCount = node["min"].get<int>();
         entry.maxCount = node["max"].get<int>();
     }
     if (entry.minCount < 1 || entry.maxCount < entry.minCount ||
         entry.maxCount > def->maxStack) {
-        *error = where + " 数量必须是 1~" + std::to_string(def->maxStack) +
-                 " 且 min <= max";
-        return false;
+        return fail(where + " 数量必须是 1~" + std::to_string(def->maxStack) +
+                    " 且 min <= max");
     }
     *out = std::move(entry);
     return true;
@@ -297,6 +296,54 @@ bool LootTableRegistry::LoadFromString(std::string_view text, const std::string&
     m_tables = std::move(tables);
     m_byId = std::move(byId);
     m_seed = seed;
+    return true;
+}
+
+bool LootTableRegistry::MergeFile(const std::filesystem::path& path,
+                                  const ItemRegistry& items, std::string* error) {
+    if (error != nullptr) {
+        error->clear();
+    }
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        if (error != nullptr) {
+            *error = "无法打开战利品文件: " + path.string();
+        }
+        ZL_ERROR(kLogModule, "无法打开战利品文件: {}", path.string());
+        return false;
+    }
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return MergeFromString(buffer.str(), path.string(), items, error);
+}
+
+bool LootTableRegistry::MergeFromString(std::string_view text,
+                                        const std::string& source,
+                                        const ItemRegistry& items,
+                                        std::string* error) {
+    if (error != nullptr) {
+        error->clear();
+    }
+    LootTableRegistry parsed;
+    if (!parsed.LoadFromString(text, source, items, error)) {
+        return false;
+    }
+    for (const LootTable& table : parsed.m_tables) {
+        if (m_byId.contains(table.id)) {
+            const std::string message =
+                source + ": 表 id 与已加载战利品表冲突: " + table.id;
+            if (error != nullptr) {
+                *error = message;
+            }
+            ZL_ERROR(kLogModule, "{}", message);
+            return false;
+        }
+    }
+    for (LootTable& table : parsed.m_tables) {
+        const std::string id = table.id;
+        m_byId.emplace(id, m_tables.size());
+        m_tables.push_back(std::move(table));
+    }
     return true;
 }
 

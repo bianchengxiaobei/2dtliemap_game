@@ -19,7 +19,9 @@ constexpr const char* kZombieSpriteName = "character.zombie";
 }  // namespace
 
 ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, float px, float py,
-                        core::EventBus* events, ecs::ZombieVariantKind variantKind) {
+                        core::EventBus* events, ecs::ZombieVariantKind variantKind,
+                        std::uint64_t stableId,
+                        const characters::CombatRuleConfig* combatRules) {
     const ZombieVariantProfile& profile = ZombieVariantProfileFor(variantKind);
     const float visualScale = std::clamp(profile.visualScale, 0.5f, 2.0f);
     const ecs::Collider baseCollider;
@@ -27,7 +29,17 @@ ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, fl
                                  baseCollider.height * visualScale,
                                  baseCollider.category, baseCollider.mask};
     entt::registry& registry = world.Registry();
-    const ecs::Entity e = world.Create();
+    if (stableId != 0) {
+        const ecs::Entity existing = world.FindById(stableId);
+        if (existing != entt::null) {
+            return existing;
+        }
+    }
+    const ecs::Entity e = stableId != 0 ? world.CreateWithStableId(stableId)
+                                        : world.Create();
+    if (e == entt::null) {
+        return entt::null;
+    }
     registry.emplace<ecs::Position>(e, ecs::Position{px, py, 0});
     registry.emplace<ecs::Velocity>(e, ecs::Velocity{});
     registry.emplace<ecs::Collider>(e, collider);
@@ -42,6 +54,8 @@ ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, fl
     registry.emplace<ecs::Health>(e, health);
     registry.emplace<ecs::Needs>(e, ecs::Needs{});
     registry.emplace<ecs::ZombieVariant>(e, MakeZombieVariant(variantKind));
+    // M30-T5：硬直条是运行时组件，生成时按变体初始化，不存档/不复制。
+    EnsureZombiePoise(world, e, variantKind, combatRules);
 
     if (physics != nullptr) {
         ecs::RigidBody rigid;
@@ -65,6 +79,21 @@ ecs::Entity SpawnZombie(ecs::EcsWorld& world, physics::PhysicsWorld* physics, fl
                            core::ZombieEvent{world.IdOf(e).id, 0, px, py, 0});
     }
     return e;
+}
+
+void EnsureZombiePoise(ecs::EcsWorld& world, ecs::Entity entity,
+                       ecs::ZombieVariantKind variant,
+                       const characters::CombatRuleConfig* combatRules) {
+    if (!world.Alive(entity)) {
+        return;
+    }
+    entt::registry& registry = world.Registry();
+    if (!registry.all_of<ecs::Poise>(entity)) {
+        const characters::CombatRuleConfig& rules =
+            combatRules != nullptr ? *combatRules
+                                   : characters::DefaultCombatRuleConfig();
+        registry.emplace<ecs::Poise>(entity, MakeZombiePoise(variant, rules));
+    }
 }
 
 }  // namespace zl::game

@@ -3,21 +3,29 @@
 #include <cstdint>
 #include <string>
 
+#include <nlohmann/json.hpp>
+
 #include "ai/PathfindingService.h"
 #include "characters/components/CharacterComponents.h"
+#include "core/Config.h"
 #include "core/GameLoop.h"
 #include "core/GameTime.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
+#include "game/ContentReload.h"
 #include "game/GameContext.h"
 #include "game/GroundItems.h"
+#include "game/Missions.h"
+#include "game/Poi.h"
 #include "items/InventoryOps.h"
 #include "items/ItemComponents.h"
 #include "items/ItemRegistry.h"
+#include "items/RecipeRegistry.h"
 #include "save/SaveTypes.h"
 #include "script/ScriptApi.h"
 #include "world/Chunk.h"
 #include "world/GridSquare.h"
+#include "world/World.h"
 #include "world/WorldCoords.h"
 
 using namespace zl;
@@ -32,10 +40,27 @@ const char* kItemsJson = R"({
   ]
 })";
 
+const char* kRecipesJson = R"({
+  "format": "recipes-v3",
+  "recipes": [
+    {
+      "id": "base_bandage",
+      "name": "基础绷带",
+      "output": { "item": "bandage", "count": 1 },
+      "ingredients": [ { "item": "bandage", "count": 1 } ]
+    }
+  ]
+})";
+
 // ScriptApi 测试夹具：最小完整 GameContext（无窗口/渲染/物理）
 struct Fixture {
     ecs::EcsWorld ecs;
     items::ItemRegistry items;
+    items::RecipeRegistry recipes;
+    core::Config config;
+    game::PoiConfig poiConfig;
+    game::MissionConfig missionConfig;
+    world::World world;
     core::GameLoop loop{60.0};
     core::GameTime gameTime;
     ai::PathfindingService pathfinding{nullptr, ai::MapChunkBounds{0, 0, 4, 4}};
@@ -45,9 +70,13 @@ struct Fixture {
     Fixture() {
         std::string error;
         CHECK(items.LoadFromString(kItemsJson, "test", &error));
+        CHECK(recipes.LoadFromString(kRecipesJson, "test-recipes", items, &error));
         gameTime.Configure(1.0, core::DateTime{});
+        ctx.config = &config;
         ctx.ecs = &ecs;
         ctx.items = &items;
+        ctx.recipes = &recipes;
+        ctx.world = &world;
         ctx.loop = &loop;
         ctx.gameTime = &gameTime;
         ctx.pathfinding = &pathfinding;
@@ -130,6 +159,78 @@ TEST_CASE("M7-T3：World.IsPassable 与 SpawnItem") {
     CHECK(game::CountGroundItems(f.ecs) == 1);
     CHECK_FALSE(f.api.SpawnItem("no_such_item", 5.0f, 6.0f, 0));
     CHECK(game::CountGroundItems(f.ecs) == 1);
+}
+
+TEST_CASE("X-F2：World.GetSquare 返回只读分层快照") {
+    Fixture f;
+    world::GridSquare& square = f.world.GetOrCreateSquare(2, 3, 0);
+    square.SetFloor(world::SquareObject{"tile.floor.wood", 0, 0, false});
+    square.AddObject(
+        world::SquareLayer::Wall,
+        world::SquareObject{"object.wall_h", 0, 0, true, 80.0f, true});
+    square.AddObject(
+        world::SquareLayer::Furniture,
+        world::SquareObject{"object.crate", 0, 0, false, -1.0f, true});
+    square.AddObject(world::SquareLayer::Item,
+                     world::SquareObject{"object.locker", 0, 0, false});
+
+    script::ScriptSquare out;
+    REQUIRE(f.api.GetSquare(2, 3, 0, out));
+    CHECK(out.loaded);
+    CHECK(out.hasFloor);
+    CHECK(out.floor.sprite == "tile.floor.wood");
+    CHECK_FALSE(out.floor.playerBuilt);
+    REQUIRE(out.wall.size() == 1);
+    CHECK(out.wall[0].sprite == "object.wall_h");
+    CHECK(out.wall[0].blocksMovement);
+    CHECK(out.wall[0].playerBuilt);
+    CHECK(out.wall[0].hp == doctest::Approx(80.0f));
+    REQUIRE(out.furniture.size() == 1);
+    CHECK(out.furniture[0].sprite == "object.crate");
+    CHECK_FALSE(out.furniture[0].blocksMovement);
+    REQUIRE(out.item.size() == 1);
+    CHECK(out.item[0].sprite == "object.locker");
+
+    CHECK_FALSE(f.api.GetSquare(50, 50, 0, out));
+    CHECK_FALSE(out.loaded);
+    CHECK_FALSE(f.api.GetSquare(2, 3, 8, out));
+}
+
+TEST_CASE("X-F2b-2d：Hud 自定义字段注册、更新与上限") {
+    Fixture f;
+    f.ctx.hudState.active = true;
+    CHECK_FALSE(f.api.RegisterHudField("", "status", "状态"));
+    CHECK_FALSE(f.api.RegisterHudField("mod", "", "状态"));
+    CHECK_FALSE(f.api.RegisterHudField("mod", "status", ""));
+    CHECK(f.api.RegisterHudField("mod", "status", "状态"));
+    CHECK(f.api.RegisterHudField("mod", "status", "新状态"));
+    CHECK_FALSE(f.api.SetHudField("missing", "x", "x", "info"));
+    CHECK_FALSE(f.api.SetHudField("mod", "status", "x", "bad"));
+    CHECK(f.api.SetHudField("mod", "status", "运行中", "warn"));
+
+    ui::HudState state;
+    REQUIRE(f.api.GetHudState(state));
+    CHECK(state.modFieldCount == 1);
+    CHECK(state.modFields[0].modId == "mod");
+    CHECK(state.modFields[0].id == "status");
+    CHECK(state.modFields[0].label == "新状态");
+    CHECK(state.modFields[0].text == "运行中");
+    CHECK(state.modFields[0].tone == "warn");
+
+    CHECK(f.api.ClearHudField("mod", "status"));
+    REQUIRE(f.api.GetHudState(state));
+    CHECK(state.modFields[0].text.empty());
+    CHECK(state.modFields[0].tone == "info");
+    CHECK_FALSE(f.api.ClearHudField("mod", "missing"));
+
+    for (int i = 1; i < 8; ++i) {
+        CHECK(f.api.RegisterHudField("mod", "extra_" + std::to_string(i),
+                                     "扩展"));
+    }
+    CHECK_FALSE(f.api.RegisterHudField("mod", "extra_8", "扩展"));
+    f.api.RemoveHudFields("mod");
+    REQUIRE(f.api.GetHudState(state));
+    CHECK(state.modFieldCount == 0);
 }
 
 TEST_CASE("M7-T3：Zombies.Spawn/Count/GetPosition（稳定 ID 句柄）") {
@@ -314,4 +415,242 @@ TEST_CASE("脚本存档 UI：Save API 列表、读档、删除与快速保存") 
     f.ctx.deleteSave = nullptr;
     CHECK_FALSE(f.api.DeleteSave("save-one", error));
     CHECK(error == "删除存档不可用");
+}
+
+TEST_CASE("X-F2b-2e：Content.RegisterItems/Recipes/Buildings 动态注册") {
+    Fixture f;
+    int contentChanges = 0;
+    f.ctx.contentChanged = [&contentChanges] { ++contentChanges; };
+    std::string error;
+
+    const std::string itemJson = R"({
+      "format": "items-v1",
+      "items": [
+        { "id": "script_dynamic", "name": "脚本物品", "icon": "item.dynamic", "weight": 0.2, "maxStack": 2, "type": "generic" }
+      ]
+    })";
+    CHECK(f.api.RegisterItems("test_mod", itemJson, error) == 1);
+    CHECK(error.empty());
+    CHECK(f.items.Find("script_dynamic") != nullptr);
+    CHECK(f.ctx.dynamicContentCount == 1);
+    CHECK(contentChanges == 1);
+
+    CHECK(f.api.RegisterItems("test_mod", itemJson, error) == 0);
+    CHECK_FALSE(error.empty());
+    CHECK(f.items.Size() == 3);
+    CHECK(f.ctx.dynamicContentCount == 1);
+    CHECK(contentChanges == 1);
+
+    const std::string recipeJson = R"({
+      "format": "recipes-v3",
+      "recipes": [
+        {
+          "id": "script_dynamic_recipe",
+          "name": "脚本配方",
+          "output": { "item": "script_dynamic", "count": 1 },
+          "ingredients": [ { "item": "bandage", "count": 1 } ]
+        }
+      ]
+    })";
+    CHECK(f.api.RegisterRecipes("test_mod", recipeJson, error) == 1);
+    CHECK(error.empty());
+    CHECK(f.recipes.Find("script_dynamic_recipe") != nullptr);
+    CHECK(f.ctx.dynamicContentCount == 2);
+    CHECK(contentChanges == 2);
+
+    const std::string buildingJson = R"({
+      "format": "buildings-v1",
+      "types": [
+        {
+          "id": "script_dynamic_crate",
+          "name": "脚本仓库",
+          "sprite": "object.script_dynamic_crate",
+          "woodCost": 2,
+          "storageKg": 12,
+          "storageSlots": 2,
+          "category": "storage"
+        }
+      ]
+    })";
+    CHECK(f.api.RegisterBuildings("test_mod", buildingJson, error) == 1);
+    CHECK(error.empty());
+    REQUIRE(f.ctx.modBuildables.size() == 1);
+    CHECK(f.ctx.modBuildables[0].id == "script_dynamic_crate");
+    CHECK(f.ctx.dynamicContentCount == 3);
+    CHECK(contentChanges == 3);
+
+    std::vector<game::BuildableDef> buildables = game::LoadBuildableDefs(f.config);
+    CHECK(game::AppendBuildableDefs(buildables, f.ctx.modBuildables) == 1);
+    CHECK(game::FindBuildableBySprite(buildables, "object.script_dynamic_crate") !=
+          nullptr);
+
+    CHECK(f.api.RegisterBuildings("test_mod", buildingJson, error) == 0);
+    CHECK_FALSE(error.empty());
+    CHECK(f.ctx.modBuildables.size() == 1);
+    CHECK(f.ctx.dynamicContentCount == 3);
+
+    f.ctx.allowDynamicContent = false;
+    const std::string anotherItem = R"({
+      "format": "items-v1",
+      "items": [
+        { "id": "script_dynamic_two", "name": "脚本物品二", "icon": "item.dynamic", "weight": 0.2, "maxStack": 2, "type": "generic" }
+      ]
+    })";
+    CHECK(f.api.RegisterItems("test_mod", anotherItem, error) == 0);
+    CHECK(error == game::kDynamicContentSinglePlayerOnlyMessage);
+    CHECK(f.items.Find("script_dynamic_two") == nullptr);
+    CHECK(f.ctx.dynamicContentCount == 3);
+    CHECK(contentChanges == 3);
+}
+
+TEST_CASE("X3-T5：联机禁用时五类动态内容注册全部拒绝") {
+    Fixture f;
+    f.ctx.allowDynamicContent = false;
+    f.poiConfig.enabled = true;
+    f.ctx.poiConfig = &f.poiConfig;
+    f.ctx.missionConfig = &f.missionConfig;
+    int contentChanges = 0;
+    f.ctx.contentChanged = [&contentChanges] { ++contentChanges; };
+    std::string error;
+
+    const std::string expected = game::kDynamicContentSinglePlayerOnlyMessage;
+    CHECK(f.api.RegisterItems("test_mod", "{}", error) == 0);
+    CHECK(error == expected);
+    CHECK(f.api.RegisterRecipes("test_mod", "{}", error) == 0);
+    CHECK(error == expected);
+    CHECK(f.api.RegisterBuildings("test_mod", "{}", error) == 0);
+    CHECK(error == expected);
+    CHECK(f.api.RegisterPois("test_mod", "{}", error) == 0);
+    CHECK(error == expected);
+    CHECK(f.api.RegisterMissions("test_mod", "{}", error) == 0);
+    CHECK(error == expected);
+
+    CHECK(f.items.Size() == 2);
+    CHECK(f.recipes.Size() == 1);
+    CHECK(f.ctx.modBuildables.empty());
+    CHECK(f.poiConfig.defs.empty());
+    CHECK(f.missionConfig.defs.empty());
+    CHECK(f.ctx.dynamicContentCount == 0);
+    CHECK(contentChanges == 0);
+}
+
+TEST_CASE("X-F2b-2e：Content.RegisterPois/RegisterMissions 动态注册") {
+    Fixture f;
+    std::string error;
+
+    f.poiConfig.enabled = true;
+    f.poiConfig.guideRange = 70.0f;
+    f.ctx.poiConfig = &f.poiConfig;
+    const std::string poiJson = R"({
+      "format": "pois-v1",
+      "defs": [
+        {
+          "id": "script_poi",
+          "name": "脚本 POI",
+          "threat": 1,
+          "markerX": 10.0,
+          "markerY": 11.0,
+          "containers": [
+            { "x": 10.5, "y": 11.5, "tableId": "script_table", "sprite": "object.crate" }
+          ],
+          "enemies": { "count": 0, "kind": "normal", "radius": 4.0 },
+          "task": {
+            "description": "搜索补给",
+            "targetTable": "script_table",
+            "rewardXp": 5.0,
+            "rewardItem": "bandage",
+            "rewardCount": 1
+          }
+        }
+      ]
+    })";
+    CHECK(f.api.RegisterPois("test_mod", poiJson, error) == 1);
+    CHECK(error.empty());
+    REQUIRE(f.poiConfig.defs.size() == 1);
+    CHECK(f.poiConfig.Find("script_poi") != nullptr);
+    CHECK(f.ctx.dynamicContentCount == 1);
+
+    CHECK(f.api.RegisterPois("test_mod", poiJson, error) == 0);
+    CHECK_FALSE(error.empty());
+    CHECK(f.poiConfig.defs.size() == 1);
+
+    const std::string baseMissions = R"({
+      "enabled": true,
+      "randomSeed": 7,
+      "defs": [
+        {
+          "id": "base_script",
+          "name": "基础脚本任务",
+          "chain": "base",
+          "order": 1,
+          "kind": "once",
+          "source": "base",
+          "objectives": [
+            { "kind": "kill", "target": "any", "count": 1, "description": "清理僵尸" }
+          ],
+          "reward": { "xp": 10.0, "skill": "melee", "label": "10 经验" }
+        }
+      ]
+    })";
+    f.config.Set("missions", nlohmann::json::parse(baseMissions));
+    REQUIRE(game::LoadMissionConfig(f.config, &f.missionConfig, &error));
+    f.ctx.missionConfig = &f.missionConfig;
+    f.ctx.missionSourceJson = f.config.Raw()["missions"].dump();
+
+    const std::string missionJson = R"({
+      "format": "missions-v1",
+      "defs": [
+        {
+          "id": "script_mission",
+          "name": "脚本任务",
+          "chain": "script",
+          "order": 1,
+          "kind": "once",
+          "source": "note",
+          "prerequisite": "base_script",
+          "objectives": [
+            { "kind": "kill", "target": "any", "count": 2, "description": "清理两只僵尸" }
+          ],
+          "reward": { "xp": 20.0, "skill": "melee", "label": "20 经验" }
+        }
+      ]
+    })";
+    CHECK(f.api.RegisterMissions("test_mod", missionJson, error) == 1);
+    CHECK(error.empty());
+    REQUIRE(f.missionConfig.defs.size() == 2);
+    REQUIRE(f.missionConfig.Find("script_mission") != nullptr);
+    CHECK(f.missionConfig.Find("script_mission")->prerequisite == "base_script");
+    CHECK(f.ctx.dynamicContentCount == 2);
+
+    CHECK(f.api.RegisterMissions("test_mod", missionJson, error) == 0);
+    CHECK_FALSE(error.empty());
+    CHECK(f.missionConfig.defs.size() == 2);
+
+    const std::string badPrerequisite = R"({
+      "format": "missions-v1",
+      "defs": [
+        {
+          "id": "bad_script_mission",
+          "name": "坏前置",
+          "chain": "bad",
+          "order": 1,
+          "kind": "once",
+          "source": "note",
+          "prerequisite": "missing_mission",
+          "objectives": [
+            { "kind": "kill", "target": "any", "count": 1, "description": "清理僵尸" }
+          ],
+          "reward": { "xp": 1.0, "skill": "melee", "label": "1 经验" }
+        }
+      ]
+    })";
+    CHECK(f.api.RegisterMissions("test_mod", badPrerequisite, error) == 0);
+    CHECK_FALSE(error.empty());
+    CHECK(f.missionConfig.defs.size() == 2);
+    CHECK(f.missionConfig.Find("bad_script_mission") == nullptr);
+
+    f.poiConfig.enabled = false;
+    CHECK(f.api.RegisterPois("test_mod", poiJson, error) == 0);
+    f.missionConfig.enabled = false;
+    CHECK(f.api.RegisterMissions("test_mod", missionJson, error) == 0);
 }

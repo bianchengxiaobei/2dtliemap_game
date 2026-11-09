@@ -5,6 +5,8 @@
 #include <cstdint>
 
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
+#include "characters/components/ProgressionComponents.h"
 #include "core/Log.h"
 #include "ecs/EcsWorld.h"
 
@@ -52,6 +54,8 @@ NeedsParams Sanitize(NeedsParams params) {
     params.thirstCritical = std::max(params.thirstMoveThreshold, params.thirstCritical);
     params.starvationHpPerSecond = ClampNonNegative(params.starvationHpPerSecond);
     params.dehydrationHpPerSecond = ClampNonNegative(params.dehydrationHpPerSecond);
+    params.nutritionHungerRelief = Clamp01(params.nutritionHungerRelief);
+    params.nutritionDamageRelief = Clamp01(params.nutritionDamageRelief);
     return params;
 }
 
@@ -76,12 +80,37 @@ void NeedsSystem::Update(ecs::EcsWorld& world, float dt) {
                 return;
             }
 
+            const ecs::Progression* progression =
+                registry.try_get<ecs::Progression>(entity);
+            const float hungerScale =
+                progression != nullptr
+                    ? std::clamp(progression->hungerDecayScale, 0.1f, 1.0f)
+                    : 1.0f;
+            const float thirstScale =
+                progression != nullptr
+                    ? std::clamp(progression->thirstDecayScale, 0.1f, 1.0f)
+                    : 1.0f;
+            const float fatigueScale =
+                progression != nullptr
+                    ? std::clamp(progression->fatigueDecayScale, 0.1f, 1.0f)
+                    : 1.0f;
+            const auto* food = registry.try_get<ecs::FoodState>(entity);
+            const float nutrition =
+                food != nullptr ? Clamp01(food->nutrition) : 0.0f;
+            const float nutritionHungerScale =
+                1.0f - m_params.nutritionHungerRelief * nutrition;
+
             needs.hunger =
-                std::clamp(needs.hunger + m_params.hungerPerDay * share, 0.0f, 1.0f);
+                std::clamp(needs.hunger + m_params.hungerPerDay * share *
+                                              hungerScale *
+                                              nutritionHungerScale,
+                           0.0f, 1.0f);
             needs.thirst =
-                std::clamp(needs.thirst + m_params.thirstPerDay * share, 0.0f, 1.0f);
+                std::clamp(needs.thirst + m_params.thirstPerDay * share * thirstScale,
+                           0.0f, 1.0f);
             needs.fatigue =
-                std::clamp(needs.fatigue + m_params.fatiguePerDay * share, 0.0f, 1.0f);
+                std::clamp(needs.fatigue + m_params.fatiguePerDay * share * fatigueScale,
+                           0.0f, 1.0f);
 
             const float hungerDamage =
                 Severity(needs.hunger, m_params.hungerDamageThreshold);
@@ -104,9 +133,12 @@ void NeedsSystem::Update(ecs::EcsWorld& world, float dt) {
                 Severity(needs.hunger, m_params.hungerCritical);
             const float dehydration =
                 Severity(needs.thirst, m_params.thirstCritical);
-            needs.healthDrainPerSecond =
-                m_params.starvationHpPerSecond * starvation +
+            const float starvationRate = m_params.starvationHpPerSecond * starvation;
+            const float dehydrationRate =
                 m_params.dehydrationHpPerSecond * dehydration;
+            needs.healthDrainPerSecond =
+                (starvationRate + dehydrationRate) *
+                (1.0f - m_params.nutritionDamageRelief * nutrition);
 
             const bool critical = needs.hunger >= m_params.hungerCritical ||
                                   needs.thirst >= m_params.thirstCritical;
@@ -125,11 +157,18 @@ void NeedsSystem::Update(ecs::EcsWorld& world, float dt) {
 
             if (needs.healthDrainPerSecond > 0.0f) {
                 const bool wasAlive = health->current > 0.0f;
-                health->current =
-                    std::max(0.0f, health->current -
-                                       needs.healthDrainPerSecond * step);
+                const float drain = needs.healthDrainPerSecond * step;
+                health->current = std::max(0.0f, health->current - drain);
+                ecs::LastDamage& last =
+                    registry.get_or_emplace<ecs::LastDamage>(entity);
+                last.cause = dehydrationRate > starvationRate
+                                 ? ecs::DamageCause::Dehydration
+                                 : ecs::DamageCause::Starvation;
+                last.amount = drain;
                 if (wasAlive && health->current <= 0.0f) {
-                    ZL_INFO("needs", "玩家因饥饿/脱水耗尽生命");
+                    ZL_INFO("needs", "玩家因{}耗尽生命",
+                            last.cause == ecs::DamageCause::Dehydration ? "脱水"
+                                                                        : "饥饿");
                 }
             }
         });

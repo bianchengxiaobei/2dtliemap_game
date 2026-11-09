@@ -1,8 +1,12 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <variant>
@@ -35,6 +39,46 @@ bool WaitForChange(script::ModWatcher& watcher, const std::string& modId) {
     return false;
 }
 
+std::optional<script::ModWatcher::ContentChange> WaitForContentChange(
+    script::ModWatcher& watcher, const std::string& modId) {
+    for (int attempt = 0; attempt < 300; ++attempt) {
+        for (const script::ModWatcher::ContentChange& change :
+             watcher.PollContentChanges()) {
+            if (change.modId == modId) {
+                return change;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return std::nullopt;
+}
+
+std::vector<script::ModWatcher::ContentChange> CollectContentChanges(
+    script::ModWatcher& watcher, const std::string& modId, int milliseconds) {
+    std::vector<script::ModWatcher::ContentChange> out;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(milliseconds);
+    while (std::chrono::steady_clock::now() < deadline) {
+        for (const script::ModWatcher::ContentChange& change :
+             watcher.PollContentChanges()) {
+            if (change.modId == modId) {
+                out.push_back(change);
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return out;
+}
+
+void WriteModFile(const TempModRoot& mods, const std::string& id,
+                  const std::string& relative, const std::string& text) {
+    const std::filesystem::path path = mods.root / id / relative;
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << text;
+}
+
 }  // namespace
 
 TEST_CASE("M7-T6：ModWatcher 检测文件变更（不初始触发、不重复、按 mod 隔离）") {
@@ -53,6 +97,24 @@ TEST_CASE("M7-T6：ModWatcher 检测文件变更（不初始触发、不重复�
     mods.WriteLua("hot", "print('v3')");
     CHECK(WaitForChange(watcher, "hot"));
     CHECK(watcher.PollChanges().empty());  // cold 从未变化
+}
+
+TEST_CASE("M7-T6：同尺寸同 mtime 覆盖仍触发（内容指纹）") {
+    TempModRoot mods;
+    mods.WriteLua("hot", "print('A')");
+    const std::filesystem::path script =
+        mods.root / "hot" / "scripts" / "main.lua";
+    std::error_code ec;
+    const std::filesystem::file_time_type stamp =
+        std::filesystem::last_write_time(script, ec);
+    REQUIRE_FALSE(ec);
+
+    script::ModWatcher watcher({{"hot", mods.root / "hot"}}, 1.0);
+    mods.WriteLua("hot", "print('B')");
+    std::filesystem::last_write_time(script, stamp, ec);
+    REQUIRE_FALSE(ec);
+
+    CHECK(WaitForChange(watcher, "hot"));
 }
 
 TEST_CASE("M7-T6：热重载端到端（检测→重载生效→失败禁用→修复恢复）") {
@@ -120,4 +182,77 @@ TEST_CASE("M7-T6：热重载端到端（检测→重载生效→失败禁用→�
     dispatchTick(4);
     const std::string afterRecovery = capture.Str().substr(lengthRecovered);
     CHECK(afterRecovery.find("v=3") != std::string::npos);
+}
+
+TEST_CASE("X3-T1：content/assets 变更分类、防抖并与脚本热重载隔离") {
+    TempModRoot mods;
+    mods.WriteLua("hot", "print('v1')");
+    WriteModFile(mods, "hot", "content/items.json", "{\"v\":1}");
+    WriteModFile(mods, "hot", "assets/asset_manifest.json", "{\"v\":1}");
+
+    script::ModWatcher watcher({{"hot", mods.root / "hot"}}, 0.02, 0.12);
+    CHECK(watcher.PollChanges().empty());
+    CHECK(watcher.PollContentChanges().empty());
+
+    mods.WriteLua("hot", "print('v2')");
+    CHECK(WaitForChange(watcher, "hot"));
+    CHECK(watcher.PollContentChanges().empty());
+
+    WriteModFile(mods, "hot", "content/items.json", "{\"v\":2}");
+    const auto contentChange = WaitForContentChange(watcher, "hot");
+    REQUIRE(contentChange.has_value());
+    CHECK(contentChange->content);
+    CHECK_FALSE(contentChange->assets);
+    CHECK(watcher.PollChanges().empty());  // content 变更不触发脚本重载
+
+    WriteModFile(mods, "hot", "assets/asset_manifest.json", "{\"v\":2}");
+    const auto assetChange = WaitForContentChange(watcher, "hot");
+    REQUIRE(assetChange.has_value());
+    CHECK_FALSE(assetChange->content);
+    CHECK(assetChange->assets);
+    CHECK(watcher.PollChanges().empty());
+}
+
+TEST_CASE("X3-T1：连续写入 content/assets 合并为一次防抖通知") {
+    TempModRoot mods;
+    WriteModFile(mods, "hot", "content/items.json", "{\"v\":1}");
+    WriteModFile(mods, "hot", "assets/asset_manifest.json", "{\"v\":1}");
+
+    script::ModWatcher watcher({{"hot", mods.root / "hot"}}, 0.02, 0.15);
+    CHECK(watcher.PollContentChanges().empty());
+
+    WriteModFile(mods, "hot", "content/items.json", "{\"v\":2}");
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    WriteModFile(mods, "hot", "content/items.json", "{\"v\":3}");
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    WriteModFile(mods, "hot", "assets/asset_manifest.json", "{\"v\":2}");
+
+    const auto changes = CollectContentChanges(watcher, "hot", 600);
+    REQUIRE(changes.size() == 1u);
+    CHECK(changes[0].content);
+    CHECK(changes[0].assets);
+}
+
+TEST_CASE("X3-T1：仅 content 的 mod 也能监听，未变化 mod 不通知") {
+    TempModRoot mods;
+    WriteModFile(mods, "content_only", "content/items.json", "{\"v\":1}");
+    WriteModFile(mods, "cold", "content/items.json", "{\"v\":1}");
+
+    script::ModWatcher watcher(
+        {{"content_only", mods.root / "content_only"},
+         {"cold", mods.root / "cold"}},
+        0.02, 0.08);
+    CHECK(watcher.PollContentChanges().empty());
+
+    WriteModFile(mods, "content_only", "content/items.json", "{\"v\":2}");
+    const auto change = WaitForContentChange(watcher, "content_only");
+    REQUIRE(change.has_value());
+    CHECK(change->content);
+    CHECK_FALSE(change->assets);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    const auto all = watcher.PollContentChanges();
+    CHECK(std::none_of(all.begin(), all.end(), [](const auto& item) {
+        return item.modId == "cold";
+    }));
 }

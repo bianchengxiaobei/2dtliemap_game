@@ -93,8 +93,53 @@ TEST_CASE("M11-T1：AudioEngine null device 播放/停止与音量组") {
     engine.SetListener({10.0f, 10.0f});
     engine.Update(0.016f);
     CHECK(engine.GetStats().played >= 2);
+
+    const audio::AudioHandle vehicleEngine =
+        engine.Play3D(audio::kVehicleEngine, {11.0f, 9.0f},
+                      audio::AudioGroup::SFX, 0.3f, true, 18.0f, true);
+    CHECK(vehicleEngine.Valid());
+    engine.SetPosition(vehicleEngine, {11.5f, 9.5f});
+    engine.SetVolume(vehicleEngine, 0.55f);
+    engine.SetPitch(vehicleEngine, 1.1f);
+    engine.Update(0.016f);
+    CHECK(engine.GetStats().activeVoices >= 2);
+    const audio::AudioHandle vehicleRam =
+        engine.Play3D(audio::kVehicleRam, {11.5f, 9.5f},
+                      audio::AudioGroup::SFX, 0.9f, false, 18.0f);
+    CHECK(vehicleRam.Valid());
+    const audio::AudioHandle vehicleHorn =
+        engine.Play3D(audio::kVehicleHorn, {11.5f, 9.5f},
+                      audio::AudioGroup::SFX, 0.8f, false, 24.0f);
+    CHECK(vehicleHorn.Valid());
+    const audio::AudioHandle vehicleHit =
+        engine.Play3D(audio::kVehicleHit, {11.5f, 9.5f},
+                      audio::AudioGroup::SFX, 0.78f, false, 18.0f);
+    CHECK(vehicleHit.Valid());
+    engine.Stop(vehicleEngine);
+    CHECK(engine.GetStats().activeVoices >= 2);
     engine.StopAll();
     CHECK(engine.GetStats().activeVoices == 0);
+    engine.Shutdown();
+}
+
+TEST_CASE("M30-T10：战斗音效资源可加载") {
+    audio::AudioEngineOptions options;
+    options.root = std::string(ZL_SOURCE_DIR) + "/assets/audio";
+    options.device = "null";
+    audio::AudioEngine engine;
+    REQUIRE(engine.Init(options));
+    const char* clips[] = {
+        audio::kMeleeSwingLight, audio::kMeleeSwingHeavy, audio::kMeleeHit,
+        audio::kMeleeBlock,      audio::kMeleeParry,      audio::kMeleeGuardBreak,
+        audio::kMeleeDodge,
+    };
+    for (const char* clip : clips) {
+        const audio::AudioHandle handle =
+            engine.Play3D(clip, {12.0f, 8.0f}, audio::AudioGroup::SFX, 0.8f,
+                          false, 8.0f);
+        CHECK(handle.Valid());
+    }
+    engine.StopAll();
     engine.Shutdown();
 }
 

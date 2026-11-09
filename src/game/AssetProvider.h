@@ -52,7 +52,8 @@ public:
     // provider 不可用（图集缺失/帧缺失）时逐项回退 own；
     // 返回 false 表示 manifest 都没加载成功（资源缺失，渲染会退化）
     bool Init(const std::string& manifestPath, const std::string& provider,
-              render::AtlasManager& atlases);
+              render::AtlasManager& atlases,
+              const std::vector<std::string>& modManifestPaths = {});
 
     const std::string& Provider() const { return m_provider; }
     bool Has(std::string_view logical) const;

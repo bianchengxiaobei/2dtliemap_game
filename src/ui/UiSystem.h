@@ -82,10 +82,13 @@ public:
     void ShowPauseMenu();
     // M14-T8：单机局结束结算；native 面板独立于脚本主菜单，保证核心流程可用。
     void ShowEndScreen(bool victory, const std::string& title,
-                       const std::string& subtitle, const std::string& stats);
+                       const std::string& subtitle, const std::string& stats,
+                       bool showRestart = true);
     void HideMenu();
     bool IsMenuOpen() const;
     bool IsMenuSettingsOpen() const;
+    // 鼠标是否悬停在可交互 UI 元素上（body/文档背景不算）。
+    bool IsPointerOverUi() const;
     void SyncMenuChrome(bool open);
 
     void SetMultiplayerActionHandler(MultiplayerActionHandler handler);
@@ -173,10 +176,55 @@ private:
     Rml::Element* m_hpTextElement = nullptr;
     Rml::Element* m_staminaFillElement = nullptr;
     Rml::Element* m_staminaTextElement = nullptr;
+    Rml::Element* m_combatStatusElement = nullptr;
+    Rml::Element* m_rangedStatusElement = nullptr;
+    Rml::Element* m_forageStatusElement = nullptr;
+    Rml::Element* m_fishingStatusElement = nullptr;
     Rml::Element* m_needsStatusElement = nullptr;
+    Rml::Element* m_woundStatusElement = nullptr;
+    Rml::Element* m_painStatusElement = nullptr;
+    Rml::Element* m_armorStatusElement = nullptr;
+    Rml::Element* m_infectionStatusElement = nullptr;
+    Rml::Element* m_weatherStatusElement = nullptr;
+    Rml::Element* m_weatherOverlayElement = nullptr;
+    Rml::Element* m_threatStatusElement = nullptr;
+    std::array<Rml::Element*, 4> m_threatEdges{};
     Rml::Element* m_objectivePanelElement = nullptr;
     Rml::Element* m_objectiveElement = nullptr;
     Rml::Element* m_objectiveHintElement = nullptr;
+    Rml::Element* m_poiGuideElement = nullptr;
+    Rml::Element* m_missionGuideElement = nullptr;
+    Rml::Element* m_eventGuideElement = nullptr;
+    Rml::Element* m_siegeStatusElement = nullptr;
+    Rml::Element* m_baseStatusElement = nullptr;
+    Rml::Element* m_modFieldsElement = nullptr;
+    std::array<Rml::Element*, 8> m_modFieldRows{};
+    std::array<Rml::Element*, 8> m_modFieldLabels{};
+    std::array<Rml::Element*, 8> m_modFieldValues{};
+    Rml::Element* m_siegeReportElement = nullptr;
+    Rml::Element* m_siegeReportTitleElement = nullptr;
+    Rml::Element* m_siegeReportRatingElement = nullptr;
+    Rml::Element* m_siegeReportHintElement = nullptr;
+    std::array<Rml::Element*, 8> m_siegeReportLineElements{};
+    Rml::Element* m_levelPanelElement = nullptr;
+    Rml::Element* m_levelTextElement = nullptr;
+    Rml::Element* m_levelPerkElement = nullptr;
+    Rml::Element* m_levelFillElement = nullptr;
+    Rml::Element* m_levelXpElement = nullptr;
+    Rml::Element* m_perkPromptElement = nullptr;
+    Rml::Element* m_characterPanelElement = nullptr;
+    Rml::Element* m_characterLevelElement = nullptr;
+    Rml::Element* m_characterXpElement = nullptr;
+    Rml::Element* m_characterXpFillElement = nullptr;
+    Rml::Element* m_characterPerksElement = nullptr;
+    std::array<Rml::Element*, 4> m_characterSkillElements{};
+    std::array<Rml::Element*, 3> m_perkChoiceElements{};
+    Rml::Element* m_dialoguePanelElement = nullptr;
+    Rml::Element* m_dialogueSpeakerElement = nullptr;
+    Rml::Element* m_dialogueTextElement = nullptr;
+    std::array<Rml::Element*, 5> m_dialogueOptionElements{};
+    Rml::Element* m_dialogueHintElement = nullptr;
+    Rml::Element* m_actionHintElement = nullptr;
     Rml::Element* m_noticeElement = nullptr;
     std::array<Rml::Element*, 5> m_hotbarSlots{};
     std::array<Rml::Element*, 5> m_hotbarNames{};

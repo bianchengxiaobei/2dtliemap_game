@@ -1,5 +1,7 @@
 #include "world/Chunk.h"
 
+#include <bit>
+
 #include "core/Log.h"
 
 namespace zl::world {
@@ -33,6 +35,11 @@ std::uint64_t HashSquare(const GridSquare& square) {
             hash = HashMix(hash, static_cast<std::uint16_t>(object.offsetX));
             hash = HashMix(hash, static_cast<std::uint16_t>(object.offsetY));
             hash = HashMix(hash, object.blocksMovement ? 1u : 0u);
+            hash = HashMix(hash, std::bit_cast<std::uint32_t>(object.hp));
+            hash = HashMix(hash, object.playerBuilt ? 1u : 0u);
+            hash = HashString(hash, object.underlay);
+            hash = HashMix(hash, object.structureId);
+            hash = HashMix(hash, object.ownerStableId);
         }
     }
     return hash;

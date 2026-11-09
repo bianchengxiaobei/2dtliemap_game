@@ -1,5 +1,7 @@
 #include "items/InventoryOps.h"
 
+#include "items/Spoilage.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -47,7 +49,9 @@ int AddItem(ecs::Container& container, const ItemRegistry& registry,
         if (added >= item.count) {
             break;
         }
-        if (entry.defId != def->id || entry.count >= def->maxStack) {
+        if (entry.defId != def->id || entry.count >= def->maxStack ||
+            std::abs(entry.condition - item.condition) > 1e-3f ||
+            entry.loadedAmmo != item.loadedAmmo) {
             continue;
         }
         const int take =
@@ -67,7 +71,8 @@ int AddItem(ecs::Container& container, const ItemRegistry& registry,
         if (take <= 0) {
             break;
         }
-        container.items.push_back(ecs::ItemInstance{def->id, take, item.condition});
+        container.items.push_back(
+            ecs::ItemInstance{def->id, take, item.condition, item.loadedAmmo});
         added += take;
         freeKg -= static_cast<float>(take) * def->weight;
     }
@@ -110,7 +115,8 @@ bool TakeAt(ecs::Container& container, std::size_t index, int count,
         return false;
     }
     if (out != nullptr) {
-        *out = ecs::ItemInstance{entry.defId, take, entry.condition};
+        *out = ecs::ItemInstance{entry.defId, take, entry.condition,
+                                 entry.loadedAmmo};
     }
     entry.count -= take;
     if (entry.count <= 0) {
@@ -139,7 +145,10 @@ bool MoveStack(ecs::Container& container, const ItemRegistry& registry, std::siz
     ecs::ItemInstance& source = container.items[from];
     ecs::ItemInstance& target = container.items[to];
     const ItemDef* def = registry.Find(source.defId);
-    if (def != nullptr && source.defId == target.defId && target.count < def->maxStack) {
+    if (def != nullptr && source.defId == target.defId &&
+        target.count < def->maxStack &&
+        std::abs(source.condition - target.condition) <= 1e-3f &&
+        source.loadedAmmo == target.loadedAmmo) {
         const int space = def->maxStack - target.count;
         const int take = std::min(space, source.count);
         target.count += take;
@@ -241,30 +250,37 @@ bool Unequip(ecs::Equipment& equipment, ecs::EquipSlot slot, ecs::ItemInstance* 
     return true;
 }
 
-UseResult UseFirstConsumable(ecs::Container& container, const ItemRegistry& registry) {
-    UseResult result;
-    for (auto it = container.items.begin(); it != container.items.end(); ++it) {
-        const ItemDef* def = registry.Find(it->defId);
-        if (def == nullptr || !def->use.Any()) {
-            continue;  // 不可使用（工具/装备/坏数据）：跳过
-        }
-        result.applied = true;
-        result.defId = def->id;
-        result.effect = def->use;
-        it->count -= 1;
-        if (it->count <= 0) {
-            container.items.erase(it);
-            result.remaining = 0;
-        } else {
-            result.remaining = it->count;
-        }
-        return result;
+namespace {
+
+bool WearEquippedSlot(ecs::Equipment& equipment, ecs::EquipSlot slot,
+                      float amount) {
+    if (!(amount > 0.0f)) {
+        return false;
     }
-    return result;  // 无可使用物品
+    std::optional<ecs::ItemInstance>& slotRef =
+        equipment.slots[static_cast<std::size_t>(slot)];
+    if (!slotRef.has_value() || !(slotRef->condition > 0.0f)) {
+        return false;
+    }
+    slotRef->condition =
+        std::max(0.0f, slotRef->condition - std::clamp(amount, 0.0f, 1.0f));
+    return slotRef->condition <= 0.0f;
 }
 
-UseResult UseAt(ecs::Container& container, const ItemRegistry& registry,
-                std::size_t index) {
+}  // namespace
+
+bool WearEquippedWeapon(ecs::Equipment& equipment, float amount) {
+    return WearEquippedSlot(equipment, ecs::EquipSlot::PrimaryHand, amount);
+}
+
+bool WearEquippedArmor(ecs::Equipment& equipment, float amount) {
+    return WearEquippedSlot(equipment, ecs::EquipSlot::Body, amount);
+}
+
+namespace {
+
+UseResult ConsumeAt(ecs::Container& container, const ItemRegistry& registry,
+                    std::size_t index) {
     UseResult result;
     if (index >= container.items.size()) {
         return result;
@@ -277,6 +293,26 @@ UseResult UseAt(ecs::Container& container, const ItemRegistry& registry,
     result.applied = true;
     result.defId = def->id;
     result.effect = def->use;
+    result.spoiled = IsSpoiled(entry, *def);
+
+    const ItemDef* replacement =
+        def->use.replaceWith.empty() ? nullptr
+                                     : registry.Find(def->use.replaceWith);
+    if (replacement != nullptr) {
+        result.replacementDefId = replacement->id;
+        if (entry.count <= 1) {
+            entry.defId = replacement->id;
+            entry.condition = 1.0f;
+            result.remaining = 1;
+        } else {
+            entry.count -= 1;
+            result.remaining = entry.count;
+            (void)AddItem(container, registry,
+                          ecs::ItemInstance{replacement->id, 1, 1.0f});
+        }
+        return result;
+    }
+
     entry.count -= 1;
     if (entry.count <= 0) {
         container.items.erase(container.items.begin() +
@@ -286,6 +322,24 @@ UseResult UseAt(ecs::Container& container, const ItemRegistry& registry,
         result.remaining = entry.count;
     }
     return result;
+}
+
+}  // namespace
+
+UseResult UseFirstConsumable(ecs::Container& container, const ItemRegistry& registry) {
+    for (std::size_t i = 0; i < container.items.size(); ++i) {
+        const ItemDef* def = registry.Find(container.items[i].defId);
+        if (def == nullptr || !def->use.Any()) {
+            continue;  // 不可使用（工具/装备/坏数据）：跳过
+        }
+        return ConsumeAt(container, registry, i);
+    }
+    return UseResult{};  // 无可使用物品
+}
+
+UseResult UseAt(ecs::Container& container, const ItemRegistry& registry,
+                std::size_t index) {
+    return ConsumeAt(container, registry, index);
 }
 
 float ApplyUseEffect(const UseEffect& effect, float hpMax, float* hpCurrent, float* hunger,

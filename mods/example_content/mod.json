@@ -1,0 +1,7 @@
+{
+  "id": "example_content",
+  "name": "Example Content",
+  "version": "1.0.0",
+  "api": 1,
+  "loadOrder": 150
+}

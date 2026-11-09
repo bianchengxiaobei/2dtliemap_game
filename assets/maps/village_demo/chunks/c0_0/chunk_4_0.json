@@ -1,0 +1,154 @@
+{
+ "cx": 4,
+ "cy": 0,
+ "floors": [
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "wwwwwwwwww",
+  "wwwwwwwwww",
+  "wwwwwwwwww",
+  "wwwwwwwwww"
+ ],
+ "objects": [
+  {
+   "x": 0,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 3,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 7,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 7,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.workbench",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.fridge"
+  },
+  {
+   "x": 9,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.fridge"
+  },
+  {
+   "x": 0,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 1,
+   "y": 7,
+   "w": 9,
+   "h": 3,
+   "id": 14,
+   "name": "poi_supermarket"
+  }
+ ]
+}

@@ -19,6 +19,7 @@ inline constexpr std::string_view kOnChunkUnloaded = "OnChunkUnloaded";
 inline constexpr std::string_view kOnSaveBegin = "OnSaveBegin";
 inline constexpr std::string_view kOnSaveEnd = "OnSaveEnd";
 inline constexpr std::string_view kOnModReload = "OnModReload";
+inline constexpr std::string_view kOnUiFrame = "OnUiFrame";
 inline constexpr std::string_view kOnUiReady = "OnUiReady";
 inline constexpr std::string_view kOnUiEvent = "OnUiEvent";
 inline constexpr std::string_view kOnMenuChanged = "OnMenuChanged";

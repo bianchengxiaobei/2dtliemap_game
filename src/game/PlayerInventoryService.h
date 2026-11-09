@@ -1,12 +1,15 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "characters/components/CharacterComponents.h"
+#include "game/FoodSafety.h"
+#include "game/ProgressionRules.h"
 #include "ecs/EcsWorld.h"
 #include "items/ItemComponents.h"
 #include "ui/InventoryUi.h"
@@ -18,7 +21,9 @@ class EventBus;
 namespace zl::items {
 class ItemRegistry;
 class RecipeRegistry;
+class LootTableRegistry;
 struct RecipeDef;
+struct UseResult;
 }  // namespace zl::items
 
 namespace zl::world {
@@ -54,7 +59,14 @@ struct InventoryServiceOptions {
     std::string repairKitDefId = "repair_kit";
     int repairKitCount = 1;
     float repairAmount = 0.5f;
+    float spoiledFoodDamage = 4.0f;
+    FoodSafetyParams foodSafety;
     std::unordered_map<std::string, std::string> stationLabels;
+    // M19-F1：服务器制作耗时按玩家制作技能/Perk 缩放；为空时保持基础耗时。
+    const ProgressionConfig* progression = nullptr;
+    // M19-F2：服务器权威 POI/容器搜刮与任务事件回调。
+    const items::LootTableRegistry* lootTables = nullptr;
+    std::function<void(ecs::Entity, std::string_view)> lootSearched;
 };
 
 class PlayerInventoryService {
@@ -78,6 +90,9 @@ public:
     InventoryResult DropEquipment(ecs::Entity player, int slot);
     InventoryResult EquipLoot(ecs::Entity player, std::uint64_t stableId, int slot);
     InventoryResult RepairBag(ecs::Entity player, int index);
+    // M19-F2：服务器权威首次搜刮；lootTables 为空时拒绝。
+    InventoryResult SearchLoot(ecs::Entity player, std::uint64_t stableId,
+                               std::string* tableId = nullptr);
 
     // UI 拖拽/按钮动作的统一入口（Transfer/Use/Equip/Drop/Repair/Pickup/制作队列）。
     InventoryResult Dispatch(ecs::Entity player, const ui::InventoryAction& action);
@@ -93,12 +108,32 @@ private:
     bool RecipeKnown(const ecs::KnownRecipes* known, std::string_view recipeId) const;
     bool StationNearby(std::string_view station, float x, float y, int z) const;
     std::string StationLabel(std::string_view station) const;
+    float CraftSeconds(ecs::Entity player, const items::RecipeDef& recipe,
+                       float efficiency) const;
 
     void ReturnOrDrop(ecs::Entity player, const ecs::ItemInstance& item);
+    bool ApplyUseInfectionRisk(ecs::Entity player, std::string_view defId,
+                               float risk);
+    void ApplyFoodUse(ecs::Entity player, const items::ItemDef& def,
+                      const items::UseResult& use);
     InventoryResult StartCraft(ecs::Entity player, const items::RecipeDef& recipe,
                                int requested, int* actual);
     InventoryResult StartNextQueued(ecs::Entity player, std::string prefix);
     void ClearCrafting(ecs::CraftingJob& job) const;
+
+    ecs::Entity FindNearbyStorage(ecs::Entity player) const;
+    bool StorageAccessible(ecs::Entity player, ecs::Entity storage) const;
+    InventoryResult StoreItemInStorage(ecs::Entity player, ecs::Entity storage,
+                                       int index, int count);
+    InventoryResult TakeItemFromStorage(ecs::Entity player, ecs::Entity storage,
+                                        int index, int count);
+    InventoryResult StoreAllInStorage(ecs::Entity player, ecs::Entity storage);
+    InventoryResult TakeAllFromStorage(ecs::Entity player, ecs::Entity storage);
+    InventoryResult SortStorage(ecs::Entity player, ecs::Entity storage);
+    InventoryResult TakeLootContainer(ecs::Entity player, ecs::Entity source,
+                                      int index, int count);
+    InventoryResult EquipLootContainer(ecs::Entity player, ecs::Entity source,
+                                       int index, int slot);
 
     ecs::EcsWorld& m_world;
     const items::ItemRegistry& m_items;
@@ -107,6 +142,8 @@ private:
     core::EventBus* m_events = nullptr;
     InventoryServiceOptions m_options;
     std::unordered_set<std::string> m_lockedRecipes;
+    std::uint64_t m_foodUseSerial = 0;
+    std::uint64_t m_useRiskSerial = 0;
 };
 
 }  // namespace zl::game

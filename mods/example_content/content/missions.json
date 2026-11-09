@@ -1,0 +1,29 @@
+{
+  "format": "missions-v1",
+  "defs": [
+    {
+      "id": "mod_depot_supply",
+      "name": "模组补给站",
+      "chain": "mod_depot",
+      "order": 1,
+      "kind": "once",
+      "source": "note",
+      "prerequisite": "",
+      "objectives": [
+        {
+          "kind": "poi",
+          "target": "mod_depot",
+          "count": 1,
+          "description": "清剿模组补给站守军并搜索补给箱"
+        }
+      ],
+      "reward": {
+        "xp": 30.0,
+        "skill": "survival",
+        "item": "camp_stew",
+        "itemCount": 1,
+        "label": "30 生存经验 + 营地炖豆×1"
+      }
+    }
+  ]
+}

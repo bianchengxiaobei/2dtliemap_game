@@ -279,16 +279,19 @@ bool ApplyEntity(const SavedEntity& saved, ecs::EcsWorld& world,
             }
             continue;
         }
-        if (component.version != codec->version) {
+        if (component.version < codec->minimumVersion ||
+            component.version > codec->version) {
             return Fail(error, "组件 " + codec->name + " 版本不兼容: 读取到 " +
                                    std::to_string(component.version) +
                                    "，支持版本 " +
+                                   std::to_string(codec->minimumVersion) + "–" +
                                    std::to_string(codec->version));
         }
 
         BinaryReader reader(component.bytes);
         SegmentHeader header;
-        if (!reader.BeginSegment(header, component.type, codec->version)) {
+        if (!reader.BeginSegment(header, component.type,
+                                 codec->minimumVersion, codec->version)) {
             return Fail(error, "组件 " + codec->name + " 段头无效: " +
                                    reader.Error());
         }

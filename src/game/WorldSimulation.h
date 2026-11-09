@@ -3,10 +3,13 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <glm/glm.hpp>
 
+#include "characters/systems/CombatSystem.h"
 #include "ecs/EcsWorld.h"
+#include "game/Weather.h"
 
 namespace zl::ai {
 class AiSystem;
@@ -16,6 +19,7 @@ class PathfindingService;
 class PerceptionSystem;
 class SpawnLodSystem;
 class VirtualHordeStore;
+class ZombieSpecialSystem;
 }  // namespace zl::ai
 
 namespace zl::characters {
@@ -32,11 +36,16 @@ class TaskScheduler;
 namespace zl::ecs {
 class EcsWorld;
 class SpatialIndex;
+enum class ZombieVariantKind : std::uint8_t;
 }  // namespace zl::ecs
 
 namespace zl::physics {
 class PhysicsWorld;
-}  // namespace zl::physics
+}
+
+namespace zl::items {
+class ItemRegistry;
+}
 
 namespace zl::save {
 class ComponentRegistry;
@@ -51,6 +60,18 @@ class World;
 
 namespace zl::game {
 
+class AnimalRegistry;
+class AnimalSystem;
+class FireRegistry;
+class FireSystem;
+class SettlementNpcSystem;
+struct PoiConfig;
+struct SettlementConfig;
+
+// M30-T7：从 config/game.json 的 combat.rules.* 读取战斗参数；
+// 缺失键使用 CombatRuleConfig 默认值，返回前统一 Sanitize（客户端/服务器共用）。
+characters::CombatRuleConfig LoadCombatRuleConfig(const core::Config& config);
+
 // M13-T3：游戏模拟的单一组装点。
 //
 // GameApp（带窗口）与 ServerHost（无窗口）都通过本类持有同一套世界、ECS、物理、
@@ -61,6 +82,12 @@ public:
         core::Config* config = nullptr;
         core::EventBus* events = nullptr;
         core::GameTime* gameTime = nullptr;
+        items::ItemRegistry* items = nullptr;
+        const AnimalRegistry* animals = nullptr;
+        const PoiConfig* pois = nullptr;
+        const SettlementConfig* settlements = nullptr;
+        bool spawnAnimals = false;
+        FireRegistry* fire = nullptr;
         core::TaskScheduler* tasks = nullptr;
         save::SaveManager* saveManager = nullptr;
         save::ComponentRegistry* saveComponents = nullptr;
@@ -111,7 +138,12 @@ public:
                                      std::string* error = nullptr);
 
     // 测试/工具：在指定格生成一个游荡者（不等待 chunk；由调用方保证位置有效）。
-    ecs::Entity SpawnZombieAt(float x, float y);
+    // M24-T4：stableId 非 0 时按 StableId 幂等生成，供随机事件/存档去重。
+    ecs::Entity SpawnZombieAt(float x, float y,
+                              std::uint64_t stableId = 0);
+    // M19-F2：POI 守军等需要指定变体时使用；仍由调用方保证位置可走。
+    ecs::Entity SpawnZombieAt(float x, float y, ecs::ZombieVariantKind variant,
+                              std::uint64_t stableId = 0);
 
     // 服务器会话清理：销毁玩家/任意实体及物理体；会延迟到下一次 Flush 回收。
     void DespawnEntity(ecs::Entity entity);
@@ -135,7 +167,21 @@ public:
     ai::BoidsSystem* Boids();
     ai::VirtualHordeStore* VirtualHordes();
     ai::SpawnLodSystem* SpawnLod();
+    ai::ZombieSpecialSystem* ZombieSpecial();
     characters::CombatSystem* Combat();
+    // M30-T4：取走本帧累积的格挡/弹反/破防/闪避反馈，供表现层消费。
+    std::vector<characters::CombatSystem::BlockFeedback> TakeBlockFeedbacks();
+    // M30-T5：取走本帧累积的真实命中/破防反馈。
+    std::vector<characters::CombatSystem::HitFeedback> TakeHitFeedbacks();
+    SettlementNpcSystem* SettlementNpcs();
+    FireSystem* Fire();
+    AnimalSystem* Animals();
+
+    // M20-F2：当前天气由游戏时间确定性采样，可随时供 HUD/脚本读取。
+    WeatherState CurrentWeather() const;
+    // M24-T4：寒潮事件临时覆盖天气；只存在运行时，不写存档。
+    void SetWeatherOverride(WeatherKind kind, float durationMinutes);
+    void ClearWeatherOverride();
 
 private:
     struct Impl;

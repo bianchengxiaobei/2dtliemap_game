@@ -72,6 +72,11 @@ void BoidsSystem::Update(ecs::EcsWorld& world) {
             } else {
                 candidate.maxSpeed = m_params.fallbackMaxSpeed;
             }
+            if (const auto* burning = registry.try_get<ecs::BurningZombie>(e);
+                burning != nullptr && burning->panicRemaining > 0.0f) {
+                candidate.maxSpeed *= std::clamp(burning->panicSpeedScale,
+                                                 0.5f, 3.0f);
+            }
             m_candidates.push_back(candidate);
         });
     if (m_candidates.empty()) {

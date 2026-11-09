@@ -6,6 +6,7 @@
 
 #include <entt/entt.hpp>
 
+#include "characters/components/CombatComponents.h"
 #include "ecs/EcsWorld.h"
 
 namespace zl::characters {
@@ -71,6 +72,7 @@ ecs::AnimClip AnimationSystem::SelectClip(const ecs::Velocity* velocity,
             case ecs::ActorAction::Dead:
                 return ecs::AnimClip::Death;
             case ecs::ActorAction::Attacking:
+            case ecs::ActorAction::Howling:
                 return ecs::AnimClip::Attack;
             case ecs::ActorAction::Hit:
                 return ecs::AnimClip::Hit;
@@ -164,7 +166,20 @@ void AnimationSystem::Update(ecs::EcsWorld& world, float dt) const {
             }
 
             const float speed2 = velocity.x * velocity.x + velocity.y * velocity.y;
-            if (speed2 >= kMoveThreshold * kMoveThreshold) {
+            // M30-T4：受击/格挡击退速度也会写进 Velocity；若据此改朝向，
+            // 连续格挡会在第一次成功后把角色转向远离攻击者，后续攻击全部
+            // 落在格挡扇区外。硬直或击退尚未衰减时保持原朝向，恢复后再
+            // 由正常移动更新。
+            bool knockbackHeld = false;
+            if (const auto* hit = registry.try_get<ecs::HitReaction>(entity);
+                hit != nullptr) {
+                const float hitSpeed2 = hit->vx * hit->vx + hit->vy * hit->vy;
+                knockbackHeld =
+                    (std::isfinite(hit->staggerLeft) && hit->staggerLeft > 0.0f) ||
+                    (std::isfinite(hitSpeed2) &&
+                     hitSpeed2 >= kMoveThreshold * kMoveThreshold);
+            }
+            if (!knockbackHeld && speed2 >= kMoveThreshold * kMoveThreshold) {
                 facing.dir = FacingFromVelocity(velocity.x, velocity.y);
             }
             Advance(anim, spec, dt);

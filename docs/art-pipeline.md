@@ -80,16 +80,19 @@
 
 - 地面：`tile.floor.grass` / `tile.floor.dirt` / `tile.floor.wood`；
 - 墙：`wall.brick` / `wall.door`；
+- 玩家建造：`object.wall_h` / `object.wall_v` / `object.door_closed_h` /
+  `object.door_closed_v` / `object.door_open_h` / `object.door_open_v`；
 - 角色：`character.placeholder`（玩家，保留旧名以兼容存档/测试）、
   `character.zombie`（僵尸）；
 - 尸体：`corpse.placeholder`；
 - 场景：`object.tree` / `object.workbench` / `object.campfire` /
-  `object.crate` / `object.locker` / `decor.grass_tuft`；
+  `object.crate` / `object.locker` / `object.bed` / `decor.grass_tuft`；
 - 物品：`item.<id>`，id 与 `assets/items.json` 一致；
 - 投射物/特效：`projectile.bullet` / `effect.impact`。
 
 新增资源必须同时更新 `assets/asset_manifest.json` 的 `own` 帧表；不得只把 PNG
-丢进目录。
+丢进目录。Mod 资源改为更新 `mods/<id>/assets/asset_manifest.json`，图集与 PNG 放在
+mod 自己的 `assets/` 下，启动时叠加到基础清单（X-F2b-2a）。
 
 ### 4.2 帧顺序
 
@@ -138,8 +141,8 @@
 本切片替换/新增：
 
 - 地面：4 个草地变体、2 个泥土、2 个木地板；
-- 墙：3 个砖墙变体、2 个门变体；
-- 玩家/僵尸：旧 4 向 × 2 帧 + v2 的 idle/attack/hit/death 新帧（walk 复用旧帧）；图集共 130 帧（含 M14-T5 木箱/储物柜、M14-T6 电台/撤离信标/无线电零件图标）；`wall.door` 为可通行 open-door 占位；
+- 墙：3 个砖墙变体、2 个门变体、2 个木墙朝向、4 个木门开关/朝向变体；
+- 玩家/僵尸：旧 4 向 × 2 帧 + v2 的 idle/attack/hit/death 新帧（walk 复用旧帧）；图集共 188 帧（含 M14-T5 木箱/储物柜、M14-T6 电台/撤离信标/无线电零件图标、M18-F4 木墙/木门、M25-T4 V12 八向皮卡）；`wall.door` 为可通行 open-door 占位；
 - 尸体 2 变体；树 3 变体；草丛 3 变体；工作台/篝火/木箱/储物柜各 1；僵尸变体复用同一套角色帧，通过 `ZombieVariant` 的色调与脚底锚点缩放区分，不新增帧；
 - 物品图标：代表性 9 个（斧、绷带、罐头、水、背包、锤、长矛、加固夹克、维修包）；
 - 投射物和命中特效各 1 个独立帧；

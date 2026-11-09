@@ -1,0 +1,29 @@
+{
+  "format": "pz-atlas-v1",
+  "source_pack": "example_content",
+  "page": "atlas_example0",
+  "image": "../../../assets/own/atlas_own.png",
+  "has_mask": false,
+  "subtextures": {
+    "mod_camp_stew": {
+      "x": 91,
+      "y": 1569,
+      "w": 15,
+      "h": 28,
+      "ox": 25,
+      "oy": 87,
+      "fx": 64,
+      "fy": 128
+    },
+    "mod_supply_crate": {
+      "x": 718,
+      "y": 1172,
+      "w": 49,
+      "h": 43,
+      "ox": 8,
+      "oy": 76,
+      "fx": 64,
+      "fy": 128
+    }
+  }
+}

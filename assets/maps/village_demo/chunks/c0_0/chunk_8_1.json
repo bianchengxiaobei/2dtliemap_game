@@ -2,15 +2,90 @@
  "cx": 8,
  "cy": 1,
  "floors": [
-  "ddgggggggg",
-  "ddgggggggg",
-  "ddgggggggg",
-  "ddgggggggg",
-  "ddgggggggg",
+  "ddddddwwww",
+  "ddggggwwww",
+  "ddggggwwww",
+  "ddggggwwww",
+  "ddggggwwww",
   "ddgggggggg",
   "ddgggggggg",
   "ddgggggggg",
   "ddgggggggg",
   "ddgggggggg"
+ ],
+ "objects": [
+  {
+   "x": 6,
+   "y": 0,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.door"
+  },
+  {
+   "x": 6,
+   "y": 1,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 7,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 7,
+   "y": 0,
+   "w": 3,
+   "h": 4,
+   "id": 15,
+   "name": "poi_police_station"
+  }
  ]
 }

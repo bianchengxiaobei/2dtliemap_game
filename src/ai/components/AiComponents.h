@@ -63,7 +63,8 @@ struct AiState {
     float actionTimer = 0.0f;    // 通用动作节流（重寻路/搜索巡点间隔，秒）
     float idleSeconds = 3.0f;    // 本次 Idle 时长（进入时按 StableId 确定性随机）
     std::uint64_t targetId = 0;  // 追击目标 StableId（0 = 当前未感知；PerceptionSystem 维护）
-    float attackCooldown = 0.0f;     // 攻击节拍计时（<=0 落一次攻击脉冲）
+    float attackCooldown = 0.0f;     // 攻击冷却（<=0 且无前摇时开始下一击）
+    float attackWindupLeft = 0.0f;   // M15-T3：可读攻击前摇剩余（秒；>0 = 蓄力中）
     std::uint32_t attackPulses = 0;  // 累计攻击次数（M5-T6 伤害挂钩点）
 };
 
@@ -89,6 +90,29 @@ struct LodState {
     std::uint8_t tier = 0;
     bool updateThisTick = true;
     float dtScale = 1.0f;
+};
+
+// M20-F3：夜间事件特殊僵尸标记。kind 只描述行为，不替换 ZombieVariant；
+// cooldown/windup 由 ZombieSpecialSystem 维护，windup 同时供 HUD/AI 表达可读预警。
+// serial 在每次成功嚎叫/破门时递增，表现层可据此去重音效与提示。
+enum class ZombieSpecialKind : std::uint8_t {
+    None = 0,
+    Howler = 1,
+    Breaker = 2,
+};
+
+struct ZombieSpecial {
+    ZombieSpecialKind kind = ZombieSpecialKind::None;
+    float cooldown = 0.0f;
+    float windup = 0.0f;
+    float windupDuration = 0.0f;
+    std::uint32_t serial = 0;
+};
+
+struct SiegeAssaultTarget {
+    float x = 0.0f;
+    float y = 0.0f;
+    bool active = false;
 };
 
 }  // namespace zl::ecs

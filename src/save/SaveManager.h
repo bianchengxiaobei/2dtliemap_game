@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,6 +44,7 @@ public:
         std::string name;
         std::string mapId;
         std::string gameVersion;
+        double gameMinutes = 0.0;
         std::vector<SavePlayer> players;
         ThumbnailImage thumbnail;
         const EntitySnapshot* entities = nullptr;
@@ -53,6 +55,7 @@ public:
         const EntitySnapshot* entities = nullptr;
         const ThumbnailImage* thumbnail = nullptr;
         const std::vector<ChunkDiff>* chunks = nullptr;
+        std::optional<double> gameMinutes;
     };
 
     explicit SaveManager(Options options);

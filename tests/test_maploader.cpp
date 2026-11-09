@@ -34,10 +34,11 @@ TEST_CASE("MapLoader::LoadMeta：village_demo 元数据（M3-T3）") {
     CHECK(meta.chunkY0 == 0);
     CHECK(meta.chunksX == 12);
     CHECK(meta.chunksY == 12);
-    CHECK(meta.legend.size() == 3u);
+    CHECK(meta.legend.size() == 4u);
     CHECK(meta.legend.at('g') == "tile.floor.grass");
     CHECK(meta.legend.at('d') == "tile.floor.dirt");
     CHECK(meta.legend.at('w') == "tile.floor.wood");
+    CHECK(meta.legend.at('a') == "tile.floor.water");
 
     CHECK(world::MapLoader::InBounds(meta, 0, 0));
     CHECK(world::MapLoader::InBounds(meta, 11, 11));
@@ -246,6 +247,27 @@ TEST_CASE("ApplyChunkData：纯数据挂接进运行时 Chunk") {
     CHECK(plain.RoomId() == -1);
 }
 
+TEST_CASE("M23-F2a-T3：池塘水面地块阻挡、泥岸可走") {
+    world::MapLoader::Meta meta;
+    std::string error;
+    REQUIRE(world::MapLoader::LoadMeta(kDemoDir, &meta, &error));
+    world::ChunkData data;
+    REQUIRE(world::MapLoader::LoadChunk(meta, 8, 3, &data, &error));
+
+    world::Chunk chunk(8, 3);
+    world::ApplyChunkData(data, chunk);
+
+    const world::GridSquare& water = chunk.Square(0, 0, 0);
+    REQUIRE(water.Floor() != nullptr);
+    CHECK(water.Floor()->sprite == "tile.floor.water");
+    CHECK(water.Floor()->blocksMovement);
+
+    const world::GridSquare& shore = chunk.Square(3, 0, 0);
+    REQUIRE(shore.Floor() != nullptr);
+    CHECK(shore.Floor()->sprite == "tile.floor.dirt");
+    CHECK_FALSE(shore.Floor()->blocksMovement);
+}
+
 TEST_CASE("MapLoader：整张 village_demo 全量解析一致性") {
     world::MapLoader::Meta meta;
     std::string error;
@@ -267,10 +289,10 @@ TEST_CASE("MapLoader：整张 village_demo 全量解析一致性") {
             roomOccurrences += static_cast<int>(data.rooms.size());
         }
     }
-    // 与生成器输出一致（确定性地图：131 个非默认 chunk / 402 对象（含 z=1 楼上、工作台、篝火与 T6 目标物）/ 15 房间出现）
-    CHECK(filesLoaded == 131);
-    CHECK(objectTotal == 402);
-    CHECK(roomOccurrences == 15);
+    // 与生成器输出一致（确定性地图：134 个非默认 chunk / 814 对象（含 z=1 楼上、工作台、篝火、T6 目标物、M19-F2/F6-T1/M24-T2 POI）/ 48 房间出现）
+    CHECK(filesLoaded == 134);
+    CHECK(objectTotal == 814);
+    CHECK(roomOccurrences == 48);
 }
 
 TEST_CASE("MapLoader：错误路径（坏元数据/坏 chunk）") {

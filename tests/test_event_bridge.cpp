@@ -141,6 +141,14 @@ TEST_CASE("M7-T4：事件表 v1 翻译（EventBus 载荷 → 脚本字段）") {
         CHECK(ready->name == "OnUiReady");
         CHECK(ready->fields.empty());
     }
+    // OnUiFrame：无字段，供 HUD 在暂停时按渲染帧刷新
+    {
+        const auto frame = script::EventBridge::Translate(
+            core::Event{std::string(core::kOnUiFrame), {}});
+        REQUIRE(frame.has_value());
+        CHECK(frame->name == "OnUiFrame");
+        CHECK(frame->fields.empty());
+    }
     // OnUiEvent：文档/元素/类型/值/键盘/鼠标
     {
         core::UiEvent ui;

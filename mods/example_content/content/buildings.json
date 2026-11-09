@@ -1,0 +1,16 @@
+{
+  "format": "buildings-v1",
+  "types": [
+    {
+      "id": "mod_supply_crate",
+      "name": "补给箱",
+      "sprite": "mod.supply_crate",
+      "woodCost": 3,
+      "maxHp": 0,
+      "blocksMovement": false,
+      "storageKg": 35,
+      "storageSlots": 4,
+      "category": "storage"
+    }
+  ]
+}

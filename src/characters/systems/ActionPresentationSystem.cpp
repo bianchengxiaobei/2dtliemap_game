@@ -34,7 +34,8 @@ void ActionPresentationSystem::Update(ecs::EcsWorld& world, float dt) const {
             }
 
             if ((action.action == ecs::ActorAction::Attacking ||
-                 action.action == ecs::ActorAction::Hit) &&
+                 action.action == ecs::ActorAction::Hit ||
+                 action.action == ecs::ActorAction::Howling) &&
                 action.duration > 0.0f) {
                 action.elapsed += dt;
                 if (action.elapsed < action.duration) {

@@ -1,0 +1,28 @@
+{
+  "format": "pois-v1",
+  "defs": [
+    {
+      "id": "mod_depot",
+      "name": "模组补给站",
+      "threat": 1,
+      "markerX": 54.5,
+      "markerY": 28.5,
+      "containers": [
+        {
+          "x": 54.5,
+          "y": 28.5,
+          "tableId": "mod_camp_cache",
+          "sprite": "mod.supply_crate"
+        }
+      ],
+      "enemies": { "count": 1, "kind": "normal", "radius": 4.0 },
+      "task": {
+        "description": "搜索营地补给箱",
+        "targetTable": "mod_camp_cache",
+        "rewardXp": 20.0,
+        "rewardItem": "camp_stew",
+        "rewardCount": 1
+      }
+    }
+  ]
+}

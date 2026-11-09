@@ -20,6 +20,7 @@ public:
         std::string title = "ZomboidLike";
         bool resizable = true;
         bool vsync = true;
+        bool fullscreen = false;
     };
 
     Window() = default;
@@ -36,6 +37,8 @@ public:
 
     bool ShouldClose() const;
     void SetShouldClose(bool value);
+    void ToggleFullscreen();
+    bool IsFullscreen() const { return m_fullscreen; }
 
     GLFWwindow* Handle() const { return m_window; }
     void* NativeHandle() const;  // Win32 HWND
@@ -58,11 +61,20 @@ private:
     int m_height = 0;
     int m_fbWidth = 0;
     int m_fbHeight = 0;
+    bool m_fullscreen = false;
+    bool m_resizable = true;
+    int m_windowedX = 0;
+    int m_windowedY = 0;
+    int m_windowedWidth = 1280;
+    int m_windowedHeight = 720;
+    core::Input* m_input = nullptr;
     float m_pendingScrollX = 0.0f;
     float m_pendingScrollY = 0.0f;
     std::function<void(int, int)> m_resizeCallback;
     std::function<void(int, int, int)> m_keyCallback;
     std::function<void(unsigned int)> m_charCallback;
+
+    void ApplyWindowSize();
 };
 
 }  // namespace zl::platform

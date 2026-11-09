@@ -1,0 +1,147 @@
+{
+ "cx": 9,
+ "cy": 1,
+ "floors": [
+  "wwwwwwwggg",
+  "wwwwwwwggg",
+  "wwwwwwwggg",
+  "wwwwwwwggg",
+  "wwwwwwwggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg"
+ ],
+ "objects": [
+  {
+   "x": 0,
+   "y": 0,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 0,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.locker"
+  },
+  {
+   "x": 6,
+   "y": 0,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 1,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 3,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 0,
+   "y": 0,
+   "w": 6,
+   "h": 4,
+   "id": 15,
+   "name": "poi_police_station"
+  }
+ ]
+}

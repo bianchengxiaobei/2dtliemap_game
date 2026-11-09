@@ -37,6 +37,12 @@ GridSquare* World::GetSquare(int wx, int wy, int z) {
     return cell ? cell->GetSquare(wx, wy, z) : nullptr;
 }
 
+const GridSquare* World::GetSquare(int wx, int wy, int z) const {
+    const CellCoord cellCoord = CellOf(wx, wy);
+    const Cell* cell = GetCell(cellCoord.cx, cellCoord.cy);
+    return cell ? cell->GetSquare(wx, wy, z) : nullptr;
+}
+
 GridSquare& World::GetOrCreateSquare(int wx, int wy, int z) {
     const CellCoord cellCoord = CellOf(wx, wy);
     return GetOrCreateCell(cellCoord.cx, cellCoord.cy).GetOrCreateSquare(wx, wy, z);

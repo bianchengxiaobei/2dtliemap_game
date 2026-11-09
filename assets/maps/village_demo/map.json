@@ -3,7 +3,7 @@
  "name": "village_demo",
  "generator": {
   "tool": "tools/gen_map.py",
-  "version": 2,
+  "version": 5,
   "seed": 20261016,
   "params": {
    "chunks": "12x12",
@@ -11,7 +11,8 @@
    "roads": 2,
    "patches": 3,
    "forests": 2,
-   "objectivePoi": true
+   "objectivePoi": true,
+   "pois": 11
   }
  },
  "bounds": {
@@ -26,6 +27,7 @@
  "legend": {
   "g": "tile.floor.grass",
   "d": "tile.floor.dirt",
-  "w": "tile.floor.wood"
+  "w": "tile.floor.wood",
+  "a": "tile.floor.water"
  }
 }

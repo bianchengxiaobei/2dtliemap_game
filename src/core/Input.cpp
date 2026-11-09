@@ -66,6 +66,16 @@ void Input::SetMouseButton(int button, bool down) {
     }
 }
 
+void Input::LatchMouseButton(int button, bool down) {
+    if (button < 0 || button >= kMouseButtonCount) {
+        return;
+    }
+    m_mouseDown[button] = down;
+    if (down) {
+        m_mousePressedLatch[button] = true;
+    }
+}
+
 void Input::SetMousePosition(float x, float y) {
     m_mouseX = x;
     m_mouseY = y;
@@ -80,6 +90,7 @@ void Input::NewFrame() {
     m_gameplayBlocked = false;
     m_keyPrev = m_keyDown;
     m_mousePrev = m_mouseDown;
+    m_mousePressedLatch.fill(false);
     m_scrollY = 0.0f;
 }
 
@@ -90,7 +101,16 @@ bool Input::IsMouseButtonPressed(int button) const {
     if (button < 0 || button >= kMouseButtonCount) {
         return false;
     }
-    return m_mouseDown[button] && !m_mousePrev[button];
+    return (m_mouseDown[button] && !m_mousePrev[button]) ||
+           m_mousePressedLatch[button];
+}
+
+bool Input::IsMouseButtonPressedRaw(int button) const {
+    if (button < 0 || button >= kMouseButtonCount) {
+        return false;
+    }
+    return (m_mouseDown[button] && !m_mousePrev[button]) ||
+           m_mousePressedLatch[button];
 }
 
 bool Input::IsMouseButtonDown(int button) const {

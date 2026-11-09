@@ -24,7 +24,6 @@ constexpr float kWanderMaxRadius = 10.0f;        // 游荡目标半径上限
 constexpr int kWanderSnapRadius = 3;             // 游荡点就近可走校正半径
 constexpr float kAttackRange = 1.0f;             // 进入攻击的距离（中心距，格）
 constexpr float kAttackKeepRange = 1.5f;         // 脱出攻击的距离（迟滞，防状态抖动）
-constexpr float kAttackPeriodSeconds = 0.8f;     // 攻击节拍（M5-T6 伤害挂该脉冲）
 constexpr float kChaseRepathSeconds = 0.5f;      // 追击重寻路节流（失败重试/周期刷新）
 constexpr float kChaseGoalTolerance = 1.2f;      // 目标移动超过该距离 → 立即重寻路（格）
 constexpr float kSearchSeconds = 6.0f;           // 搜索超时 → 放弃回 Idle
@@ -70,6 +69,21 @@ void CancelPathAndStop(ecs::EcsWorld& world, ecs::Entity e) {
 
 }  // namespace
 
+const AiSystem::AttackProfile& AiSystem::AttackParams::ProfileFor(
+    ecs::ZombieVariantKind kind) const {
+    switch (kind) {
+        case ecs::ZombieVariantKind::Fast:
+            return fast;
+        case ecs::ZombieVariantKind::Strong:
+            return strong;
+        case ecs::ZombieVariantKind::Armored:
+            return armored;
+        case ecs::ZombieVariantKind::Normal:
+        default:
+            return normal;
+    }
+}
+
 void AiSystem::Update(ecs::EcsWorld& world, float dt) {
     ++m_tick;
     entt::registry& registry = world.Registry();
@@ -80,6 +94,18 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
     m_stats.search = 0;
     m_stats.attack = 0;
     m_stats.dead = 0;
+
+    // M23-F3-T5：燃烧僵尸需要无视视野追逐最近玩家；每帧只收集一次。
+    m_players.clear();
+    registry.view<ecs::PlayerTag, ecs::Position>().each(
+        [&](const entt::entity player, const ecs::Position& position) {
+            const auto* health = registry.try_get<ecs::Health>(player);
+            if (health != nullptr && health->current <= 0.0f) {
+                return;
+            }
+            m_players.push_back(PlayerTarget{world.IdOf(player).id, position.x,
+                                             position.y});
+        });
 
     registry.view<AiState, ecs::Position>().each(
         [&](const entt::entity e, AiState& ai, const ecs::Position& position) {
@@ -111,10 +137,24 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                 return;
             }
             const float edt = lod != nullptr ? dt * lod->dtScale : dt;
-            // M5-T6：受击硬直中 → 冻结状态机（转移/计时/动作全暂停）；
-            // 击退位移由 CombatSystem 接管 MoveIntent，硬直结束恢复原状态语义
+            // M5-T6/M15-T3：受击硬直中 → 冻结状态机（转移/计时/动作全暂停）；
+            // 正在蓄力的攻击被打断（不会硬直结束后立刻命中，必须重新前摇）。
             const auto* hit = registry.try_get<ecs::HitReaction>(e);
             if (hit != nullptr && hit->staggerLeft > 0.0f) {
+                if (ai.attackWindupLeft > 0.0f) {
+                    ai.attackWindupLeft = 0.0f;
+                    ++m_stats.interrupted;
+                }
+                return;
+            }
+
+            // M20-F3：嚎叫蓄力时站定，给玩家可读的打断窗口；播报/引怪由
+            // ZombieSpecialSystem 在同 tick 完成，AI 不重复发声音。
+            const auto* special = registry.try_get<ecs::ZombieSpecial>(e);
+            if (special != nullptr &&
+                special->kind == ecs::ZombieSpecialKind::Howler &&
+                special->windup > 0.0f) {
+                CancelPathAndStop(world, e);
                 return;
             }
 
@@ -122,21 +162,60 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
             auto* request = registry.try_get<ecs::PathRequest>(e);
             auto* follow = registry.try_get<ecs::PathFollow>(e);
             auto* perception = registry.try_get<ecs::PerceptionState>(e);
+            const auto* assault = registry.try_get<ecs::SiegeAssaultTarget>(e);
+            const bool assaulting = assault != nullptr && assault->active;
+            const auto* burning = registry.try_get<ecs::BurningZombie>(e);
+            const bool panicking =
+                burning != nullptr && burning->panicRemaining > 0.0f;
+            if (panicking && !assaulting && perception != nullptr &&
+                burning->panicChaseRadius > 0.0f) {
+                const float radius = burning->panicChaseRadius;
+                const float radiusSq = radius * radius;
+                PlayerTarget best;
+                float bestDistSq = radiusSq + 1.0f;
+                for (const PlayerTarget& player : m_players) {
+                    const float distanceSq =
+                        DistSq(position.x, position.y, player.x, player.y);
+                    if (distanceSq > radiusSq || distanceSq >= bestDistSq) {
+                        continue;
+                    }
+                    best = player;
+                    bestDistSq = distanceSq;
+                }
+                if (best.id != 0) {
+                    ai.targetId = best.id;
+                    perception->lastKnownX = best.x;
+                    perception->lastKnownY = best.y;
+                    perception->alertness = 1.0f;
+                } else {
+                    ai.targetId = 0;
+                }
+            }
 
             ai.stateTime += edt;
             ai.actionTimer = std::max(0.0f, ai.actionTimer - edt);
 
             // —— facts：每 tick 计算一次，转移判定只读 ——
             // lastKnown（LastKnownPos）由感知维护：看见 = 玩家位置；听见 = 声源位置
-            const float lastKnownX = perception != nullptr ? perception->lastKnownX : position.x;
-            const float lastKnownY = perception != nullptr ? perception->lastKnownY : position.y;
+            const float lastKnownX = assaulting
+                                         ? assault->x
+                                         : (perception != nullptr
+                                                ? perception->lastKnownX
+                                                : position.x);
+            const float lastKnownY = assaulting
+                                         ? assault->y
+                                         : (perception != nullptr
+                                                ? perception->lastKnownY
+                                                : position.y);
             const bool heardRecently =
                 perception != nullptr && perception->sinceHeard < kHearReactSeconds;
             const bool dead = health != nullptr && health->current <= 0.0f;
             bool targetVisible = false;
             float targetX = 0.0f;
             float targetY = 0.0f;
-            if (ai.targetId != 0) {
+            if (assaulting) {
+                ai.targetId = 0;
+            } else if (ai.targetId != 0) {
                 const ecs::Entity target = world.FindById(ai.targetId);
                 if (target != ecs::EcsWorld::kNull) {
                     if (const auto* tp = registry.try_get<ecs::Position>(target)) {
@@ -237,10 +316,38 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                             facing->dir = characters::AnimationSystem::FacingFromVelocity(
                                 targetX - position.x, targetY - position.y);
                         }
-                        if (ai.attackCooldown <= 0.0f) {
+                        const auto* variant = registry.try_get<ecs::ZombieVariant>(e);
+                        const AttackProfile& profile = m_attack.ProfileFor(
+                            variant != nullptr ? variant->kind
+                                               : ecs::ZombieVariantKind::Normal);
+
+                        bool strike = false;
+                        if (ai.attackWindupLeft > 0.0f) {
+                            ai.attackWindupLeft =
+                                std::max(0.0f, ai.attackWindupLeft - edt);
+                            strike = ai.attackWindupLeft <= 0.0f;
+                        } else if (ai.attackCooldown > 0.0f) {
+                            ai.attackCooldown = std::max(0.0f, ai.attackCooldown - edt);
+                        } else {
+                            // 新一击：先进入可读前摇，前摇结束才真正落地伤害。
+                            ai.attackWindupLeft = std::max(0.0f, profile.windupSeconds);
+                            ++m_stats.windups;
+                            if (ai.attackWindupLeft <= 0.0f) {
+                                strike = true;
+                            } else {
+                                ecs::ActionState& action =
+                                    registry.get_or_emplace<ecs::ActionState>(e);
+                                action.action = ecs::ActorAction::Attacking;
+                                action.elapsed = 0.0f;
+                                action.duration = ai.attackWindupLeft;
+                            }
+                        }
+
+                        if (strike) {
                             ++ai.attackPulses;
                             ++m_stats.swings;
-                            ai.attackCooldown = kAttackPeriodSeconds;
+                            ai.attackCooldown =
+                                std::max(0.0f, profile.cooldownSeconds);
                             // M5-T6：落下攻击意图（CombatSystem 同 tick 消费：
                             // 扇形判定 → 伤害管线 → 玩家被抓/僵尸受击）
                             if (auto* attack = registry.try_get<ecs::AttackIntent>(e);
@@ -253,21 +360,14 @@ void AiSystem::Update(ecs::EcsWorld& world, float dt) {
                                     attack->dirX = ddx / dlen;
                                     attack->dirY = ddy / dlen;
                                 }
-                                attack->damage = m_attack.damage;
-                                if (const auto* variant = registry.try_get<ecs::ZombieVariant>(e);
-                                    variant != nullptr) {
-                                    attack->damage *=
-                                        std::clamp(variant->damageScale, 0.25f, 3.0f);
-                                }
-                                attack->knockback = m_attack.knockback;
-                                attack->staggerSeconds = m_attack.staggerSeconds;
-                                attack->range = m_attack.range;
-                                attack->arcDegrees = m_attack.arcDegrees;
-                                attack->type = m_attack.type;
+                                attack->damage = profile.damage;
+                                attack->knockback = profile.knockback;
+                                attack->staggerSeconds = profile.staggerSeconds;
+                                attack->range = profile.range;
+                                attack->arcDegrees = profile.arcDegrees;
+                                attack->type = profile.type;
                                 attack->pending = true;
                             }
-                        } else {
-                            ai.attackCooldown -= edt;
                         }
                     }
                     break;
@@ -282,6 +382,7 @@ void AiSystem::EnterState(ecs::EcsWorld& world, ecs::Entity e, AiState& ai, AiSt
     ai.status = status;
     ai.stateTime = 0.0f;
     ai.actionTimer = 0.0f;
+    ai.attackWindupLeft = 0.0f;
     const std::uint64_t stableId = world.IdOf(e).id;
     switch (status) {
         case AiStatus::Idle:

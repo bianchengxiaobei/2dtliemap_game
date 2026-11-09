@@ -27,6 +27,10 @@ struct NeedsParams {
     float thirstCritical = 0.90f;
     float starvationHpPerSecond = 0.35f;
     float dehydrationHpPerSecond = 0.60f;
+
+    // F5-T3：营养降低饥饿增速与饥饿/脱水伤害（0 = 关闭）。
+    float nutritionHungerRelief = 0.25f;
+    float nutritionDamageRelief = 0.35f;
 };
 
 class NeedsSystem {

@@ -27,6 +27,22 @@ struct ScriptVec3 {
     int z = 0;
 };
 
+struct ScriptSquareObject {
+    std::string sprite;
+    float hp = -1.0f;
+    bool playerBuilt = false;
+    bool blocksMovement = false;
+};
+
+struct ScriptSquare {
+    bool loaded = false;
+    bool hasFloor = false;
+    ScriptSquareObject floor;
+    std::vector<ScriptSquareObject> wall;
+    std::vector<ScriptSquareObject> furniture;
+    std::vector<ScriptSquareObject> item;
+};
+
 // Save 列表的展示快照；不向脚本暴露 SQLite/path 细节。
 struct ScriptSaveInfo {
     std::string id;
@@ -53,8 +69,14 @@ public:
     core::DateTime GetTime() const;     // 无游戏时间源时返回默认日期
     double GetTotalGameMinutes() const;
 
-    // ---- HUD / 核心 UI（只读快照 + 玩家可执行的核心 UI 动作）----
+    // ---- HUD / 核心 UI（HUD 快照 + Mod 字段 + 玩家可执行的核心 UI 动作）----
     bool GetHudState(ui::HudState& out) const;
+    bool RegisterHudField(const std::string& modId, const std::string& id,
+                          const std::string& label) const;
+    bool SetHudField(const std::string& modId, const std::string& id,
+                     const std::string& text, const std::string& tone) const;
+    bool ClearHudField(const std::string& modId, const std::string& id) const;
+    void RemoveHudFields(const std::string& modId) const;
     bool ToggleInventory() const;
     bool IsInventoryOpen() const;
     bool IsMenuOpen() const;
@@ -85,6 +107,7 @@ public:
 
     // ---- World ----
     bool IsPassable(int gx, int gy) const;  // z=0 地面层；未加载 chunk = 不可通行
+    bool GetSquare(int gx, int gy, int z, ScriptSquare& out) const;
     bool SpawnItem(const std::string& defId, float x, float y, int z) const;
 
     // ---- Zombies ----
@@ -95,6 +118,17 @@ public:
     // ---- Items（只读注册表查询）----
     bool ItemExists(const std::string& defId) const;
     std::string ItemName(const std::string& defId) const;
+
+    int RegisterItems(const std::string& modId, const std::string& json,
+                      std::string& error) const;
+    int RegisterRecipes(const std::string& modId, const std::string& json,
+                        std::string& error) const;
+    int RegisterBuildings(const std::string& modId, const std::string& json,
+                          std::string& error) const;
+    int RegisterPois(const std::string& modId, const std::string& json,
+                     std::string& error) const;
+    int RegisterMissions(const std::string& modId, const std::string& json,
+                         std::string& error) const;
 
 private:
     entt::entity FindPlayer() const;

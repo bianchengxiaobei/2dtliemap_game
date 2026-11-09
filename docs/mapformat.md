@@ -94,6 +94,22 @@ z 为世界层（0=地面，见 `core::kMaxZ`）。
 房间矩形跨 chunk 时，会在它相交的**每个** chunk 文件中出现（`id` 相同），
 且坐标**已按各 chunk 裁剪**（文件自包含；生成器负责裁剪，加载器只接受 chunk 内矩形）。
 
+M19-F2 起 `tools/gen_map.py` 会在 `village_demo` 额外生成固定 POI：
+v3 为废弃加油站/诊所/农场仓，v4（M23-F6-T1）增加圣玛丽医院与军事检查站，
+共 5 个。仍使用本文格式的 `wall.brick`、`wall.door`、`object.workbench`、
+`object.bed`、`object.barricade` 和 `rooms`，不新增文件字段；医院的室内隔墙
+由生成器写入普通 `wall.brick`，门洞通过缺墙格表达。POI 的运行时容器、威胁、
+任务和地图标记由 `config/game.json` 的 `pois` 段配置。重新生成地图后需同步
+`pois.defs[].markerX/Y` 与 `containers[]` 坐标。
+
+F6-T1 的两处固定布局（生成器 v4）：
+
+- **圣玛丽医院**：占地 `x=40..51, y=80..88`，南门 `(46,88)`；`x=44/47` 两道室内隔墙在 `y=84` 留门洞，形成两个 ward，6 张 `object.bed`；药房/物资箱各 1 个，地图标记 `(46.5,84.5)`，威胁 2、7 名 mixed 守军。
+- **军事检查站**：占地 `x=100..109, y=18..24`，南门 `(105,24)`；四角 `object.barricade`、工作台与补给箱形成入口缓冲；军械柜/补给箱各 1 个，地图标记 `(105.5,21.5)`，威胁 3、9 名 strong 守军（前 2 名为 `armored`）。
+
+医院/检查站的容器表、守军、任务与地图标记在 `config/game.json` 的 `pois.defs`；
+对应两段任务链与随机事件在 `missions.defs`，规则与奖励见 `docs/modding.md` 3.6.4/3.6.5。
+
 ## 4. 版本与兼容策略
 
 - `format` 做加载门禁：不认识的值 → 明确报错（不猜测）；

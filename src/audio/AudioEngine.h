@@ -88,9 +88,15 @@ public:
                        float volume = 1.0f, bool loop = false);
     AudioHandle Play3D(std::string_view clip, const glm::vec2& worldPos,
                        AudioGroup group = AudioGroup::SFX, float volume = 1.0f,
-                       bool loop = false, float maxDistance = 0.0f);
+                       bool loop = false, float maxDistance = 0.0f,
+                       bool allowPitch = false);
     void Stop(AudioHandle handle);
     void StopAll();
+
+    // 长音（如载具引擎）运行中更新；allowPitch=false 的声音忽略 SetPitch。
+    void SetVolume(AudioHandle handle, float volume);
+    void SetPitch(AudioHandle handle, float pitch);
+    void SetPosition(AudioHandle handle, const glm::vec2& worldPos);
 
     void SetGroupVolume(AudioGroup group, float volume);
     float GroupVolume(AudioGroup group) const;

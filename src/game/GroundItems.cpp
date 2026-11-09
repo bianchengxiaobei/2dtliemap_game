@@ -91,6 +91,9 @@ int SpawnDemoGroundItems(ecs::EcsWorld& world, const items::ItemRegistry& regist
         {4, 2, "magazine_cooking", 1},
         {-2, 2, "water_bottle", 1},
         {3, 2, "energy_bar", 2},
+        {-2, -3, "wood", 12},
+        {-4, 1, "cabbage_seeds", 3},
+        {4, 0, "fuel_can", 1},
     };
     const int baseGridX = static_cast<int>(std::floor(baseX));
     const int baseGridY = static_cast<int>(std::floor(baseY));

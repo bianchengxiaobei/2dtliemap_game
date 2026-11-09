@@ -1,30 +1,60 @@
 #include "script/ScriptApi.h"
 
+#include <algorithm>
 #include <ctime>
+#include <string_view>
 #include <utility>
 
 #include <entt/entt.hpp>
+#include <nlohmann/json.hpp>
 
 #include "ai/PathfindingService.h"
 #include "ai/components/AiComponents.h"
 #include "characters/components/CharacterComponents.h"
+#include "core/Config.h"
+#include "core/Constants.h"
 #include "core/GameLoop.h"
 #include "core/Log.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
 #include "ecs/components/PhysicsComponents.h"
+#include "game/BuildingRules.h"
+#include "game/ContentReload.h"
 #include "game/GameContext.h"
 #include "game/GroundItems.h"
+#include "game/NetworkClient.h"
+#include "game/Missions.h"
+#include "game/Poi.h"
 #include "game/ZombieFactory.h"
 #include "items/InventoryOps.h"
+#include "items/ItemRegistry.h"
+#include "items/RecipeRegistry.h"
 #include "physics/PhysicsWorld.h"
 #include "ui/HudState.h"
 #include "ui/UiInput.h"
+#include "world/GridSquare.h"
+#include "world/World.h"
 
 namespace zl::script {
 namespace {
 
 constexpr const char* kModule = "script-api";
+
+ui::HudModField* FindModHudField(std::vector<ui::HudModField>& fields,
+                                 const std::string& modId,
+                                 const std::string& id) {
+    for (ui::HudModField& field : fields) {
+        if (field.modId == modId && field.id == id) {
+            return &field;
+        }
+    }
+    return nullptr;
+}
+
+bool IsHudTone(std::string_view tone) {
+    return tone == "info" || tone == "warn" || tone == "ok" ||
+           tone == "fail";
+}
 
 std::string FormatSaveTime(std::int64_t epochSeconds) {
     if (epochSeconds <= 0) {
@@ -85,7 +115,82 @@ bool ScriptApi::GetHudState(ui::HudState& out) const {
         return false;
     }
     out = m_ctx->hudState;
+    out.modFieldCount = 0;
+    out.modFields.fill({});
+    const std::size_t count =
+        std::min(m_ctx->modHudFields.size(), ui::kMaxModHudFields);
+    for (std::size_t i = 0; i < count; ++i) {
+        out.modFields[i] = m_ctx->modHudFields[i];
+    }
+    out.modFieldCount = static_cast<int>(count);
     return out.active;
+}
+
+bool ScriptApi::RegisterHudField(const std::string& modId,
+                                 const std::string& id,
+                                 const std::string& label) const {
+    if (m_ctx == nullptr || modId.empty() || id.empty() || label.empty()) {
+        return false;
+    }
+    if (ui::HudModField* existing =
+            FindModHudField(m_ctx->modHudFields, modId, id);
+        existing != nullptr) {
+        existing->label = label;
+        return true;
+    }
+    if (m_ctx->modHudFields.size() >= ui::kMaxModHudFields) {
+        return false;
+    }
+    ui::HudModField field;
+    field.modId = modId;
+    field.id = id;
+    field.label = label;
+    m_ctx->modHudFields.push_back(std::move(field));
+    ZL_INFO(kModule, "注册 Mod HUD 字段：{}.{}（{}）", modId, id, label);
+    return true;
+}
+
+bool ScriptApi::SetHudField(const std::string& modId, const std::string& id,
+                            const std::string& text,
+                            const std::string& tone) const {
+    if (m_ctx == nullptr || !IsHudTone(tone)) {
+        return false;
+    }
+    ui::HudModField* field =
+        FindModHudField(m_ctx->modHudFields, modId, id);
+    if (field == nullptr) {
+        return false;
+    }
+    field->text = text;
+    field->tone = tone;
+    return true;
+}
+
+bool ScriptApi::ClearHudField(const std::string& modId,
+                              const std::string& id) const {
+    if (m_ctx == nullptr) {
+        return false;
+    }
+    ui::HudModField* field =
+        FindModHudField(m_ctx->modHudFields, modId, id);
+    if (field == nullptr) {
+        return false;
+    }
+    field->text.clear();
+    field->tone = "info";
+    return true;
+}
+
+void ScriptApi::RemoveHudFields(const std::string& modId) const {
+    if (m_ctx == nullptr) {
+        return;
+    }
+    m_ctx->modHudFields.erase(
+        std::remove_if(m_ctx->modHudFields.begin(), m_ctx->modHudFields.end(),
+                       [&modId](const ui::HudModField& field) {
+                           return field.modId == modId;
+                       }),
+        m_ctx->modHudFields.end());
 }
 
 bool ScriptApi::ToggleInventory() const {
@@ -303,6 +408,40 @@ bool ScriptApi::IsPassable(int gx, int gy) const {
     return m_ctx->pathfinding->IsPassable(gx, gy);
 }
 
+bool ScriptApi::GetSquare(int gx, int gy, int z, ScriptSquare& out) const {
+    out = {};
+    if (m_ctx == nullptr || m_ctx->world == nullptr || z < 0 ||
+        z >= core::kMaxZ) {
+        return false;
+    }
+    const world::GridSquare* square = m_ctx->world->GetSquare(gx, gy, z);
+    if (square == nullptr) {
+        return false;
+    }
+    const auto convert = [](const world::SquareObject& object) {
+        return ScriptSquareObject{object.sprite, object.hp, object.playerBuilt,
+                                  object.blocksMovement};
+    };
+    out.loaded = true;
+    if (const world::SquareObject* floor = square->Floor(); floor != nullptr) {
+        out.hasFloor = true;
+        out.floor = convert(*floor);
+    }
+    for (const world::SquareObject& object :
+         square->Layer(world::SquareLayer::Wall)) {
+        out.wall.push_back(convert(object));
+    }
+    for (const world::SquareObject& object :
+         square->Layer(world::SquareLayer::Furniture)) {
+        out.furniture.push_back(convert(object));
+    }
+    for (const world::SquareObject& object :
+         square->Layer(world::SquareLayer::Item)) {
+        out.item.push_back(convert(object));
+    }
+    return true;
+}
+
 bool ScriptApi::SpawnItem(const std::string& defId, float x, float y, int z) const {
     if (m_ctx == nullptr || m_ctx->ecs == nullptr || m_ctx->items == nullptr) {
         return false;
@@ -364,6 +503,248 @@ std::string ScriptApi::ItemName(const std::string& defId) const {
     return def != nullptr ? def->name : std::string();
 }
 
+int ScriptApi::RegisterItems(const std::string& modId, const std::string& json,
+                             std::string& error) const {
+    error.clear();
+    if (m_ctx == nullptr || m_ctx->items == nullptr) {
+        error = "物品注册表不可用";
+        return 0;
+    }
+    if (const std::string blocked =
+            game::DynamicContentBlockedReason(m_ctx->allowDynamicContent);
+        !blocked.empty()) {
+        error = blocked;
+        return 0;
+    }
+    std::size_t added = 0;
+    if (!m_ctx->items->MergeFromString(json, "mod:" + modId + " items",
+                                       &added, &error)) {
+        ZL_WARN(kModule, "动态物品注册失败 [{}]：{}", modId, error);
+        return 0;
+    }
+    if (added > 0) {
+        m_ctx->dynamicContentCount += static_cast<int>(added);
+        if (m_ctx->contentChanged) {
+            m_ctx->contentChanged();
+        }
+        ZL_INFO(kModule, "动态物品注册 [{}]：+{}（总计 {}）", modId, added,
+                m_ctx->items->Size());
+    }
+    return static_cast<int>(added);
+}
+
+int ScriptApi::RegisterRecipes(const std::string& modId, const std::string& json,
+                               std::string& error) const {
+    error.clear();
+    if (m_ctx == nullptr || m_ctx->items == nullptr ||
+        m_ctx->recipes == nullptr) {
+        error = "配方注册表不可用";
+        return 0;
+    }
+    if (const std::string blocked =
+            game::DynamicContentBlockedReason(m_ctx->allowDynamicContent);
+        !blocked.empty()) {
+        error = blocked;
+        return 0;
+    }
+    std::size_t added = 0;
+    if (!m_ctx->recipes->MergeFromString(json, "mod:" + modId + " recipes",
+                                         *m_ctx->items, &added, &error)) {
+        ZL_WARN(kModule, "动态配方注册失败 [{}]：{}", modId, error);
+        return 0;
+    }
+    if (added > 0) {
+        m_ctx->dynamicContentCount += static_cast<int>(added);
+        if (m_ctx->contentChanged) {
+            m_ctx->contentChanged();
+        }
+        ZL_INFO(kModule, "动态配方注册 [{}]：+{}（总计 {}）", modId, added,
+                m_ctx->recipes->Size());
+    }
+    return static_cast<int>(added);
+}
+
+int ScriptApi::RegisterBuildings(const std::string& modId,
+                                 const std::string& json,
+                                 std::string& error) const {
+    error.clear();
+    if (m_ctx == nullptr || m_ctx->config == nullptr) {
+        error = "配置不可用";
+        return 0;
+    }
+    if (const std::string blocked =
+            game::DynamicContentBlockedReason(m_ctx->allowDynamicContent);
+        !blocked.empty()) {
+        error = blocked;
+        return 0;
+    }
+    nlohmann::json doc;
+    try {
+        doc = nlohmann::json::parse(json);
+    } catch (const std::exception& e) {
+        error = std::string("JSON 解析失败：") + e.what();
+        return 0;
+    }
+    if (!doc.is_object() || !doc.contains("format") ||
+        !doc["format"].is_string() ||
+        doc["format"].get<std::string>() != "buildings-v1") {
+        error = "format 必须是 buildings-v1";
+        return 0;
+    }
+    if (!doc.contains("types") || !doc["types"].is_array() ||
+        doc["types"].empty()) {
+        error = "types 必须是非空数组";
+        return 0;
+    }
+    const std::string source = "mod:" + modId + " buildings";
+    const std::vector<game::BuildableDef> parsed =
+        game::ParseBuildableDefs(doc["types"], source);
+    if (parsed.empty()) {
+        error = "没有有效的建造定义";
+        return 0;
+    }
+
+    std::vector<game::BuildableDef> all = game::LoadBuildableDefs(*m_ctx->config);
+    game::AppendBuildableDefs(all, m_ctx->modBuildables);
+    int added = 0;
+    for (const game::BuildableDef& def : parsed) {
+        const std::vector<game::BuildableDef> one{def};
+        if (game::AppendBuildableDefs(all, one) != 1) {
+            continue;
+        }
+        m_ctx->modBuildables.push_back(def);
+        ++added;
+    }
+    if (added == 0) {
+        error = "没有可追加的建造项（重复 id 或 sprite 冲突）";
+        return 0;
+    }
+    m_ctx->dynamicContentCount += added;
+    if (m_ctx->contentChanged) {
+        m_ctx->contentChanged();
+    }
+    ZL_INFO(kModule, "动态建造注册 [{}]：+{}（总计 {}）", modId, added,
+            m_ctx->modBuildables.size());
+    return added;
+}
+
+int ScriptApi::RegisterPois(const std::string& modId, const std::string& json,
+                            std::string& error) const {
+    error.clear();
+    if (m_ctx == nullptr || m_ctx->poiConfig == nullptr) {
+        error = "POI 配置不可用";
+        return 0;
+    }
+    if (const std::string blocked =
+            game::DynamicContentBlockedReason(m_ctx->allowDynamicContent);
+        !blocked.empty()) {
+        error = blocked;
+        return 0;
+    }
+    if (!m_ctx->poiConfig->enabled) {
+        error = "基础 POI 配置未启用";
+        return 0;
+    }
+    game::PoiMergeStats stats;
+    if (!game::MergePoiJson(json, "mod:" + modId + " pois",
+                            m_ctx->poiConfig, &stats, &error)) {
+        ZL_WARN(kModule, "动态 POI 注册失败 [{}]：{}", modId, error);
+        return 0;
+    }
+    if (stats.defsAdded == 0) {
+        error = "没有可追加的 POI（重复 id 或无效定义）";
+        return 0;
+    }
+    m_ctx->dynamicContentCount += stats.defsAdded;
+    if (m_ctx->contentChanged) {
+        m_ctx->contentChanged();
+    }
+    ZL_INFO(kModule, "动态 POI 注册 [{}]：+{}（总计 {}）", modId,
+            stats.defsAdded, m_ctx->poiConfig->defs.size());
+    return stats.defsAdded;
+}
+
+int ScriptApi::RegisterMissions(const std::string& modId,
+                                const std::string& json,
+                                std::string& error) const {
+    error.clear();
+    if (m_ctx == nullptr || m_ctx->missionConfig == nullptr) {
+        error = "任务配置不可用";
+        return 0;
+    }
+    if (const std::string blocked =
+            game::DynamicContentBlockedReason(m_ctx->allowDynamicContent);
+        !blocked.empty()) {
+        error = blocked;
+        return 0;
+    }
+    if (!m_ctx->missionConfig->enabled) {
+        error = "基础任务配置未启用";
+        return 0;
+    }
+    if (m_ctx->missionSourceJson.empty()) {
+        error = "任务配置没有可追加的基础文档";
+        return 0;
+    }
+    nlohmann::json incoming;
+    try {
+        incoming = nlohmann::json::parse(json);
+    } catch (const std::exception& e) {
+        error = std::string("JSON 解析失败：") + e.what();
+        return 0;
+    }
+    if (!incoming.is_object() || !incoming.contains("format") ||
+        !incoming["format"].is_string() ||
+        incoming["format"].get<std::string>() != "missions-v1") {
+        error = "format 必须是 missions-v1";
+        return 0;
+    }
+    if (!incoming.contains("defs") || !incoming["defs"].is_array() ||
+        incoming["defs"].empty()) {
+        error = "defs 必须是非空数组";
+        return 0;
+    }
+    nlohmann::json candidate;
+    try {
+        candidate = nlohmann::json::parse(m_ctx->missionSourceJson);
+    } catch (const std::exception& e) {
+        error = std::string("基础任务文档解析失败：") + e.what();
+        return 0;
+    }
+    if (!candidate.is_object() || !candidate.contains("defs") ||
+        !candidate["defs"].is_array()) {
+        error = "基础任务文档缺少 defs 数组";
+        return 0;
+    }
+    const std::size_t incomingCount = incoming["defs"].size();
+    for (const nlohmann::json& def : incoming["defs"]) {
+        candidate["defs"].push_back(def);
+    }
+    core::Config candidateConfig;
+    candidateConfig.Set("missions", candidate);
+    game::MissionConfig parsed;
+    std::string parseError;
+    const std::size_t expected =
+        m_ctx->missionConfig->defs.size() + incomingCount;
+    if (!game::LoadMissionConfig(candidateConfig, &parsed, &parseError) ||
+        parsed.defs.size() != expected) {
+        error = parseError.empty()
+                    ? std::string("任务定义无效、重复或前置不存在")
+                    : parseError;
+        ZL_WARN(kModule, "动态任务注册失败 [{}]：{}", modId, error);
+        return 0;
+    }
+    *m_ctx->missionConfig = std::move(parsed);
+    m_ctx->missionSourceJson = candidate.dump();
+    m_ctx->dynamicContentCount += static_cast<int>(incomingCount);
+    if (m_ctx->contentChanged) {
+        m_ctx->contentChanged();
+    }
+    ZL_INFO(kModule, "动态任务注册 [{}]：+{}（总计 {}）", modId, incomingCount,
+            m_ctx->missionConfig->defs.size());
+    return static_cast<int>(incomingCount);
+}
+
 entt::entity ScriptApi::FindPlayer() const {
     if (m_ctx == nullptr || m_ctx->ecs == nullptr) {
         return entt::null;
@@ -374,6 +755,12 @@ entt::entity ScriptApi::FindPlayer() const {
             found = entity;
         }
     });
+    if (found == entt::null && m_ctx->networkClient != nullptr) {
+        const std::uint64_t localId = m_ctx->networkClient->PlayerStableId();
+        if (localId != 0) {
+            found = m_ctx->ecs->FindById(localId);
+        }
+    }
     return found;
 }
 

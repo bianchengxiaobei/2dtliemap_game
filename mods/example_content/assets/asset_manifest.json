@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "logical": {
+    "mod.camp_stew": {
+      "own": {
+        "atlas": "atlas_example.atlas.json",
+        "frames": [
+          "mod_camp_stew"
+        ]
+      }
+    },
+    "mod.supply_crate": {
+      "own": {
+        "atlas": "atlas_example.atlas.json",
+        "frames": [
+          "mod_supply_crate"
+        ]
+      }
+    }
+  }
+}

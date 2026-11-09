@@ -29,6 +29,17 @@ struct SquareObject {
     // 阻挡移动（M4 起）：物理静态碰撞体（M4-T3）与 A* passability（M4-T6）共用；
     // 由地图数据显式标注（floor/草丛等装饰不标）
     bool blocksMovement = false;
+    // M17-T1：可损坏结构的当前耐久；<0 表示无耐久（地图对象/装饰/工作台等）。
+    float hp = -1.0f;
+    // M17-T1：玩家建造标记，供维修/拆除与旧档迁移使用。
+    bool playerBuilt = false;
+    // M18-F4：玩家木地板覆盖前的地面逻辑名；拆地板时据此恢复。
+    std::string underlay;
+    // X-F1 阶段 2b：玩家结构的稳定 ID（按格/层生成，跨 chunk 重载与服务端重启不变）。
+    // 0 = 非玩家结构或旧档未回填。
+    std::uint64_t structureId = 0;
+    // X-F1 阶段 2b：建造者的持久 StableId；0 = 无主/旧档结构。
+    std::uint64_t ownerStableId = 0;
 };
 
 // 单格。动态实体（角色/僵尸/抛掷物）不挂在格上，由 ECS 统一管理（docs/00 §4.2）。

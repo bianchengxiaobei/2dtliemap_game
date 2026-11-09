@@ -5,6 +5,16 @@
     <link type="text/rcss" href="hud.rcss"/>
 </head>
 <body>
+    <div id="weather-overlay" class="weather-overlay weather-clear"></div>
+    <div id="threat-left" class="threat-edge threat-left"></div>
+    <div id="threat-right" class="threat-edge threat-right"></div>
+    <div id="threat-top" class="threat-edge threat-top"></div>
+    <div id="threat-bottom" class="threat-edge threat-bottom"></div>
+    <div id="hud-alerts">
+        <div id="base-status" class="base-status"></div>
+        <div id="siege-status" class="siege-status"></div>
+        <div id="threat-status" class="threat-status"></div>
+    </div>
     <div id="hud-clock" class="hud-box">
         <div id="hud-day" class="hud-day">第 1 天</div>
         <div class="hud-clock-row">
@@ -13,24 +23,83 @@
         </div>
     </div>
 
-    <div id="hud-objective" class="hud-box">
-        <div class="objective-label">目标</div>
-        <div id="objective-text" class="objective-text">目标：--</div>
-        <div id="objective-hint" class="objective-hint"></div>
+    <div id="hud-right">
+        <div id="hud-objective" class="hud-box">
+            <div class="objective-label">目标</div>
+            <div id="objective-text" class="objective-text">目标：--</div>
+            <div id="objective-hint" class="objective-hint"></div>
+            <div id="poi-guide" class="poi-guide"></div>
+            <div id="mission-guide" class="mission-guide"></div>
+            <div id="event-guide" class="event-guide"></div>
+        </div>
+        <div id="mod-fields" class="mod-fields hud-box">
+            <div class="mod-fields-title">模组</div>
+            <div id="mod-field-0" class="mod-field">
+                <span id="mod-field-label-0" class="mod-field-label"></span>
+                <span id="mod-field-value-0" class="mod-field-value"></span>
+            </div>
+            <div id="mod-field-1" class="mod-field">
+                <span id="mod-field-label-1" class="mod-field-label"></span>
+                <span id="mod-field-value-1" class="mod-field-value"></span>
+            </div>
+            <div id="mod-field-2" class="mod-field">
+                <span id="mod-field-label-2" class="mod-field-label"></span>
+                <span id="mod-field-value-2" class="mod-field-value"></span>
+            </div>
+            <div id="mod-field-3" class="mod-field">
+                <span id="mod-field-label-3" class="mod-field-label"></span>
+                <span id="mod-field-value-3" class="mod-field-value"></span>
+            </div>
+            <div id="mod-field-4" class="mod-field">
+                <span id="mod-field-label-4" class="mod-field-label"></span>
+                <span id="mod-field-value-4" class="mod-field-value"></span>
+            </div>
+            <div id="mod-field-5" class="mod-field">
+                <span id="mod-field-label-5" class="mod-field-label"></span>
+                <span id="mod-field-value-5" class="mod-field-value"></span>
+            </div>
+            <div id="mod-field-6" class="mod-field">
+                <span id="mod-field-label-6" class="mod-field-label"></span>
+                <span id="mod-field-value-6" class="mod-field-value"></span>
+            </div>
+            <div id="mod-field-7" class="mod-field">
+                <span id="mod-field-label-7" class="mod-field-label"></span>
+                <span id="mod-field-value-7" class="mod-field-value"></span>
+            </div>
+        </div>
     </div>
 
-    <div id="hud-vitals" class="hud-box">
-        <div class="vital-row">
-            <span class="vital-label">生命</span>
-            <div class="vital-track"><div id="hp-fill" class="vital-fill hp"></div></div>
-            <span id="hp-text" class="vital-value">100</span>
+    <div id="hud-left">
+        <div id="hud-level" class="hud-box">
+            <div class="hud-level-row">
+                <span id="level-text" class="level-text">Lv.1</span>
+                <span id="level-perk" class="level-perk">Perk×1</span>
+            </div>
+            <div class="level-track"><div id="level-fill" class="level-fill"></div></div>
+            <div id="level-xp" class="level-xp">0 / 0</div>
         </div>
-        <div class="vital-row">
-            <span class="vital-label">体力</span>
-            <div class="vital-track"><div id="stamina-fill" class="vital-fill stamina"></div></div>
-            <span id="stamina-text" class="vital-value">100</span>
+        <div id="hud-vitals" class="hud-box">
+            <div class="vital-row">
+                <span class="vital-label">生命</span>
+                <div class="vital-track"><div id="hp-fill" class="vital-fill hp"></div></div>
+                <span id="hp-text" class="vital-value">100</span>
+            </div>
+            <div class="vital-row">
+                <span class="vital-label">体力</span>
+                <div class="vital-track"><div id="stamina-fill" class="vital-fill stamina"></div></div>
+                <span id="stamina-text" class="vital-value">100</span>
+            </div>
+            <div id="combat-status" class="needs-status combat-status"></div>
+            <div id="ranged-status" class="needs-status ranged-status"></div>
+            <div id="forage-status" class="needs-status forage-status"></div>
+            <div id="fishing-status" class="needs-status fishing-status"></div>
+            <div id="needs-status" class="needs-status"></div>
+            <div id="wound-status" class="needs-status wound-status"></div>
+            <div id="pain-status" class="needs-status pain-status"></div>
+            <div id="armor-status" class="needs-status armor-status"></div>
+            <div id="infection-status" class="needs-status infection-status"></div>
+            <div id="weather-status" class="needs-status weather-status"></div>
         </div>
-        <div id="needs-status" class="needs-status"></div>
     </div>
 
     <div id="hotbar">
@@ -66,6 +135,57 @@
         <span class="hud-bag-key">I</span>
     </div>
 
+    <div id="action-hint" class="action-hint"></div>
+
+    <div id="dialogue-panel" class="dialogue-panel">
+        <div class="dialogue-card">
+            <div id="dialogue-speaker" class="dialogue-speaker"></div>
+            <div id="dialogue-text" class="dialogue-text"></div>
+            <div id="dialogue-option-0" class="dialogue-option"></div>
+            <div id="dialogue-option-1" class="dialogue-option"></div>
+            <div id="dialogue-option-2" class="dialogue-option"></div>
+            <div id="dialogue-option-3" class="dialogue-option"></div>
+            <div id="dialogue-option-4" class="dialogue-option"></div>
+            <div id="dialogue-hint" class="dialogue-hint">1-5 选择 · 滚轮定位 · E 确认 · ESC 关闭</div>
+        </div>
+    </div>
+
+    <div id="character-panel" class="character-panel">
+        <div class="character-card hud-box">
+            <div class="character-title">角色面板</div>
+            <div id="character-level" class="character-level">等级 1</div>
+            <div class="level-track"><div id="character-xp-fill" class="level-fill"></div></div>
+            <div id="character-xp" class="level-xp">0 / 0 XP</div>
+            <div class="character-section">技能</div>
+            <div id="character-skill-0" class="character-skill"></div>
+            <div id="character-skill-1" class="character-skill"></div>
+            <div id="character-skill-2" class="character-skill"></div>
+            <div id="character-skill-3" class="character-skill"></div>
+            <div class="character-section">已选 Perk</div>
+            <div id="character-perks" class="character-perks">暂无</div>
+            <div class="character-section">升级选择</div>
+            <div id="perk-choice-0" class="perk-choice"></div>
+            <div id="perk-choice-1" class="perk-choice"></div>
+            <div id="perk-choice-2" class="perk-choice"></div>
+            <div class="character-hint">1/2/3 选择 Perk · C/ESC 关闭</div>
+        </div>
+    </div>
+    <div id="perk-prompt" class="perk-prompt"></div>
+    <div id="siege-report" class="siege-report">
+        <div id="siege-report-card" class="siege-report-card">
+            <div id="siege-report-title" class="siege-report-title">守夜战报</div>
+            <div id="siege-report-rating" class="siege-report-rating">S</div>
+            <div id="siege-report-line-0" class="siege-report-line"></div>
+            <div id="siege-report-line-1" class="siege-report-line"></div>
+            <div id="siege-report-line-2" class="siege-report-line"></div>
+            <div id="siege-report-line-3" class="siege-report-line"></div>
+            <div id="siege-report-line-4" class="siege-report-line"></div>
+            <div id="siege-report-line-5" class="siege-report-line"></div>
+            <div id="siege-report-line-6" class="siege-report-line"></div>
+            <div id="siege-report-line-7" class="siege-report-line"></div>
+            <div id="siege-report-hint" class="siege-report-hint">ESC 关闭</div>
+        </div>
+    </div>
     <div id="notice" class="notice notice-info"></div>
 </body>
 </rml>

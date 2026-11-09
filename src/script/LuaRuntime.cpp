@@ -258,6 +258,48 @@ struct LuaRuntime::Impl {
         world["IsPassable"] = [scriptApi](int gx, int gy) -> bool {
             return scriptApi != nullptr && scriptApi->IsPassable(gx, gy);
         };
+        world["GetSquare"] = [scriptApi](sol::this_state ts, int gx, int gy,
+                                         sol::optional<int> z)
+            -> std::optional<sol::table> {
+            if (scriptApi == nullptr) {
+                return std::nullopt;
+            }
+            ScriptSquare square;
+            if (!scriptApi->GetSquare(gx, gy, z.value_or(0), square)) {
+                return std::nullopt;
+            }
+            lua_State* luaState = ts.L;
+            const auto makeObject = [luaState](const ScriptSquareObject& object) {
+                sol::table objectTable = NewTable(luaState);
+                objectTable["sprite"] = object.sprite;
+                objectTable["hp"] = object.hp;
+                objectTable["playerBuilt"] = object.playerBuilt;
+                objectTable["blocksMovement"] = object.blocksMovement;
+                return objectTable;
+            };
+            sol::table out = NewTable(luaState);
+            out["loaded"] = square.loaded;
+            out["hasFloor"] = square.hasFloor;
+            if (square.hasFloor) {
+                out["floor"] = makeObject(square.floor);
+            }
+            sol::table wall = NewTable(luaState);
+            for (const ScriptSquareObject& object : square.wall) {
+                wall.add(makeObject(object));
+            }
+            out["wall"] = wall;
+            sol::table furniture = NewTable(luaState);
+            for (const ScriptSquareObject& object : square.furniture) {
+                furniture.add(makeObject(object));
+            }
+            out["furniture"] = furniture;
+            sol::table item = NewTable(luaState);
+            for (const ScriptSquareObject& object : square.item) {
+                item.add(makeObject(object));
+            }
+            out["item"] = item;
+            return out;
+        };
         world["SpawnItem"] = [scriptApi](const std::string& defId, double x, double y,
                                          sol::optional<int> z) -> bool {
             return scriptApi != nullptr && scriptApi->SpawnItem(defId, static_cast<float>(x),
@@ -295,6 +337,64 @@ struct LuaRuntime::Impl {
         };
         env["Items"] = itemsApi;
 
+        sol::table contentApi = NewTable(lua->lua_state(), 3);
+        contentApi["RegisterItems"] = [scriptApi, modId](
+                                          const std::string& json) -> int {
+            std::string error;
+            const int added = scriptApi != nullptr
+                                  ? scriptApi->RegisterItems(modId, json, error)
+                                  : 0;
+            if (added == 0 && !error.empty()) {
+                ZL_WARN("script-mod", "[{}] {}", modId, error);
+            }
+            return added;
+        };
+        contentApi["RegisterRecipes"] = [scriptApi, modId](
+                                            const std::string& json) -> int {
+            std::string error;
+            const int added = scriptApi != nullptr
+                                  ? scriptApi->RegisterRecipes(modId, json, error)
+                                  : 0;
+            if (added == 0 && !error.empty()) {
+                ZL_WARN("script-mod", "[{}] {}", modId, error);
+            }
+            return added;
+        };
+        contentApi["RegisterBuildings"] = [scriptApi, modId](
+                                              const std::string& json) -> int {
+            std::string error;
+            const int added = scriptApi != nullptr
+                                  ? scriptApi->RegisterBuildings(modId, json, error)
+                                  : 0;
+            if (added == 0 && !error.empty()) {
+                ZL_WARN("script-mod", "[{}] {}", modId, error);
+            }
+            return added;
+        };
+        contentApi["RegisterPois"] = [scriptApi, modId](
+                                         const std::string& json) -> int {
+            std::string error;
+            const int added = scriptApi != nullptr
+                                  ? scriptApi->RegisterPois(modId, json, error)
+                                  : 0;
+            if (added == 0 && !error.empty()) {
+                ZL_WARN("script-mod", "[{}] {}", modId, error);
+            }
+            return added;
+        };
+        contentApi["RegisterMissions"] = [scriptApi, modId](
+                                             const std::string& json) -> int {
+            std::string error;
+            const int added = scriptApi != nullptr
+                                  ? scriptApi->RegisterMissions(modId, json, error)
+                                  : 0;
+            if (added == 0 && !error.empty()) {
+                ZL_WARN("script-mod", "[{}] {}", modId, error);
+            }
+            return added;
+        };
+        env["Content"] = contentApi;
+
         sol::table hud = NewTable(lua->lua_state(), 16);
         hud["GetState"] = [scriptApi](sol::this_state ts) -> sol::table {
             sol::table out = NewTable(ts.L, 16);
@@ -311,12 +411,144 @@ struct LuaRuntime::Impl {
             out["healthMax"] = state.healthMax;
             out["stamina"] = state.stamina;
             out["staminaMax"] = state.staminaMax;
+            out["combatStatus"] = state.combatStatus;
+            out["combatTone"] = state.combatTone;
+            out["rangedValid"] = state.rangedValid;
+            out["rangedName"] = state.rangedName;
+            out["rangedLoaded"] = state.rangedLoaded;
+            out["rangedMagazine"] = state.rangedMagazine;
+            out["rangedReserve"] = state.rangedReserve;
+            out["rangedReloading"] = state.rangedReloading;
+            out["rangedReloadProgress"] = state.rangedReloadProgress;
+            out["rangedReloadRemaining"] = state.rangedReloadRemaining;
+            out["rangedStatus"] = state.rangedStatus;
+            out["rangedTone"] = state.rangedTone;
+            out["forageValid"] = state.forageValid;
+            out["forageName"] = state.forageName;
+            out["forageToolName"] = state.forageToolName;
+            out["forageMissingTool"] = state.forageMissingTool;
+            out["forageExhausted"] = state.forageExhausted;
+            out["forageRespawnMinutes"] = state.forageRespawnMinutes;
+            out["forageSeconds"] = state.forageSeconds;
+            out["forageSearching"] = state.forageSearching;
+            out["forageProgress"] = state.forageProgress;
+            out["forageStatus"] = state.forageStatus;
+            out["forageTone"] = state.forageTone;
+            out["fishingValid"] = state.fishingValid;
+            out["fishingName"] = state.fishingName;
+            out["fishingRodName"] = state.fishingRodName;
+            out["fishingBaitName"] = state.fishingBaitName;
+            out["fishingMissingRod"] = state.fishingMissingRod;
+            out["fishingMissingBait"] = state.fishingMissingBait;
+            out["fishingSeconds"] = state.fishingSeconds;
+            out["fishingWaiting"] = state.fishingWaiting;
+            out["fishingProgress"] = state.fishingProgress;
+            out["fishingBiting"] = state.fishingBiting;
+            out["fishingBiteRemaining"] = state.fishingBiteRemaining;
+            out["fishingStatus"] = state.fishingStatus;
+            out["fishingTone"] = state.fishingTone;
             out["needsValid"] = state.needsValid;
             out["needsStatus"] = state.needsStatus;
             out["needsTone"] = state.needsTone;
+            out["woundStatus"] = state.woundStatus;
+            out["woundTone"] = state.woundTone;
+            out["painStatus"] = state.painStatus;
+            out["painTone"] = state.painTone;
+            out["armorStatus"] = state.armorStatus;
+            out["armorTone"] = state.armorTone;
+            out["infectionStatus"] = state.infectionStatus;
+            out["infectionTone"] = state.infectionTone;
+            out["weatherStatus"] = state.weatherStatus;
+            out["weatherTone"] = state.weatherTone;
+            out["weatherClass"] = state.weatherClass;
+            out["threatStatus"] = state.threatStatus;
+            out["threatDirection"] = state.threatDirection;
+            out["threatRemaining"] = state.threatRemaining;
+            out["threatDuration"] = state.threatDuration;
             out["objective"] = state.objective;
             out["objectiveTone"] = state.objectiveTone;
             out["objectiveHint"] = state.objectiveHint;
+            out["poiGuide"] = state.poiGuide;
+            out["poiGuideTone"] = state.poiGuideTone;
+            out["missionGuide"] = state.missionGuide;
+            out["missionTone"] = state.missionTone;
+            out["eventGuide"] = state.eventGuide;
+            out["eventTone"] = state.eventTone;
+            out["siegeStatus"] = state.siegeStatus;
+            out["siegeTone"] = state.siegeTone;
+            out["siegeReportOpen"] = state.siegeReportOpen;
+            out["siegeReportTitle"] = state.siegeReportTitle;
+            out["siegeReportRating"] = state.siegeReportRating;
+            out["siegeReportTone"] = state.siegeReportTone;
+            out["siegeReportHint"] = state.siegeReportHint;
+            sol::table siegeReportLines = NewTable(ts.L, 8);
+            for (std::size_t i = 0; i < state.siegeReportLines.size(); ++i) {
+                siegeReportLines[i + 1] = state.siegeReportLines[i];
+            }
+            out["siegeReportLines"] = siegeReportLines;
+            out["baseActive"] = state.baseActive;
+            out["baseStorageCount"] = state.baseStorageCount;
+            out["baseStorageWeight"] = state.baseStorageWeight;
+            out["baseStorageCapacity"] = state.baseStorageCapacity;
+            out["baseBeds"] = state.baseBeds;
+            out["baseCampfires"] = state.baseCampfires;
+            out["baseWorkbenches"] = state.baseWorkbenches;
+            out["baseDefensesIntact"] = state.baseDefensesIntact;
+            out["baseDefensesDamaged"] = state.baseDefensesDamaged;
+            out["baseFarms"] = state.baseFarms;
+            out["baseFarmGrowing"] = state.baseFarmGrowing;
+            out["baseFarmMature"] = state.baseFarmMature;
+            out["baseFarmDiseased"] = state.baseFarmDiseased;
+            out["baseFarmThirsty"] = state.baseFarmThirsty;
+            out["baseFarmFertilized"] = state.baseFarmFertilized;
+            out["baseGenerators"] = state.baseGenerators;
+            out["baseGeneratorsOnline"] = state.baseGeneratorsOnline;
+            out["baseFridges"] = state.baseFridges;
+            out["baseFridgesPowered"] = state.baseFridgesPowered;
+            out["baseTraps"] = state.baseTraps;
+            out["baseTrapsArmed"] = state.baseTrapsArmed;
+            out["baseFloodlights"] = state.baseFloodlights;
+            out["baseFloodlightsPowered"] = state.baseFloodlightsPowered;
+            out["baseElectricFences"] = state.baseElectricFences;
+            out["baseElectricFencesPowered"] = state.baseElectricFencesPowered;
+            out["basePowerFuelMinutes"] = state.basePowerFuelMinutes;
+            out["basePowerLoad"] = state.basePowerLoad;
+            out["basePowerLowFuel"] = state.basePowerLowFuel;
+            out["basePowerOutage"] = state.basePowerOutage;
+            out["baseStatus"] = state.baseStatus;
+            out["baseTone"] = state.baseTone;
+            out["progressionValid"] = state.progressionValid;
+            out["progressionLevel"] = state.progressionLevel;
+            out["progressionXp"] = state.progressionXp;
+            out["progressionXpNext"] = state.progressionXpNext;
+            out["progressionPerkPoints"] = state.progressionPerkPoints;
+            out["progressionPerks"] = state.progressionPerks;
+            out["progressionChoiceCount"] = state.progressionChoiceCount;
+            out["perkPrompt"] = state.perkPrompt;
+            out["characterOpen"] = state.characterOpen;
+            sol::table skills = NewTable(ts.L, 4);
+            for (std::size_t i = 0; i < state.progressionSkills.size(); ++i) {
+                skills[i + 1] = state.progressionSkills[i];
+            }
+            out["progressionSkills"] = skills;
+            sol::table choices = NewTable(ts.L, 3);
+            for (std::size_t i = 0; i < state.progressionChoices.size(); ++i) {
+                choices[i + 1] = state.progressionChoices[i];
+            }
+            out["progressionChoices"] = choices;
+            out["dialogueOpen"] = state.dialogueOpen;
+            out["dialogueSpeaker"] = state.dialogueSpeaker;
+            out["dialogueText"] = state.dialogueText;
+            out["dialogueOptionCount"] = state.dialogueOptionCount;
+            out["dialogueSelected"] = state.dialogueSelected;
+            out["dialogueHint"] = state.dialogueHint;
+            sol::table dialogueOptions = NewTable(ts.L, 5);
+            for (std::size_t i = 0; i < state.dialogueOptions.size(); ++i) {
+                dialogueOptions[i + 1] = state.dialogueOptions[i];
+            }
+            out["dialogueOptions"] = dialogueOptions;
+            out["actionHint"] = state.actionHint;
+            out["actionTone"] = state.actionTone;
             out["selectedSlot"] = state.selectedSlot;
             out["notice"] = state.notice;
             out["noticeTone"] = state.noticeTone;
@@ -330,7 +562,36 @@ struct LuaRuntime::Impl {
                 slots[i + 1] = slot;
             }
             out["slots"] = slots;
+            sol::table modFields = NewTable(ts.L, state.modFieldCount);
+            for (int i = 0; i < state.modFieldCount; ++i) {
+                const ui::HudModField& field =
+                    state.modFields[static_cast<std::size_t>(i)];
+                sol::table item = NewTable(ts.L, 5);
+                item["modId"] = field.modId;
+                item["id"] = field.id;
+                item["label"] = field.label;
+                item["text"] = field.text;
+                item["tone"] = field.tone;
+                modFields[i + 1] = item;
+            }
+            out["modFields"] = modFields;
             return out;
+        };
+        hud["RegisterField"] = [scriptApi, modId](const std::string& id,
+                                                  const std::string& label) -> bool {
+            return scriptApi != nullptr &&
+                   scriptApi->RegisterHudField(modId, id, label);
+        };
+        hud["SetField"] = [scriptApi, modId](
+                              const std::string& id, const std::string& text,
+                              sol::optional<std::string> tone) -> bool {
+            return scriptApi != nullptr &&
+                   scriptApi->SetHudField(modId, id, text,
+                                          tone.value_or("info"));
+        };
+        hud["ClearField"] = [scriptApi, modId](const std::string& id) -> bool {
+            return scriptApi != nullptr &&
+                   scriptApi->ClearHudField(modId, id);
         };
         env["Hud"] = hud;
 
@@ -466,6 +727,9 @@ struct LuaRuntime::Impl {
             out["bagStacks"] = state.bagStacks;
             out["lootStacks"] = state.lootStacks;
             out["lootTitle"] = state.lootTitle;
+            out["lootIsStorage"] = state.lootIsStorage;
+            out["lootCanTakeAll"] = state.lootCanTakeAll;
+            out["lootEntityId"] = state.lootEntityId;
             out["status"] = state.status;
             out["statusTone"] = state.statusTone;
             sol::table recipes =
@@ -484,6 +748,23 @@ struct LuaRuntime::Impl {
                 recipe["station"] = entry.station;
                 recipe["stationLabel"] = entry.stationLabel;
                 recipe["stationNearby"] = entry.stationNearby;
+                recipe["category"] = entry.category;
+                recipe["categoryLabel"] = entry.categoryLabel;
+                auto appendExtraRequirement =
+                    [&](const char* key,
+                        const std::optional<ui::InventoryRecipeIngredient>&
+                            requirement) {
+                        if (!requirement.has_value()) {
+                            return;
+                        }
+                        sol::table item = NewTable(ts.L, 3);
+                        item["label"] = requirement->label;
+                        item["required"] = requirement->required;
+                        item["have"] = requirement->have;
+                        recipe[key] = item;
+                    };
+                appendExtraRequirement("cookware", entry.cookware);
+                appendExtraRequirement("fuel", entry.fuel);
                 sol::table ingredients =
                     NewTable(ts.L, static_cast<int>(entry.ingredients.size()));
                 for (std::size_t j = 0; j < entry.ingredients.size(); ++j) {
@@ -537,7 +818,7 @@ struct LuaRuntime::Impl {
             auto appendSlots = [&](sol::table& target, const auto& source) {
                 for (std::size_t i = 0; i < source.size(); ++i) {
                     const ui::InventorySlot& entry = source[i];
-                    sol::table slot = NewTable(ts.L, 9);
+                    sol::table slot = NewTable(ts.L, 10);
                     slot["filled"] = entry.filled;
                     slot["label"] = entry.label;
                     slot["count"] = entry.count;
@@ -547,6 +828,7 @@ struct LuaRuntime::Impl {
                     slot["condition"] = entry.condition;
                     slot["damaged"] = entry.damaged;
                     slot["repairAvailable"] = entry.repairAvailable;
+                    slot["perishable"] = entry.perishable;
                     target[i + 1] = slot;
                 }
             };
@@ -607,6 +889,12 @@ struct LuaRuntime::Impl {
                 parsed.type = ui::InventoryActionType::QueueRemove;
             } else if (type == "queue_count") {
                 parsed.type = ui::InventoryActionType::QueueSetCount;
+            } else if (type == "store_all") {
+                parsed.type = ui::InventoryActionType::StoreAll;
+            } else if (type == "take_all") {
+                parsed.type = ui::InventoryActionType::TakeAll;
+            } else if (type == "sort_storage") {
+                parsed.type = ui::InventoryActionType::SortStorage;
             } else {
                 return false;
             }

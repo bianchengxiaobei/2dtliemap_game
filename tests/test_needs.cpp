@@ -4,6 +4,7 @@
 
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
+#include "characters/components/ProgressionComponents.h"
 #include "characters/systems/CombatSystem.h"
 #include "characters/systems/MovementSystem.h"
 #include "characters/systems/NeedsSystem.h"
@@ -113,6 +114,9 @@ TEST_CASE("NeedsSystem：阈值降低移速/伤害，危险阈值产生持续伤
     CHECK(needs.warning == 2);
     CHECK(needs.healthDrainPerSecond > 0.0f);
     CHECK(registry.get<Health>(player).current < 100.0f);
+    REQUIRE(registry.try_get<ecs::LastDamage>(player) != nullptr);
+    CHECK(registry.get<ecs::LastDamage>(player).cause ==
+          ecs::DamageCause::Dehydration);
 }
 
 TEST_CASE("NeedsSystem：食物/饮水恢复后派生警告与倍率回落") {
@@ -180,4 +184,27 @@ TEST_CASE("Needs 派生倍率：MovementSystem 降速、CombatSystem 降伤") {
     CombatSystem combat;
     combat.Update(world, 1.0f / 60.0f);
     CHECK(registry.get<Health>(target).current == doctest::Approx(80.0f));
+}
+
+TEST_CASE("M19-F1 生存技能/Perk 降低需求增长") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const ecs::Entity player = world.Create();
+    registry.emplace<PlayerTag>(player);
+    registry.emplace<Health>(player, Health{100.0f, 100.0f});
+    registry.emplace<Needs>(player, Needs{0.0f, 0.0f, 0.0f});
+    ecs::Progression progression;
+    progression.skills[ecs::SkillIndex(ecs::SkillKind::Survival)] =
+        ecs::SkillProgress{4, 0.0f};
+    progression.hungerDecayScale = 0.8f;
+    progression.thirstDecayScale = 0.8f;
+    progression.fatigueDecayScale = 0.8f;
+    registry.emplace<ecs::Progression>(player, progression);
+
+    NeedsSystem system(InertParams());
+    system.Update(world, 10.0f);
+    const Needs& needs = registry.get<Needs>(player);
+    CHECK(needs.hunger == doctest::Approx(0.08f));
+    CHECK(needs.thirst == doctest::Approx(0.16f));
+    CHECK(needs.fatigue == doctest::Approx(0.04f));
 }

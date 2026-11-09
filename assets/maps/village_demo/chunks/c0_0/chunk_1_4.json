@@ -2,24 +2,88 @@
  "cx": 1,
  "cy": 4,
  "floors": [
-  "ggggggdddg",
-  "ggggggdddg",
-  "ggggggdddg",
-  "ggggggdddg",
-  "ggggggdddg",
-  "ggggggdddg",
-  "ggggggdddg",
+  "wwwwwwdddg",
+  "wwwwwwdddg",
+  "wwwwwwdddg",
+  "wwwwwwdddg",
+  "dgggggdddg",
+  "dgggggdddg",
+  "dgggggdddg",
   "ggggggdddg",
   "ggggggdddg",
   "ggggggdddg"
  ],
  "objects": [
   {
-   "x": 3,
-   "y": 4,
+   "x": 5,
+   "y": 0,
    "z": 0,
-   "layer": "furniture",
-   "sprite": "decor.grass_tuft"
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 1,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.door"
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 3,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 3,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 1,
@@ -27,6 +91,16 @@
    "z": 0,
    "layer": "furniture",
    "sprite": "decor.grass_tuft"
+  }
+ ],
+ "rooms": [
+  {
+   "x": 0,
+   "y": 0,
+   "w": 5,
+   "h": 3,
+   "id": 17,
+   "name": "poi_motel"
   }
  ]
 }

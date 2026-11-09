@@ -10,7 +10,7 @@
         <div id="mp-window">
             <div class="mp-kicker">MULTIPLAYER</div>
             <div class="mp-title">联机游戏</div>
-            <div class="mp-subtitle">局域网直连或在本机开房；加入后可在游戏内用 Enter 聊天。</div>
+            <div class="mp-subtitle">局域网直连或在本机开房；加入后可在游戏内用 Y 聊天。</div>
             <div class="mp-accent"></div>
 
             <div class="mp-columns">

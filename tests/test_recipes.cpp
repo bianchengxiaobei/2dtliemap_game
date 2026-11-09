@@ -18,7 +18,7 @@ const char* kItemsJson = R"({
     { "id": "bandage", "name": "绷带", "icon": "i", "weight": 0.1, "maxStack": 5, "type": "consumable" },
     { "id": "rag", "name": "破布", "icon": "i", "weight": 0.1, "maxStack": 10, "type": "generic" },
     { "id": "knife", "name": "刀", "icon": "i", "weight": 0.6, "maxStack": 1, "type": "weapon" },
-    { "id": "jacket", "name": "夹克", "icon": "i", "weight": 1.2, "maxStack": 1, "type": "clothing" },
+    { "id": "jacket", "name": "夹克", "icon": "i", "weight": 1.2, "maxStack": 1, "type": "clothing", "repairEfficiency": 1.5 },
     { "id": "spear", "name": "长矛", "icon": "i", "weight": 1.1, "maxStack": 1, "type": "weapon" },
     { "id": "padded", "name": "加固夹克", "icon": "i", "weight": 1.4, "maxStack": 1, "type": "clothing" },
     { "id": "hammer", "name": "锤子", "icon": "i", "weight": 2.0, "maxStack": 1, "type": "weapon" },
@@ -140,7 +140,7 @@ TEST_CASE("配方注册表：结构、引用与重复项校验") {
     CHECK_FALSE(load(R"({ "format": "recipes-v1", "recipes": [] })"));
     CHECK(Contains(error, "数组为空"));
 
-    CHECK_FALSE(load(R"({ "format": "recipes-v4", "recipes": [{}] })"));
+    CHECK_FALSE(load(R"({ "format": "recipes-v5", "recipes": [{}] })"));
     CHECK(Contains(error, "format 不受支持"));
 
     CHECK_FALSE(load(R"({ "format": "recipes-v1", "recipes": [
@@ -598,7 +598,7 @@ TEST_CASE("仓库内置配方文件与物品定义一致") {
     std::string error;
     const std::string itemsPath = std::string(ZL_SOURCE_DIR) + "/assets/items.json";
     REQUIRE(items.LoadFile(itemsPath, &error));
-    CHECK(items.Size() == 20);
+    CHECK(items.Size() == 94);
     const items::ItemDef* magazine = items.Find("magazine_cooking");
     REQUIRE(magazine != nullptr);
     REQUIRE(magazine->unlocksRecipes.size() == 1u);
@@ -607,7 +607,7 @@ TEST_CASE("仓库内置配方文件与物品定义一致") {
     items::RecipeRegistry recipes;
     const std::string recipesPath = std::string(ZL_SOURCE_DIR) + "/assets/recipes.json";
     REQUIRE(recipes.LoadFile(recipesPath, items, &error));
-    CHECK(recipes.Size() >= 4);
+    CHECK(recipes.Size() >= 12);
     const items::RecipeDef* campfireBeans = recipes.Find("campfire_beans");
     REQUIRE(campfireBeans != nullptr);
     CHECK(campfireBeans->station == "campfire");
@@ -618,7 +618,8 @@ TEST_CASE("仓库内置配方文件与物品定义一致") {
         CHECK(items.Find(recipe.outputDefId) != nullptr);
         const bool stationValid = recipe.station.empty() ||
                                   recipe.station == "workbench" ||
-                                  recipe.station == "campfire";
+                                  recipe.station == "campfire" ||
+                                  recipe.station == "locker";
         CHECK(stationValid);
         CHECK_FALSE(recipe.ingredients.empty());
         CHECK(recipe.craftSeconds >= 0.1f);
@@ -659,6 +660,21 @@ TEST_CASE("维修：消耗维修包并恢复耐久") {
     REQUIRE(bag.items.size() == 1);
     CHECK(bag.items[0].defId == "hammer");
     CHECK(bag.items[0].condition == doctest::Approx(0.9f));
+}
+
+TEST_CASE("维修：衣物可维修且按 repairEfficiency 恢复") {
+    Fixture f;
+    ecs::Container bag;
+    bag.capacityKg = 20.0f;
+    REQUIRE(items::AddItem(bag, f.items, Item("repair_kit", 1)) == 1);
+    REQUIRE(items::AddItem(bag, f.items, ecs::ItemInstance{"jacket", 1, 0.4f}) == 1);
+
+    const items::RepairResult result =
+        items::Repair(bag, f.items, 1, "repair_kit", 1, 0.2f);
+    CHECK(result.ok);
+    CHECK(result.defId == "jacket");
+    CHECK(result.after == doctest::Approx(0.7f));
+    CHECK(items::CountOf(bag, "repair_kit") == 0);
 }
 
 TEST_CASE("维修：耐久上限与失败不改容器") {
@@ -707,7 +723,7 @@ TEST_CASE("维修：缺材料、损坏与非工具被拒绝") {
     const items::RepairResult nonTool =
         items::Repair(bag, f.items, 0, "repair_kit", 1, 0.5f);
     CHECK_FALSE(nonTool.ok);
-    CHECK(Contains(nonTool.error, "不是可维修工具"));
+    CHECK(Contains(nonTool.error, "不可维修"));
 
     const items::RepairResult invalidIndex =
         items::Repair(bag, f.items, 9, "repair_kit", 1, 0.5f);
@@ -740,4 +756,205 @@ TEST_CASE("维修：材料定义与参数校验") {
         items::Repair(bag, f.items, 0, "repair_kit", 1, 1.1f);
     CHECK_FALSE(badRestore.ok);
     CHECK(Contains(badRestore.error, "维修量无效"));
+}
+
+TEST_CASE("X-F2b-2e：配方注册表事务式追加") {
+    Fixture f;
+    const std::size_t baseSize = f.recipes.Size();
+    std::string error;
+    std::size_t added = 0;
+
+    const std::string dynamic = R"({
+      "format": "recipes-v3",
+      "recipes": [
+        {
+          "id": "dynamic_bandage",
+          "name": "动态绷带",
+          "output": { "item": "bandage", "count": 1 },
+          "ingredients": [ { "item": "rag", "count": 1 } ],
+          "time": 0.3
+        }
+      ]
+    })";
+    REQUIRE(f.recipes.MergeFromString(dynamic, "dynamic", f.items, &added, &error));
+    CHECK(added == 1);
+    CHECK(f.recipes.Size() == baseSize + 1);
+    REQUIRE(f.recipes.Find("dynamic_bandage") != nullptr);
+
+    added = 99;
+    CHECK_FALSE(f.recipes.MergeFromString(dynamic, "duplicate", f.items,
+                                          &added, &error));
+    CHECK(added == 0);
+    CHECK(f.recipes.Size() == baseSize + 1);
+
+    const std::string badReference = R"({
+      "format": "recipes-v3",
+      "recipes": [
+        {
+          "id": "bad_reference",
+          "name": "坏引用",
+          "output": { "item": "ghost", "count": 1 },
+          "ingredients": [ { "item": "rag", "count": 1 } ]
+        }
+      ]
+    })";
+    CHECK_FALSE(f.recipes.MergeFromString(badReference, "bad", f.items,
+                                          &added, &error));
+    CHECK(f.recipes.Find("bad_reference") == nullptr);
+    CHECK(f.recipes.Size() == baseSize + 1);
+
+    const std::string partial = R"({
+      "format": "recipes-v3",
+      "recipes": [
+        {
+          "id": "partial_recipe",
+          "name": "部分配方",
+          "output": { "item": "bandage", "count": 1 },
+          "ingredients": [ { "item": "rag", "count": 1 } ]
+        },
+        {
+          "id": "broken_recipe",
+          "name": "坏配方",
+          "output": { "item": "ghost", "count": 1 },
+          "ingredients": [ { "item": "rag", "count": 1 } ]
+        }
+      ]
+    })";
+    CHECK_FALSE(f.recipes.MergeFromString(partial, "partial", f.items,
+                                          &added, &error));
+    CHECK(f.recipes.Find("partial_recipe") == nullptr);
+    CHECK(f.recipes.Size() == baseSize + 1);
+}
+
+TEST_CASE("F5-T3：recipes-v4 分类、锅具与燃料") {
+    static const char* kItems = R"json({
+      "format": "items-v1",
+      "items": [
+        { "id": "pot", "name": "锅", "icon": "i", "weight": 1.0, "maxStack": 1, "type": "generic" },
+        { "id": "wood", "name": "木材", "icon": "i", "weight": 0.4, "maxStack": 20, "type": "generic" },
+        { "id": "food", "name": "食材", "icon": "i", "weight": 0.3, "maxStack": 10, "type": "generic" },
+        { "id": "meal", "name": "炖菜", "icon": "i", "weight": 0.6, "maxStack": 3, "type": "consumable" }
+      ]
+    })json";
+    static const char* kRecipes = R"json({
+      "format": "recipes-v4",
+      "recipes": [
+        {
+          "id": "stew",
+          "name": "炖菜",
+          "category": "cooking",
+          "output": { "item": "meal", "count": 1 },
+          "ingredients": [ { "item": "food", "count": 1 } ],
+          "cookware": { "item": "pot", "count": 1 },
+          "fuel": { "item": "wood", "count": 1 },
+          "station": "campfire",
+          "time": 1.0
+        }
+      ]
+    })json";
+    items::ItemRegistry items;
+    items::RecipeRegistry recipes;
+    std::string error;
+    REQUIRE_MESSAGE(items.LoadFromString(kItems, "f5t3-items", &error), error);
+    REQUIRE_MESSAGE(
+        recipes.LoadFromString(kRecipes, "f5t3-recipes", items, &error),
+        error);
+    const items::RecipeDef* stew = recipes.Find("stew");
+    REQUIRE(stew != nullptr);
+    CHECK(stew->category == items::RecipeCategory::Cooking);
+    CHECK(std::string(items::RecipeCategoryToString(stew->category)) ==
+          "cooking");
+    CHECK(std::string(items::RecipeCategoryLabel(stew->category)) == "烹饪");
+    REQUIRE(stew->cookware.has_value());
+    CHECK(stew->cookware->defId == "pot");
+    CHECK(stew->cookware->count == 1);
+    REQUIRE(stew->fuel.has_value());
+    CHECK(stew->fuel->defId == "wood");
+    CHECK(stew->fuel->count == 1);
+
+    ecs::Container bag;
+    bag.capacityKg = 20.0f;
+    REQUIRE(items::AddItem(bag, items, ecs::ItemInstance{"food", 2, 1.0f}) ==
+            2);
+    REQUIRE(items::AddItem(bag, items, ecs::ItemInstance{"wood", 2, 1.0f}) ==
+            2);
+    std::string reason;
+    CHECK_FALSE(items::CanCraft(bag, items, *stew, &reason));
+    CHECK(Contains(reason, "锅具"));
+
+    REQUIRE(items::AddItem(bag, items,
+                           ecs::ItemInstance{"pot", 1, 0.8f}) == 1);
+    CHECK(items::CanCraft(bag, items, *stew, &reason));
+    CHECK(reason.empty());
+    CHECK(items::ToolEfficiency(bag, *stew) == doctest::Approx(0.9f));
+    const items::CraftResult crafted = items::Craft(bag, items, *stew);
+    REQUIRE(crafted.ok);
+    CHECK(items::CountOf(bag, "food") == 1);
+    CHECK(items::CountOf(bag, "wood") == 1);
+    CHECK(items::CountOf(bag, "meal") == 1);
+    CHECK(items::CountOf(bag, "pot") == 1);
+    CHECK(items::MaxCraftCount(bag, items, *stew, 5) == 1);
+
+    items::RecipeRegistry invalid;
+    CHECK_FALSE(invalid.LoadFromString(
+        R"({ "format": "recipes-v3", "recipes": [
+          { "id": "x", "name": "x", "category": "cooking",
+            "output": { "item": "meal", "count": 1 },
+            "ingredients": [ { "item": "food", "count": 1 } ] }
+        ] })",
+        "f5t3-v3", items, &error));
+    CHECK(Contains(error, "recipes-v3 不支持 category"));
+    CHECK_FALSE(invalid.LoadFromString(
+        R"({ "format": "recipes-v4", "recipes": [
+          { "id": "x", "name": "x", "category": "soup",
+            "output": { "item": "meal", "count": 1 },
+            "ingredients": [ { "item": "food", "count": 1 } ] }
+        ] })",
+        "f5t3-v4", items, &error));
+    CHECK(Contains(error, "category"));
+}
+
+TEST_CASE("M24-T1：新增十个配方与工具/锅具引用") {
+    const std::string root = std::string(ZL_SOURCE_DIR);
+    items::ItemRegistry items;
+    std::string error;
+    REQUIRE_MESSAGE(items.LoadFile(root + "/assets/items.json", &error), error);
+    items::RecipeRegistry recipes;
+    REQUIRE_MESSAGE(recipes.LoadFile(root + "/assets/recipes.json", items,
+                                     &error),
+                    error);
+    CHECK(recipes.Size() == 30);
+
+    for (const char* id : {"roast_carrot", "cook_chicken", "cook_goat",
+                           "carrot_stew", "chicken_stew", "goat_stew",
+                           "first_aid_kit", "herbal_salve", "sledgehammer",
+                           "fire_suit"}) {
+        INFO("recipe id: " << id);
+        REQUIRE(recipes.Find(id) != nullptr);
+    }
+
+    const items::RecipeDef* carrotStew = recipes.Find("carrot_stew");
+    REQUIRE(carrotStew != nullptr);
+    CHECK(carrotStew->station == "campfire");
+    REQUIRE(carrotStew->cookware.has_value());
+    CHECK(carrotStew->cookware->defId == "cooking_pot");
+    REQUIRE(carrotStew->fuel.has_value());
+    CHECK(carrotStew->fuel->defId == "wood");
+
+    const items::RecipeDef* firstAid = recipes.Find("first_aid_kit");
+    REQUIRE(firstAid != nullptr);
+    CHECK(firstAid->category == items::RecipeCategory::Medical);
+    CHECK(firstAid->station == "workbench");
+
+    const items::RecipeDef* sledge = recipes.Find("sledgehammer");
+    REQUIRE(sledge != nullptr);
+    REQUIRE(sledge->tools.size() == 1u);
+    CHECK(sledge->tools[0].defId == "toolbox");
+    CHECK(sledge->tools[0].wear == doctest::Approx(0.10f));
+
+    const items::RecipeDef* suit = recipes.Find("fire_suit");
+    REQUIRE(suit != nullptr);
+    REQUIRE(suit->tools.size() == 1u);
+    CHECK(suit->tools[0].defId == "sewing_kit");
+    CHECK(suit->outputDefId == "fire_suit");
 }

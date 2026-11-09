@@ -17,6 +17,7 @@ constexpr const char* kLogModule = "items";
 constexpr const char* kFormatV1 = "recipes-v1";
 constexpr const char* kFormatV2 = "recipes-v2";
 constexpr const char* kFormatV3 = "recipes-v3";
+constexpr const char* kFormatV4 = "recipes-v4";
 constexpr std::size_t kMaxIdLength = 64;
 constexpr std::size_t kMaxStationIdLength = 32;
 constexpr int kMaxCount = 9999;
@@ -128,20 +129,24 @@ bool RecipeRegistry::LoadFromString(std::string_view text, const std::string& so
         return fail("根节点必须是对象");
     }
     if (!doc.contains("format")) {
-        return fail(std::string("缺少 format 字段（期望 \"") + kFormatV3 +
-                    "\"，兼容 \"" + kFormatV2 + "\"/\"" + kFormatV1 + "\"）");
+        return fail(std::string("缺少 format 字段（期望 \"") + kFormatV4 +
+                    "\"，兼容 \"" + kFormatV3 + "\"/\"" + kFormatV2 + "\"/\"" +
+                    kFormatV1 + "\"）");
     }
     if (!doc["format"].is_string()) {
         return fail("format 必须是字符串");
     }
     const std::string format = doc["format"].get<std::string>();
-    if (format != kFormatV1 && format != kFormatV2 && format != kFormatV3) {
-        return fail("format 不受支持: \"" + format + "\"（期望 \"" + kFormatV3 +
-                    "\"，兼容 \"" + kFormatV2 + "\"/\"" + kFormatV1 + "\"）");
+    if (format != kFormatV1 && format != kFormatV2 && format != kFormatV3 &&
+        format != kFormatV4) {
+        return fail("format 不受支持: \"" + format + "\"（期望 \"" + kFormatV4 +
+                    "\"，兼容 \"" + kFormatV3 + "\"/\"" + kFormatV2 + "\"/\"" +
+                    kFormatV1 + "\"）");
     }
     const bool toolsAllowed = format != kFormatV1;
     const bool timeAllowed = format != kFormatV1;
-    const bool stationAllowed = format == kFormatV3;
+    const bool stationAllowed = format == kFormatV3 || format == kFormatV4;
+    const bool cookingFieldsAllowed = format == kFormatV4;
     if (!doc.contains("recipes")) {
         return fail("缺少 recipes 数组");
     }
@@ -173,6 +178,13 @@ bool RecipeRegistry::LoadFromString(std::string_view text, const std::string& so
             return fail(where + " " + format + " 不支持 station（请升级 format 为 " +
                         kFormatV3 + "）");
         }
+        if ((entry.contains("category") || entry.contains("cookware") ||
+             entry.contains("fuel")) &&
+            !cookingFieldsAllowed) {
+            return fail(where + " " + format +
+                        " 不支持 category/cookware/fuel（请升级 format 为 " +
+                        kFormatV4 + "）");
+        }
         std::unordered_set<std::string> allowedKeys = {
             "id", "name", "output", "ingredients"};
         std::string allowedHint = "id/name/output/ingredients";
@@ -187,6 +199,12 @@ bool RecipeRegistry::LoadFromString(std::string_view text, const std::string& so
         if (stationAllowed) {
             allowedKeys.insert("station");
             allowedHint += "/station";
+        }
+        if (cookingFieldsAllowed) {
+            allowedKeys.insert("category");
+            allowedKeys.insert("cookware");
+            allowedKeys.insert("fuel");
+            allowedHint += "/category/cookware/fuel";
         }
         for (auto it = entry.begin(); it != entry.end(); ++it) {
             if (!allowedKeys.contains(it.key())) {
@@ -226,6 +244,19 @@ bool RecipeRegistry::LoadFromString(std::string_view text, const std::string& so
                 return fail(where + " station \"" + def.station +
                             "\" 非法：仅允许小写字母/数字/下划线/连字符/点");
             }
+        }
+        if (entry.contains("category")) {
+            if (!entry["category"].is_string()) {
+                return fail(where + " 字段 'category' 必须是字符串");
+            }
+            const std::string categoryText = entry["category"].get<std::string>();
+            RecipeCategory parsedCategory = RecipeCategory::General;
+            if (!ParseRecipeCategory(categoryText, &parsedCategory)) {
+                return fail(where + " category \"" + categoryText +
+                            "\" 非法（允许: general/cooking/preservation/"
+                            "medical/crafting）");
+            }
+            def.category = parsedCategory;
         }
         if (!entry.contains("id") || !entry["id"].is_string()) {
             return fail(where + " 缺少字符串字段 'id'");
@@ -313,6 +344,56 @@ bool RecipeRegistry::LoadFromString(std::string_view text, const std::string& so
             }
         }
 
+        auto usedByRecipe = [&](std::string_view defId) {
+            return ingredientIds.contains(std::string(defId)) ||
+                   std::any_of(def.tools.begin(), def.tools.end(),
+                               [&](const RecipeIngredient& tool) {
+                                   return tool.defId == defId;
+                               });
+        };
+        if (entry.contains("cookware")) {
+            if (!entry["cookware"].is_object()) {
+                return fail(where + " 字段 'cookware' 必须是对象");
+            }
+            RecipeIngredient cookware;
+            std::string cookwareError;
+            if (!ParseItemRef(entry["cookware"], items, &cookware.defId,
+                              &cookware.count, nullptr, &cookwareError,
+                              where + ".cookware")) {
+                return fail(cookwareError);
+            }
+            if (cookware.count != 1) {
+                return fail(where + " cookware.count 必须为 1（锅具不可堆叠）");
+            }
+            if (usedByRecipe(cookware.defId)) {
+                return fail(where + ".cookware 与其他材料/工具重复 '" +
+                            cookware.defId + "'");
+            }
+            const ItemDef* cookwareDef = items.Find(cookware.defId);
+            if (cookwareDef != nullptr && cookwareDef->maxStack != 1) {
+                return fail(where + ".cookware 必须引用 maxStack=1 的锅具");
+            }
+            def.cookware = std::move(cookware);
+        }
+        if (entry.contains("fuel")) {
+            if (!entry["fuel"].is_object()) {
+                return fail(where + " 字段 'fuel' 必须是对象");
+            }
+            RecipeIngredient fuel;
+            std::string fuelError;
+            if (!ParseItemRef(entry["fuel"], items, &fuel.defId, &fuel.count,
+                              nullptr, &fuelError, where + ".fuel")) {
+                return fail(fuelError);
+            }
+            if (usedByRecipe(fuel.defId) ||
+                (def.cookware.has_value() &&
+                 def.cookware->defId == fuel.defId)) {
+                return fail(where + ".fuel 与其他材料/工具/锅具重复 '" +
+                            fuel.defId + "'");
+            }
+            def.fuel = std::move(fuel);
+        }
+
         byId.emplace(def.id, defs.size());
         defs.push_back(std::move(def));
     }
@@ -328,7 +409,95 @@ bool RecipeRegistry::LoadFromString(std::string_view text, const std::string& so
 
     m_defs = std::move(defs);
     m_byId = std::move(byId);
+    m_sourceText.assign(text.data(), text.size());
     ZL_INFO(kLogModule, "配方注册表已加载: {} 条定义 <- {}", m_defs.size(), source);
+    return true;
+}
+
+bool RecipeRegistry::MergeFromString(std::string_view text, const std::string& source,
+                                     const ItemRegistry& items,
+                                     std::size_t* added, std::string* error) {
+    if (added != nullptr) {
+        *added = 0;
+    }
+    if (error != nullptr) {
+        error->clear();
+    }
+    auto fail = [&](const std::string& message) {
+        const std::string full = source + ": " + message;
+        if (error != nullptr) {
+            *error = full;
+        }
+        ZL_ERROR(kLogModule, "{}", full);
+        return false;
+    };
+    if (m_sourceText.empty()) {
+        return fail("注册表没有可追加的基础文档");
+    }
+
+    nlohmann::json incoming;
+    try {
+        incoming = nlohmann::json::parse(text);
+    } catch (const nlohmann::json::parse_error& e) {
+        return fail(std::string("JSON 语法错误 — ") + e.what());
+    } catch (const std::exception& e) {
+        return fail(std::string("JSON 解析失败 — ") + e.what());
+    }
+    if (!incoming.is_object()) {
+        return fail("根节点必须是对象");
+    }
+    if (!incoming.contains("format") || !incoming["format"].is_string()) {
+        return fail("format 必须是 recipes-v1/v2/v3/v4");
+    }
+    const std::string incomingFormat = incoming["format"].get<std::string>();
+    if (incomingFormat != kFormatV1 && incomingFormat != kFormatV2 &&
+        incomingFormat != kFormatV3 && incomingFormat != kFormatV4) {
+        return fail("format 必须是 recipes-v1/v2/v3/v4");
+    }
+    if (!incoming.contains("recipes") || !incoming["recipes"].is_array() ||
+        incoming["recipes"].empty()) {
+        return fail("recipes 必须是非空数组");
+    }
+
+    nlohmann::json candidate;
+    try {
+        candidate = nlohmann::json::parse(m_sourceText);
+    } catch (const std::exception& e) {
+        return fail(std::string("基础文档解析失败 — ") + e.what());
+    }
+    if (!candidate.is_object() || !candidate.contains("recipes") ||
+        !candidate["recipes"].is_array()) {
+        return fail("基础文档缺少 recipes 数组");
+    }
+    const auto formatRank = [](const std::string& format) {
+        if (format == kFormatV4) {
+            return 4;
+        }
+        if (format == kFormatV3) {
+            return 3;
+        }
+        if (format == kFormatV2) {
+            return 2;
+        }
+        return 1;
+    };
+    const std::string baseFormat =
+        candidate.contains("format") && candidate["format"].is_string()
+            ? candidate["format"].get<std::string>()
+            : std::string(kFormatV1);
+    if (formatRank(incomingFormat) > formatRank(baseFormat)) {
+        candidate["format"] = incomingFormat;
+    }
+    const std::size_t incomingCount = incoming["recipes"].size();
+    for (const nlohmann::json& recipe : incoming["recipes"]) {
+        candidate["recipes"].push_back(recipe);
+    }
+    if (!LoadFromString(candidate.dump(), source, items, error)) {
+        return false;
+    }
+    if (added != nullptr) {
+        *added = incomingCount;
+    }
     return true;
 }
 

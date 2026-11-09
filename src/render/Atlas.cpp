@@ -45,8 +45,9 @@ std::unique_ptr<Atlas> Atlas::LoadFromJson(const std::string& jsonPath, TextureM
         return nullptr;
     }
 
-    const std::filesystem::path imagePath = std::filesystem::path(jsonPath).parent_path() / imageName;
-    Texture2D* texture = textures.Load(imagePath.string());
+    const std::filesystem::path imagePath =
+        (std::filesystem::path(jsonPath).parent_path() / imageName).lexically_normal();
+    Texture2D* texture = textures.Load(imagePath.generic_string());
     if (texture == nullptr) {
         if (error != nullptr) {
             *error = "图集纹理加载失败: " + imagePath.string();

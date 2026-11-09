@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <doctest/doctest.h>
+#include <sqlite3.h>
 
 #include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
@@ -121,6 +122,7 @@ save::SaveManager::CreateOptions MakeCreateOptions(
     save::SaveManager::CreateOptions options;
     options.name = "测试存档";
     options.mapId = "village_demo";
+    options.gameMinutes = 1950.0;
     options.players.push_back(save::SavePlayer{playerId, "Alice", true});
     options.thumbnail = MakeThumbnail();
     options.entities = &entities;
@@ -238,6 +240,7 @@ TEST_CASE("M10-T4 SaveManager 创建、列表、加载与删除") {
     CHECK(list[0].gameVersion == "manager-1.0");
     CHECK(list[0].saveVersion == save::kSaveFormatVersion);
     CHECK(list[0].thumbnail == save::kSaveThumbnailFile);
+    CHECK(list[0].gameMinutes == doctest::Approx(1950.0));
     REQUIRE(list[0].players.size() == 1u);
     CHECK(list[0].players[0].stableId == playerId);
     CHECK(list[0].players[0].name == "Alice");
@@ -259,6 +262,7 @@ TEST_CASE("M10-T4 SaveManager 创建、列表、加载与删除") {
     REQUIRE(loadedEntities.entities.size() == 1u);
     CHECK(loadedEntities.entities[0].stableId == playerId);
     CHECK(loadedMetadata.name == "测试存档");
+    CHECK(loadedMetadata.gameMinutes == doctest::Approx(1950.0));
 
     const std::vector<std::uint8_t> png = ReadBytes(manager.ThumbnailPath(id));
     CHECK(ReadBigEndian32(png, 16) == 4u);
@@ -298,6 +302,15 @@ TEST_CASE("M10-T4 SaveManager 更新实体与缩略图") {
     REQUIRE(manager.ReadMetadata(id, &metadata, &error) ==
             save::SaveManager::LoadResult::Ok);
     CHECK(metadata.thumbnail == save::kSaveThumbnailFile);
+    CHECK(metadata.gameMinutes == doctest::Approx(1950.0));
+
+    save::SaveManager::SaveOptions saveOptions;
+    saveOptions.entities = &entities;
+    saveOptions.gameMinutes = 2100.5;
+    REQUIRE(manager.Save(id, saveOptions, &error));
+    REQUIRE(manager.ReadMetadata(id, &metadata, &error) ==
+            save::SaveManager::LoadResult::Ok);
+    CHECK(metadata.gameMinutes == doctest::Approx(2100.5));
     const auto png = ReadBytes(manager.ThumbnailPath(id));
     CHECK(ReadBigEndian32(png, 16) == 2u);
     CHECK(ReadBigEndian32(png, 20) == 2u);
@@ -531,4 +544,62 @@ TEST_CASE("M10-T5 SaveOptions 后台更新实体与 chunk") {
     const world::GridSquare& square = target.Square(1, 1, 0);
     REQUIRE(square.Floor() != nullptr);
     CHECK(square.Floor()->sprite == "tile.floor.dirt");
+}
+
+TEST_CASE("M18-F3 v1 save metadata migrates and defaults game time to zero") {
+    TempRoot root("zl_save_manager_v1_migration");
+    save::SaveManager manager({root.path, "manager-1.0"});
+    REQUIRE(manager.EnsureRoot());
+    const std::filesystem::path dir = manager.SavePath("legacy");
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path path = dir / save::kSaveMetaFile;
+
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open(path.string().c_str(), &db) == SQLITE_OK);
+    const char* schema = R"sql(
+CREATE TABLE meta (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    save_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    save_version INTEGER NOT NULL,
+    game_version TEXT NOT NULL,
+    map_id TEXT NOT NULL,
+    thumbnail TEXT NOT NULL
+);
+CREATE TABLE players (
+    stable_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    is_local INTEGER NOT NULL
+);
+INSERT INTO meta
+    (id, save_id, name, created_at, updated_at, save_version, game_version,
+     map_id, thumbnail)
+    VALUES (1, 'legacy', 'Legacy', 1, 1, 1, '0.3.0', 'village_demo', '');
+PRAGMA user_version = 1;
+)sql";
+    char* sqlError = nullptr;
+    REQUIRE(sqlite3_exec(db, schema, nullptr, nullptr, &sqlError) == SQLITE_OK);
+    sqlite3_free(sqlError);
+    REQUIRE(sqlite3_close(db) == SQLITE_OK);
+
+    save::SaveMetadata metadata;
+    std::string error;
+    REQUIRE(manager.ReadMetadata("legacy", &metadata, &error) ==
+            save::SaveManager::LoadResult::Ok);
+    CHECK(error.empty());
+    CHECK(metadata.id == "legacy");
+    CHECK(metadata.gameMinutes == doctest::Approx(0.0));
+
+    db = nullptr;
+    REQUIRE(sqlite3_open(path.string().c_str(), &db) == SQLITE_OK);
+    sqlite3_stmt* statement = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db,
+                               "SELECT game_minutes FROM meta WHERE id = 1;", -1,
+                               &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    CHECK(sqlite3_column_double(statement, 0) == doctest::Approx(0.0));
+    REQUIRE(sqlite3_finalize(statement) == SQLITE_OK);
+    REQUIRE(sqlite3_close(db) == SQLITE_OK);
 }

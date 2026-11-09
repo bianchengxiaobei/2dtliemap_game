@@ -1,6 +1,7 @@
-#include "items/ItemRegistry.h"
+﻿#include "items/ItemRegistry.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <fstream>
 #include <sstream>
@@ -246,11 +247,14 @@ bool ItemRegistry::LoadFromString(std::string_view text, const std::string& sour
 
         static const std::unordered_set<std::string> kAllowedKeys = {
             "id", "name", "icon", "weight", "maxStack", "type", "use",
-            "unlocksRecipes"};
+            "unlocksRecipes", "combat", "ranged", "armor", "repairEfficiency",
+            "spoilDays"};
         for (auto it = item.begin(); it != item.end(); ++it) {
             if (!kAllowedKeys.contains(it.key())) {
                 return itemFail("未知字段 '" + it.key() +
-                                "'（允许: id/name/icon/weight/maxStack/type/use/unlocksRecipes）");
+                                "'（允许: id/name/icon/weight/maxStack/type/use/"
+                                "unlocksRecipes/combat/ranged/armor/"
+                                "repairEfficiency/spoilDays）");
             }
         }
 
@@ -330,18 +334,336 @@ bool ItemRegistry::LoadFromString(std::string_view text, const std::string& sour
             return itemFail("type 不受支持: \"" + typeText + "\"（允许 " + kAllowedTypes + "）");
         }
 
+        // M15-T1 / M30-T1：可选战斗参数（仅 weapon）。子字段可单独缺省，
+        // 由运行时默认值补齐；M30 新增 heavy 子对象和体力/前摇/硬直/格挡字段。
+        if (item.contains("combat")) {
+            if (def.type != ItemType::Weapon) {
+                return itemFail("字段 'combat' 仅适用于 weapon 类型");
+            }
+            const nlohmann::json& combat = item["combat"];
+            if (!combat.is_object()) {
+                return itemFail("字段 'combat' 必须是对象，实际: " + combat.dump());
+            }
+
+            static const std::unordered_set<std::string> kBaseCombatKeys = {
+                "damage", "range", "arc", "cooldown", "knockback", "stagger",
+                "wear", "stamina", "windup", "poise"};
+            static const std::unordered_set<std::string> kBlockCombatKeys = {
+                "blockReduction", "blockStamina"};
+            auto parseCombatFields = [&](const nlohmann::json& object,
+                                         const std::string& path, bool allowBlock,
+                                         bool allowHeavy, WeaponCombatFields* out,
+                                         WeaponCombat* blockOut) -> bool {
+                for (auto it = object.begin(); it != object.end(); ++it) {
+                    const bool known =
+                        kBaseCombatKeys.contains(it.key()) ||
+                        (allowBlock && kBlockCombatKeys.contains(it.key())) ||
+                        (allowHeavy && it.key() == "heavy");
+                    if (!known) {
+                        std::string allowed =
+                            "damage/range/arc/cooldown/knockback/stagger/wear/"
+                            "stamina/windup/poise";
+                        if (allowBlock) {
+                            allowed += "/blockReduction/blockStamina";
+                        }
+                        if (allowHeavy) {
+                            allowed += "/heavy";
+                        }
+                        return itemFail(path + " 未知字段 '" + it.key() +
+                                        "'（允许: " + allowed + "）");
+                    }
+                }
+                auto readCombat = [&](const char* key, float minValue, float maxValue,
+                                      std::optional<float>* member) {
+                    if (!object.contains(key)) {
+                        return true;
+                    }
+                    const nlohmann::json& value = object[key];
+                    if (!value.is_number()) {
+                        return itemFail(path + "." + key +
+                                        " 必须是数字，实际: " + value.dump());
+                    }
+                    const double number = value.get<double>();
+                    if (!std::isfinite(number) || number < minValue ||
+                        number > maxValue) {
+                        return itemFail(path + "." + key + " 取值非法: " +
+                                        value.dump() + "（允许 " +
+                                        std::to_string(minValue) + " ~ " +
+                                        std::to_string(maxValue) + "）");
+                    }
+                    *member = static_cast<float>(number);
+                    return true;
+                };
+                if (!readCombat("damage", 0.1f, 500.0f, &out->damage) ||
+                    !readCombat("range", 0.1f, 10.0f, &out->range) ||
+                    !readCombat("arc", 10.0f, 360.0f, &out->arcDegrees) ||
+                    !readCombat("cooldown", 0.05f, 5.0f, &out->cooldownSeconds) ||
+                    !readCombat("knockback", 0.0f, 20.0f, &out->knockback) ||
+                    !readCombat("stagger", 0.0f, 5.0f, &out->staggerSeconds) ||
+                    !readCombat("wear", 0.0f, 1.0f, &out->wearPerHit) ||
+                    !readCombat("stamina", 0.0f, 100.0f, &out->staminaCost) ||
+                    !readCombat("windup", 0.0f, 1.5f, &out->windupSeconds) ||
+                    !readCombat("poise", 0.0f, 100.0f, &out->poiseDamage)) {
+                    return false;
+                }
+                if (allowBlock) {
+                    if (blockOut == nullptr) {
+                        return itemFail(path + " 缺少格挡输出对象");
+                    }
+                    if (!readCombat("blockReduction", 0.0f, 0.95f,
+                                    &blockOut->blockReduction) ||
+                        !readCombat("blockStamina", 0.0f, 100.0f,
+                                    &blockOut->blockStaminaCost)) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+
+            if (!parseCombatFields(combat, "combat", true, true, &def.combat,
+                                   &def.combat)) {
+                return false;
+            }
+            if (!def.combat.Any()) {
+                return itemFail("字段 'combat' 至少需要一个参数"
+                                "（damage/range/arc/cooldown/knockback/stagger/wear/"
+                                "stamina/windup/poise/blockReduction/blockStamina）");
+            }
+            if (combat.contains("heavy")) {
+                if (!combat["heavy"].is_object()) {
+                    return itemFail("字段 'combat.heavy' 必须是对象，实际: " +
+                                    combat["heavy"].dump());
+                }
+                WeaponHeavyCombat heavy;
+                if (!parseCombatFields(combat["heavy"], "combat.heavy", false, false,
+                                       &heavy, nullptr)) {
+                    return false;
+                }
+                if (!heavy.Any()) {
+                    return itemFail("字段 'combat.heavy' 至少需要一个参数");
+                }
+                def.heavy = std::move(heavy);
+            }
+        }
+
+        if (item.contains("ranged")) {
+            if (def.type != ItemType::Weapon) {
+                return itemFail("字段 'ranged' 仅适用于 weapon 类型");
+            }
+            const nlohmann::json& ranged = item["ranged"];
+            if (!ranged.is_object()) {
+                return itemFail("字段 'ranged' 必须是对象，实际: " + ranged.dump());
+            }
+            static const std::unordered_set<std::string> kRangedKeys = {
+                "damage", "range", "spreadDegrees", "pellets",
+                "cooldownSeconds", "magazine", "reloadSeconds", "ammoDefId",
+                "noiseRadius", "wearPerShot", "projectileSpeed",
+                "falloffStart", "falloffEnd", "falloffScale"};
+            for (auto it = ranged.begin(); it != ranged.end(); ++it) {
+                if (!kRangedKeys.contains(it.key())) {
+                    return itemFail("ranged 未知字段 '" + it.key() +
+                                    "'（允许: damage/range/spreadDegrees/pellets/"
+                                    "cooldownSeconds/magazine/reloadSeconds/"
+                                    "ammoDefId/noiseRadius/wearPerShot/"
+                                    "projectileSpeed/falloffStart/falloffEnd/"
+                                    "falloffScale）");
+                }
+            }
+            RangedCombat parsed;
+            auto readRangedNumber = [&](const char* key, float minValue,
+                                        float maxValue, float* out) {
+                if (!ranged.contains(key)) {
+                    return itemFail(std::string("缺少字段 'ranged.") + key + "'");
+                }
+                const nlohmann::json& value = ranged[key];
+                if (!value.is_number()) {
+                    return itemFail(std::string("ranged.") + key +
+                                    " 必须是数字，实际: " + value.dump());
+                }
+                const double number = value.get<double>();
+                if (!std::isfinite(number) || number < minValue ||
+                    number > maxValue) {
+                    return itemFail(std::string("ranged.") + key +
+                                    " 取值非法: " + value.dump() + "（允许 " +
+                                    std::to_string(minValue) + " ~ " +
+                                    std::to_string(maxValue) + "）");
+                }
+                *out = static_cast<float>(number);
+                return true;
+            };
+            auto readRangedInt = [&](const char* key, int minValue, int maxValue,
+                                     int* out) {
+                if (!ranged.contains(key)) {
+                    return itemFail(std::string("缺少字段 'ranged.") + key + "'");
+                }
+                const nlohmann::json& value = ranged[key];
+                if (!value.is_number_integer()) {
+                    return itemFail(std::string("ranged.") + key +
+                                    " 必须是整数，实际: " + value.dump());
+                }
+                const long long number = value.get<long long>();
+                if (number < minValue || number > maxValue) {
+                    return itemFail(std::string("ranged.") + key +
+                                    " 取值非法: " + value.dump() + "（允许 " +
+                                    std::to_string(minValue) + " ~ " +
+                                    std::to_string(maxValue) + "）");
+                }
+                *out = static_cast<int>(number);
+                return true;
+            };
+            if (!readRangedNumber("damage", 0.1f, 500.0f, &parsed.damage) ||
+                !readRangedNumber("range", 0.1f, 100.0f, &parsed.range) ||
+                !readRangedNumber("spreadDegrees", 0.0f, 90.0f,
+                                  &parsed.spreadDegrees) ||
+                !readRangedInt("pellets", 1, 32, &parsed.pellets) ||
+                !readRangedNumber("cooldownSeconds", 0.05f, 10.0f,
+                                  &parsed.cooldownSeconds) ||
+                !readRangedInt("magazine", 1, 200, &parsed.magazine) ||
+                !readRangedNumber("reloadSeconds", 0.1f, 30.0f,
+                                  &parsed.reloadSeconds) ||
+                !readRangedNumber("noiseRadius", 0.0f, 200.0f,
+                                  &parsed.noiseRadius) ||
+                !readRangedNumber("wearPerShot", 0.0f, 1.0f,
+                                  &parsed.wearPerShot) ||
+                !readRangedNumber("projectileSpeed", 0.1f, 100.0f,
+                                  &parsed.projectileSpeed) ||
+                !readRangedNumber("falloffStart", 0.0f, parsed.range,
+                                  &parsed.falloffStart) ||
+                !readRangedNumber("falloffEnd", 0.0f, parsed.range,
+                                  &parsed.falloffEnd) ||
+                !readRangedNumber("falloffScale", 0.0f, 1.0f,
+                                  &parsed.falloffScale)) {
+                return false;
+            }
+            if (parsed.falloffEnd < parsed.falloffStart) {
+                return itemFail("ranged.falloffEnd 必须大于或等于 falloffStart");
+            }
+            if (!ranged.contains("ammoDefId")) {
+                return itemFail("缺少字段 'ranged.ammoDefId'");
+            }
+            if (!ranged["ammoDefId"].is_string()) {
+                return itemFail("ranged.ammoDefId 必须是物品 id 字符串，实际: " +
+                                ranged["ammoDefId"].dump());
+            }
+            parsed.ammoDefId = ranged["ammoDefId"].get<std::string>();
+            if (parsed.ammoDefId.empty() || parsed.ammoDefId.size() > kMaxIdLength) {
+                return itemFail("ranged.ammoDefId 长度非法（1~64 字符）: \"" +
+                                parsed.ammoDefId + "\"");
+            }
+            const bool ammoIdCharsetOk =
+                std::all_of(parsed.ammoDefId.begin(), parsed.ammoDefId.end(),
+                            [](char c) {
+                                return (c >= 'a' && c <= 'z') ||
+                                       (c >= '0' && c <= '9') || c == '_' ||
+                                       c == '.';
+                            });
+            if (!ammoIdCharsetOk) {
+                return itemFail("ranged.ammoDefId \"" + parsed.ammoDefId +
+                                "\" 非法：仅允许小写字母/数字/下划线/点");
+            }
+            def.ranged = std::move(parsed);
+        }
+
+        // M19-F4：衣物护甲参数（仅 clothing）。condition 会在运行时削弱减伤。
+        if (item.contains("armor")) {
+            if (def.type != ItemType::Clothing) {
+                return itemFail("字段 'armor' 仅适用于 clothing 类型");
+            }
+            const nlohmann::json& armor = item["armor"];
+            if (!armor.is_object()) {
+                return itemFail("字段 'armor' 必须是对象，实际: " + armor.dump());
+            }
+            static const std::unordered_set<std::string> kArmorKeys = {
+                "claw", "bite", "blunt", "wear", "moveScale", "insulation",
+                "waterproof"};
+            for (auto it = armor.begin(); it != armor.end(); ++it) {
+                if (!kArmorKeys.contains(it.key())) {
+                    return itemFail("armor 未知字段 '" + it.key() +
+                                    "'（允许: claw/bite/blunt/wear/moveScale/"
+                                    "insulation/waterproof）");
+                }
+            }
+            auto readArmor = [&](const char* key, float minValue, float maxValue,
+                                 float* out) {
+                if (!armor.contains(key)) {
+                    return true;
+                }
+                const nlohmann::json& value = armor[key];
+                if (!value.is_number()) {
+                    return itemFail(std::string("armor.") + key +
+                                    " 必须是数字，实际: " + value.dump());
+                }
+                const double number = value.get<double>();
+                if (!std::isfinite(number) || number < minValue || number > maxValue) {
+                    return itemFail(std::string("armor.") + key + " 取值非法: " +
+                                    value.dump() + "（允许 " +
+                                    std::to_string(minValue) + " ~ " +
+                                    std::to_string(maxValue) + "）");
+                }
+                *out = static_cast<float>(number);
+                return true;
+            };
+            if (!readArmor("claw", 0.0f, 0.95f, &def.armor.clawReduction) ||
+                !readArmor("bite", 0.0f, 0.95f, &def.armor.biteReduction) ||
+                !readArmor("blunt", 0.0f, 0.95f, &def.armor.bluntReduction) ||
+                !readArmor("wear", 0.0f, 1.0f, &def.armor.wearPerHit) ||
+                !readArmor("moveScale", 0.5f, 1.0f, &def.armor.moveScale) ||
+                !readArmor("insulation", 0.0f, 1.0f, &def.armor.insulation) ||
+                !readArmor("waterproof", 0.0f, 1.0f, &def.armor.waterproof)) {
+                return false;
+            }
+            if (!def.armor.Any()) {
+                return itemFail("字段 'armor' 至少需要一个非零参数"
+                                "（claw/bite/blunt/wear/moveScale/insulation/waterproof）");
+            }
+        }
+
+        // M19-F4：维修包恢复量倍率（武器/衣物；缺省 1.0）。
+        if (item.contains("repairEfficiency")) {
+            if (def.type != ItemType::Weapon && def.type != ItemType::Clothing) {
+                return itemFail("字段 'repairEfficiency' 仅适用于 weapon/clothing 类型");
+            }
+            const nlohmann::json& value = item["repairEfficiency"];
+            if (!value.is_number()) {
+                return itemFail("字段 'repairEfficiency' 必须是数字，实际: " +
+                                value.dump());
+            }
+            const double number = value.get<double>();
+            if (!std::isfinite(number) || number < 0.1 || number > 3.0) {
+                return itemFail("repairEfficiency 取值非法: " + value.dump() +
+                                "（允许 0.1 ~ 3.0）");
+            }
+            def.repairEfficiency = static_cast<float>(number);
+        }
+
         // use 效果（M6-T5，可选）：heal 0~100 HP；hunger/thirst/fatigue 0~1（正值 = 减少需求）
         if (item.contains("use")) {
             const nlohmann::json& use = item["use"];
             if (!use.is_object()) {
                 return itemFail("字段 'use' 必须是对象，实际: " + use.dump());
             }
-            static const std::unordered_set<std::string> kUseKeys = {"heal", "hunger", "thirst",
-                                                                     "fatigue"};
+            static const std::unordered_set<std::string> kUseKeys = {
+                "heal", "hunger", "thirst", "fatigue", "bandage", "painRelief",
+                "painReliefSeconds", "healthPenalty", "infectionCure",
+                "infectionSlow", "infectionSlowSeconds", "infectionRisk",
+                "extinguish",
+                "extinguishWear", "replaceWith", "nutrition",
+                "foodPoisonChance"};
             for (auto it = use.begin(); it != use.end(); ++it) {
                 if (!kUseKeys.contains(it.key())) {
                     return itemFail("use 未知字段 '" + it.key() +
-                                    "'（允许: heal/hunger/thirst/fatigue）");
+                                    "'（允许: heal/hunger/thirst/fatigue/bandage/"
+                                    "painRelief/painReliefSeconds/healthPenalty/"
+                                    "infectionCure/infectionSlow/"
+                                    "infectionSlowSeconds/infectionRisk/extinguish/"
+                                    "extinguishWear/replaceWith/nutrition/"
+                                    "foodPoisonChance）");
+                }
+                if (it.key() == "replaceWith") {
+                    if (!it->is_string()) {
+                        return itemFail("use.replaceWith 必须是物品 id 字符串");
+                    }
+                    continue;
                 }
                 if (!it->is_number()) {
                     return itemFail("use." + it.key() + " 必须是数字，实际: " + it->dump());
@@ -361,7 +683,137 @@ bool ItemRegistry::LoadFromString(std::string_view text, const std::string& sour
                                     "（允许 0 ~ 1，正值 = 减少需求）");
                 }
             }
-            def.use = UseEffect{heal, needs[0], needs[1], needs[2]};
+            const float bandage = use.value("bandage", 0.0f);
+            if (!(bandage >= 0.0f) || bandage > 1.0f) {
+                return itemFail("use.bandage 取值非法: " + use["bandage"].dump() +
+                                "（允许 0 ~ 1，表示伤口严重度降低比例）");
+            }
+            const float painRelief = use.value("painRelief", 0.0f);
+            if (!(painRelief >= 0.0f) || painRelief > 1.0f) {
+                return itemFail("use.painRelief 取值非法: " + use["painRelief"].dump() +
+                                "（允许 0 ~ 1）");
+            }
+            const float painReliefSeconds = use.value("painReliefSeconds", 0.0f);
+            if (!(painReliefSeconds >= 0.0f) || painReliefSeconds > 600.0f) {
+                return itemFail("use.painReliefSeconds 取值非法: " +
+                                use["painReliefSeconds"].dump() +
+                                "（允许 0 ~ 600 秒）");
+            }
+            if (painRelief > 0.0f && !(painReliefSeconds > 0.0f)) {
+                return itemFail("use.painReliefSeconds 必须大于 0（当 painRelief > 0）");
+            }
+            const float healthPenalty = use.value("healthPenalty", 0.0f);
+            if (!(healthPenalty >= 0.0f) || healthPenalty > 100.0f) {
+                return itemFail("use.healthPenalty 取值非法: " +
+                                use["healthPenalty"].dump() +
+                                "（允许 0 ~ 100 HP）");
+            }
+            const float infectionCure = use.value("infectionCure", 0.0f);
+            if (!(infectionCure >= 0.0f) || infectionCure > 1.0f) {
+                return itemFail("use.infectionCure 取值非法: " +
+                                use["infectionCure"].dump() + "（允许 0 ~ 1）");
+            }
+            const float infectionSlow = use.value("infectionSlow", 0.0f);
+            if (!(infectionSlow >= 0.0f) || infectionSlow > 1.0f) {
+                return itemFail("use.infectionSlow 取值非法: " +
+                                use["infectionSlow"].dump() + "（允许 0 ~ 1）");
+            }
+            const float infectionSlowSeconds =
+                use.value("infectionSlowSeconds", 0.0f);
+            if (!(infectionSlowSeconds >= 0.0f) || infectionSlowSeconds > 600.0f) {
+                return itemFail("use.infectionSlowSeconds 取值非法: " +
+                                use["infectionSlowSeconds"].dump() +
+                                "（允许 0 ~ 600 秒）");
+            }
+            if (infectionSlow > 0.0f && !(infectionSlowSeconds > 0.0f)) {
+                return itemFail(
+                    "use.infectionSlowSeconds 必须大于 0（当 infectionSlow > 0）");
+            }
+            const float infectionRisk = use.value("infectionRisk", 0.0f);
+            if (!(infectionRisk >= 0.0f) || infectionRisk > 1.0f ||
+                !std::isfinite(infectionRisk)) {
+                return itemFail("use.infectionRisk 取值非法: " +
+                                use["infectionRisk"].dump() + "（允许 0 ~ 1）");
+            }
+            const float extinguish = use.value("extinguish", 0.0f);
+            if (!(extinguish >= 0.0f) || extinguish > 1.0f) {
+                return itemFail("use.extinguish 取值非法: " +
+                                use["extinguish"].dump() + "（允许 0 ~ 1）");
+            }
+            const float extinguishWear = use.value("extinguishWear", 0.0f);
+            if (!(extinguishWear >= 0.0f) || extinguishWear > 1.0f) {
+                return itemFail("use.extinguishWear 取值非法: " +
+                                use["extinguishWear"].dump() +
+                                "（允许 0 ~ 1）");
+            }
+            if (extinguish > 0.0f && extinguishWear <= 0.0f &&
+                use.value("replaceWith", std::string()).empty()) {
+                return itemFail(
+                    "use.extinguishWear 必须大于 0（无 replaceWith 的灭火物品）");
+            }
+            const float nutrition = use.value("nutrition", 0.0f);
+            if (!(nutrition >= 0.0f) || nutrition > 1.0f ||
+                !std::isfinite(nutrition)) {
+                return itemFail("use.nutrition 取值非法: " +
+                                use["nutrition"].dump() + "（允许 0 ~ 1）");
+            }
+            const float foodPoisonChance =
+                use.value("foodPoisonChance", 0.0f);
+            if (!(foodPoisonChance >= 0.0f) || foodPoisonChance > 1.0f ||
+                !std::isfinite(foodPoisonChance)) {
+                return itemFail("use.foodPoisonChance 取值非法: " +
+                                use["foodPoisonChance"].dump() +
+                                "（允许 0 ~ 1）");
+            }
+            const std::string replaceWith =
+                use.value("replaceWith", std::string());
+            if (!replaceWith.empty()) {
+                if (replaceWith.size() > kMaxIdLength) {
+                    return itemFail("use.replaceWith 物品 id 过长");
+                }
+                const bool charsetOk =
+                    std::all_of(replaceWith.begin(), replaceWith.end(),
+                                [](char c) {
+                                    return (c >= 'a' && c <= 'z') ||
+                                           (c >= '0' && c <= '9') ||
+                                           c == '_' || c == '.';
+                                });
+                if (!charsetOk) {
+                    return itemFail("use.replaceWith 物品 id 非法：仅允许小写字母/"
+                                    "数字/下划线/点");
+                }
+            }
+            def.use = UseEffect{};
+            def.use.heal = heal;
+            def.use.hunger = needs[0];
+            def.use.thirst = needs[1];
+            def.use.fatigue = needs[2];
+            def.use.bandage = bandage;
+            def.use.painRelief = painRelief;
+            def.use.painReliefSeconds = painReliefSeconds;
+            def.use.healthPenalty = healthPenalty;
+            def.use.infectionCure = infectionCure;
+            def.use.infectionSlow = infectionSlow;
+            def.use.infectionSlowSeconds = infectionSlowSeconds;
+            def.use.infectionRisk = infectionRisk;
+            def.use.extinguish = extinguish;
+            def.use.extinguishWear = extinguishWear;
+            def.use.replaceWith = replaceWith;
+            def.use.nutrition = nutrition;
+            def.use.foodPoisonChance = foodPoisonChance;
+        }
+
+        if (item.contains("spoilDays")) {
+            const nlohmann::json& value = item["spoilDays"];
+            if (!value.is_number()) {
+                return itemFail("字段 'spoilDays' 必须是数字，实际: " + value.dump());
+            }
+            const double days = value.get<double>();
+            if (!std::isfinite(days) || days < 0.0 || days > 3650.0) {
+                return itemFail("spoilDays 取值非法: " + value.dump() +
+                                "（允许 0 ~ 3650 天，0 = 不腐败）");
+            }
+            def.spoilDays = static_cast<float>(days);
         }
 
         if (item.contains("unlocksRecipes")) {
@@ -401,9 +853,97 @@ bool ItemRegistry::LoadFromString(std::string_view text, const std::string& sour
         defs.push_back(std::move(def));
     }
 
+    for (const ItemDef& def : defs) {
+        if (!def.use.replaceWith.empty() &&
+            !byId.contains(def.use.replaceWith)) {
+            if (error != nullptr) {
+                *error = "use.replaceWith 引用了未注册物品 '" +
+                         def.use.replaceWith + "'（物品 " + def.id + "）";
+            }
+            ZL_ERROR(kLogModule, "物品定义非法: use.replaceWith 引用了未注册物品 '{}'",
+                     def.use.replaceWith);
+            return false;
+        }
+        if (def.ranged.has_value() &&
+            !byId.contains(def.ranged->ammoDefId)) {
+            if (error != nullptr) {
+                *error = "ranged.ammoDefId 引用了未注册物品 '" +
+                         def.ranged->ammoDefId + "'（物品 " + def.id + "）";
+            }
+            ZL_ERROR(kLogModule,
+                     "物品定义非法: ranged.ammoDefId 引用了未注册物品 '{}'",
+                     def.ranged->ammoDefId);
+            return false;
+        }
+    }
+
     m_defs = std::move(defs);
     m_byId = std::move(byId);
+    m_sourceText.assign(text.data(), text.size());
     ZL_INFO(kLogModule, "物品注册表已加载: {} 条定义 <- {}", m_defs.size(), source);
+    return true;
+}
+
+bool ItemRegistry::MergeFromString(std::string_view text, const std::string& source,
+                                   std::size_t* added, std::string* error) {
+    if (added != nullptr) {
+        *added = 0;
+    }
+    if (error != nullptr) {
+        error->clear();
+    }
+    auto fail = [&](const std::string& message) {
+        const std::string full = source + ": " + message;
+        if (error != nullptr) {
+            *error = full;
+        }
+        ZL_ERROR(kLogModule, "{}", full);
+        return false;
+    };
+    if (m_sourceText.empty()) {
+        return fail("注册表没有可追加的基础文档");
+    }
+
+    nlohmann::json incoming;
+    try {
+        incoming = nlohmann::json::parse(text);
+    } catch (const nlohmann::json::parse_error& e) {
+        return fail(std::string("JSON 语法错误 — ") + e.what());
+    } catch (const std::exception& e) {
+        return fail(std::string("JSON 解析失败 — ") + e.what());
+    }
+    if (!incoming.is_object()) {
+        return fail("根节点必须是对象");
+    }
+    if (!incoming.contains("format") || !incoming["format"].is_string() ||
+        incoming["format"].get<std::string>() != kFormat) {
+        return fail(std::string("format 必须是 ") + kFormat);
+    }
+    if (!incoming.contains("items") || !incoming["items"].is_array() ||
+        incoming["items"].empty()) {
+        return fail("items 必须是非空数组");
+    }
+
+    nlohmann::json candidate;
+    try {
+        candidate = nlohmann::json::parse(m_sourceText);
+    } catch (const std::exception& e) {
+        return fail(std::string("基础文档解析失败 — ") + e.what());
+    }
+    if (!candidate.is_object() || !candidate.contains("items") ||
+        !candidate["items"].is_array()) {
+        return fail("基础文档缺少 items 数组");
+    }
+    const std::size_t incomingCount = incoming["items"].size();
+    for (const nlohmann::json& item : incoming["items"]) {
+        candidate["items"].push_back(item);
+    }
+    if (!LoadFromString(candidate.dump(), source, error)) {
+        return false;
+    }
+    if (added != nullptr) {
+        *added = incomingCount;
+    }
     return true;
 }
 

@@ -1,0 +1,64 @@
+{
+  "format": "settlements-v1",
+  "defs": [
+    {
+      "id": "village_haven",
+      "name": "村庄营地",
+      "centerX": 75.0,
+      "centerY": 26.5,
+      "safeRadius": 8.0,
+      "npcPoints": [
+        {
+          "id": "merchant_mara",
+          "kind": "merchant",
+          "x": 75.5,
+          "y": 26.5,
+          "wanderRadius": 1.5
+        },
+        {
+          "id": "guard_cole",
+          "kind": "guard",
+          "x": 76.5,
+          "y": 25.5,
+          "wanderRadius": 2.0
+        },
+        {
+          "id": "requester_ivy",
+          "kind": "requester",
+          "x": 73.5,
+          "y": 27.5,
+          "wanderRadius": 1.5
+        }
+      ],
+      "merchantStock": [4, 2, 1, 2, 1],
+      "restockDays": 1,
+      "defense": {
+        "enabled": true,
+        "minDay": 10,
+        "nightStartHour": 22,
+        "nightEndHour": 5,
+        "activationRadius": 24.0,
+        "spawnRadius": 13.0,
+        "baseRaiders": 2,
+        "raidersPerNight": 1,
+        "maxRaiders": 4,
+        "guardBehavior": "defend",
+        "guardHealth": 120.0,
+        "guardDamage": 18.0,
+        "guardRange": 1.6,
+        "guardAttackSeconds": 0.9,
+        "raiderHealth": 50.0,
+        "raiderDamage": 5.0,
+        "raiderRange": 1.35,
+        "raiderAttackSeconds": 1.5,
+        "raiderSpeed": 2.1
+      },
+      "missionPool": [
+        "settlement_help",
+        "settlement_escort",
+        "settlement_clear",
+        "settlement_supply"
+      ]
+    }
+  ]
+}

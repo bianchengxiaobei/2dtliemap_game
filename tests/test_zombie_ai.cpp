@@ -71,6 +71,8 @@ struct AiRig {
         r.emplace<ecs::Collider>(e, ecs::Collider{});
         r.emplace<ecs::Health>(e, ecs::Health{100.0f, 100.0f});
         r.emplace<ecs::AiState>(e, ecs::AiState{});
+        r.emplace<ecs::ActionState>(e, ecs::ActionState{});
+        r.emplace<ecs::AttackIntent>(e, ecs::AttackIntent{});
         ecs::PerceptionState percep;
         percep.lastKnownX = x;  // 初始可疑点 = 出生位置（与演示一致）
         percep.lastKnownY = y;
@@ -180,8 +182,13 @@ TEST_CASE("AiSystem：Chase→Attack→Search→Idle 转移链（含攻击节拍
     CHECK(rig.world.Registry().get<ecs::MoveIntent>(z).x == 0.0f);
     CHECK(rig.world.Registry().get<ecs::MoveIntent>(z).y == 0.0f);
 
-    // 攻击节拍：每 0.8s 一次脉冲
-    rig.Run(55);  // 0.92s
+    // M15-T3：前摇 0.5s 后才落第一击；命中后冷却 1.0s，不会贴身连续命中。
+    rig.Run(35);  // 0.58s：越过前摇，落第一击
+    CHECK(rig.Ai(z).attackPulses == 1);
+    CHECK(rig.aiSystem.GetStats().swings == 1);
+    rig.Run(40);  // 累计 1.25s：仍在冷却内
+    CHECK(rig.Ai(z).attackPulses == 1);
+    rig.Run(50);  // 累计 2.08s：冷却 + 第二次前摇结束
     CHECK(rig.Ai(z).attackPulses >= 2);
     CHECK(rig.aiSystem.GetStats().swings >= 2);
 
@@ -255,6 +262,25 @@ TEST_CASE("AiSystem：目标移动触发追击重定向（goal 跟随 lastKnown�
     CHECK(searchGoalDist <= 8.0f);  // 巡点半径 4 + 就近校正余量
 }
 
+TEST_CASE("M21-F1a siege assault ignores a visible player and paths to breach") {
+    AiRig rig;
+    const ecs::Entity z = rig.AddZombie(5.5f, 5.5f);
+    const ecs::Entity player = rig.AddTarget(20.5f, 5.5f);
+    rig.Ai(z).status = ecs::AiStatus::Chase;
+    rig.Ai(z).targetId = rig.world.IdOf(player).id;
+    rig.Ai(z).idleSeconds = 100.0f;
+    rig.Percep(z).lastKnownX = 20.5f;
+    rig.Percep(z).lastKnownY = 5.5f;
+    rig.world.Registry().emplace<ecs::SiegeAssaultTarget>(
+        z, ecs::SiegeAssaultTarget{14.5f, 5.5f, true});
+
+    rig.Run(30);
+    CHECK(rig.Ai(z).status == ecs::AiStatus::SearchLastKnown);
+    CHECK(rig.Ai(z).targetId == 0);
+    CHECK(rig.Pos(z).x > 5.5f);
+    CHECK(rig.Pos(z).x < 14.5f);
+}
+
 TEST_CASE("AiSystem：Health 归零 → Dead 冻结（不再写意图/请求）") {
     AiRig rig;
     const ecs::Entity z = rig.AddZombie(5.5f, 5.5f);
@@ -271,4 +297,34 @@ TEST_CASE("AiSystem：Health 归零 → Dead 冻结（不再写意图/请求）"
     CHECK(rig.Ai(z).status == ecs::AiStatus::Dead);
     CHECK_FALSE(rig.Request(z).newRequest);  // 死了不再要路
     CHECK(rig.aiSystem.GetStats().dead == 1);
+}
+
+
+TEST_CASE("M23-F3-T5 燃烧僵尸受惊追逐最近玩家并加速") {
+    AiRig rig;
+    const ecs::Entity zombie = rig.AddZombie(5.5f, 5.5f);
+    const ecs::Entity player = rig.AddTarget(12.5f, 5.5f);
+    entt::registry& registry = rig.world.Registry();
+    registry.emplace<ecs::PlayerTag>(player);
+    registry.emplace<ecs::Health>(player, ecs::Health{100.0f, 100.0f});
+    ecs::BurningZombie burning;
+    burning.remaining = 8.0f;
+    burning.panicRemaining = 4.0f;
+    burning.panicSpeedScale = 1.25f;
+    burning.panicChaseRadius = 12.0f;
+    registry.emplace<ecs::BurningZombie>(zombie, burning);
+    rig.Ai(zombie).idleSeconds = 100.0f;
+
+    const ecs::Entity calm = rig.AddZombie(5.5f, 8.5f);
+    rig.Ai(calm).idleSeconds = 100.0f;
+
+    rig.Tick();
+    CHECK(rig.Ai(zombie).status == ecs::AiStatus::Chase);
+    CHECK(rig.Ai(zombie).targetId == rig.world.IdOf(player).id);
+    CHECK(rig.Percep(zombie).lastKnownX == doctest::Approx(12.5f));
+    CHECK(rig.Ai(calm).status == ecs::AiStatus::Idle);
+
+    rig.Run(30);
+    CHECK(rig.Ai(zombie).status == ecs::AiStatus::Chase);
+    CHECK(rig.Pos(zombie).x > 6.4f);
 }

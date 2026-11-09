@@ -5,6 +5,7 @@
 #include <btBulletDynamicsCommon.h>
 
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
 #include "ecs/components/PhysicsComponents.h"
@@ -23,6 +24,23 @@ void MovementSystem::Update(ecs::EcsWorld& world, float dt) {
             if (registry.all_of<ecs::PlayerTag>(e)) {
                 if (const auto* needs = registry.try_get<ecs::Needs>(e); needs != nullptr) {
                     const float scale = std::clamp(needs->moveScale, 0.05f, 1.0f);
+                    velocity.x *= scale;
+                    velocity.y *= scale;
+                }
+                if (const auto* pain = registry.try_get<ecs::Pain>(e); pain != nullptr) {
+                    const float scale = std::clamp(pain->moveScale, 0.05f, 1.0f);
+                    velocity.x *= scale;
+                    velocity.y *= scale;
+                }
+                if (const auto* armor = registry.try_get<ecs::DamageResist>(e);
+                    armor != nullptr) {
+                    const float scale = std::clamp(armor->moveScale, 0.5f, 1.0f);
+                    velocity.x *= scale;
+                    velocity.y *= scale;
+                }
+                if (const auto* climate = registry.try_get<ecs::Climate>(e);
+                    climate != nullptr) {
+                    const float scale = std::clamp(climate->moveScale, 0.05f, 1.0f);
                     velocity.x *= scale;
                     velocity.y *= scale;
                 }

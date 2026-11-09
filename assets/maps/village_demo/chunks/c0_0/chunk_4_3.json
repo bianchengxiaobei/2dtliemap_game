@@ -1,6 +1,18 @@
 {
  "cx": 4,
  "cy": 3,
+ "floors": [
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "ggggggggww",
+  "ggggggggww",
+  "ggggggggww",
+  "ggggggggww",
+  "ggggggggww",
+  "ggggggggww"
+ ],
  "objects": [
   {
    "x": 0,
@@ -9,6 +21,80 @@
    "layer": "furniture",
    "sprite": "object.tree",
    "solid": true
+  },
+  {
+   "x": 8,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 4,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 5,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 9,
+   "y": 5,
+   "w": 1,
+   "h": 5,
+   "id": 16,
+   "name": "poi_fire_station"
   }
  ]
 }

@@ -50,10 +50,18 @@ bool Equip(ecs::Equipment& equipment, const ItemRegistry& registry, ecs::EquipSl
 // 卸下槽位：成功 true 并移出到 *outRemoved（可为 null）；槽位空返回 false
 bool Unequip(ecs::Equipment& equipment, ecs::EquipSlot slot, ecs::ItemInstance* outRemoved);
 
+// M15-T1：命中后磨损主手武器（amount 钳制到 0~1）；返回是否刚刚损坏（condition 降到 0）。
+bool WearEquippedWeapon(ecs::Equipment& equipment, float amount);
+
+// M19-F4：受击后磨损躯干护甲；返回是否刚刚损坏（condition 降到 0）。
+bool WearEquippedArmor(ecs::Equipment& equipment, float amount);
+
 // 使用结果（M6-T5）：调用方负责把 effect 落地到 Health/Needs（含钳制）与提示
 struct UseResult {
     bool applied = false;  // false = 容器里没有可使用的物品（未消耗任何东西）
+    bool spoiled = false;  // 食物在变质阈值以下时使用（由调用方施加风险）
     std::string defId;     // 被消耗的物品定义 id
+    std::string replacementDefId;  // 使用后原位替换成的物品 id（可空）
     UseEffect effect;      // 定义中的使用效果
     int remaining = 0;     // 该堆叠使用后剩余数量（0 = 条目已移除）
 };

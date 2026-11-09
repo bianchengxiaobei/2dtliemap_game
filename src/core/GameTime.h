@@ -28,6 +28,8 @@ public:
 
     // 联机时间同步：用服务器从开局起经过的游戏分钟数重建日期/时间。
     void SetTotalGameMinutes(double totalMinutes);
+    void AdvanceGameMinutes(double minutes);
+    double MinutesUntilHour(int hour) const;
 
     const DateTime& Now() const { return m_now; }
     double TotalGameMinutes() const { return m_totalMinutes; }

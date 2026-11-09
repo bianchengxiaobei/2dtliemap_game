@@ -3,10 +3,15 @@
 #include <string>
 
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
+#include "characters/systems/PainSystem.h"
+#include "characters/systems/WoundSystem.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
 #include "game/GroundItems.h"
 #include "game/PlayerInventoryService.h"
+#include "game/PlayerStorage.h"
+#include "game/StructureComponents.h"
 #include "items/InventoryOps.h"
 #include "items/ItemRegistry.h"
 #include "items/RecipeRegistry.h"
@@ -18,14 +23,18 @@ namespace {
 const char* kItemsJson = R"({
   "format": "items-v1",
   "items": [
-    { "id": "bandage", "name": "绷带", "icon": "i", "weight": 0.1, "maxStack": 5, "type": "consumable", "use": { "heal": 15 } },
+    { "id": "bandage", "name": "绷带", "icon": "i", "weight": 0.1, "maxStack": 5, "type": "consumable", "use": { "heal": 15, "bandage": 0.7 } },
     { "id": "rag", "name": "破布", "icon": "i", "weight": 0.1, "maxStack": 10, "type": "generic" },
     { "id": "axe", "name": "斧", "icon": "i", "weight": 3.0, "maxStack": 1, "type": "weapon" },
     { "id": "jacket", "name": "夹克", "icon": "i", "weight": 1.2, "maxStack": 1, "type": "clothing" },
     { "id": "hammer", "name": "锤子", "icon": "i", "weight": 2.0, "maxStack": 1, "type": "weapon" },
     { "id": "repair_kit", "name": "维修包", "icon": "i", "weight": 0.3, "maxStack": 5, "type": "generic" },
     { "id": "canned_beans", "name": "罐头豆子", "icon": "i", "weight": 0.8, "maxStack": 3, "type": "consumable", "use": { "hunger": 0.35 } },
-    { "id": "water_bottle", "name": "瓶装水", "icon": "i", "weight": 0.5, "maxStack": 2, "type": "consumable", "use": { "thirst": 0.4 } }
+    { "id": "tainted_food", "name": "可疑食物", "icon": "i", "weight": 0.3, "maxStack": 1, "type": "consumable", "use": { "hunger": 0.2, "nutrition": 0.4, "foodPoisonChance": 1.0 } },
+    { "id": "water_bottle", "name": "瓶装水", "icon": "i", "weight": 0.5, "maxStack": 2, "type": "consumable", "use": { "thirst": 0.4 } },
+    { "id": "painkillers", "name": "止痛药", "icon": "i", "weight": 0.05, "maxStack": 5, "type": "consumable", "use": { "painRelief": 0.65, "painReliefSeconds": 90 } },
+    { "id": "antibiotics", "name": "抗生素", "icon": "i", "weight": 0.05, "maxStack": 5, "type": "consumable", "use": { "infectionCure": 0.35, "infectionSlow": 0.5, "infectionSlowSeconds": 60 } },
+    { "id": "tainted_bandage", "name": "污染绷带", "icon": "i", "weight": 0.1, "maxStack": 5, "type": "consumable", "use": { "bandage": 0.35, "infectionRisk": 1.0 } }
   ]
 })";
 
@@ -141,6 +150,25 @@ TEST_CASE("M14-T4 食物/饮水通过服务器背包动作恢复 Needs") {
     CHECK(bag.items.empty());
 }
 
+TEST_CASE("F5-T3 服务器食用会写入营养与中毒状态") {
+    Fixture fixture;
+    ecs::EcsWorld world;
+    const ecs::Entity player = MakePlayer(world);
+    game::PlayerInventoryService service(world, fixture.items, fixture.recipes,
+                                         nullptr, nullptr);
+    entt::registry& registry = world.Registry();
+    auto& bag = registry.get<ecs::Container>(player);
+    bag.items.push_back(ecs::ItemInstance{"tainted_food", 1, 1.0f});
+
+    const game::InventoryResult ate = service.UseBag(player, 0);
+    REQUIRE(ate.ok);
+    const auto* food = registry.try_get<ecs::FoodState>(player);
+    REQUIRE(food != nullptr);
+    CHECK(food->nutrition == doctest::Approx(0.4f));
+    CHECK(food->poisonRemaining > 0.0f);
+    CHECK(food->poisonDamagePerSecond > 0.0f);
+}
+
 TEST_CASE("M13-T7 服务器背包动作：维修") {
     Fixture fixture;
     ecs::EcsWorld world;
@@ -214,4 +242,205 @@ TEST_CASE("M13-T7 服务器制作：批量计时、队列与取消") {
     CHECK(service.Dispatch(player, cancel).ok);
     CHECK_FALSE(job.active);
     CHECK(items::CountOf(bag, "rag") == 2);
+}
+
+TEST_CASE("M15-T2 服务器背包使用绷带止血并降低伤口") {
+    Fixture fixture;
+    ecs::EcsWorld world;
+    const ecs::Entity player = MakePlayer(world);
+    game::PlayerInventoryService service(world, fixture.items, fixture.recipes,
+                                         nullptr, nullptr);
+    entt::registry& registry = world.Registry();
+    auto& bag = registry.get<ecs::Container>(player);
+    bag.items.push_back(ecs::ItemInstance{"bandage", 1, 1.0f});
+    ecs::Wounds wounds;
+    wounds.count = 1;
+    wounds.entries[0] =
+        ecs::WoundEntry{ecs::DamageType::Bite, 0.4f, 1.2f, 12.5f, 30.0f, false};
+    registry.emplace<ecs::Wounds>(player, wounds);
+
+    const game::InventoryResult result = service.UseBag(player, 0);
+    CHECK(result.ok);
+    CHECK(result.message.find("止血") != std::string::npos);
+    const auto& used = registry.get<ecs::Wounds>(player);
+    CHECK(used.entries[0].bandaged);
+    CHECK(used.entries[0].bleedRemaining == doctest::Approx(0.0f));
+    CHECK(zl::characters::CurrentBleedRate(used) == doctest::Approx(0.0f));
+    CHECK(used.entries[0].severity == doctest::Approx(0.12f));
+    CHECK(registry.get<ecs::Health>(player).current == doctest::Approx(65.0f));
+    const float before = registry.get<ecs::Health>(player).current;
+    zl::characters::WoundSystem system;
+    system.Update(world, 2.0f);
+    CHECK(registry.get<ecs::Health>(player).current == doctest::Approx(before));
+    CHECK(items::CountOf(bag, "bandage") == 0);
+}
+
+TEST_CASE("M15-T4 止痛药短时降低疼痛，重复使用刷新不叠加，无痛不消耗") {
+    Fixture fixture;
+    ecs::EcsWorld world;
+    const ecs::Entity player = MakePlayer(world);
+    game::PlayerInventoryService service(world, fixture.items, fixture.recipes,
+                                         nullptr, nullptr);
+    entt::registry& registry = world.Registry();
+    auto& bag = registry.get<ecs::Container>(player);
+    bag.items.push_back(ecs::ItemInstance{"painkillers", 2, 1.0f});
+    ecs::Pain pain;
+    pain.baseLevel = 0.5f;
+    pain.level = 0.5f;
+    registry.emplace<ecs::Pain>(player, pain);
+
+    const game::InventoryResult first = service.UseBag(player, 0);
+    CHECK(first.ok);
+    CHECK(first.message.find("止痛") != std::string::npos);
+    CHECK(items::CountOf(bag, "painkillers") == 1);
+    auto& used = registry.get<ecs::Pain>(player);
+    CHECK(used.reliefStrength == doctest::Approx(0.65f));
+    CHECK(used.reliefRemaining == doctest::Approx(90.0f));
+    CHECK(used.level == doctest::Approx(0.175f));
+
+    const game::InventoryResult second = service.UseBag(player, 0);
+    CHECK(second.ok);
+    CHECK(items::CountOf(bag, "painkillers") == 0);
+    CHECK(used.reliefStrength == doctest::Approx(0.65f));
+    CHECK(used.reliefRemaining == doctest::Approx(90.0f));
+    CHECK(used.level == doctest::Approx(0.175f));
+
+    ecs::EcsWorld noPainWorld;
+    const ecs::Entity noPain = MakePlayer(noPainWorld, 20.0f, 20.0f);
+    game::PlayerInventoryService noPainService(noPainWorld, fixture.items,
+                                               fixture.recipes, nullptr, nullptr);
+    auto& noPainBag = noPainWorld.Registry().get<ecs::Container>(noPain);
+    noPainBag.items.push_back(ecs::ItemInstance{"painkillers", 1, 1.0f});
+    const game::InventoryResult invalid = noPainService.UseBag(noPain, 0);
+    CHECK_FALSE(invalid.ok);
+    CHECK(invalid.message.find("没有") != std::string::npos);
+    CHECK(items::CountOf(noPainBag, "painkillers") == 1);
+}
+
+TEST_CASE("M20-F1 服务器背包使用抗生素降低感染，未感染时不消耗") {
+    Fixture fixture;
+    ecs::EcsWorld world;
+    const ecs::Entity player = MakePlayer(world);
+    game::PlayerInventoryService service(world, fixture.items, fixture.recipes,
+                                         nullptr, nullptr);
+    entt::registry& registry = world.Registry();
+    auto& bag = registry.get<ecs::Container>(player);
+    bag.items.push_back(ecs::ItemInstance{"antibiotics", 2, 1.0f});
+    ecs::Infection infection;
+    infection.stage = ecs::InfectionStage::Fever;
+    infection.progress = 0.60f;
+    infection.timeToNextStage = 100.0f;
+    registry.emplace<ecs::Infection>(player, infection);
+
+    const game::InventoryResult first = service.UseBag(player, 0);
+    CHECK(first.ok);
+    CHECK(first.message.find("感染") != std::string::npos);
+    CHECK(items::CountOf(bag, "antibiotics") == 1);
+    auto& treated = registry.get<ecs::Infection>(player);
+    CHECK(treated.stage == ecs::InfectionStage::Incubating);
+    CHECK(treated.progress == doctest::Approx(0.25f));
+    CHECK(treated.slowStrength == doctest::Approx(0.5f));
+    CHECK(treated.slowRemaining == doctest::Approx(60.0f));
+
+    const game::InventoryResult second = service.UseBag(player, 0);
+    CHECK(second.ok);
+    CHECK(items::CountOf(bag, "antibiotics") == 0);
+    CHECK(registry.get<ecs::Infection>(player).stage ==
+          ecs::InfectionStage::None);
+
+    ecs::EcsWorld cleanWorld;
+    const ecs::Entity clean = MakePlayer(cleanWorld, 20.0f, 20.0f);
+    game::PlayerInventoryService cleanService(cleanWorld, fixture.items,
+                                              fixture.recipes, nullptr, nullptr);
+    auto& cleanBag = cleanWorld.Registry().get<ecs::Container>(clean);
+    cleanBag.items.push_back(ecs::ItemInstance{"antibiotics", 1, 1.0f});
+    const game::InventoryResult invalid = cleanService.UseBag(clean, 0);
+    CHECK_FALSE(invalid.ok);
+    CHECK(invalid.message.find("没有感染") != std::string::npos);
+    CHECK(items::CountOf(cleanBag, "antibiotics") == 1);
+}
+
+TEST_CASE("F6-T2 服务器使用污染绷带：止血同时触发伤口感染") {
+    Fixture fixture;
+    ecs::EcsWorld world;
+    const ecs::Entity player = MakePlayer(world);
+    game::PlayerInventoryService service(world, fixture.items, fixture.recipes,
+                                         nullptr, nullptr);
+    entt::registry& registry = world.Registry();
+    auto& bag = registry.get<ecs::Container>(player);
+    bag.items.push_back(ecs::ItemInstance{"tainted_bandage", 1, 1.0f});
+    ecs::Wounds wounds;
+    wounds.count = 1;
+    wounds.entries[0] = ecs::WoundEntry{ecs::DamageType::Claw, 0.5f,
+                                        0.0f, 0.0f, 0.0f, false};
+    registry.emplace<ecs::Wounds>(player, wounds);
+
+    const game::InventoryResult used = service.UseBag(player, 0);
+    CHECK(used.ok);
+    CHECK(used.message.find("感染") != std::string::npos);
+    CHECK(items::CountOf(bag, "tainted_bandage") == 0);
+    CHECK(registry.get<ecs::Wounds>(player).entries[0].bandaged);
+    CHECK(registry.get<ecs::Infection>(player).stage ==
+          ecs::InfectionStage::Incubating);
+}
+
+TEST_CASE("X-F1 2b-2 服务器仓库存取与所有权") {
+    Fixture fixture;
+    ecs::EcsWorld world;
+    const ecs::Entity player = MakePlayer(world, 10.0f, 10.0f);
+    game::PlayerInventoryService service(world, fixture.items, fixture.recipes,
+                                         nullptr, nullptr);
+    entt::registry& registry = world.Registry();
+    auto& bag = registry.get<ecs::Container>(player);
+    const ecs::Entity storage = game::SpawnPlayerStorage(
+        world, 10.5f, 10.5f, 0, "object.crate", 50.0f, 6);
+    REQUIRE(static_cast<bool>(storage != entt::null));
+    const std::uint64_t storageId = world.IdOf(storage).id;
+    registry.emplace<ecs::StructureOwner>(storage,
+                                          ecs::StructureOwner{1});
+    auto& storageContainer = registry.get<ecs::Container>(storage);
+
+    bag.items.push_back(ecs::ItemInstance{"bandage", 2, 1.0f});
+    ui::InventoryAction action;
+    action.from = ui::InventoryArea::Loot;
+    action.to = ui::InventoryArea::Backpack;
+    action.fromEntityId = storageId;
+    action.type = ui::InventoryActionType::StoreAll;
+    const game::InventoryResult stored = service.Dispatch(player, action);
+    CHECK(stored.ok);
+    CHECK(bag.items.empty());
+    CHECK(items::CountOf(storageContainer, "bandage") == 2);
+
+    action.type = ui::InventoryActionType::TakeAll;
+    const game::InventoryResult taken = service.Dispatch(player, action);
+    CHECK(taken.ok);
+    CHECK(items::CountOf(bag, "bandage") == 2);
+    CHECK(storageContainer.items.empty());
+
+    bag.items.clear();
+    bag.items.push_back(ecs::ItemInstance{"rag", 2, 1.0f});
+    ui::InventoryAction transfer;
+    transfer.type = ui::InventoryActionType::Transfer;
+    transfer.from = ui::InventoryArea::Backpack;
+    transfer.to = ui::InventoryArea::Loot;
+    transfer.fromIndex = 0;
+    const game::InventoryResult storedOne = service.Dispatch(player, transfer);
+    CHECK(storedOne.ok);
+    CHECK(items::CountOf(storageContainer, "rag") == 2);
+    CHECK(bag.items.empty());
+
+    transfer.from = ui::InventoryArea::Loot;
+    transfer.to = ui::InventoryArea::Backpack;
+    transfer.fromEntityId = storageId;
+    transfer.fromIndex = 0;
+    const game::InventoryResult takenOne = service.Dispatch(player, transfer);
+    CHECK(takenOne.ok);
+    CHECK(items::CountOf(bag, "rag") == 1);
+    CHECK(items::CountOf(storageContainer, "rag") == 1);
+
+    registry.get<ecs::StructureOwner>(storage).ownerStableId = 99;
+    const game::InventoryResult denied = service.Dispatch(player, action);
+    CHECK_FALSE(denied.ok);
+    CHECK(items::CountOf(bag, "rag") == 1);
+    CHECK(items::CountOf(storageContainer, "rag") == 1);
 }

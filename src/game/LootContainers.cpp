@@ -59,14 +59,25 @@ void CountContainer(const ecs::Container& container, int* stacks, int* total) {
 ecs::Entity SpawnLootContainer(ecs::EcsWorld& world,
                                const items::LootTableRegistry& lootTables,
                                std::string_view tableId, float px, float py, int z,
-                               std::string_view spriteLogical) {
+                               std::string_view spriteLogical,
+                               std::uint64_t stableId) {
     const items::LootTable* table = lootTables.Find(tableId);
     if (table == nullptr) {
         ZL_WARN(kLogModule, "SpawnLootContainer：未知战利品表 '{}'", tableId);
         return entt::null;
     }
     entt::registry& registry = world.Registry();
-    const ecs::Entity entity = world.Create();
+    if (stableId != 0) {
+        const ecs::Entity existing = world.FindById(stableId);
+        if (existing != entt::null) {
+            return existing;
+        }
+    }
+    const ecs::Entity entity = stableId != 0 ? world.CreateWithStableId(stableId)
+                                             : world.Create();
+    if (entity == entt::null) {
+        return entt::null;
+    }
     registry.emplace<ecs::Position>(entity, ecs::Position{px, py, z});
     registry.emplace<ecs::Container>(entity,
                                      ecs::Container{{}, table->capacityKg});
@@ -267,6 +278,30 @@ LootTakeResult TakeLootContainerItem(ecs::EcsWorld& world,
     }
     result.taken = added;
     result.remaining = items::CountOf(*source, result.defId);
+    return result;
+}
+
+LootTakeAllResult TakeAllLootContainerItems(
+    ecs::EcsWorld& world, const items::ItemRegistry& items,
+    ecs::Entity containerEntity, ecs::Container& playerContainer) {
+    LootTakeAllResult result;
+    if (!world.Alive(containerEntity)) {
+        return result;
+    }
+    auto* source = world.Registry().try_get<ecs::Container>(containerEntity);
+    if (source == nullptr) {
+        return result;
+    }
+    for (int guard = 0; guard < 256 && !source->items.empty(); ++guard) {
+        const int want = source->items.front().count;
+        const LootTakeResult taken = TakeLootContainerItem(
+            world, items, containerEntity, playerContainer, 0, want);
+        if (taken.taken <= 0) {
+            break;
+        }
+        result.moved += taken.taken;
+    }
+    result.remainingStacks = static_cast<int>(source->items.size());
     return result;
 }
 

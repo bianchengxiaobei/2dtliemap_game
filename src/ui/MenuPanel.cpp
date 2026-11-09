@@ -77,6 +77,7 @@ bool MenuPanel::Init(Rml::Context& context, const std::string& path) {
     m_endTitle = m_document->GetElementById("end-title");
     m_endSubtitle = m_document->GetElementById("end-subtitle");
     m_endStats = m_document->GetElementById("end-stats");
+    m_endHint = m_document->GetElementById("end-hint");
     m_continueButton = m_document->GetElementById("menu-continue");
     m_volumeElement = m_document->GetElementById("setting-volume");
     m_volumeValueElement = m_document->GetElementById("setting-volume-value");
@@ -199,6 +200,7 @@ void MenuPanel::Shutdown() {
     m_endTitle = nullptr;
     m_endSubtitle = nullptr;
     m_endStats = nullptr;
+    m_endHint = nullptr;
     m_continueButton = nullptr;
     m_volumeElement = nullptr;
     m_volumeValueElement = nullptr;
@@ -277,7 +279,8 @@ void MenuPanel::ShowPauseMenu() {
 }
 
 void MenuPanel::ShowEndScreen(bool victory, const std::string& title,
-                              const std::string& subtitle, const std::string& stats) {
+                              const std::string& subtitle, const std::string& stats,
+                              bool showRestart) {
     if (m_document == nullptr) {
         return;
     }
@@ -291,10 +294,17 @@ void MenuPanel::ShowEndScreen(bool victory, const std::string& title,
         m_endView->SetClass("victory", victory);
         m_endView->SetClass("death", !victory);
     }
+    if (Rml::Element* restart = m_document->GetElementById("end-restart");
+        restart != nullptr) {
+        restart->SetProperty("display", showRestart ? "block" : "none");
+    }
     SetText(m_endKicker, victory ? "RUN COMPLETE" : "YOU DIED");
     SetText(m_endTitle, title);
     SetText(m_endSubtitle, subtitle);
     SetText(m_endStats, stats);
+    SetText(m_endHint, showRestart
+                           ? "本局已结束 · 重新开始会生成新的世界"
+                           : "本局已结束 · 返回主菜单可重新联机");
     ShowView("end-menu");
     m_open = true;
 }

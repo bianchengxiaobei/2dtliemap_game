@@ -39,6 +39,11 @@ void FacingGridDir(Direction dir, float* fx, float* fy) {
 
 }  // namespace
 
+void PerceptionSystem::SetEnvironmentSightScale(float scale) {
+    m_environmentSightScale = std::clamp(std::isfinite(scale) ? scale : 1.0f,
+                                          0.25f, 1.5f);
+}
+
 void PerceptionSystem::PushSound(const core::SoundEvent& sound) {
     m_pendingSounds.push_back(sound);
 }
@@ -69,7 +74,8 @@ bool PerceptionSystem::CanSee(const Facing* facing, float px, float py, float tx
     const float dx = tx - px;
     const float dy = ty - py;
     const float distSq = dx * dx + dy * dy;
-    if (distSq > m_params.sightRadius * m_params.sightRadius) {
+    const float sightRadius = m_params.sightRadius * m_environmentSightScale;
+    if (distSq > sightRadius * sightRadius) {
         return false;
     }
     const bool close = distSq <= m_params.closeRadius * m_params.closeRadius;

@@ -32,6 +32,8 @@
 #include "script/ScriptApi.h"
 #include "script/ScriptManager.h"
 #include "world/Chunk.h"
+#include "world/GridSquare.h"
+#include "world/World.h"
 
 using namespace zl;
 using zltest::LogCapture;
@@ -222,6 +224,11 @@ TEST_CASE("M7-T3：Lua 绑定端到端（Game/Player/World/Zombies/Items/Log）"
     ai::PathfindingService pathfinding(nullptr, ai::MapChunkBounds{0, 0, 4, 4});
     world::Chunk chunk(0, 0);
     pathfinding.OnChunkLoaded(chunk);
+    world::World world;
+    world::GridSquare& square = world.GetOrCreateSquare(1, 0, 0);
+    square.SetFloor(world::SquareObject{"tile.floor.wood", 0, 0, false});
+    square.AddObject(world::SquareLayer::Wall,
+                     world::SquareObject{"wall.brick", 0, 0, true});
 
     const ecs::Entity player = ecs.Create();
     {
@@ -238,6 +245,7 @@ TEST_CASE("M7-T3：Lua 绑定端到端（Game/Player/World/Zombies/Items/Log）"
     game::GameContext ctx;
     ctx.ecs = &ecs;
     ctx.items = &items;
+    ctx.world = &world;
     ctx.loop = &loop;
     ctx.gameTime = &gameTime;
     ctx.pathfinding = &pathfinding;
@@ -265,6 +273,8 @@ Log.Info(string.format('z at %.0f,%.0f', z.x, z.y))
 Log.Info('item=' .. Items.GetName('bandage') .. ' exists=' .. tostring(Items.Exists('missing')))
 Log.Info('spawnitem=' .. tostring(World.SpawnItem('bandage', 1.5, 2.5, 0)) .. '/' .. tostring(World.SpawnItem('nope', 1.5, 2.5, 0)))
 Log.Info('passable=' .. tostring(World.IsPassable(0, 0)))
+local sq = World.GetSquare(1, 0, 0)
+Log.Info('square=' .. tostring(sq ~= nil) .. '/' .. tostring(sq.hasFloor) .. '/' .. sq.floor.sprite .. '/' .. sq.wall[1].sprite)
 local t = Game.GetTime()
 Log.Info('date=' .. t.year .. '-' .. t.month .. '-' .. t.day .. ' tick=' .. Game.GetTick())
 )lua");
@@ -281,6 +291,8 @@ Log.Info('date=' .. t.year .. '-' .. t.month .. '-' .. t.day .. ' tick=' .. Game
     CHECK(logs.find("item=绷带 exists=false") != std::string::npos);
     CHECK(logs.find("spawnitem=true/false") != std::string::npos);
     CHECK(logs.find("passable=true") != std::string::npos);
+    CHECK(logs.find("square=true/true/tile.floor.wood/wall.brick") !=
+          std::string::npos);
     CHECK(logs.find("date=2000-7-9 tick=1") != std::string::npos);
 
     // 副作用落地：位置/背包/地面/僵尸

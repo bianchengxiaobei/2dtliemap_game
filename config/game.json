@@ -3,6 +3,7 @@
     "width": 1280,
     "height": 720,
     "title": "ZomboidLike",
+    "fullscreen": false,
     "vsync": true
   },
   "game": {
@@ -43,6 +44,53 @@
   "loot": {
     "file": "assets/loot.json"
   },
+  "forage": {
+    "file": "assets/forage.json",
+    "interactRange": 2.2,
+    "planRadius": 10,
+    "scanSeconds": 1.0
+  },
+  "animals": {
+    "file": "assets/animals.json",
+    "spawn": {
+      "enabled": true,
+      "maxLive": 36,
+      "minPlayerDistance": 18.0,
+      "poiRadius": 16.0,
+      "seed": 20261030
+    }
+  },
+  "fire": {
+    "file": "assets/fire.json",
+    "ignitionSeconds": 1.5,
+    "wetnessPenalty": 0.90,
+    "minIgnitionChance": 0.0,
+    "smolderSeconds": 20.0,
+    "spreadIntervalSeconds": 6.0,
+    "spreadChanceScale": 0.20,
+    "rainBurnDecayScale": 1.0,
+    "maxActiveSources": 128,
+    "maxSpreadsPerTick": 2,
+    "extinguishRange": 2.5,
+    "bareHandsChance": 0.15,
+    "bareHandsSelfDamage": 2.0,
+    "fireDamagePerSecond": 6.0,
+    "fireDamageRadius": 1.0,
+    "fireDamageIntervalSeconds": 0.5,
+    "zombieBurnSeconds": 8.0,
+    "zombieBurnDamagePerSecond": 3.0,
+    "zombieBurnDamageIntervalSeconds": 0.5,
+    "zombieSpreadIntervalSeconds": 1.5,
+    "zombieSpreadChance": 0.35,
+    "zombiePanicSeconds": 4.0,
+    "zombiePanicSpeedScale": 1.25,
+    "zombiePanicChaseRadius": 12.0,
+    "seed": 20261029
+  },
+  "fishing": {
+    "interactRange": 2.2,
+    "planRadius": 12
+  },
   "objective": {
     "radioPart": "radio_part",
     "radioX": 72.5,
@@ -56,8 +104,21 @@
     "stationRange": 2.5,
     "stationLabels": {
       "workbench": "工作台",
-      "campfire": "篝火"
+      "campfire": "篝火",
+      "locker": "雨水收集器"
     }
+  },
+  "food": {
+    "spoilScale": 1.0,
+    "spoiledDamage": 4.0,
+    "warningThreshold": 0.2,
+    "spoiledPoisonChance": 0.85,
+    "poisonDurationSeconds": 45.0,
+    "poisonDamagePerSecond": 0.12,
+    "nutritionDecayPerDay": 0.5,
+    "nutritionHungerRelief": 0.25,
+    "nutritionDamageRelief": 0.35,
+    "nutritionPoisonReduction": 0.5
   },
   "save": {
     "root": "saves",
@@ -69,7 +130,8 @@
     "backend": "lua",
     "modsDir": "mods",
     "hotReload": true,
-    "hotReloadSeconds": 1.0
+    "hotReloadSeconds": 1.0,
+    "contentHotReloadDebounceSeconds": 0.5
   },
   "inventory": {
     "playerCapacityKg": 20.0,
@@ -78,6 +140,72 @@
     "repairKit": "repair_kit",
     "repairKitCount": 1,
     "repairAmount": 0.5
+  },
+  "vehicle": {
+    "maxSpeed": 10.0,
+    "acceleration": 8.0,
+    "braking": 14.0,
+    "radius": 0.65,
+    "enterRange": 2.2,
+    "fuelPerSecond": 0.012,
+    "count": 3,
+    "spawnOffsetX": 6,
+    "spawnOffsetY": 6,
+    "spawnSearchRadius": 3,
+    "crashMinSpeed": 3.0,
+    "crashDamagePerSpeed": 0.08,
+    "maxCrashDamage": 0.56,
+    "ramMinSpeed": 2.0,
+    "ramBaseDamage": 20.0,
+    "ramDamagePerSpeed": 18.0,
+    "ramKnockbackPerSpeed": 0.45,
+    "ramKnockbackBase": 1.2,
+    "ramStaggerBase": 0.25,
+    "ramStaggerPerSpeed": 0.02,
+    "ramCooldownSeconds": 0.75,
+    "ramConditionDamageBase": 0.015,
+    "ramConditionDamagePerSpeed": 0.008,
+    "ramConditionDamageMax": 0.12,
+    "vehicleCollisionMinSpeed": 2.0,
+    "vehicleCollisionConditionDamageBase": 0.01,
+    "vehicleCollisionConditionDamagePerSpeed": 0.008,
+    "vehicleCollisionConditionDamageMax": 0.1,
+    "vehicleCollisionOccupantDamageBase": 3.0,
+    "vehicleCollisionOccupantDamagePerSpeed": 1.2,
+    "vehicleCollisionOccupantDamageMax": 20.0,
+    "vehicleCollisionCooldownSeconds": 0.75,
+    "vehicleCollisionPushPerSpeed": 0.12,
+    "vehicleCollisionPushMax": 0.8,
+    "vehicleCollisionRestitution": 0.2,
+    "vehicleCoastBraking": 3.0,
+    "vehicleCollisionFriction": 0.35,
+    "vehicleAngularDamping": 3.0,
+    "driverDamageReduction": 0.85,
+    "seatHandoffMaxSpeed": 0.10,
+    "zombieAttackConditionDamage": 0.015,
+    "zombieAttackCooldownSeconds": 0.75,
+    "noiseRadius": 12.0,
+    "noiseIntervalSeconds": 0.45,
+    "noiseMinSpeed": 1.5,
+    "hornNoiseRadius": 24.0,
+    "hornCooldownSeconds": 1.5,
+    "dirtMaxSpeedScale": 0.92,
+    "dirtAccelerationScale": 0.88,
+    "dirtBrakingScale": 0.92,
+    "grassMaxSpeedScale": 0.62,
+    "grassAccelerationScale": 0.55,
+    "grassBrakingScale": 0.72,
+    "engineIdleVolume": 0.18,
+    "engineMaxVolume": 0.62,
+    "engineMinPitch": 0.82,
+    "engineMaxPitch": 1.28,
+    "ramSoundVolume": 0.9,
+    "repairItem": "repair_kit",
+    "repairAmount": 0.4,
+    "fuelItem": "fuel_can",
+    "fuelPerCan": 0.5,
+    "trunkCapacityKg": 40.0,
+    "trunkStacks": 6
   },
   "health": {
     "playerMaxHp": 100.0,
@@ -101,6 +229,54 @@
     "starvationHpPerSecond": 0.35,
     "dehydrationHpPerSecond": 0.60
   },
+  "weather": {
+    "enabled": true,
+    "seed": 20261024,
+    "periodMinutes": 180,
+    "transitionMinutes": 30,
+    "clearWeight": 0.45,
+    "rainWeight": 0.25,
+    "fogWeight": 0.17,
+    "coldSnapWeight": 0.13,
+    "clearTemperatureC": 24.0,
+    "rainTemperatureC": 13.0,
+    "fogTemperatureC": 16.0,
+    "coldSnapTemperatureC": -6.0,
+    "nightTemperatureDropC": 6.0,
+    "rainSightScale": 0.80,
+    "fogSightScale": 0.55,
+    "coldSnapSightScale": 0.90,
+    "rainMoveScale": 0.95,
+    "fogMoveScale": 0.90,
+    "coldSnapMoveScale": 0.88,
+    "rainWetness": 0.80,
+    "fogWetness": 0.18,
+    "coldSnapWetness": 0.08
+  },
+  "climate": {
+    "rainWetnessPerSecond": 0.025,
+    "dryPerSecond": 0.012,
+    "fireDryPerSecond": 0.05,
+    "comfortC": 37.0,
+    "coldStartC": 18.0,
+    "coldRate": 0.15,
+    "bodyResponseSeconds": 120.0,
+    "indoorWarmthC": 14.0,
+    "fireWarmthC": 18.0,
+    "insulationWarmthC": 8.0,
+    "wetCoolingC": 6.0,
+    "indoorMinBodyC": 36.2,
+    "fireMinBodyC": 36.8,
+    "coldWarnC": 36.0,
+    "coldFatigueThresholdC": 36.0,
+    "coldFatiguePerSecond": 0.001,
+    "hypothermiaThresholdC": 35.0,
+    "hypothermiaDamagePerSecond": 0.15,
+    "coldMovePenalty": 0.12,
+    "coldMoveMin": 0.65,
+    "wetWarnLevel": 0.60,
+    "campfireRadius": 3.0
+  },
   "world": {
     "mapDir": "assets/maps/village_demo",
     "loadRadius": 3,
@@ -121,7 +297,8 @@
   },
   "render": {
     "wallOcclusionAlpha": 0.35,
-    "roomCutaway": true
+    "roomCutaway": true,
+    "debugText": true
   },
   "task": {
     "threads": 0
@@ -155,16 +332,986 @@
     "alignmentWeight": 0.4
   },
   "combat": {
-    "zombieDamage": 8,
-    "zombieKnockback": 2.0,
-    "zombieStaggerSeconds": 0.3,
-    "zombieRange": 1.3,
-    "zombieArcDegrees": 120,
+    "pvp": false,
+    "rules": {
+      "staminaMax": 100.0,
+      "staminaRegenPerSecond": 18.0,
+      "staminaRegenDelaySeconds": 0.8,
+      "staminaExhaustedThreshold": 5.0,
+      "staminaExhaustedSeconds": 0.6,
+      "fatigueMaxPenalty": 0.30,
+      "fatigueRegenPenalty": 0.50,
+      "heavyDamageScale": 1.65,
+      "heavyCooldownScale": 1.55,
+      "heavyRangeBonus": 0.10,
+      "heavyArcScale": 0.90,
+      "heavyKnockbackScale": 1.25,
+      "heavyStaggerScale": 1.25,
+      "heavyWearScale": 1.25,
+      "heavyStaminaScale": 1.80,
+      "heavyPoiseScale": 2.50,
+      "blockMoveScale": 0.65,
+      "blockArcDegrees": 140.0,
+      "blockDamageScale": 0.35,
+      "blockKnockbackScale": 0.50,
+      "blockBaseStaminaCost": 8.0,
+      "blockStaminaPerWeight": 3.0,
+      "blockMinStaminaCost": 10.0,
+      "blockMaxStaminaCost": 30.0,
+      "parryWindowSeconds": 0.18,
+      "parryStaminaCost": 6.0,
+      "parryCooldownSeconds": 0.70,
+      "parryStaggerSeconds": 0.55,
+      "guardBreakSeconds": 0.80,
+      "dodgeStaminaCost": 18.0,
+      "dodgeDurationSeconds": 0.28,
+      "dodgeInvulnSeconds": 0.18,
+      "dodgeCooldownSeconds": 0.65,
+      "dodgeDistance": 1.50,
+      "poiseRegenPerSecond": 10.0,
+      "poiseRegenDelaySeconds": 1.20,
+      "poiseBreakStaggerSeconds": 0.55,
+      "poiseResetRatio": 0.60,
+      "poiseMaxNormal": 20.0,
+      "poiseMaxFast": 14.0,
+      "poiseMaxStrong": 32.0,
+      "poiseMaxArmored": 55.0,
+      "armoredStaggerPoiseThreshold": 16.0
+    },
+    "zombieAttacks": {
+      "normal": {
+        "type": "claw",
+        "damage": 8,
+        "knockback": 1.8,
+        "staggerSeconds": 0.28,
+        "range": 1.3,
+        "arcDegrees": 110,
+        "windupSeconds": 0.5,
+        "cooldownSeconds": 1.0
+      },
+      "fast": {
+        "type": "claw",
+        "damage": 6.4,
+        "knockback": 1.4,
+        "staggerSeconds": 0.22,
+        "range": 1.2,
+        "arcDegrees": 100,
+        "windupSeconds": 0.32,
+        "cooldownSeconds": 0.7
+      },
+      "strong": {
+        "type": "bite",
+        "damage": 12.4,
+        "knockback": 2.6,
+        "staggerSeconds": 0.45,
+        "range": 1.45,
+        "arcDegrees": 80,
+        "windupSeconds": 0.8,
+        "cooldownSeconds": 1.5
+      },
+      "armored": {
+        "type": "bite",
+        "damage": 14.5,
+        "knockback": 3.0,
+        "staggerSeconds": 0.5,
+        "range": 1.5,
+        "arcDegrees": 75,
+        "windupSeconds": 0.75,
+        "cooldownSeconds": 1.35
+      }
+    },
     "playerDamage": 40,
     "playerRange": 1.7,
+    "playerArcDegrees": 100,
+    "playerCooldownSeconds": 0.5,
     "playerKnockback": 3.0,
     "playerStaggerSeconds": 0.35,
+    "playerWearPerHit": 0,
     "deathFallSeconds": 0.5
+  },
+  "wounds": {
+    "severityPerDamage": 0.02,
+    "clawSeverityScale": 1.2,
+    "biteSeverityScale": 1.6,
+    "bluntSeverityScale": 1.0,
+    "clawBleedPerDamage": 0.035,
+    "biteBleedPerDamage": 0.08,
+    "clawBleedSeconds": 18.0,
+    "biteBleedSeconds": 30.0,
+    "maxBleedRate": 8.0
+  },
+  "pain": {
+    "perSeverity": 0.65,
+    "bandagedScale": 0.5,
+    "maxLevel": 0.9,
+    "maxMoveSlow": 0.35,
+    "maxAttackCooldownIncrease": 0.5
+  },
+  "infection": {
+    "enabled": true,
+    "seed": 20261024,
+    "clawChance": 0.06,
+    "biteChance": 0.20,
+    "woundRiskBonus": 0.55,
+    "maxChance": 0.75,
+    "totalSeconds": 900.0,
+    "incubatingEnd": 0.30,
+    "feverEnd": 0.70,
+    "woundProgressionBonus": 0.80,
+    "feverFatiguePerSecond": 0.0015,
+    "severeFatiguePerSecond": 0.0030,
+    "severeHealthDrainPerSecond": 0.08
+  },
+  "building": {
+    "range": 3.5,
+    "actionRange": 2.5,
+    "actionCooldownSeconds": 0.5,
+    "repairWoodCost": 1,
+    "repairAmount": 30.0,
+    "demolishRefundRatio": 0.5,
+    "woodItem": "wood",
+    "zombieDamage": 12.0,
+    "zombieAttackCooldownSeconds": 1.0,
+    "types": [
+      { "id": "barricade", "name": "木栅栏", "sprite": "object.barricade", "woodCost": 3, "maxHp": 120.0, "blocksMovement": true, "category": "defense" },
+      { "id": "wall", "name": "木墙", "sprite": "object.wall_h", "spriteVertical": "object.wall_v", "woodCost": 3, "maxHp": 200.0, "blocksMovement": true, "layer": "wall", "category": "defense" },
+      { "id": "door", "name": "木门", "sprite": "object.door_closed_h", "spriteVertical": "object.door_closed_v", "openSprite": "object.door_open_h", "openSpriteVertical": "object.door_open_v", "woodCost": 3, "maxHp": 120.0, "blocksMovement": true, "door": true, "layer": "wall", "category": "defense" },
+      { "id": "floor", "name": "木地板", "sprite": "tile.floor.wood", "woodCost": 1, "maxHp": 0.0, "blocksMovement": false, "layer": "floor", "category": "defense" },
+      { "id": "campfire", "name": "篝火", "sprite": "object.campfire", "woodCost": 2, "maxHp": 0.0, "blocksMovement": false, "category": "facility" },
+      { "id": "workbench", "name": "工作台", "sprite": "object.workbench", "woodCost": 4, "maxHp": 0.0, "blocksMovement": false, "category": "facility" },
+      { "id": "rain_collector", "name": "雨水收集器", "sprite": "object.locker", "woodCost": 5, "maxHp": 0.0, "blocksMovement": false, "category": "facility", "requiresMission": "farm_tools" },
+      { "id": "bed", "name": "床", "sprite": "object.bed", "woodCost": 4, "maxHp": 0.0, "blocksMovement": false, "category": "facility" },
+      { "id": "storage", "name": "木箱", "sprite": "object.crate", "woodCost": 4, "maxHp": 0.0, "blocksMovement": false, "storageKg": 50.0, "storageSlots": 6, "category": "storage" },
+      { "id": "farm_plot", "name": "农田", "sprite": "object.farm_plot", "woodCost": 2, "maxHp": 0.0, "blocksMovement": false, "category": "facility" },
+      { "id": "generator", "name": "发电机", "sprite": "object.generator", "woodCost": 4, "maxHp": 0.0, "blocksMovement": false, "category": "facility" },
+      { "id": "fridge", "name": "冷藏柜", "sprite": "object.fridge", "woodCost": 4, "maxHp": 0.0, "blocksMovement": false, "storageKg": 30.0, "storageSlots": 4, "category": "storage" },
+      { "id": "spike_trap", "name": "尖刺陷阱", "sprite": "object.trap", "woodCost": 2, "maxHp": 0.0, "blocksMovement": false, "category": "defense" },
+      { "id": "floodlight", "name": "泛光灯", "sprite": "object.floodlight", "woodCost": 2, "maxHp": 80.0, "blocksMovement": false, "category": "facility" },
+      { "id": "electric_fence", "name": "电网", "sprite": "object.electric_fence", "woodCost": 3, "maxHp": 100.0, "blocksMovement": true, "category": "defense" }
+    ]
+  },
+  "progression": {
+    "enabled": true,
+    "maxLevel": 10,
+    "maxSkillLevel": 10,
+    "xpBase": 180.0,
+    "xpGrowth": 1.45,
+    "perkChoices": 3,
+    "meleeXpPerHit": 5.0,
+    "meleeXpPerKill": 25.0,
+    "craftXpPerItem": 8.0,
+    "buildXpPerStructure": 20.0,
+    "lootXpPerContainer": 15.0,
+    "survivalXpPerHour": 12.0,
+    "skills": [
+      { "id": "melee", "name": "近战", "description": "近战伤害", "xpBase": 80.0, "xpGrowth": 1.4, "damagePerLevel": 0.03 },
+      { "id": "building", "name": "建造", "description": "结构维修", "xpBase": 60.0, "xpGrowth": 1.4, "repairPerLevel": 0.08 },
+      { "id": "crafting", "name": "制作", "description": "制作速度", "xpBase": 60.0, "xpGrowth": 1.4, "craftSpeedPerLevel": 0.03 },
+      { "id": "survival", "name": "生存", "description": "生存与搜刮", "xpBase": 100.0, "xpGrowth": 1.4, "carryKgPerLevel": 0.5, "lootXpPerLevel": 0.03, "needsDecayPerLevel": 0.02 }
+    ],
+    "perks": [
+      { "id": "bruiser", "name": "猛击", "description": "近战伤害 +15%", "meleeDamageBonus": 0.15 },
+      { "id": "brawler", "name": "连击", "description": "近战攻击冷却 -10%", "meleeCooldownScale": 0.9 },
+      { "id": "fleet", "name": "疾行", "description": "移动速度 +8%", "moveSpeedBonus": 0.08 },
+      { "id": "pack_mule", "name": "负重者", "description": "背包容量 +5kg", "carryKg": 5.0 },
+      { "id": "quick_hands", "name": "巧手", "description": "制作速度 +15%", "craftSpeedBonus": 0.15 },
+      { "id": "builder", "name": "工匠", "description": "结构维修量 +25%", "repairBonus": 0.25 },
+      { "id": "survivor", "name": "生存者", "description": "饥饿/口渴/疲劳增长 -10%", "hungerDecayBonus": -0.1, "thirstDecayBonus": -0.1, "fatigueDecayBonus": -0.1 },
+      { "id": "iron_stomach", "name": "铁胃", "description": "饥饿增长 -15%", "hungerDecayBonus": -0.15 },
+      { "id": "light_step", "name": "轻步", "description": "疲劳增长 -15%", "fatigueDecayBonus": -0.15 },
+      { "id": "scavenger", "name": "搜刮专家", "description": "搜刮经验 +50%", "lootXpBonus": 0.5 },
+      { "id": "veteran", "name": "老手", "description": "角色经验 +10%", "characterXpBonus": 0.1 },
+      { "id": "learner", "name": "好学", "description": "技能经验 +15%", "skillXpBonus": 0.15 }
+    ]
+  },
+  "pois": {
+    "enabled": true,
+    "guideRange": 120.0,
+    "defs": [
+      {
+        "id": "gas_station",
+        "name": "废弃加油站",
+        "threat": 1,
+        "markerX": 31.5,
+        "markerY": 26.5,
+        "containers": [
+          { "x": 33.5, "y": 20.5, "tableId": "poi_gas_station", "sprite": "object.locker" },
+          { "x": 28.5, "y": 23.5, "tableId": "poi_gas_snacks", "sprite": "object.crate" }
+        ],
+        "enemies": { "count": 3, "kind": "mixed", "radius": 7.0 },
+        "task": {
+          "description": "清剿守军并搜索加油站储物柜（工具/弹药）",
+          "targetTable": "poi_gas_station",
+          "rewardXp": 60.0,
+          "rewardItem": "ammo_9mm",
+          "rewardCount": 12
+        }
+      },
+      {
+        "id": "clinic",
+        "name": "废弃诊所",
+        "threat": 2,
+        "markerX": 18.5,
+        "markerY": 55.5,
+        "containers": [
+          { "x": 20.5, "y": 53.5, "tableId": "poi_clinic_medicine", "sprite": "object.locker" },
+          { "x": 25.5, "y": 56.5, "tableId": "poi_clinic_supplies", "sprite": "object.crate" }
+        ],
+        "enemies": { "count": 5, "kind": "mixed", "radius": 8.0 },
+        "task": {
+          "description": "清剿守军并搜索诊所药柜（医疗物资）",
+          "targetTable": "poi_clinic_medicine",
+          "rewardXp": 80.0,
+          "rewardItem": "bandage",
+          "rewardCount": 3
+        }
+      },
+      {
+        "id": "farm_barn",
+        "name": "废弃农场仓",
+        "threat": 3,
+        "markerX": 81.5,
+        "markerY": 62.5,
+        "containers": [
+          { "x": 84.5, "y": 60.5, "tableId": "poi_farm_barn", "sprite": "object.crate" },
+          { "x": 88.5, "y": 64.5, "tableId": "poi_farm_tools", "sprite": "object.locker" }
+        ],
+        "enemies": { "count": 6, "kind": "mixed", "radius": 8.0 },
+        "task": {
+          "description": "清剿守军并搜索农场仓物资箱（食物/弹药）",
+          "targetTable": "poi_farm_barn",
+          "rewardXp": 100.0,
+          "rewardItem": "ammo_shells",
+          "rewardCount": 6
+        }
+      },
+      {
+        "id": "hospital",
+        "name": "圣玛丽医院",
+        "threat": 2,
+        "markerX": 46.5,
+        "markerY": 84.5,
+        "containers": [
+          { "x": 41.5, "y": 85.5, "tableId": "poi_hospital_pharmacy", "sprite": "object.locker" },
+          { "x": 50.5, "y": 85.5, "tableId": "poi_hospital_supplies", "sprite": "object.crate" }
+        ],
+        "enemies": { "count": 7, "kind": "mixed", "radius": 7.0 },
+        "task": {
+          "description": "清剿医院守军并搜索药房（医疗/感染风险）",
+          "targetTable": "poi_hospital_pharmacy",
+          "rewardXp": 90.0,
+          "rewardItem": "antibiotics",
+          "rewardCount": 2
+        }
+      },
+      {
+        "id": "military_checkpoint",
+        "name": "军事检查站",
+        "threat": 3,
+        "markerX": 105.5,
+        "markerY": 21.5,
+        "containers": [
+          { "x": 101.5, "y": 20.5, "tableId": "poi_military_armory", "sprite": "object.locker" },
+          { "x": 108.5, "y": 22.5, "tableId": "poi_military_supplies", "sprite": "object.crate" }
+        ],
+        "enemies": { "count": 9, "kind": "strong", "armoredCount": 2, "radius": 9.0 },
+        "task": {
+          "description": "巡逻记录：东侧商业区信号中断，重复，信号中断。清剿守军并搜索军械柜（枪械/弹药）",
+          "targetTable": "poi_military_armory",
+          "rewardXp": 130.0,
+          "rewardItem": "ammo_9mm",
+          "rewardCount": 18
+        }
+      },
+      {
+        "id": "supermarket",
+        "name": "废弃超市",
+        "threat": 1,
+        "markerX": 46.5,
+        "markerY": 9.5,
+        "containers": [
+          { "x": 42.5, "y": 11.5, "tableId": "poi_supermarket_food", "sprite": "object.fridge" },
+          { "x": 49.5, "y": 11.5, "tableId": "poi_supermarket_household", "sprite": "object.crate" },
+          { "x": 46.5, "y": 7.5, "tableId": "poi_supermarket_storage", "sprite": "object.locker" }
+        ],
+        "enemies": { "count": 4, "kind": "mixed", "radius": 8.0 },
+        "task": {
+          "description": "货架被搬空了一半，收银台后的仓库门还锁着。清剿守军并搜索后仓（食物/日用品）",
+          "targetTable": "poi_supermarket_storage",
+          "rewardXp": 50.0,
+          "rewardItem": "canned_soup",
+          "rewardCount": 2
+        }
+      },
+      {
+        "id": "motel",
+        "name": "废弃汽车旅馆",
+        "threat": 1,
+        "markerX": 10.5,
+        "markerY": 39.5,
+        "containers": [
+          { "x": 14.5, "y": 41.5, "tableId": "poi_motel_office", "sprite": "object.locker" },
+          { "x": 5.5, "y": 40.5, "tableId": "poi_motel_room", "sprite": "object.crate" },
+          { "x": 10.5, "y": 37.5, "tableId": "poi_motel_storage", "sprite": "object.crate" }
+        ],
+        "enemies": { "count": 3, "kind": "mixed", "radius": 7.0 },
+        "task": {
+          "description": "登记簿最后一页写着：别相信走廊尽头的人。清剿守军并搜索储藏间（食物/燃料）",
+          "targetTable": "poi_motel_storage",
+          "rewardXp": 55.0,
+          "rewardItem": "instant_noodles",
+          "rewardCount": 2
+        }
+      },
+      {
+        "id": "police_station",
+        "name": "废弃警察局",
+        "threat": 2,
+        "markerX": 91.5,
+        "markerY": 9.5,
+        "containers": [
+          { "x": 94.5, "y": 8.5, "tableId": "poi_police_armory", "sprite": "object.locker" },
+          { "x": 88.5, "y": 11.5, "tableId": "poi_police_evidence", "sprite": "object.locker" },
+          { "x": 94.5, "y": 12.5, "tableId": "poi_police_supplies", "sprite": "object.crate" }
+        ],
+        "enemies": { "count": 6, "kind": "mixed", "armoredCount": 1, "radius": 8.0 },
+        "task": {
+          "description": "案卷被人翻过，枪柜却还满着。清剿守军并搜索证物柜（枪械/弹药）",
+          "targetTable": "poi_police_armory",
+          "rewardXp": 90.0,
+          "rewardItem": "ammo_9mm",
+          "rewardCount": 12
+        }
+      },
+      {
+        "id": "fire_station",
+        "name": "废弃消防站",
+        "threat": 2,
+        "markerX": 53.5,
+        "markerY": 38.5,
+        "containers": [
+          { "x": 56.5, "y": 40.5, "tableId": "poi_fire_gear", "sprite": "object.locker" },
+          { "x": 50.5, "y": 40.5, "tableId": "poi_fire_tools", "sprite": "object.crate" },
+          { "x": 53.5, "y": 35.5, "tableId": "poi_fire_medical", "sprite": "object.crate" }
+        ],
+        "enemies": { "count": 5, "kind": "mixed", "armoredCount": 1, "radius": 8.0 },
+        "task": {
+          "description": "出警记录停在三天前，车库里的水罐还是满的。清剿守军并搜索装备柜（防护/医疗）",
+          "targetTable": "poi_fire_gear",
+          "rewardXp": 85.0,
+          "rewardItem": "first_aid_kit",
+          "rewardCount": 1
+        }
+      },
+      {
+        "id": "church",
+        "name": "废弃教堂",
+        "threat": 2,
+        "markerX": 55.5,
+        "markerY": 110.5,
+        "containers": [
+          { "x": 52.5, "y": 106.5, "tableId": "poi_church_supplies", "sprite": "object.crate" },
+          { "x": 57.5, "y": 106.5, "tableId": "poi_church_medical", "sprite": "object.locker" },
+          { "x": 55.5, "y": 113.5, "tableId": "poi_church_archive", "sprite": "object.crate" }
+        ],
+        "enemies": { "count": 5, "kind": "mixed", "armoredCount": 1, "radius": 7.0 },
+        "task": {
+          "description": "长椅上摆着未点完的蜡烛，告解室里有人睡过。清剿守军并搜索救济物资（药品/补给）",
+          "targetTable": "poi_church_supplies",
+          "rewardXp": 80.0,
+          "rewardItem": "herbal_salve",
+          "rewardCount": 2
+        }
+      },
+      {
+        "id": "warehouse",
+        "name": "废弃仓库",
+        "threat": 3,
+        "markerX": 105.5,
+        "markerY": 88.5,
+        "containers": [
+          { "x": 109.5, "y": 86.5, "tableId": "poi_warehouse_tools", "sprite": "object.crate" },
+          { "x": 102.5, "y": 91.5, "tableId": "poi_warehouse_food", "sprite": "object.crate" },
+          { "x": 109.5, "y": 88.5, "tableId": "poi_warehouse_relay", "sprite": "object.locker" },
+          { "x": 109.5, "y": 91.5, "tableId": "poi_warehouse_valuables", "sprite": "object.locker" }
+        ],
+        "enemies": { "count": 8, "kind": "strong", "armoredCount": 2, "radius": 9.0 },
+        "task": {
+          "description": "货运单上多了一行手写：中继零件已转移到东侧货架。清剿守军并搜索贵重品柜（枪械/弹药）",
+          "targetTable": "poi_warehouse_valuables",
+          "rewardXp": 140.0,
+          "rewardItem": "ammo_shells",
+          "rewardCount": 8
+        }
+      }
+    ]
+  },
+  "missions": {
+    "enabled": true,
+    "randomSeed": 20261024,
+    "defs": [
+      {
+        "id": "radio_signal",
+        "name": "无线电求救",
+        "chain": "radio",
+        "order": 1,
+        "kind": "once",
+        "source": "radio",
+        "prerequisite": "",
+        "objectives": [
+          { "kind": "loot", "target": "house_workshop", "count": 1, "description": "搜索房屋工具柜，找到无线电零件" }
+        ],
+        "reward": { "xp": 40.0, "skill": "survival", "label": "40 生存经验" }
+      },
+      {
+        "id": "radio_repair",
+        "name": "修复电台",
+        "chain": "radio",
+        "order": 2,
+        "kind": "once",
+        "source": "radio",
+        "prerequisite": "radio_signal",
+        "objectives": [
+          { "kind": "interact", "target": "radio", "count": 1, "description": "带零件到电台按 E 修理" }
+        ],
+        "reward": { "xp": 60.0, "skill": "survival", "item": "repair_kit", "itemCount": 1, "label": "60 生存经验 + 维修包×1" }
+      },
+      {
+        "id": "clinic_supply",
+        "name": "诊所补给",
+        "chain": "clinic",
+        "order": 1,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "",
+        "objectives": [
+          { "kind": "poi", "target": "clinic", "count": 1, "description": "清剿诊所守军并搜索药柜" }
+        ],
+        "reward": { "xp": 80.0, "skill": "survival", "item": "bandage", "itemCount": 2, "label": "80 生存经验 + 绷带×2" }
+      },
+      {
+        "id": "clinic_return",
+        "name": "送回药品",
+        "chain": "clinic",
+        "order": 2,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "clinic_supply",
+        "objectives": [
+          { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "返回村庄营地向同伴交付药品" }
+        ],
+        "reward": { "xp": 50.0, "skill": "survival", "blueprint": "campfire_beans", "label": "50 生存经验 + 图纸：烤豆子" }
+      },
+      {
+        "id": "farm_supply",
+        "name": "农场补给",
+        "chain": "farm",
+        "order": 1,
+        "kind": "once",
+        "source": "base",
+        "prerequisite": "",
+        "objectives": [
+          { "kind": "poi", "target": "farm_barn", "count": 1, "description": "清剿农场仓守军并搜索物资箱" }
+        ],
+        "reward": { "xp": 100.0, "skill": "survival", "item": "canned_beans", "itemCount": 2, "label": "100 生存经验 + 罐头×2" }
+      },
+      {
+        "id": "farm_tools",
+        "name": "农场工具",
+        "chain": "farm",
+        "order": 2,
+        "kind": "once",
+        "source": "base",
+        "prerequisite": "farm_supply",
+        "objectives": [
+          { "kind": "loot", "target": "poi_farm_tools", "count": 1, "description": "搜索农场工具柜，取回工具图纸" }
+        ],
+        "reward": { "xp": 60.0, "skill": "survival", "blueprint": "fill_bottle", "label": "60 生存经验 + 图纸：装水（解锁雨水收集器）" }
+      },
+      {
+        "id": "hospital_supply",
+        "name": "医院补给",
+        "chain": "hospital",
+        "order": 1,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "",
+        "objectives": [
+          { "kind": "poi", "target": "hospital", "count": 1, "description": "清剿医院守军并搜索药房" }
+        ],
+        "reward": { "xp": 110.0, "skill": "survival", "item": "painkillers", "itemCount": 2, "label": "110 生存经验 + 止痛药×2" }
+      },
+      {
+        "id": "hospital_quarantine",
+        "name": "污染样本",
+        "chain": "hospital",
+        "order": 2,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "hospital_supply",
+        "objectives": [
+          { "kind": "loot", "target": "poi_hospital_supplies", "count": 1, "description": "搜索医院物资箱，取回污染样本" },
+          { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "返回村庄营地交付污染样本" }
+        ],
+        "reward": { "xp": 80.0, "skill": "survival", "blueprint": "field_bandage", "label": "80 生存经验 + 图纸：简易绷带" }
+      },
+      {
+        "id": "military_armory",
+        "name": "军械回收",
+        "chain": "military",
+        "order": 1,
+        "kind": "once",
+        "source": "base",
+        "prerequisite": "",
+        "objectives": [
+          { "kind": "poi", "target": "military_checkpoint", "count": 1, "description": "清剿检查站守军并搜索军械柜" }
+        ],
+        "reward": { "xp": 150.0, "skill": "melee", "item": "ammo_shells", "itemCount": 8, "label": "150 近战经验 + 霰弹×8" }
+      },
+      {
+        "id": "military_extract",
+        "name": "巡逻记录",
+        "chain": "military",
+        "order": 2,
+        "kind": "once",
+        "source": "base",
+        "prerequisite": "military_armory",
+        "objectives": [
+          { "kind": "loot", "target": "poi_military_supplies", "count": 1, "description": "搜索检查站补给箱，回收巡逻记录" },
+          { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "把巡逻记录带回村庄营地" }
+        ],
+        "reward": { "xp": 90.0, "skill": "melee", "blueprint": "padded_jacket", "label": "90 近战经验 + 图纸：加固夹克" }
+      },
+      {
+        "id": "settlement_help",
+        "name": "伤员的药",
+        "chain": "settlement",
+        "order": 1,
+        "kind": "once",
+        "source": "npc",
+        "task": "help",
+        "prerequisite": "",
+        "minDay": 1,
+        "autoActivate": false,
+        "timeLimitDays": 2,
+        "retryDays": 1,
+        "objectives": [
+          { "kind": "collect", "target": "bandage", "count": 2, "description": "为营地伤员收集绷带" }
+        ],
+        "reward": { "xp": 70.0, "skill": "survival", "item": "antibiotics", "itemCount": 1, "label": "70 生存经验 + 抗生素×1" }
+      },
+      {
+        "id": "settlement_escort",
+        "name": "接应幸存者",
+        "chain": "settlement",
+        "order": 2,
+        "kind": "once",
+        "source": "npc",
+        "task": "escort",
+        "prerequisite": "settlement_help",
+        "minDay": 1,
+        "autoActivate": false,
+        "timeLimitDays": 3,
+        "retryDays": 1,
+        "objectives": [
+          { "kind": "reach", "x": 46.0, "y": 89.0, "radius": 2.5, "count": 1, "description": "前往医院南门接应幸存者" },
+          { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "护送幸存者返回村庄营地" }
+        ],
+        "reward": { "xp": 80.0, "skill": "survival", "item": "painkillers", "itemCount": 1, "label": "80 生存经验 + 止痛药×1" }
+      },
+      {
+        "id": "settlement_clear",
+        "name": "营地外围清剿",
+        "chain": "settlement",
+        "order": 3,
+        "kind": "once",
+        "source": "npc",
+        "task": "clear",
+        "prerequisite": "settlement_escort",
+        "minDay": 1,
+        "autoActivate": false,
+        "timeLimitDays": 2,
+        "retryDays": 1,
+        "objectives": [
+          { "kind": "kill", "target": "any", "count": 6, "description": "清理营地外围的感染者" }
+        ],
+        "reward": { "xp": 90.0, "skill": "melee", "item": "ammo_9mm", "itemCount": 12, "label": "90 近战经验 + 9mm 弹药×12" }
+      },
+      {
+        "id": "settlement_supply",
+        "name": "药房补给",
+        "chain": "settlement",
+        "order": 4,
+        "kind": "once",
+        "source": "npc",
+        "task": "supply",
+        "prerequisite": "settlement_clear",
+        "minDay": 1,
+        "autoActivate": false,
+        "timeLimitDays": 3,
+        "retryDays": 1,
+        "objectives": [
+          { "kind": "loot", "target": "poi_hospital_supplies", "count": 1, "description": "搜索医院物资箱，取回急救药品" },
+          { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "把急救药品送回村庄营地" }
+        ],
+        "reward": { "xp": 100.0, "skill": "survival", "item": "antibiotics", "itemCount": 2, "label": "100 生存经验 + 抗生素×2" }
+      },
+      {
+        "id": "event_hospital_outbreak",
+        "name": "医院逃逸者",
+        "chain": "event_hospital_outbreak",
+        "order": 1,
+        "kind": "random",
+        "source": "npc",
+        "prerequisite": "",
+        "minDay": 2,
+        "chance": 0.55,
+        "objectives": [
+          { "kind": "kill", "target": "any", "count": 5, "description": "清理从医院逃出的感染者" }
+        ],
+        "reward": { "xp": 60.0, "skill": "survival", "item": "antibiotics", "itemCount": 1, "label": "60 生存经验 + 抗生素×1" }
+      },
+      {
+        "id": "event_military_patrol",
+        "name": "检查站巡逻队",
+        "chain": "event_military_patrol",
+        "order": 1,
+        "kind": "random",
+        "source": "radio",
+        "prerequisite": "",
+        "minDay": 4,
+        "chance": 0.40,
+        "objectives": [
+          { "kind": "kill", "target": "any", "count": 6, "description": "击退离开检查站的巡逻队" }
+        ],
+        "reward": { "xp": 75.0, "skill": "melee", "item": "ammo_9mm", "itemCount": 12, "label": "75 近战经验 + 9mm 弹药×12" }
+      },
+      {
+        "id": "event_wandering_horde",
+        "name": "流浪尸潮",
+        "chain": "event_wandering_horde",
+        "order": 1,
+        "kind": "random",
+        "source": "radio",
+        "prerequisite": "",
+        "minDay": 3,
+        "chance": 0.50,
+        "objectives": [
+          { "kind": "kill", "target": "event_wandering_horde", "count": 8, "description": "从公路方向传来成片的脚步，击退流浪尸潮" }
+        ],
+        "reward": { "xp": 80.0, "skill": "melee", "item": "ammo_9mm", "itemCount": 12, "label": "80 近战经验 + 9mm 弹药×12" }
+      },
+      {
+        "id": "event_infected_house",
+        "name": "被感染房屋",
+        "chain": "event_infected_house",
+        "order": 1,
+        "kind": "random",
+        "source": "npc",
+        "prerequisite": "",
+        "minDay": 2,
+        "chance": 0.55,
+        "objectives": [
+          { "kind": "kill", "target": "event_infected_house", "count": 3, "description": "西侧空屋的窗户被钉死，清理屋内感染者" },
+          { "kind": "loot", "target": "event_infected_cache", "count": 1, "description": "搜出屋内的感染者藏匿箱" }
+        ],
+        "reward": { "xp": 60.0, "skill": "survival", "item": "first_aid_kit", "itemCount": 1, "label": "60 生存经验 + 急救包×1" }
+      },
+      {
+        "id": "event_survivor_ambush",
+        "name": "幸存者伏击",
+        "chain": "event_survivor_ambush",
+        "order": 1,
+        "kind": "random",
+        "source": "npc",
+        "prerequisite": "",
+        "minDay": 4,
+        "chance": 0.40,
+        "objectives": [
+          { "kind": "kill", "target": "event_survivor_ambush", "count": 2, "description": "有人跟着你，击退武装拾荒者" }
+        ],
+        "reward": { "xp": 90.0, "skill": "melee", "item": "ammo_9mm", "itemCount": 12, "extraItem": "painkillers", "extraItemCount": 1, "label": "90 近战经验 + 9mm 弹药×12 + 止痛药×1" }
+      },
+      {
+        "id": "event_cold_snap",
+        "name": "寒潮突变",
+        "chain": "event_cold_snap",
+        "order": 1,
+        "kind": "random",
+        "source": "radio",
+        "prerequisite": "",
+        "minDay": 2,
+        "chance": 0.35,
+        "objectives": [
+          { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "气温骤降，撑过寒潮并返回村庄营地" }
+        ],
+        "reward": { "xp": 60.0, "skill": "survival", "item": "herbal_salve", "itemCount": 1, "label": "60 生存经验 + 草药膏×1" }
+      },
+      {
+        "id": "daily_patrol",
+        "name": "每日巡逻",
+        "chain": "daily_patrol",
+        "order": 1,
+        "kind": "daily",
+        "source": "base",
+        "prerequisite": "",
+        "minDay": 1,
+        "objectives": [
+          { "kind": "kill", "target": "any", "count": 3, "description": "清理村庄附近僵尸" }
+        ],
+        "reward": { "xp": 30.0, "skill": "survival", "item": "energy_bar", "itemCount": 1, "label": "30 生存经验 + 能量棒×1" }
+      },
+      {
+        "id": "event_supply_drop",
+        "name": "空投回收",
+        "chain": "event_supply_drop",
+        "order": 1,
+        "kind": "random",
+        "source": "npc",
+        "prerequisite": "",
+        "minDay": 2,
+        "chance": 0.65,
+        "objectives": [
+          { "kind": "loot", "target": "any", "count": 2, "description": "搜索任意两个容器，回收空投物资" }
+        ],
+        "reward": { "xp": 40.0, "skill": "survival", "item": "canned_beans", "itemCount": 1, "label": "40 生存经验 + 罐头×1" }
+      },
+      {
+        "id": "event_scout",
+        "name": "斥候清剿",
+        "chain": "event_scout",
+        "order": 1,
+        "kind": "random",
+        "source": "radio",
+        "prerequisite": "",
+        "minDay": 3,
+        "chance": 0.45,
+        "objectives": [
+          { "kind": "kill", "target": "any", "count": 4, "description": "清理被斥候吸引的僵尸" }
+        ],
+        "reward": { "xp": 50.0, "skill": "melee", "item": "bandage", "itemCount": 1, "label": "50 近战经验 + 绷带×1" }
+      },
+      {
+        "id": "super_stock",
+        "name": "超市补货",
+        "chain": "supermarket",
+        "order": 1,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "",
+        "objectives": [
+          { "kind": "poi", "target": "supermarket", "count": 1, "description": "最后一批罐头在仓库，别走正门。清剿超市守军并搜索后仓" }
+        ],
+        "reward": { "xp": 70.0, "skill": "survival", "item": "canned_soup", "itemCount": 2, "label": "70 生存经验 + 罐头汤×2" }
+      },
+      {
+        "id": "super_return",
+        "name": "送回补给",
+        "chain": "supermarket",
+        "order": 2,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "super_stock",
+        "objectives": [
+          { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "营地的人说，六个新地点里至少有三个已经没人回来了。把补给送回村庄营地" }
+        ],
+        "reward": { "xp": 50.0, "skill": "survival", "item": "instant_noodles", "itemCount": 2, "label": "50 生存经验 + 方便面×2" }
+      },
+      {
+        "id": "police_case",
+        "name": "警局案卷",
+        "chain": "police",
+        "order": 1,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "",
+        "objectives": [
+          { "kind": "loot", "target": "poi_police_evidence", "count": 1, "description": "案卷被人翻过，枪柜却还满着。搜索证物柜，取回案卷" }
+        ],
+        "reward": { "xp": 110.0, "skill": "melee", "item": "ammo_9mm", "itemCount": 12, "label": "110 近战经验 + 9mm 弹药×12" }
+      },
+      {
+        "id": "police_return",
+        "name": "移交案卷",
+        "chain": "police",
+        "order": 2,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "police_case",
+        "objectives": [
+          { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "把案卷带回村庄，交给营地的记录员" }
+        ],
+        "reward": { "xp": 60.0, "skill": "survival", "item": "first_aid_kit", "itemCount": 1, "label": "60 生存经验 + 急救包×1" }
+      },
+      {
+        "id": "motel_guest",
+        "name": "旅馆住客",
+        "chain": "motel",
+        "order": 1,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "",
+        "objectives": [
+          { "kind": "poi", "target": "motel", "count": 1, "description": "登记簿最后一页写着：别相信走廊尽头的人。清剿旅馆守军并搜索储藏间" }
+        ],
+        "reward": { "xp": 70.0, "skill": "survival", "item": "canned_fruit", "itemCount": 2, "label": "70 生存经验 + 水果罐头×2" }
+      },
+      {
+        "id": "motel_return",
+        "name": "住客留言",
+        "chain": "motel",
+        "order": 2,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "motel_guest",
+        "objectives": [
+          { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "把住客留言带回村庄，提醒营地的人" }
+        ],
+        "reward": { "xp": 50.0, "skill": "survival", "item": "sewing_kit", "itemCount": 1, "label": "50 生存经验 + 缝纫包×1" }
+      },
+      {
+        "id": "relay_recover",
+        "name": "中继零件",
+        "chain": "relay",
+        "order": 1,
+        "kind": "once",
+        "source": "radio",
+        "prerequisite": "radio_repair",
+        "objectives": [
+          { "kind": "loot", "target": "poi_warehouse_relay", "count": 1, "description": "如果你听到这段广播，去仓库找中继零件，然后到撤离点。搜索东侧中继货架" },
+          { "kind": "collect", "target": "relay_part", "count": 1, "description": "把中继零件放进背包" }
+        ],
+        "reward": { "xp": 120.0, "skill": "survival", "item": "toolbox", "itemCount": 1, "label": "120 生存经验 + 工具箱×1" }
+      },
+      {
+        "id": "relay_extract",
+        "name": "准备撤离",
+        "chain": "relay",
+        "order": 2,
+        "kind": "once",
+        "source": "radio",
+        "prerequisite": "relay_recover",
+        "objectives": [
+          { "kind": "reach", "x": 66.5, "y": 28.5, "radius": 1.5, "count": 1, "description": "带中继零件前往撤离点，准备出发" }
+        ],
+        "reward": { "xp": 150.0, "skill": "survival", "item": "ammo_shells", "itemCount": 8, "label": "150 生存经验 + 霰弹×8" }
+      }
+    ]
+  },
+  "sleep": {
+    "enabled": true,
+    "minHours": 1,
+    "maxHours": 8,
+    "dawnHour": 7,
+    "gameMinutesPerSecond": 120.0,
+    "voteSeconds": 30.0,
+    "fatigueRecoveryPerHour": 0.15,
+    "zombieRadius": 8.0,
+    "interruptOnDamage": true,
+    "interruptOnZombie": true
+  },
+  "crops": {
+    "file": "assets/crops.json"
+  },
+  "farming": {
+    "enabled": true,
+    "growMinutes": 240.0,
+    "waterMinutes": 360.0,
+    "maxWaterMinutes": 720.0,
+    "witherMinutes": 1440.0,
+    "harvestYield": 2,
+    "seedYield": 1,
+    "seedItem": "cabbage_seeds",
+    "produceItem": "fresh_cabbage",
+    "waterItem": "water_bottle",
+    "fertilizerItem": "fertilizer",
+    "fungicideItem": "fungicide",
+    "fertilizerYieldBonus": 1,
+    "diseaseChance": 0.05,
+    "diseaseDryFraction": 0.45,
+    "diseaseYieldPenalty": 0.5,
+    "rainWaterPerMinute": 0.5,
+    "season": {
+      "springGrowth": 1.0,
+      "summerGrowth": 1.0,
+      "autumnGrowth": 0.9,
+      "winterGrowth": 0.25,
+      "springDisease": 1.0,
+      "summerDisease": 1.2,
+      "autumnDisease": 0.9,
+      "winterDisease": 0.6
+    }
+  },
+  "power": {
+    "enabled": true,
+    "fuelMinutesPerCan": 720.0,
+    "radius": 8.0,
+    "fuelItem": "fuel_can",
+    "baseLoad": 1.0,
+    "coldStorageLoad": 0.5,
+    "floodlightLoad": 0.5,
+    "electricFenceLoad": 1.0,
+    "floodlightRadius": 6.0,
+    "attractRadius": 18.0,
+    "electricFenceDamage": 25.0,
+    "electricFenceCooldownSeconds": 1.2,
+    "electricFenceStaggerSeconds": 0.5,
+    "lowFuelWarningMinutes": 10.0,
+    "deviceRequiresNight": true
+  },
+  "traps": {
+    "enabled": true,
+    "damage": 45.0,
+    "radius": 1.0,
+    "cooldownSeconds": 1.5,
+    "staggerSeconds": 0.35,
+    "uses": 6
+  },
+  "settlements": {
+    "enabled": true,
+    "file": "assets/settlements.json"
+  },
+  "trading": {
+    "enabled": true,
+    "range": 3.5,
+    "merchantX": 68.5,
+    "merchantY": 26.5,
+    "restockDays": 1
+  },
+  "baseEvent": {
+    "enabled": true,
+    "minStructures": 1,
+    "startHour": 22,
+    "endHour": 5,
+    "warningSeconds": 30.0,
+    "waveIntervalSeconds": 45.0,
+    "waves": [4, 6, 8],
+    "maxAlive": 24,
+    "maxWaveSize": 24,
+    "scalePerDay": 0.12,
+    "scalePerStructure": 0.02,
+    "specialStartWave": 1,
+    "specialCount": 1,
+    "howlerRange": 12.0,
+    "howlerAbortRange": 18.0,
+    "howlerWindupSeconds": 1.2,
+    "howlerCooldownSeconds": 9.0,
+    "howlerRadius": 24.0,
+    "breakerDamage": 28.0,
+    "breakerCooldownSeconds": 1.2,
+    "breakerRange": 2.2,
+    "breakerWindupSeconds": 0.9,
+    "triggerRadius": 12.0,
+    "spawnRadiusMin": 10.0,
+    "spawnRadiusMax": 14.0,
+    "leaveRadius": 25.0,
+    "director": {
+      "enabled": true,
+      "maxAxes": 2,
+      "intelFullDelayRatio": 0.5,
+      "weakestWeight": 0.7,
+      "rewardEnabled": true
+    }
   },
   "spawner": {
     "populationTarget": 80,
@@ -213,6 +1360,7 @@
     "maxProjectileDistance": 24.0,
     "playerStateIntervalTicks": 6,
     "socialStateIntervalTicks": 30,
+    "structureSyncIntervalTicks": 180,
     "chatCooldownSeconds": 1.0,
     "playerIdentity": "",
     "identityFile": "saves/client_identity.txt",
@@ -247,10 +1395,26 @@
       "DemoGunshot": "F7",
       "DemoProjectile": "V",
       "Attack": "SPACE",
+      "HeavyAttack": "LSHIFT",
+      "Block": "LCTRL",
+      "Dodge": "Z",
       "Pickup": "F",
       "Use": "E",
+      "FarmCare": "T",
+      "FarmSeed": "Q",
       "Equip": "R",
       "Drop": "G",
+      "BuildMode": "B",
+      "RepairStructure": "H",
+      "RepairAllStructures": "J",
+      "DemolishStructure": "X",
+      "CharacterPanel": "C",
+      "MissionFocus": "L",
+      "MissionAbandon": "K",
+      "Vehicle": "ENTER",
+      "Headlights": "L",
+      "SleepVoteYes": "Y",
+      "SleepVoteNo": "N",
       "QuickSave": "F12",
       "TogglePhysicsDebug": "F10"
     }

@@ -24,6 +24,10 @@ public:
     bool LoadFromString(std::string_view text, const std::string& sourceName,
                         std::string* error = nullptr);
 
+    bool MergeFromString(std::string_view text, const std::string& sourceName,
+                         std::size_t* added = nullptr,
+                         std::string* error = nullptr);
+
     // 按 id 查定义；不存在返回 nullptr（指针在下次成功加载前稳定）
     const ItemDef* Find(std::string_view id) const;
 
@@ -33,6 +37,7 @@ public:
 private:
     std::vector<ItemDef> m_defs;
     std::unordered_map<std::string, std::size_t> m_byId;
+    std::string m_sourceText;
 };
 
 }  // namespace zl::items

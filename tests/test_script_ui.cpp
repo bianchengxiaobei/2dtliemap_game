@@ -10,6 +10,7 @@
 #include "core/EventBus.h"
 #include "core/GameEvents.h"
 #include "game/GameContext.h"
+#include "items/ItemRegistry.h"
 #include "save/SaveTypes.h"
 #include "script/LuaRuntime.h"
 #include "script/ScriptApi.h"
@@ -131,6 +132,19 @@ TEST_CASE("Script UI host loads, updates, unloads and routes mouse events") {
     CHECK(host.InputConsumedThisFrame());
 
     capturedEvents.clear();
+    host.BeginFrame();
+    context->ProcessMouseMove(180, 180, 0);
+    context->ProcessMouseButtonDown(0, 0);
+    context->ProcessMouseButtonUp(0, 0);
+    context->Update();
+    host.EndFrame();
+    const auto backgroundClick =
+        std::find_if(capturedEvents.begin(), capturedEvents.end(),
+                     [](const core::UiEvent& event) { return event.type == "click"; });
+    REQUIRE(backgroundClick != capturedEvents.end());
+    CHECK_FALSE(host.InputConsumedThisFrame());
+
+    capturedEvents.clear();
     Rml::Element* button = context->GetDocument(0)->GetElementById("btn");
     REQUIRE(button != nullptr);
     REQUIRE(button->Focus());
@@ -228,14 +242,118 @@ TEST_CASE("Lua UI binding opens and updates a mod document") {
         out << "assert(UI.OpenDocument('panel', 'ui/panel.rml', false))\n"
                "assert(UI.SetText('panel', 'title', 'from lua'))\n"
                "assert(UI.SetProperty('panel', 'title', 'color', 'blue'))\n"
+               "assert(Content.RegisterItems('{\"format\":\"items-v1\",\"items\":[{\"id\":\"lua_dynamic\",\"name\":\"Lua 动态\",\"icon\":\"i\",\"weight\":0.1,\"maxStack\":1,\"type\":\"generic\"}]}') == 1)\n"
+               "assert(Items.Exists('lua_dynamic'))\n"
                "local hud = Hud.GetState()\n"
                "assert(hud.active == false)\n"
-               "assert(#hud.slots == 5)\n"
-               "assert(type(hud.needsStatus) == 'string')\n"
+               "assert(#hud.modFields == 0)\n"
+               "assert(Hud.RegisterField('status', '模组状态'))\n"
+               "assert(Hud.RegisterField('status', '模组状态'))\n"
+               "assert(Hud.SetField('status', '运行中', 'ok'))\n"
+               "assert(Hud.SetField('missing', 'x', 'info') == false)\n"
+               "assert(Hud.SetField('status', 'x', 'bad') == false)\n"
+               "local fields = Hud.GetState().modFields\n"
+               "assert(#fields == 1 and fields[1].modId == 'ui_lua')\n"
+               "assert(fields[1].id == 'status' and fields[1].label == '模组状态')\n"
+               "assert(fields[1].text == '运行中' and fields[1].tone == 'ok')\n"
+               "assert(Hud.ClearField('status'))\n"
+               "assert(Hud.GetState().modFields[1].text == '')\n"
+               "assert(Hud.SetField('status', '运行中', 'ok'))\n"
+                "assert(#hud.slots == 5)\n"
+                "assert(type(hud.combatStatus) == 'string')\n"
+                "assert(type(hud.combatTone) == 'string')\n"
+                "assert(type(hud.rangedValid) == 'boolean')\n"
+                "assert(type(hud.rangedName) == 'string')\n"
+                "assert(type(hud.rangedLoaded) == 'number')\n"
+                "assert(type(hud.rangedMagazine) == 'number')\n"
+                "assert(type(hud.rangedReserve) == 'number')\n"
+                "assert(type(hud.rangedReloading) == 'boolean')\n"
+                "assert(type(hud.rangedReloadProgress) == 'number')\n"
+                "assert(type(hud.rangedReloadRemaining) == 'number')\n"
+                "assert(type(hud.rangedStatus) == 'string')\n"
+                "assert(type(hud.rangedTone) == 'string')\n"
+                "assert(type(hud.forageValid) == 'boolean')\n"
+                "assert(type(hud.forageName) == 'string')\n"
+                "assert(type(hud.forageToolName) == 'string')\n"
+                "assert(type(hud.forageMissingTool) == 'boolean')\n"
+                "assert(type(hud.forageExhausted) == 'boolean')\n"
+                "assert(type(hud.forageRespawnMinutes) == 'number')\n"
+                "assert(type(hud.forageSeconds) == 'number')\n"
+                "assert(type(hud.forageSearching) == 'boolean')\n"
+                "assert(type(hud.forageProgress) == 'number')\n"
+                "assert(type(hud.forageStatus) == 'string')\n"
+                "assert(type(hud.forageTone) == 'string')\n"
+                "assert(type(hud.fishingValid) == 'boolean')\n"
+                "assert(type(hud.fishingName) == 'string')\n"
+                "assert(type(hud.fishingRodName) == 'string')\n"
+                "assert(type(hud.fishingBaitName) == 'string')\n"
+                "assert(type(hud.fishingMissingRod) == 'boolean')\n"
+                "assert(type(hud.fishingMissingBait) == 'boolean')\n"
+                "assert(type(hud.fishingSeconds) == 'number')\n"
+                "assert(type(hud.fishingWaiting) == 'boolean')\n"
+                "assert(type(hud.fishingProgress) == 'number')\n"
+                "assert(type(hud.fishingBiting) == 'boolean')\n"
+                "assert(type(hud.fishingBiteRemaining) == 'number')\n"
+                "assert(type(hud.fishingStatus) == 'string')\n"
+                "assert(type(hud.fishingTone) == 'string')\n"
+                "assert(type(hud.needsStatus) == 'string')\n"
                "assert(type(hud.needsTone) == 'string')\n"
+               "assert(type(hud.woundStatus) == 'string')\n"
+               "assert(type(hud.woundTone) == 'string')\n"
+               "assert(type(hud.painStatus) == 'string')\n"
+               "assert(type(hud.painTone) == 'string')\n"
+               "assert(type(hud.armorStatus) == 'string')\n"
+               "assert(type(hud.armorTone) == 'string')\n"
+               "assert(type(hud.infectionStatus) == 'string')\n"
+               "assert(type(hud.infectionTone) == 'string')\n"
+               "assert(type(hud.weatherStatus) == 'string')\n"
+               "assert(type(hud.weatherTone) == 'string')\n"
+               "assert(type(hud.weatherClass) == 'string')\n"
+               "assert(type(hud.threatStatus) == 'string')\n"
+               "assert(type(hud.threatDirection) == 'string')\n"
+               "assert(type(hud.threatRemaining) == 'number')\n"
+               "assert(type(hud.threatDuration) == 'number')\n"
                "assert(type(hud.objective) == 'string')\n"
                "assert(type(hud.objectiveTone) == 'string')\n"
                "assert(type(hud.objectiveHint) == 'string')\n"
+               "assert(type(hud.poiGuide) == 'string')\n"
+               "assert(type(hud.poiGuideTone) == 'string')\n"
+               "assert(type(hud.missionGuide) == 'string')\n"
+               "assert(type(hud.missionTone) == 'string')\n"
+               "assert(type(hud.eventGuide) == 'string')\n"
+               "assert(type(hud.eventTone) == 'string')\n"
+               "assert(type(hud.siegeStatus) == 'string')\n"
+               "assert(type(hud.siegeTone) == 'string')\n"
+               "assert(type(hud.siegeReportOpen) == 'boolean')\n"
+               "assert(type(hud.siegeReportTitle) == 'string')\n"
+               "assert(type(hud.siegeReportRating) == 'string')\n"
+               "assert(type(hud.siegeReportTone) == 'string')\n"
+               "assert(type(hud.siegeReportHint) == 'string')\n"
+               "assert(type(hud.siegeReportLines) == 'table' and #hud.siegeReportLines == 8)\n"
+               "assert(type(hud.baseActive) == 'boolean')\n"
+               "assert(type(hud.baseStorageCount) == 'number')\n"
+               "assert(type(hud.baseStorageWeight) == 'number')\n"
+               "assert(type(hud.baseStorageCapacity) == 'number')\n"
+               "assert(type(hud.baseBeds) == 'number')\n"
+               "assert(type(hud.baseCampfires) == 'number')\n"
+               "assert(type(hud.baseWorkbenches) == 'number')\n"
+               "assert(type(hud.baseDefensesIntact) == 'number')\n"
+               "assert(type(hud.baseDefensesDamaged) == 'number')\n"
+               "assert(type(hud.baseStatus) == 'string')\n"
+               "assert(type(hud.baseTone) == 'string')\n"
+               "assert(type(hud.progressionValid) == 'boolean')\n"
+               "assert(type(hud.progressionLevel) == 'number')\n"
+               "assert(type(hud.progressionXp) == 'number')\n"
+               "assert(type(hud.progressionXpNext) == 'number')\n"
+               "assert(type(hud.progressionPerkPoints) == 'number')\n"
+               "assert(type(hud.progressionSkills) == 'table' and #hud.progressionSkills == 4)\n"
+               "assert(type(hud.progressionPerks) == 'string')\n"
+               "assert(type(hud.progressionChoices) == 'table' and #hud.progressionChoices == 3)\n"
+               "assert(type(hud.progressionChoiceCount) == 'number')\n"
+               "assert(type(hud.perkPrompt) == 'string')\n"
+               "assert(type(hud.characterOpen) == 'boolean')\n"
+               "assert(type(hud.actionHint) == 'string')\n"
+               "assert(type(hud.actionTone) == 'string')\n"
                "assert(Game.IsMenuOpen() == false)\n"
                "assert(Game.IsInventoryOpen() == false)\n"
                "local menu = Menu.GetState()\n"
@@ -249,7 +367,7 @@ TEST_CASE("Lua UI binding opens and updates a mod document") {
                "assert(Menu.Action('unknown') == false)\n"
                "local inv = Inventory.GetState()\n"
                "assert(inv.open)\n"
-               "assert(#inv.bag == 25 and #inv.loot == 6)\n"
+               "assert(#inv.bag == 25 and #inv.loot == 8)\n"
                "assert(type(inv.lootTitle) == 'string')\n"
                "assert(inv.bag[1].label == '绷带')\n"
                "assert(inv.bag[1].condition == 0.75)\n"
@@ -280,6 +398,9 @@ TEST_CASE("Lua UI binding opens and updates a mod document") {
                 "assert(Inventory.Action({type='queue_down', from='bag', fromIndex=0}))\n"
                 "assert(Inventory.Action({type='queue_remove', from='bag', fromIndex=0}))\n"
                 "assert(Inventory.Action({type='queue_count', from='bag', fromIndex=0, count=7}))\n"
+                "assert(Inventory.Action({type='store_all', from='loot'}))\n"
+                "assert(Inventory.Action({type='take_all', from='loot'}))\n"
+                "assert(Inventory.Action({type='sort_storage', from='loot'}))\n"
                  "assert(Inventory.Action({type='bogus'}) == false)\n"
                 "Inventory.PlayClick()\n"
                 "local saves = Save.List()\n"
@@ -294,7 +415,13 @@ TEST_CASE("Lua UI binding opens and updates a mod document") {
 
     {
         zl::ui::ScriptUiHost host(*context);
+        zl::items::ItemRegistry items;
+        std::string itemError;
+        REQUIRE(items.LoadFromString(
+            R"({"format":"items-v1","items":[{"id":"base_lua","name":"基础","icon":"i","weight":0.1,"maxStack":1,"type":"generic"}]})",
+            "lua-items", &itemError));
         zl::game::GameContext contextData;
+        contextData.items = &items;
         zl::ui::MenuState menuState;
         menuState.settings.volume = 42;
         menuState.settings.bindings.push_back(
@@ -353,6 +480,9 @@ TEST_CASE("Lua UI binding opens and updates a mod document") {
         bool queueDownActed = false;
         bool queueRemoveActed = false;
         bool queueCountActed = false;
+        bool storeAllActed = false;
+        bool takeAllActed = false;
+        bool sortStorageActed = false;
         int queueActionIndex = -1;
         int queueCountValue = 0;
         int craftBatchCount = 0;
@@ -402,6 +532,18 @@ TEST_CASE("Lua UI binding opens and updates a mod document") {
                     queueCountActed = true;
                     queueActionIndex = action.fromIndex;
                     queueCountValue = action.count;
+                    return true;
+                }
+                if (action.type == zl::ui::InventoryActionType::StoreAll) {
+                    storeAllActed = true;
+                    return true;
+                }
+                if (action.type == zl::ui::InventoryActionType::TakeAll) {
+                    takeAllActed = true;
+                    return true;
+                }
+                if (action.type == zl::ui::InventoryActionType::SortStorage) {
+                    sortStorageActed = true;
                     return true;
                 }
                 return false;
@@ -461,7 +603,15 @@ TEST_CASE("Lua UI binding opens and updates a mod document") {
         REQUIRE(title != nullptr);
         CHECK(title->GetInnerRML() == "from lua");
         CHECK(host.HasOwner("ui_lua"));
-        CHECK(inventoryActions == 8);
+        REQUIRE(contextData.modHudFields.size() == 1);
+        CHECK(contextData.modHudFields[0].modId == "ui_lua");
+        CHECK(contextData.modHudFields[0].id == "status");
+        CHECK(contextData.modHudFields[0].label == "模组状态");
+        CHECK(contextData.modHudFields[0].text == "运行中");
+        CHECK(contextData.modHudFields[0].tone == "ok");
+        CHECK(contextData.dynamicContentCount == 1);
+        CHECK(items.Find("lua_dynamic") != nullptr);
+        CHECK(inventoryActions == 11);
         CHECK(transferActed);
         CHECK(craftActed);
         CHECK(craftBatchCount == 3);
@@ -471,6 +621,9 @@ TEST_CASE("Lua UI binding opens and updates a mod document") {
         CHECK(queueDownActed);
         CHECK(queueRemoveActed);
         CHECK(queueCountActed);
+        CHECK(storeAllActed);
+        CHECK(takeAllActed);
+        CHECK(sortStorageActed);
         CHECK(queueActionIndex == 0);
         CHECK(queueCountValue == 7);
         CHECK(inventoryClicks == 1);

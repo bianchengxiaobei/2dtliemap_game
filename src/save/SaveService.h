@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -23,6 +24,7 @@ struct SaveRequest {
     std::string name;
     std::string mapId;
     std::string gameVersion;
+    std::optional<double> gameMinutes;
     std::vector<SavePlayer> players;
     EntitySnapshot entities;
     ThumbnailImage thumbnail;

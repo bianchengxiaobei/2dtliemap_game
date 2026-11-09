@@ -10,9 +10,11 @@
       "entries": [
         { "defId": "bandage", "weight": 4, "min": 1, "max": 2 },
         { "defId": "rag", "weight": 4, "min": 2, "max": 4 },
+        { "defId": "painkillers", "weight": 2, "min": 1, "max": 1 },
         { "defId": "energy_bar", "weight": 2, "min": 1, "max": 2 },
         { "defId": "canned_beans", "weight": 2, "min": 1, "max": 1 },
-        { "defId": "water_bottle", "weight": 2, "min": 1, "max": 1 }
+        { "defId": "water_bottle", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "wood", "weight": 3, "min": 4, "max": 8 }
       ]
     },
     {
@@ -21,13 +23,20 @@
       "capacityKg": 20.0,
       "rolls": 2,
       "guaranteed": [
-        { "defId": "repair_kit", "count": 1 }
+        { "defId": "repair_kit", "count": 1 },
+        { "defId": "antibiotics", "count": 1 }
       ],
       "entries": [
         { "defId": "hammer", "weight": 3, "min": 1, "max": 1 },
         { "defId": "screwdriver", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "leather_jacket", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "crowbar", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "baseball_bat", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "ammo_9mm", "weight": 1, "min": 4, "max": 8 },
         { "defId": "rag", "weight": 2, "min": 1, "max": 3 },
-        { "defId": "painkillers", "weight": 2, "min": 1, "max": 1 }
+        { "defId": "painkillers", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "antibiotics", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "fire_extinguisher", "weight": 2, "min": 1, "max": 1 }
       ]
     },
     {
@@ -35,6 +44,9 @@
       "name": "厨房橱柜",
       "capacityKg": 16.0,
       "rolls": 3,
+      "guaranteed": [
+        { "defId": "cooking_pot", "count": 1 }
+      ],
       "entries": [
         { "defId": "canned_beans", "weight": 4, "min": 1, "max": 2 },
         { "defId": "water_bottle", "weight": 3, "min": 1, "max": 1 },
@@ -52,8 +64,689 @@
       ],
       "entries": [
         { "defId": "screwdriver", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "machete", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "crowbar", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "ammo_9mm", "weight": 1, "min": 3, "max": 6 },
         { "defId": "rag", "weight": 2, "min": 1, "max": 2 },
-        { "defId": "repair_kit", "weight": 1, "min": 1, "max": 1 }
+        { "defId": "repair_kit", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "wood", "weight": 4, "min": 5, "max": 10 }
+      ]
+    },
+    {
+      "id": "poi_gas_station",
+      "name": "加油站储物柜",
+      "capacityKg": 22.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "repair_kit", "count": 1 },
+        { "defId": "fuel_can", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "screwdriver", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "baseball_bat", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "riot_vest", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "pistol", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "ammo_9mm", "weight": 3, "min": 8, "max": 12 },
+        { "defId": "rag", "weight": 3, "min": 2, "max": 4 },
+        { "defId": "water_bottle", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "energy_bar", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "fuel_can", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "wood", "weight": 2, "min": 4, "max": 8 },
+        { "defId": "fire_extinguisher", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_gas_snacks",
+      "name": "加油站货架",
+      "capacityKg": 14.0,
+      "rolls": 2,
+      "entries": [
+        { "defId": "energy_bar", "weight": 4, "min": 1, "max": 2 },
+        { "defId": "canned_beans", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "water_bottle", "weight": 3, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_clinic_medicine",
+      "name": "诊所药柜",
+      "capacityKg": 18.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "bandage", "count": 2 },
+        { "defId": "antibiotics", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "painkillers", "weight": 4, "min": 1, "max": 1 },
+        { "defId": "antibiotics", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "disinfectant", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "bandage", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "rag", "weight": 2, "min": 1, "max": 3 },
+        { "defId": "water_bottle", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_clinic_supplies",
+      "name": "诊所物资箱",
+      "capacityKg": 16.0,
+      "rolls": 2,
+      "entries": [
+        { "defId": "bandage", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "rag", "weight": 3, "min": 1, "max": 3 },
+        { "defId": "energy_bar", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "water_bottle", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_hospital_pharmacy",
+      "name": "医院药房柜",
+      "capacityKg": 18.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "bandage", "count": 2 },
+        { "defId": "antibiotics", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "painkillers", "weight": 4, "min": 1, "max": 1 },
+        { "defId": "disinfectant", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "herbal_tea", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "bandage", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "tainted_bandage", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "rag", "weight": 2, "min": 1, "max": 3 },
+        { "defId": "water_bottle", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_hospital_supplies",
+      "name": "医院物资箱",
+      "capacityKg": 16.0,
+      "rolls": 2,
+      "guaranteed": [
+        { "defId": "water_bottle", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "bandage", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "tainted_bandage", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "rag", "weight": 3, "min": 1, "max": 3 },
+        { "defId": "energy_bar", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "canned_beans", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_military_armory",
+      "name": "检查站军械柜",
+      "capacityKg": 24.0,
+      "rolls": 4,
+      "guaranteed": [
+        { "defId": "pistol", "count": 1 },
+        { "defId": "ammo_9mm", "count": 16 },
+        { "defId": "ammo_shells", "count": 8 }
+      ],
+      "entries": [
+        { "defId": "pistol", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "shotgun", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "riot_vest", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "ammo_9mm", "weight": 3, "min": 8, "max": 16 },
+        { "defId": "ammo_shells", "weight": 2, "min": 4, "max": 8 },
+        { "defId": "repair_kit", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_military_supplies",
+      "name": "检查站补给箱",
+      "capacityKg": 18.0,
+      "rolls": 2,
+      "guaranteed": [
+        { "defId": "canned_beans", "count": 1 },
+        { "defId": "water_bottle", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "energy_bar", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "wood", "weight": 2, "min": 4, "max": 8 },
+        { "defId": "bandage", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "rag", "weight": 2, "min": 1, "max": 2 }
+      ]
+    },
+    {
+      "id": "poi_farm_barn",
+      "name": "农场仓物资箱",
+      "capacityKg": 24.0,
+      "rolls": 4,
+      "guaranteed": [
+        { "defId": "wood", "count": 8 },
+        { "defId": "cabbage_seeds", "count": 3 }
+      ],
+      "entries": [
+        { "defId": "canned_beans", "weight": 4, "min": 1, "max": 2 },
+        { "defId": "cooked_beans", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "energy_bar", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "water_bottle", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "cabbage_seeds", "weight": 2, "min": 1, "max": 3 },
+        { "defId": "potato_seeds", "weight": 1, "min": 1, "max": 3 },
+        { "defId": "tomato_seeds", "weight": 1, "min": 1, "max": 3 },
+        { "defId": "corn_seeds", "weight": 1, "min": 1, "max": 2 },
+        { "defId": "fertilizer", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "fungicide", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "shotgun", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "ammo_shells", "weight": 2, "min": 4, "max": 6 },
+        { "defId": "rag", "weight": 2, "min": 1, "max": 2 }
+      ]
+    },
+    {
+      "id": "poi_farm_tools",
+      "name": "农场工具柜",
+      "capacityKg": 20.0,
+      "rolls": 2,
+      "guaranteed": [
+        { "defId": "repair_kit", "count": 1 },
+        { "defId": "cabbage_seeds", "count": 3 },
+        { "defId": "fertilizer", "count": 2 },
+        { "defId": "fungicide", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "hammer", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "screwdriver", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "machete", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "raincoat", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "ammo_shells", "weight": 1, "min": 2, "max": 4 },
+        { "defId": "wood", "weight": 4, "min": 5, "max": 10 },
+        { "defId": "cabbage_seeds", "weight": 2, "min": 1, "max": 3 },
+        { "defId": "potato_seeds", "weight": 1, "min": 1, "max": 3 },
+        { "defId": "tomato_seeds", "weight": 1, "min": 1, "max": 3 },
+        { "defId": "corn_seeds", "weight": 1, "min": 1, "max": 2 },
+        { "defId": "rag", "weight": 2, "min": 1, "max": 2 }
+      ]
+    },
+    {
+      "id": "forage_forest",
+      "name": "森林地表",
+      "capacityKg": 8.0,
+      "rolls": 2,
+      "entries": [
+        { "defId": "forage_stick", "weight": 4, "min": 1, "max": 3 },
+        { "defId": "wild_berries", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "wild_mushroom", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "medicinal_herb", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "forage_stone", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "forage_meadow",
+      "name": "鑽夊湴",
+      "capacityKg": 8.0,
+      "rolls": 2,
+      "entries": [
+        { "defId": "wild_berries", "weight": 4, "min": 1, "max": 2 },
+        { "defId": "medicinal_herb", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "fish_bait", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "forage_stick", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "forage_stone", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "forage_shore",
+      "name": "姘村哺",
+      "capacityKg": 8.0,
+      "rolls": 2,
+      "entries": [
+        { "defId": "river_trash", "weight": 4, "min": 1, "max": 2 },
+        { "defId": "forage_stick", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "forage_stone", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "wild_berries", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "fish_water",
+      "name": "静水鱼获",
+      "capacityKg": 6.0,
+      "rolls": 1,
+      "entries": [
+        { "defId": "small_fish", "weight": 5, "min": 1, "max": 2 }
+      ]
+    },
+    {
+      "id": "fish_water_trash",
+      "name": "静水杂物",
+      "capacityKg": 6.0,
+      "rolls": 1,
+      "entries": [
+        { "defId": "river_trash", "weight": 5, "min": 1, "max": 1 },
+        { "defId": "forage_stick", "weight": 2, "min": 1, "max": 1 }
+      ]
+    }
+,
+    {
+      "id": "animal_deer",
+      "name": "鹿尸体",
+      "capacityKg": 12.0,
+      "rolls": 3,
+      "entries": [
+        { "defId": "raw_venison", "weight": 8, "min": 2, "max": 3 },
+        { "defId": "animal_hide", "weight": 5, "min": 1, "max": 1 },
+        { "defId": "bone", "weight": 4, "min": 1, "max": 2 }
+      ]
+    },
+    {
+      "id": "animal_rabbit",
+      "name": "兔子尸体",
+      "capacityKg": 6.0,
+      "rolls": 2,
+      "entries": [
+        { "defId": "raw_rabbit_meat", "weight": 8, "min": 1, "max": 2 },
+        { "defId": "animal_hide", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "bone", "weight": 3, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "animal_boar",
+      "name": "野猪尸体",
+      "capacityKg": 18.0,
+      "rolls": 4,
+      "entries": [
+        { "defId": "raw_boar_meat", "weight": 8, "min": 2, "max": 3 },
+        { "defId": "animal_hide", "weight": 5, "min": 1, "max": 2 },
+        { "defId": "bone", "weight": 4, "min": 1, "max": 2 }
+      ]
+    },
+    {
+      "id": "animal_chicken",
+      "name": "鸡尸体",
+      "capacityKg": 6.0,
+      "rolls": 2,
+      "entries": [
+        { "defId": "raw_chicken", "weight": 8, "min": 1, "max": 2 },
+        { "defId": "bone", "weight": 3, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "animal_goat",
+      "name": "山羊尸体",
+      "capacityKg": 18.0,
+      "rolls": 3,
+      "entries": [
+        { "defId": "raw_goat_meat", "weight": 8, "min": 2, "max": 3 },
+        { "defId": "animal_hide", "weight": 5, "min": 1, "max": 2 },
+        { "defId": "bone", "weight": 4, "min": 1, "max": 2 }
+      ]
+    },
+    {
+      "id": "poi_supermarket_food",
+      "name": "超市食品货架",
+      "capacityKg": 20.0,
+      "rolls": 1,
+      "guaranteed": [
+        { "defId": "water_bottle", "count": 1 },
+        { "defId": "canned_soup", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "canned_beans", "weight": 4, "min": 1, "max": 2 },
+        { "defId": "canned_soup", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "instant_noodles", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "canned_fruit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "protein_bar", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "energy_bar", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "water_bottle", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "fresh_carrot", "weight": 2, "min": 1, "max": 2 }
+      ]
+    },
+    {
+      "id": "poi_supermarket_household",
+      "name": "超市日用品货架",
+      "capacityKg": 16.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "rag", "count": 2 }
+      ],
+      "entries": [
+        { "defId": "rag", "weight": 4, "min": 2, "max": 4 },
+        { "defId": "sewing_kit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "water_bottle", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "empty_bottle", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "painkillers", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "bandage", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "tote_bag", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_supermarket_storage",
+      "name": "超市后仓",
+      "capacityKg": 22.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "repair_kit", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "toolbox", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "fuel_can", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "wood", "weight": 4, "min": 4, "max": 8 },
+        { "defId": "crowbar", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "screwdriver", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "fire_extinguisher", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "sewing_kit", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_motel_office",
+      "name": "旅馆前台",
+      "capacityKg": 18.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "ammo_9mm", "count": 4 }
+      ],
+      "entries": [
+        { "defId": "energy_bar", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "water_bottle", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "painkillers", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "rag", "weight": 3, "min": 1, "max": 3 },
+        { "defId": "bandage", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "sewing_kit", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "tote_bag", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_motel_room",
+      "name": "旅馆客房",
+      "capacityKg": 18.0,
+      "rolls": 2,
+      "guaranteed": [
+        { "defId": "water_bottle", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "canned_soup", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "instant_noodles", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "protein_bar", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "canned_fruit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "fresh_carrot", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "bandage", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "rag", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "jacket", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_motel_storage",
+      "name": "旅馆储藏间",
+      "capacityKg": 20.0,
+      "rolls": 2,
+      "guaranteed": [
+        { "defId": "fuel_can", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "wood", "weight": 4, "min": 4, "max": 8 },
+        { "defId": "repair_kit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "toolbox", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "crowbar", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "fire_extinguisher", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "empty_bottle", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_police_armory",
+      "name": "警察局枪柜",
+      "capacityKg": 24.0,
+      "rolls": 4,
+      "guaranteed": [
+        { "defId": "pistol", "count": 1 },
+        { "defId": "ammo_9mm", "count": 6 }
+      ],
+      "entries": [
+        { "defId": "pistol", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "ammo_9mm", "weight": 3, "min": 8, "max": 12 },
+        { "defId": "police_baton", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "riot_vest", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "shotgun", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "ammo_shells", "weight": 1, "min": 2, "max": 4 }
+      ]
+    },
+    {
+      "id": "poi_police_evidence",
+      "name": "警察局证物柜",
+      "capacityKg": 20.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "painkillers", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "ammo_9mm", "weight": 2, "min": 4, "max": 8 },
+        { "defId": "bandage", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "disinfectant", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "rag", "weight": 3, "min": 1, "max": 3 },
+        { "defId": "antibiotics", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "first_aid_kit", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_police_supplies",
+      "name": "警察局补给箱",
+      "capacityKg": 20.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "bandage", "count": 2 }
+      ],
+      "entries": [
+        { "defId": "water_bottle", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "energy_bar", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "repair_kit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "first_aid_kit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "riot_vest", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "ammo_9mm", "weight": 2, "min": 4, "max": 6 }
+      ]
+    },
+    {
+      "id": "poi_fire_gear",
+      "name": "消防装备柜",
+      "capacityKg": 24.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "fire_suit", "count": 1 },
+        { "defId": "fire_extinguisher", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "raincoat", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "jacket", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "leather_jacket", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "padded_jacket", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "hiking_boots", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "fire_suit", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_fire_tools",
+      "name": "消防工具柜",
+      "capacityKg": 24.0,
+      "rolls": 4,
+      "guaranteed": [
+        { "defId": "fire_extinguisher", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "axe", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "sledgehammer", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "crowbar", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "hammer", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "wood", "weight": 4, "min": 5, "max": 10 },
+        { "defId": "repair_kit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "toolbox", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_fire_medical",
+      "name": "消防急救箱",
+      "capacityKg": 18.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "bandage", "count": 2 },
+        { "defId": "first_aid_kit", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "painkillers", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "herbal_salve", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "disinfectant", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "antibiotics", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "water_bottle", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_church_supplies",
+      "name": "教堂救济物资",
+      "capacityKg": 20.0,
+      "rolls": 1,
+      "guaranteed": [
+        { "defId": "water_bottle", "count": 1 },
+        { "defId": "canned_soup", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "canned_beans", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "canned_fruit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "protein_bar", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "energy_bar", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "fresh_carrot", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "bandage", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "rag", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "herbal_tea", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_church_medical",
+      "name": "教堂药柜",
+      "capacityKg": 18.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "herbal_salve", "count": 1 },
+        { "defId": "bandage", "count": 2 }
+      ],
+      "entries": [
+        { "defId": "painkillers", "weight": 3, "min": 1, "max": 1 },
+        { "defId": "antibiotics", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "disinfectant", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "medicinal_herb", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "herbal_tea", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "first_aid_kit", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_church_archive",
+      "name": "教堂档案柜",
+      "capacityKg": 16.0,
+      "rolls": 2,
+      "guaranteed": [
+        { "defId": "radio_part", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "magazine_cooking", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "sewing_kit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "rag", "weight": 3, "min": 1, "max": 3 },
+        { "defId": "empty_bottle", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "bandage", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "herbal_tea", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_warehouse_tools",
+      "name": "仓库工具区",
+      "capacityKg": 30.0,
+      "rolls": 4,
+      "guaranteed": [
+        { "defId": "toolbox", "count": 1 },
+        { "defId": "repair_kit", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "sledgehammer", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "axe", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "crowbar", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "hammer", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "wood", "weight": 4, "min": 6, "max": 12 },
+        { "defId": "fuel_can", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "fire_extinguisher", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "screwdriver", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_warehouse_food",
+      "name": "仓库食品区",
+      "capacityKg": 28.0,
+      "rolls": 1,
+      "guaranteed": [
+        { "defId": "canned_soup", "count": 1 },
+        { "defId": "water_bottle", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "canned_beans", "weight": 4, "min": 1, "max": 2 },
+        { "defId": "canned_fruit", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "instant_noodles", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "protein_bar", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "energy_bar", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "fresh_carrot", "weight": 2, "min": 1, "max": 3 },
+        { "defId": "fresh_potato", "weight": 2, "min": 1, "max": 3 }
+      ]
+    },
+    {
+      "id": "poi_warehouse_valuables",
+      "name": "仓库贵重品柜",
+      "capacityKg": 28.0,
+      "rolls": 4,
+      "guaranteed": [
+        { "defId": "ammo_9mm", "count": 12 },
+        { "defId": "ammo_shells", "count": 6 }
+      ],
+      "entries": [
+        { "defId": "pistol", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "shotgun", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "riot_vest", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "ammo_9mm", "weight": 3, "min": 8, "max": 12 },
+        { "defId": "ammo_shells", "weight": 2, "min": 4, "max": 6 },
+        { "defId": "first_aid_kit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "toolbox", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "poi_warehouse_relay",
+      "name": "仓库中继货架",
+      "capacityKg": 12.0,
+      "rolls": 1,
+      "guaranteed": [
+        { "defId": "relay_part", "count": 1 }
+      ],
+      "entries": [
+        { "defId": "ammo_9mm", "weight": 3, "min": 4, "max": 8 },
+        { "defId": "repair_kit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "fuel_can", "weight": 2, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "event_supply_crate",
+      "name": "空投补给箱",
+      "capacityKg": 24.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "water_bottle", "count": 1 },
+        { "defId": "canned_soup", "count": 1 },
+        { "defId": "ammo_9mm", "count": 8 }
+      ],
+      "entries": [
+        { "defId": "first_aid_kit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "energy_bar", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "protein_bar", "weight": 3, "min": 1, "max": 2 },
+        { "defId": "canned_fruit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "ammo_shells", "weight": 1, "min": 4, "max": 6 },
+        { "defId": "repair_kit", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "fire_extinguisher", "weight": 1, "min": 1, "max": 1 }
+      ]
+    },
+    {
+      "id": "event_infected_cache",
+      "name": "感染者藏匿箱",
+      "capacityKg": 18.0,
+      "rolls": 3,
+      "guaranteed": [
+        { "defId": "bandage", "count": 2 }
+      ],
+      "entries": [
+        { "defId": "tainted_bandage", "weight": 2, "min": 1, "max": 2 },
+        { "defId": "painkillers", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "disinfectant", "weight": 2, "min": 1, "max": 1 },
+        { "defId": "antibiotics", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "ammo_9mm", "weight": 2, "min": 4, "max": 8 },
+        { "defId": "first_aid_kit", "weight": 1, "min": 1, "max": 1 },
+        { "defId": "rag", "weight": 3, "min": 1, "max": 3 },
+        { "defId": "canned_beans", "weight": 2, "min": 1, "max": 1 }
       ]
     }
   ]

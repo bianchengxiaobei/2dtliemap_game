@@ -316,6 +316,47 @@ struct PythonRuntime::Impl {
         world.attr("IsPassable") = py::cpp_function([scriptApi](int gx, int gy) -> bool {
             return scriptApi != nullptr && scriptApi->IsPassable(gx, gy);
         });
+        world.attr("GetSquare") = py::cpp_function(
+            [scriptApi](int gx, int gy, int z) -> py::object {
+                if (scriptApi == nullptr) {
+                    return py::none();
+                }
+                ScriptSquare square;
+                if (!scriptApi->GetSquare(gx, gy, z, square)) {
+                    return py::none();
+                }
+                const auto makeObject = [](const ScriptSquareObject& object) {
+                    py::dict out;
+                    out["sprite"] = object.sprite;
+                    out["hp"] = object.hp;
+                    out["playerBuilt"] = object.playerBuilt;
+                    out["blocksMovement"] = object.blocksMovement;
+                    return out;
+                };
+                py::dict out;
+                out["loaded"] = square.loaded;
+                out["hasFloor"] = square.hasFloor;
+                if (square.hasFloor) {
+                    out["floor"] = makeObject(square.floor);
+                }
+                py::list wall;
+                for (const ScriptSquareObject& object : square.wall) {
+                    wall.append(makeObject(object));
+                }
+                out["wall"] = wall;
+                py::list furniture;
+                for (const ScriptSquareObject& object : square.furniture) {
+                    furniture.append(makeObject(object));
+                }
+                out["furniture"] = furniture;
+                py::list item;
+                for (const ScriptSquareObject& object : square.item) {
+                    item.append(makeObject(object));
+                }
+                out["item"] = item;
+                return out;
+            },
+            py::arg("x"), py::arg("y"), py::arg("z") = 0);
         world.attr("SpawnItem") = py::cpp_function(
             [scriptApi](const std::string& defId, double x, double y, int z) -> bool {
                 return scriptApi != nullptr && scriptApi->SpawnItem(
@@ -363,6 +404,69 @@ struct PythonRuntime::Impl {
             py::arg("defId"));
         globals["Items"] = itemsApi;
 
+        py::object contentApi = makeNamespace();
+        contentApi.attr("RegisterItems") = py::cpp_function(
+            [scriptApi, modId](const std::string& json) -> int {
+                std::string error;
+                const int added = scriptApi != nullptr
+                                      ? scriptApi->RegisterItems(modId, json, error)
+                                      : 0;
+                if (added == 0 && !error.empty()) {
+                    ZL_WARN("script-mod", "[{}] {}", modId, error);
+                }
+                return added;
+            },
+            py::arg("json"));
+        contentApi.attr("RegisterRecipes") = py::cpp_function(
+            [scriptApi, modId](const std::string& json) -> int {
+                std::string error;
+                const int added = scriptApi != nullptr
+                                      ? scriptApi->RegisterRecipes(modId, json, error)
+                                      : 0;
+                if (added == 0 && !error.empty()) {
+                    ZL_WARN("script-mod", "[{}] {}", modId, error);
+                }
+                return added;
+            },
+            py::arg("json"));
+        contentApi.attr("RegisterBuildings") = py::cpp_function(
+            [scriptApi, modId](const std::string& json) -> int {
+                std::string error;
+                const int added = scriptApi != nullptr
+                                      ? scriptApi->RegisterBuildings(modId, json, error)
+                                      : 0;
+                if (added == 0 && !error.empty()) {
+                    ZL_WARN("script-mod", "[{}] {}", modId, error);
+                }
+                return added;
+            },
+            py::arg("json"));
+        contentApi.attr("RegisterPois") = py::cpp_function(
+            [scriptApi, modId](const std::string& json) -> int {
+                std::string error;
+                const int added = scriptApi != nullptr
+                                      ? scriptApi->RegisterPois(modId, json, error)
+                                      : 0;
+                if (added == 0 && !error.empty()) {
+                    ZL_WARN("script-mod", "[{}] {}", modId, error);
+                }
+                return added;
+            },
+            py::arg("json"));
+        contentApi.attr("RegisterMissions") = py::cpp_function(
+            [scriptApi, modId](const std::string& json) -> int {
+                std::string error;
+                const int added = scriptApi != nullptr
+                                      ? scriptApi->RegisterMissions(modId, json, error)
+                                      : 0;
+                if (added == 0 && !error.empty()) {
+                    ZL_WARN("script-mod", "[{}] {}", modId, error);
+                }
+                return added;
+            },
+            py::arg("json"));
+        globals["Content"] = contentApi;
+
         py::object hud = makeNamespace();
         hud.attr("GetState") = py::cpp_function([scriptApi]() -> py::dict {
             ui::HudState state;
@@ -379,12 +483,144 @@ struct PythonRuntime::Impl {
             out["healthMax"] = state.healthMax;
             out["stamina"] = state.stamina;
             out["staminaMax"] = state.staminaMax;
+            out["combatStatus"] = state.combatStatus;
+            out["combatTone"] = state.combatTone;
+            out["rangedValid"] = state.rangedValid;
+            out["rangedName"] = state.rangedName;
+            out["rangedLoaded"] = state.rangedLoaded;
+            out["rangedMagazine"] = state.rangedMagazine;
+            out["rangedReserve"] = state.rangedReserve;
+            out["rangedReloading"] = state.rangedReloading;
+            out["rangedReloadProgress"] = state.rangedReloadProgress;
+            out["rangedReloadRemaining"] = state.rangedReloadRemaining;
+            out["rangedStatus"] = state.rangedStatus;
+            out["rangedTone"] = state.rangedTone;
+            out["forageValid"] = state.forageValid;
+            out["forageName"] = state.forageName;
+            out["forageToolName"] = state.forageToolName;
+            out["forageMissingTool"] = state.forageMissingTool;
+            out["forageExhausted"] = state.forageExhausted;
+            out["forageRespawnMinutes"] = state.forageRespawnMinutes;
+            out["forageSeconds"] = state.forageSeconds;
+            out["forageSearching"] = state.forageSearching;
+            out["forageProgress"] = state.forageProgress;
+            out["forageStatus"] = state.forageStatus;
+            out["forageTone"] = state.forageTone;
+            out["fishingValid"] = state.fishingValid;
+            out["fishingName"] = state.fishingName;
+            out["fishingRodName"] = state.fishingRodName;
+            out["fishingBaitName"] = state.fishingBaitName;
+            out["fishingMissingRod"] = state.fishingMissingRod;
+            out["fishingMissingBait"] = state.fishingMissingBait;
+            out["fishingSeconds"] = state.fishingSeconds;
+            out["fishingWaiting"] = state.fishingWaiting;
+            out["fishingProgress"] = state.fishingProgress;
+            out["fishingBiting"] = state.fishingBiting;
+            out["fishingBiteRemaining"] = state.fishingBiteRemaining;
+            out["fishingStatus"] = state.fishingStatus;
+            out["fishingTone"] = state.fishingTone;
             out["needsValid"] = state.needsValid;
             out["needsStatus"] = state.needsStatus;
             out["needsTone"] = state.needsTone;
+            out["woundStatus"] = state.woundStatus;
+            out["woundTone"] = state.woundTone;
+            out["painStatus"] = state.painStatus;
+            out["painTone"] = state.painTone;
+            out["armorStatus"] = state.armorStatus;
+            out["armorTone"] = state.armorTone;
+            out["infectionStatus"] = state.infectionStatus;
+            out["infectionTone"] = state.infectionTone;
+            out["weatherStatus"] = state.weatherStatus;
+            out["weatherTone"] = state.weatherTone;
+            out["weatherClass"] = state.weatherClass;
+            out["threatStatus"] = state.threatStatus;
+            out["threatDirection"] = state.threatDirection;
+            out["threatRemaining"] = state.threatRemaining;
+            out["threatDuration"] = state.threatDuration;
             out["objective"] = state.objective;
             out["objectiveTone"] = state.objectiveTone;
             out["objectiveHint"] = state.objectiveHint;
+            out["poiGuide"] = state.poiGuide;
+            out["poiGuideTone"] = state.poiGuideTone;
+            out["missionGuide"] = state.missionGuide;
+            out["missionTone"] = state.missionTone;
+            out["eventGuide"] = state.eventGuide;
+            out["eventTone"] = state.eventTone;
+            out["siegeStatus"] = state.siegeStatus;
+            out["siegeTone"] = state.siegeTone;
+            out["siegeReportOpen"] = state.siegeReportOpen;
+            out["siegeReportTitle"] = state.siegeReportTitle;
+            out["siegeReportRating"] = state.siegeReportRating;
+            out["siegeReportTone"] = state.siegeReportTone;
+            out["siegeReportHint"] = state.siegeReportHint;
+            py::list siegeReportLines;
+            for (const std::string& line : state.siegeReportLines) {
+                siegeReportLines.append(line);
+            }
+            out["siegeReportLines"] = siegeReportLines;
+            out["baseActive"] = state.baseActive;
+            out["baseStorageCount"] = state.baseStorageCount;
+            out["baseStorageWeight"] = state.baseStorageWeight;
+            out["baseStorageCapacity"] = state.baseStorageCapacity;
+            out["baseBeds"] = state.baseBeds;
+            out["baseCampfires"] = state.baseCampfires;
+            out["baseWorkbenches"] = state.baseWorkbenches;
+            out["baseDefensesIntact"] = state.baseDefensesIntact;
+            out["baseDefensesDamaged"] = state.baseDefensesDamaged;
+            out["baseFarms"] = state.baseFarms;
+            out["baseFarmGrowing"] = state.baseFarmGrowing;
+            out["baseFarmMature"] = state.baseFarmMature;
+            out["baseFarmDiseased"] = state.baseFarmDiseased;
+            out["baseFarmThirsty"] = state.baseFarmThirsty;
+            out["baseFarmFertilized"] = state.baseFarmFertilized;
+            out["baseGenerators"] = state.baseGenerators;
+            out["baseGeneratorsOnline"] = state.baseGeneratorsOnline;
+            out["baseFridges"] = state.baseFridges;
+            out["baseFridgesPowered"] = state.baseFridgesPowered;
+            out["baseTraps"] = state.baseTraps;
+            out["baseTrapsArmed"] = state.baseTrapsArmed;
+            out["baseFloodlights"] = state.baseFloodlights;
+            out["baseFloodlightsPowered"] = state.baseFloodlightsPowered;
+            out["baseElectricFences"] = state.baseElectricFences;
+            out["baseElectricFencesPowered"] = state.baseElectricFencesPowered;
+            out["basePowerFuelMinutes"] = state.basePowerFuelMinutes;
+            out["basePowerLoad"] = state.basePowerLoad;
+            out["basePowerLowFuel"] = state.basePowerLowFuel;
+            out["basePowerOutage"] = state.basePowerOutage;
+            out["baseStatus"] = state.baseStatus;
+            out["baseTone"] = state.baseTone;
+            out["progressionValid"] = state.progressionValid;
+            out["progressionLevel"] = state.progressionLevel;
+            out["progressionXp"] = state.progressionXp;
+            out["progressionXpNext"] = state.progressionXpNext;
+            out["progressionPerkPoints"] = state.progressionPerkPoints;
+            out["progressionPerks"] = state.progressionPerks;
+            out["progressionChoiceCount"] = state.progressionChoiceCount;
+            out["perkPrompt"] = state.perkPrompt;
+            out["characterOpen"] = state.characterOpen;
+            py::list skills;
+            for (const std::string& line : state.progressionSkills) {
+                skills.append(line);
+            }
+            out["progressionSkills"] = skills;
+            py::list choices;
+            for (const std::string& line : state.progressionChoices) {
+                choices.append(line);
+            }
+            out["progressionChoices"] = choices;
+            out["dialogueOpen"] = state.dialogueOpen;
+            out["dialogueSpeaker"] = state.dialogueSpeaker;
+            out["dialogueText"] = state.dialogueText;
+            out["dialogueOptionCount"] = state.dialogueOptionCount;
+            out["dialogueSelected"] = state.dialogueSelected;
+            out["dialogueHint"] = state.dialogueHint;
+            py::list dialogueOptions;
+            for (const std::string& option : state.dialogueOptions) {
+                dialogueOptions.append(option);
+            }
+            out["dialogueOptions"] = dialogueOptions;
+            out["actionHint"] = state.actionHint;
+            out["actionTone"] = state.actionTone;
             out["selectedSlot"] = state.selectedSlot;
             out["notice"] = state.notice;
             out["noticeTone"] = state.noticeTone;
@@ -398,8 +634,41 @@ struct PythonRuntime::Impl {
                 slots.append(item);
             }
             out["slots"] = slots;
+            py::list modFields;
+            for (int i = 0; i < state.modFieldCount; ++i) {
+                const ui::HudModField& field =
+                    state.modFields[static_cast<std::size_t>(i)];
+                py::dict item;
+                item["modId"] = field.modId;
+                item["id"] = field.id;
+                item["label"] = field.label;
+                item["text"] = field.text;
+                item["tone"] = field.tone;
+                modFields.append(item);
+            }
+            out["modFields"] = modFields;
             return out;
         });
+        hud.attr("RegisterField") = py::cpp_function(
+            [scriptApi, modId](const std::string& id,
+                               const std::string& label) -> bool {
+                return scriptApi != nullptr &&
+                       scriptApi->RegisterHudField(modId, id, label);
+            },
+            py::arg("id"), py::arg("label"));
+        hud.attr("SetField") = py::cpp_function(
+            [scriptApi, modId](const std::string& id, const std::string& text,
+                               const std::string& tone) -> bool {
+                return scriptApi != nullptr &&
+                       scriptApi->SetHudField(modId, id, text, tone);
+            },
+            py::arg("id"), py::arg("text"), py::arg("tone") = "info");
+        hud.attr("ClearField") = py::cpp_function(
+            [scriptApi, modId](const std::string& id) -> bool {
+                return scriptApi != nullptr &&
+                       scriptApi->ClearHudField(modId, id);
+            },
+            py::arg("id"));
         globals["Hud"] = hud;
 
         py::object menu = makeNamespace();
@@ -539,6 +808,9 @@ struct PythonRuntime::Impl {
             out["bagStacks"] = state.bagStacks;
             out["lootStacks"] = state.lootStacks;
             out["lootTitle"] = state.lootTitle;
+            out["lootIsStorage"] = state.lootIsStorage;
+            out["lootCanTakeAll"] = state.lootCanTakeAll;
+            out["lootEntityId"] = state.lootEntityId;
             out["status"] = state.status;
             out["statusTone"] = state.statusTone;
             py::list recipes;
@@ -555,6 +827,23 @@ struct PythonRuntime::Impl {
                 recipe["station"] = entry.station;
                 recipe["stationLabel"] = entry.stationLabel;
                 recipe["stationNearby"] = entry.stationNearby;
+                recipe["category"] = entry.category;
+                recipe["categoryLabel"] = entry.categoryLabel;
+                auto appendExtraRequirement =
+                    [&](const char* key,
+                        const std::optional<ui::InventoryRecipeIngredient>&
+                            requirement) {
+                        if (!requirement.has_value()) {
+                            return;
+                        }
+                        py::dict item;
+                        item["label"] = requirement->label;
+                        item["required"] = requirement->required;
+                        item["have"] = requirement->have;
+                        recipe[key] = item;
+                    };
+                appendExtraRequirement("cookware", entry.cookware);
+                appendExtraRequirement("fuel", entry.fuel);
                 py::list ingredients;
                 for (const ui::InventoryRecipeIngredient& ingredient :
                      entry.ingredients) {
@@ -611,6 +900,7 @@ struct PythonRuntime::Impl {
                     slot["condition"] = entry.condition;
                     slot["damaged"] = entry.damaged;
                     slot["repairAvailable"] = entry.repairAvailable;
+                    slot["perishable"] = entry.perishable;
                     target.append(slot);
                 }
             };
@@ -673,6 +963,12 @@ struct PythonRuntime::Impl {
                     parsed.type = ui::InventoryActionType::QueueRemove;
                 } else if (type == "queue_count") {
                     parsed.type = ui::InventoryActionType::QueueSetCount;
+                } else if (type == "store_all") {
+                    parsed.type = ui::InventoryActionType::StoreAll;
+                } else if (type == "take_all") {
+                    parsed.type = ui::InventoryActionType::TakeAll;
+                } else if (type == "sort_storage") {
+                    parsed.type = ui::InventoryActionType::SortStorage;
                 } else {
                     return false;
                 }

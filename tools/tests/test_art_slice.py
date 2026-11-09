@@ -69,7 +69,10 @@ class ArtSliceTest(unittest.TestCase):
 
     def test_wall_and_door_contract(self):
         for name in ("wall_brick_1", "wall_brick_2", "wall_brick_3",
-                     "wall_door_1", "wall_door_2"):
+                     "wall_door_1", "wall_door_2",
+                     "wall_wood_h_1", "wall_wood_v_1",
+                     "door_wood_closed_h_1", "door_wood_closed_v_1",
+                     "door_wood_open_h_1", "door_wood_open_v_1"):
             frame = self.frames[name]
             self.assertEqual((frame["w"], frame["h"]), (64, 112), name)
             self.assertEqual((frame["fx"], frame["fy"]), (64, 224), name)
@@ -136,19 +139,58 @@ class ArtSliceTest(unittest.TestCase):
             "character_zombie_up_1",
             "wall_brick_3",
             "wall_door_2",
+            "wall_wood_h_1",
+            "wall_wood_v_1",
+            "door_wood_closed_h_1",
+            "door_wood_closed_v_1",
+            "door_wood_open_h_1",
+            "door_wood_open_v_1",
             "item_makeshift_spear",
             "item_padded_jacket",
             "item_repair_kit",
             "crate_1",
+            "vehicle_north",
+            "vehicle_northeast",
+            "vehicle_east",
+            "vehicle_southeast",
+            "vehicle_south",
+            "vehicle_southwest",
+            "vehicle_west",
+            "vehicle_northwest",
             "locker_1",
+            "bed_1",
+            "barricade_1",
             "radio_1",
             "extraction_1",
             "item_radio_part",
+            "item_wood",
             "projectile_bullet",
             "effect_impact",
         )
         for name in required:
             self.assertIn(name, self.frames)
+
+    def test_vehicle_eight_direction_contract(self):
+        expected = {
+            "object.vehicle": "vehicle_south",
+            "object.vehicle_north": "vehicle_north",
+            "object.vehicle_northeast": "vehicle_northeast",
+            "object.vehicle_east": "vehicle_east",
+            "object.vehicle_southeast": "vehicle_southeast",
+            "object.vehicle_south": "vehicle_south",
+            "object.vehicle_southwest": "vehicle_southwest",
+            "object.vehicle_west": "vehicle_west",
+            "object.vehicle_northwest": "vehicle_northwest",
+        }
+        for logical, frame_name in expected.items():
+            own = self.manifest["logical"][logical]["own"]
+            self.assertEqual(own["frames"], [frame_name], logical)
+            frame = self.frames[frame_name]
+            self.assertEqual((frame["fx"], frame["fy"]), (160, 128), frame_name)
+            self.assertGreater(frame["w"], 0, frame_name)
+            self.assertGreater(frame["h"], 0, frame_name)
+            self.assertLessEqual(frame["ox"] + frame["w"], 160, frame_name)
+            self.assertLessEqual(frame["oy"] + frame["h"], 128, frame_name)
 
     def test_item_icons_resolve(self):
         with (ROOT / "assets" / "items.json").open(encoding="utf-8") as f:

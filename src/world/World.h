@@ -22,6 +22,7 @@ public:
 
     // 世界格坐标直达（cell/chunk 链路未创建时返回 nullptr）
     GridSquare* GetSquare(int wx, int wy, int z);
+    const GridSquare* GetSquare(int wx, int wy, int z) const;
     GridSquare& GetOrCreateSquare(int wx, int wy, int z);
 
     // 回收所有"无已创建 chunk"的空 cell（卸载流程收尾用），返回移除数

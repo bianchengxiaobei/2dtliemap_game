@@ -1,6 +1,6 @@
 #include "game/AssetProvider.h"
 
-#include <fstream>
+#include <filesystem>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -9,6 +9,7 @@
 #include "core/Log.h"
 #include "ecs/components/CommonComponents.h"
 #include "game/AnimationManifest.h"
+#include "game/AssetManifest.h"
 
 namespace zl::game {
 namespace {
@@ -92,23 +93,25 @@ ResolvedBinding ResolveBinding(const nlohmann::json& binding,
 }  // namespace
 
 bool AssetProvider::Init(const std::string& manifestPath, const std::string& provider,
-                         render::AtlasManager& atlases) {
+                         render::AtlasManager& atlases,
+                         const std::vector<std::string>& modManifestPaths) {
     m_provider = provider;
     m_resolved.clear();
     m_byHash.clear();
     m_animationSets.clear();
     m_animByHash.clear();
 
-    std::ifstream file(manifestPath);
-    if (!file.is_open()) {
-        ZL_ERROR("assets", "资源清单不存在: {}", manifestPath);
-        return false;
+    std::vector<std::filesystem::path> modPaths;
+    modPaths.reserve(modManifestPaths.size());
+    for (const std::string& path : modManifestPaths) {
+        modPaths.emplace_back(path);
     }
     nlohmann::json doc;
-    try {
-        file >> doc;
-    } catch (const nlohmann::json::exception& e) {
-        ZL_ERROR("assets", "资源清单解析失败: {} <- {}", e.what(), manifestPath);
+    AssetManifestMergeStats mergeStats;
+    std::string manifestError;
+    if (!LoadMergedAssetManifest(manifestPath, modPaths, &doc, &mergeStats,
+                                 &manifestError)) {
+        ZL_ERROR("assets", "资源清单加载失败: {}", manifestError);
         return false;
     }
 
@@ -179,8 +182,14 @@ bool AssetProvider::Init(const std::string& manifestPath, const std::string& pro
     }
 
     ZL_INFO("assets",
-            "AssetProvider 就绪：provider={}，逻辑资源 {} 项（own 回退 {} 项，动画集 {} 项）",
-            m_provider, m_resolved.size(), fallbackCount, animationCount);
+            "AssetProvider 就绪：provider={}，逻辑资源 {} 项（own 回退 {} 项，动画集 {} 项，"
+            "mod 清单 {}，新增绑定 {}）",
+            m_provider, m_resolved.size(), fallbackCount, animationCount,
+            mergeStats.manifestsLoaded, mergeStats.bindingsAdded);
+    if (mergeStats.manifestsSkipped > 0 || mergeStats.bindingsSkipped > 0) {
+        ZL_WARN("assets", "mod 资源清单跳过：清单 {}，绑定 {}",
+                mergeStats.manifestsSkipped, mergeStats.bindingsSkipped);
+    }
     return true;
 }
 

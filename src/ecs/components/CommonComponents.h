@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace zl::ecs {
@@ -60,11 +61,36 @@ struct SpriteRef {
     std::uint32_t tint = 0xFFFFFFFFu;
 };
 
+struct SpriteScale {
+    float scale = 1.0f;
+};
+
 // 稳定 ID：跨存档 / 脚本 / 事件 / 跨模块引用一律用它；
 // 绝不跨 tick 保存 entt::entity 数值。EcsWorld::Create 自动附着，
 // 从 1 开始单调递增、永不复用（0 = 无效）。
 struct StableId {
     std::uint64_t id = 0;
+};
+
+struct BaseSiegeZombie {};
+
+struct NoCombatTarget {};
+
+// M23-F4-T5：友方 NPC 标记。死亡事件/击杀统计不得把聚落守卫当作僵尸；
+// 具体阵营/关系系统留后续，本标记只服务最小友军语义。
+struct FriendlyNpc {};
+
+// M19-F2：POI 固定守军标记（poiId 用于按区域统计）。带此标记的僵尸不参与 LOD 虚拟化，
+// 避免玩家离开后 POI 威胁被回收；守军实体随存档保留。
+struct PoiGuard {
+    std::string poiId;
+};
+
+// M24-T4：随机事件临时敌人标记。仅运行时存在，不进入存档；eventId 用于把击杀
+// 只记到对应随机事件，避免普通僵尸或其它事件完成“击杀事件敌人”目标。
+struct RandomEventActor {
+    std::string eventId;
+    int index = 0;
 };
 
 }  // namespace zl::ecs

@@ -15,7 +15,8 @@ void ApplyChunkData(ChunkData& data, Chunk& chunk) {
             std::string& name = data.floors[static_cast<std::size_t>(ly) * core::kChunkSize + lx];
             if (!name.empty()) {
                 chunk.MarkZUsed(0);
-                chunk.Square(lx, ly, 0).SetFloor({std::move(name), 0, 0});
+                const bool blocks = name == "tile.floor.water";
+                chunk.Square(lx, ly, 0).SetFloor({std::move(name), 0, 0, blocks});
             }
         }
     }

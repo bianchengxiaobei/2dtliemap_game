@@ -27,6 +27,7 @@ bool EmbeddedServer::Start(const Options& options, std::string* error) {
     hostOptions.portOverride = true;
     hostOptions.contentHash = options.contentHash;
     hostOptions.spawnDemoPopulation = options.spawnDemoPopulation;
+    hostOptions.spawnAnimals = options.spawnAnimals;
     hostOptions.spawnLocalPlayer = false;
     hostOptions.enablePlayerProfiles = true;
     hostOptions.playerProfilesFile = options.playerProfilesFile;
@@ -97,5 +98,9 @@ bool EmbeddedServer::Running() const {
 }
 
 std::uint16_t EmbeddedServer::Port() const { return m_port; }
+
+std::uint64_t EmbeddedServer::ContentHash() const {
+    return m_host != nullptr ? m_host->ContentHash() : 0;
+}
 
 }  // namespace zl::game

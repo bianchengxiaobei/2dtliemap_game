@@ -1,5 +1,6 @@
 #include "core/GameTime.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -81,6 +82,24 @@ void GameTime::SetTotalGameMinutes(double totalMinutes) {
             ++m_now.year;
         }
     }
+}
+
+void GameTime::AdvanceGameMinutes(double minutes) {
+    if (!std::isfinite(minutes) || minutes <= 0.0) {
+        return;
+    }
+    SetTotalGameMinutes(m_totalMinutes + minutes);
+}
+
+double GameTime::MinutesUntilHour(int hour) const {
+    const int targetHour = std::clamp(hour, 0, 23);
+    const int current = m_now.hour * kMinutesPerHour + m_now.minute;
+    const int target = targetHour * kMinutesPerHour;
+    int delta = target - current;
+    if (delta < 0) {
+        delta += kHoursPerDay * kMinutesPerHour;
+    }
+    return static_cast<double>(delta);
 }
 
 void GameTime::Tick() {

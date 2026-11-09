@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <random>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -16,10 +18,17 @@
 #include "ai/systems/PathFollowSystem.h"
 #include "ai/systems/PerceptionSystem.h"
 #include "ai/systems/SpawnLodSystem.h"
+#include "ai/systems/ZombieSpecialSystem.h"
+#include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/ProgressionComponents.h"
 #include "characters/systems/ActionPresentationSystem.h"
 #include "characters/systems/AnimationSystem.h"
 #include "characters/systems/CombatSystem.h"
+#include "characters/systems/CombatRules.h"
+#include "characters/systems/InfectionSystem.h"
+#include "characters/systems/PainSystem.h"
+#include "characters/systems/WoundSystem.h"
 #include "characters/systems/DeathSystem.h"
 #include "characters/systems/InputSystem.h"
 #include "characters/systems/MovementSystem.h"
@@ -32,11 +41,27 @@
 #include "core/TaskScheduler.h"
 #include "ecs/SpatialIndex.h"
 #include "ecs/components/PhysicsComponents.h"
+#include "game/Armor.h"
+#include "game/Climate.h"
+#include "game/FoodSafety.h"
+#include "game/FireSystem.h"
+#include "game/GroundItems.h"
+#include "game/HomesteadComponents.h"
 #include "game/Objectives.h"
+#include "game/MissionComponents.h"
+#include "game/PoiComponents.h"
+#include "game/WeatherStatus.h"
+#include "game/AnimalSystem.h"
+#include "game/Animals.h"
+#include "game/Poi.h"
+#include "game/SettlementNpc.h"
 #include "game/WorldQueries.h"
 #include "game/ZombieFactory.h"
 #include "game/ZombieVariants.h"
+#include "items/InventoryOps.h"
 #include "items/ItemComponents.h"
+#include "items/ItemRegistry.h"
+#include "items/Spoilage.h"
 #include "physics/PhysicsSyncSystem.h"
 #include "physics/PhysicsWorld.h"
 #include "save/ComponentRegistry.h"
@@ -59,7 +84,127 @@ int CurrentZombieSpawnHour(const core::GameTime* gameTime) {
     return gameTime != nullptr ? gameTime->Now().hour : 12;
 }
 
+ecs::DamageType ParseAttackType(const std::string& value, ecs::DamageType fallback) {
+    if (value == "claw") {
+        return ecs::DamageType::Claw;
+    }
+    if (value == "bite") {
+        return ecs::DamageType::Bite;
+    }
+    if (value == "blunt") {
+        return ecs::DamageType::Blunt;
+    }
+    return fallback;
+}
+
+ai::AiSystem::AttackProfile LoadZombieAttack(const core::Config& config,
+                                             const std::string& key,
+                                             ai::AiSystem::AttackProfile profile) {
+    profile.damage =
+        static_cast<float>(config.Get<double>(key + ".damage", profile.damage));
+    profile.knockback =
+        static_cast<float>(config.Get<double>(key + ".knockback", profile.knockback));
+    profile.staggerSeconds = static_cast<float>(
+        config.Get<double>(key + ".staggerSeconds", profile.staggerSeconds));
+    profile.range = static_cast<float>(config.Get<double>(key + ".range", profile.range));
+    profile.arcDegrees =
+        static_cast<float>(config.Get<double>(key + ".arcDegrees", profile.arcDegrees));
+    profile.windupSeconds = static_cast<float>(
+        config.Get<double>(key + ".windupSeconds", profile.windupSeconds));
+    profile.cooldownSeconds = static_cast<float>(
+        config.Get<double>(key + ".cooldownSeconds", profile.cooldownSeconds));
+    profile.type = ParseAttackType(
+        config.Get<std::string>(key + ".type", ""), profile.type);
+    return profile;
+}
+
 }  // namespace
+
+characters::CombatRuleConfig LoadCombatRuleConfig(const core::Config& config) {
+    characters::CombatRuleConfig rules =
+        characters::DefaultCombatRuleConfig();
+    const auto read = [&config](const char* key, float fallback) {
+        return static_cast<float>(
+            config.Get<double>(std::string("combat.rules.") + key, fallback));
+    };
+
+    rules.staminaMax = read("staminaMax", rules.staminaMax);
+    rules.staminaRegenPerSecond =
+        read("staminaRegenPerSecond", rules.staminaRegenPerSecond);
+    rules.staminaRegenDelaySeconds =
+        read("staminaRegenDelaySeconds", rules.staminaRegenDelaySeconds);
+    rules.staminaExhaustedThreshold =
+        read("staminaExhaustedThreshold", rules.staminaExhaustedThreshold);
+    rules.staminaExhaustedSeconds =
+        read("staminaExhaustedSeconds", rules.staminaExhaustedSeconds);
+    rules.fatigueMaxPenalty = read("fatigueMaxPenalty", rules.fatigueMaxPenalty);
+    rules.fatigueRegenPenalty =
+        read("fatigueRegenPenalty", rules.fatigueRegenPenalty);
+
+    rules.heavyDamageScale = read("heavyDamageScale", rules.heavyDamageScale);
+    rules.heavyCooldownScale =
+        read("heavyCooldownScale", rules.heavyCooldownScale);
+    rules.heavyRangeBonus = read("heavyRangeBonus", rules.heavyRangeBonus);
+    rules.heavyArcScale = read("heavyArcScale", rules.heavyArcScale);
+    rules.heavyKnockbackScale =
+        read("heavyKnockbackScale", rules.heavyKnockbackScale);
+    rules.heavyStaggerScale =
+        read("heavyStaggerScale", rules.heavyStaggerScale);
+    rules.heavyWearScale = read("heavyWearScale", rules.heavyWearScale);
+    rules.heavyStaminaScale =
+        read("heavyStaminaScale", rules.heavyStaminaScale);
+    rules.heavyPoiseScale = read("heavyPoiseScale", rules.heavyPoiseScale);
+
+    rules.blockMoveScale = read("blockMoveScale", rules.blockMoveScale);
+    rules.blockArcDegrees = read("blockArcDegrees", rules.blockArcDegrees);
+    rules.blockDamageScale = read("blockDamageScale", rules.blockDamageScale);
+    rules.blockKnockbackScale =
+        read("blockKnockbackScale", rules.blockKnockbackScale);
+    rules.blockBaseStaminaCost =
+        read("blockBaseStaminaCost", rules.blockBaseStaminaCost);
+    rules.blockStaminaPerWeight =
+        read("blockStaminaPerWeight", rules.blockStaminaPerWeight);
+    rules.blockMinStaminaCost =
+        read("blockMinStaminaCost", rules.blockMinStaminaCost);
+    rules.blockMaxStaminaCost =
+        read("blockMaxStaminaCost", rules.blockMaxStaminaCost);
+
+    rules.parryWindowSeconds =
+        read("parryWindowSeconds", rules.parryWindowSeconds);
+    rules.parryStaminaCost =
+        read("parryStaminaCost", rules.parryStaminaCost);
+    rules.parryCooldownSeconds =
+        read("parryCooldownSeconds", rules.parryCooldownSeconds);
+    rules.parryStaggerSeconds =
+        read("parryStaggerSeconds", rules.parryStaggerSeconds);
+    rules.guardBreakSeconds =
+        read("guardBreakSeconds", rules.guardBreakSeconds);
+
+    rules.dodgeStaminaCost = read("dodgeStaminaCost", rules.dodgeStaminaCost);
+    rules.dodgeDurationSeconds =
+        read("dodgeDurationSeconds", rules.dodgeDurationSeconds);
+    rules.dodgeInvulnSeconds =
+        read("dodgeInvulnSeconds", rules.dodgeInvulnSeconds);
+    rules.dodgeCooldownSeconds =
+        read("dodgeCooldownSeconds", rules.dodgeCooldownSeconds);
+    rules.dodgeDistance = read("dodgeDistance", rules.dodgeDistance);
+
+    rules.poiseRegenPerSecond =
+        read("poiseRegenPerSecond", rules.poiseRegenPerSecond);
+    rules.poiseRegenDelaySeconds =
+        read("poiseRegenDelaySeconds", rules.poiseRegenDelaySeconds);
+    rules.poiseBreakStaggerSeconds =
+        read("poiseBreakStaggerSeconds", rules.poiseBreakStaggerSeconds);
+    rules.poiseResetRatio = read("poiseResetRatio", rules.poiseResetRatio);
+    rules.poiseMaxNormal = read("poiseMaxNormal", rules.poiseMaxNormal);
+    rules.poiseMaxFast = read("poiseMaxFast", rules.poiseMaxFast);
+    rules.poiseMaxStrong = read("poiseMaxStrong", rules.poiseMaxStrong);
+    rules.poiseMaxArmored = read("poiseMaxArmored", rules.poiseMaxArmored);
+    rules.armoredStaggerPoiseThreshold = read(
+        "armoredStaggerPoiseThreshold", rules.armoredStaggerPoiseThreshold);
+
+    return characters::SanitizeCombatRuleConfig(rules);
+}
 
 struct WorldSimulation::Impl {
     explicit Impl(Options value) : options(std::move(value)) {}
@@ -83,10 +228,30 @@ struct WorldSimulation::Impl {
     std::unique_ptr<characters::AnimationSystem> animationSystem;
     std::unique_ptr<characters::DeathSystem> deathSystem;
     std::unique_ptr<characters::CombatSystem> combatSystem;
+    characters::CombatRuleConfig combatRules =
+        characters::DefaultCombatRuleConfig();
+    std::vector<characters::CombatSystem::BlockFeedback> blockFeedbacks;
+    std::vector<characters::CombatSystem::HitFeedback> hitFeedbacks;
+    std::unique_ptr<characters::WoundSystem> woundSystem;
+    std::unique_ptr<characters::PainSystem> painSystem;
+    std::unique_ptr<characters::InfectionSystem> infectionSystem;
+    characters::InfectionParams infectionParams;
+    std::mt19937 infectionRng{20261024u};
+    std::unique_ptr<game::WeatherSystem> weatherSystem;
+    std::unique_ptr<game::AnimalSystem> animalSystem;
+    std::unique_ptr<game::SettlementNpcSystem> settlementNpcSystem;
+    std::unique_ptr<game::FireSystem> fireSystem;
+    float fireDamageAccumulator = 0.0f;
+    game::ClimateParams climateParams;
+    WeatherState currentWeather;
+    float campfireWarmthRadius = 3.0f;
+    WeatherKind lastWeatherKind = WeatherKind::Clear;
+    bool weatherLogged = false;
 
     std::unique_ptr<ai::PathFollowSystem> pathFollowSystem;
     std::unique_ptr<ai::AiSystem> aiSystem;
     std::unique_ptr<ai::PerceptionSystem> perceptionSystem;
+    std::unique_ptr<ai::ZombieSpecialSystem> zombieSpecialSystem;
     std::unique_ptr<ai::LodSystem> lodSystem;
     std::unique_ptr<ai::BoidsSystem> boidsSystem;
     ai::VirtualHordeStore virtualHordes;
@@ -99,6 +264,39 @@ struct WorldSimulation::Impl {
     float playerMaxHp = 100.0f;
     float playerStartHp = 100.0f;
     float playerCapacityKg = 20.0f;
+    float foodSpoilScale = 1.0f;
+    float spoilAccumulatorMinutes = 0.0f;
+    double lastSpoilGameMinute = -1.0;
+    FoodSafetyParams foodSafety;
+    double lastFoodGameMinute = -1.0;
+
+    void AdvanceFoodSpoilage(float minutes) {
+        if (options.items == nullptr || ecs == nullptr || !(minutes > 0.0f)) {
+            return;
+        }
+        entt::registry& registry = ecs->Registry();
+        registry.view<ecs::Container>().each(
+            [&](const ecs::Entity entity, ecs::Container& container) {
+                const auto* cold = registry.try_get<ecs::ColdStorage>(entity);
+                if (cold != nullptr && cold->powered) {
+                    return;
+                }
+                items::AdvanceSpoilage(container, *options.items, minutes,
+                                       foodSpoilScale);
+            });
+        registry.view<ecs::ItemInstance>().each(
+            [&](const ecs::Entity, ecs::ItemInstance& item) {
+                const items::ItemDef* def = options.items->Find(item.defId);
+                if (def == nullptr || !items::IsPerishable(*def) ||
+                    !(item.condition > 0.0f)) {
+                    return;
+                }
+                const float life = std::max(def->spoilDays * 1440.0f, 1.0f);
+                item.condition = std::max(
+                    0.0f, item.condition -
+                              minutes * foodSpoilScale / life);
+            });
+    }
 
     ecs::Entity SpawnPlayer(float px, float py, std::uint64_t stableId = 0) {
         if (ecs == nullptr) {
@@ -124,6 +322,9 @@ struct WorldSimulation::Impl {
         health.current = std::min(playerStartHp, health.max);
         registry.emplace<ecs::Health>(entity, health);
         registry.emplace<ecs::Needs>(entity, ecs::Needs{});
+        registry.emplace<ecs::Pain>(entity, ecs::Pain{});
+        registry.emplace<ecs::Infection>(entity, ecs::Infection{});
+        registry.emplace<ecs::Climate>(entity, ecs::Climate{});
 
         if (physics != nullptr) {
             const ecs::Collider collision;
@@ -142,11 +343,20 @@ struct WorldSimulation::Impl {
         registry.emplace<ecs::PathRequest>(entity, ecs::PathRequest{});
         registry.emplace<ecs::PathFollow>(entity, ecs::PathFollow{});
         registry.emplace<ecs::AttackIntent>(entity, ecs::AttackIntent{});
+        const float staminaMax = characters::EffectiveMaxStamina(
+            0.0f, combatRules);
+        registry.emplace<ecs::CombatStamina>(
+            entity, ecs::CombatStamina{staminaMax, staminaMax, 0.0f, 0.0f});
+        registry.emplace<ecs::CombatStance>(entity, ecs::CombatStance{});
         registry.emplace<ecs::Container>(entity, ecs::Container{{}, playerCapacityKg});
         registry.emplace<ecs::Equipment>(entity, ecs::Equipment{});
+        registry.emplace<ecs::DamageResist>(entity, ecs::DamageResist{});
         registry.emplace<ecs::KnownRecipes>(entity);
         registry.emplace<ecs::CraftingJob>(entity);
+        registry.emplace<ecs::Progression>(entity);
         registry.emplace<ecs::Objective>(entity);
+        registry.emplace<ecs::PoiTasks>(entity);
+        registry.emplace<ecs::MissionLog>(entity);
         return entity;
     }
 
@@ -194,12 +404,19 @@ struct WorldSimulation::Impl {
             if (position == nullptr) {
                 continue;
             }
+            if (registry.all_of<ecs::Animal>(entity)) {
+                continue;
+            }
             const bool isPlayer = registry.all_of<ecs::PlayerTag>(entity);
             const bool isGroundItem = registry.all_of<ecs::ItemInstance>(entity);
             const bool isCorpse = registry.all_of<ecs::Corpse>(entity);
+            const bool isFacility = registry.any_of<
+                ecs::FarmPlot, ecs::Generator, ecs::ColdStorage,
+                ecs::Floodlight, ecs::SpikeTrap, ecs::PlayerStorage,
+                ecs::MerchantStock>(entity);
             const bool isCharacter =
                 isPlayer || (registry.all_of<ecs::Health>(entity) && !isGroundItem &&
-                             !isCorpse);
+                             !isCorpse && !isFacility);
             if (!isCharacter) {
                 continue;
             }
@@ -209,6 +426,8 @@ struct WorldSimulation::Impl {
                 if (const auto* variant = registry.try_get<ecs::ZombieVariant>(entity);
                     variant != nullptr) {
                     visualScale = std::clamp(variant->visualScale, 0.5f, 2.0f);
+                    // M30-T5：硬直条不存档；读档时按变体重新初始化。
+                    EnsureZombiePoise(*ecs, entity, variant->kind, &combatRules);
                 }
             }
             if (!registry.all_of<ecs::Collider>(entity)) {
@@ -251,6 +470,18 @@ struct WorldSimulation::Impl {
             }
 
             if (isPlayer) {
+                if (!registry.all_of<ecs::CombatStamina>(entity)) {
+                    const auto* needs = registry.try_get<ecs::Needs>(entity);
+                    const float fatigue = needs != nullptr ? needs->fatigue : 0.0f;
+                    const float staminaMax = characters::EffectiveMaxStamina(
+                        fatigue, combatRules);
+                    registry.emplace<ecs::CombatStamina>(
+                        entity,
+                        ecs::CombatStamina{staminaMax, staminaMax, 0.0f, 0.0f});
+                }
+                if (!registry.all_of<ecs::CombatStance>(entity)) {
+                    registry.emplace<ecs::CombatStance>(entity);
+                }
                 if (!registry.all_of<ecs::LocalControl>(entity)) {
                     registry.emplace<ecs::LocalControl>(entity);
                 }
@@ -261,14 +492,35 @@ struct WorldSimulation::Impl {
                 if (!registry.all_of<ecs::Equipment>(entity)) {
                     registry.emplace<ecs::Equipment>(entity);
                 }
+                if (!registry.all_of<ecs::DamageResist>(entity)) {
+                    registry.emplace<ecs::DamageResist>(entity);
+                }
                 if (!registry.all_of<ecs::KnownRecipes>(entity)) {
                     registry.emplace<ecs::KnownRecipes>(entity);
                 }
                 if (!registry.all_of<ecs::CraftingJob>(entity)) {
                     registry.emplace<ecs::CraftingJob>(entity);
                 }
+                if (!registry.all_of<ecs::Progression>(entity)) {
+                    registry.emplace<ecs::Progression>(entity);
+                }
+                if (!registry.all_of<ecs::Pain>(entity)) {
+                    registry.emplace<ecs::Pain>(entity);
+                }
+                if (!registry.all_of<ecs::Infection>(entity)) {
+                    registry.emplace<ecs::Infection>(entity);
+                }
+                if (!registry.all_of<ecs::Climate>(entity)) {
+                    registry.emplace<ecs::Climate>(entity);
+                }
                 if (!registry.all_of<ecs::Objective>(entity)) {
                     registry.emplace<ecs::Objective>(entity);
+                }
+                if (!registry.all_of<ecs::PoiTasks>(entity)) {
+                    registry.emplace<ecs::PoiTasks>(entity);
+                }
+                if (!registry.all_of<ecs::MissionLog>(entity)) {
+                    registry.emplace<ecs::MissionLog>(entity);
                 }
                 if (player == entt::null) {
                     player = entity;
@@ -289,6 +541,117 @@ struct WorldSimulation::Impl {
             }
         }
         return true;
+    }
+
+    WeatherState SampleWeather() const {
+        if (!weatherSystem) {
+            return WeatherState{};
+        }
+        const double minutes =
+            options.gameTime != nullptr ? options.gameTime->TotalGameMinutes() : 0.0;
+        const int hour =
+            options.gameTime != nullptr ? options.gameTime->Now().hour : 12;
+        return weatherSystem->Sample(minutes, hour);
+    }
+
+    void UpdateWeather() {
+        currentWeather = SampleWeather();
+        if (perceptionSystem != nullptr) {
+            perceptionSystem->SetEnvironmentSightScale(currentWeather.sightScale);
+        }
+        if (pathFollowSystem != nullptr) {
+            pathFollowSystem->SetEnvironmentMoveScale(currentWeather.moveScale);
+        }
+        if (!weatherLogged || currentWeather.kind != lastWeatherKind) {
+            lastWeatherKind = currentWeather.kind;
+            weatherLogged = true;
+            ZL_INFO("weather", "天气切换：{}，环境 {:.1f}°C，能见度 x{:.2f}，尸速 x{:.2f}，游戏分钟 {:.1f}，周期 {:.1f}",
+                    WeatherSystem::KindName(currentWeather.kind),
+                    static_cast<double>(currentWeather.ambientC),
+                    static_cast<double>(currentWeather.sightScale),
+                    static_cast<double>(currentWeather.moveScale),
+                    options.gameTime != nullptr
+                        ? options.gameTime->TotalGameMinutes()
+                        : 0.0,
+                    static_cast<double>(weatherSystem->Params().periodMinutes));
+        }
+    }
+
+    void UpdateClimate(ecs::EcsWorld& value, float dt) {
+        if (ecs == nullptr || !(dt > 0.0f)) {
+            return;
+        }
+        entt::registry& registry = value.Registry();
+        registry.view<ecs::PlayerTag, ecs::Position>().each(
+            [&](const ecs::Entity entity, const ecs::Position& position) {
+                auto* health = registry.try_get<ecs::Health>(entity);
+                if (health == nullptr || health->current <= 0.0f ||
+                    registry.any_of<ecs::Dying>(entity)) {
+                    return;
+                }
+                ecs::Climate& climate =
+                    registry.get_or_emplace<ecs::Climate>(entity);
+                game::PlayerArmor armor;
+                if (options.items != nullptr) {
+                    if (const auto* equipment =
+                            registry.try_get<ecs::Equipment>(entity);
+                        equipment != nullptr) {
+                        armor = game::ResolvePlayerArmor(*equipment, *options.items);
+                    }
+                }
+                game::ClimateEnvironment environment;
+                environment.ambientC = currentWeather.ambientC;
+                environment.rainIntensity = currentWeather.wetnessIntensity;
+                environment.insulation = armor.insulation;
+                environment.waterproof = armor.waterproof;
+                environment.indoor =
+                    world != nullptr &&
+                    game::IsIndoors(*world, position.x, position.y, position.z);
+                environment.nearFire =
+                    fireSystem != nullptr
+                        ? fireSystem->HasActiveFireNear(value, position.x,
+                                                        position.y,
+                                                        position.z)
+                        : (world != nullptr &&
+                           game::HasCampfireNearby(
+                               *world, position.x, position.y, position.z,
+                               campfireWarmthRadius));
+                const std::uint8_t previousWarning = climate.warning;
+                const game::ClimateTick tick = game::UpdateClimate(
+                    climate, environment, climateParams, dt);
+
+                if (tick.fatigueDelta > 0.0f) {
+                    if (auto* needs = registry.try_get<ecs::Needs>(entity);
+                        needs != nullptr) {
+                        needs->fatigue = std::clamp(
+                            needs->fatigue + tick.fatigueDelta, 0.0f, 1.0f);
+                    }
+                }
+                if (tick.damaging) {
+                    const bool wasAlive = health->current > 0.0f;
+                    health->current =
+                        std::max(0.0f, health->current - tick.healthDamage);
+                    ecs::LastDamage& last =
+                        registry.get_or_emplace<ecs::LastDamage>(entity);
+                    last.cause = ecs::DamageCause::Hypothermia;
+                    last.amount = tick.healthDamage;
+                    if (wasAlive && health->current <= 0.0f) {
+                        ZL_INFO("weather", "玩家因失温死亡（体温 {:.1f}°C）",
+                                static_cast<double>(climate.bodyC));
+                    }
+                }
+                if (climate.warning != previousWarning) {
+                    ZL_INFO("weather",
+                            "玩家气候状态 {}：体温 {:.1f}°C，潮湿 {:.0f}%，"
+                            "体感 {:.1f}°C，室内 {}，篝火 {}",
+                            static_cast<int>(climate.warning),
+                            static_cast<double>(climate.bodyC),
+                            static_cast<double>(climate.wetness * 100.0f),
+                            static_cast<double>(climate.effectiveC),
+                            climate.indoor ? "是" : "否",
+                            climate.nearFire ? "是" : "否");
+                }
+            });
     }
 };
 
@@ -377,6 +740,9 @@ bool WorldSimulation::Init(std::string* error) {
             }
             s.physics->BuildChunkStatics(cx, cy, chunk);
             s.pathfinding->OnChunkLoaded(chunk);
+            if (s.animalSystem != nullptr) {
+                s.animalSystem->OnChunkLoaded(cx, cy);
+            }
             s.options.events->EmitQueued(core::kOnChunkLoaded, core::ChunkEvent{cx, cy});
         },
         [&s](world::Chunk& chunk, int cx, int cy) {
@@ -390,22 +756,28 @@ bool WorldSimulation::Init(std::string* error) {
                     ZL_WARN("save", "chunk ({},{}) 卸载存档失败：{}", cx, cy, saveError);
                 }
             }
+            if (s.animalSystem != nullptr) {
+                s.animalSystem->OnChunkUnloaded(cx, cy);
+            }
             s.physics->RemoveChunkStatics(cx, cy);
             s.pathfinding->OnChunkUnloading(cx, cy);
+            if (s.fireSystem != nullptr && s.ecs != nullptr) {
+                (void)s.fireSystem->UnloadChunk(*s.ecs, cx, cy);
+            }
             s.options.events->EmitQueued(core::kOnChunkUnloaded, core::ChunkEvent{cx, cy});
         });
 
     const auto walkable = [&s](int wx, int wy) { return !s.IsBlocked(wx, wy); };
 
     ai::AiSystem::AttackParams aiAttack;
-    aiAttack.damage = static_cast<float>(config.Get<double>("combat.zombieDamage", 8.0));
-    aiAttack.knockback =
-        static_cast<float>(config.Get<double>("combat.zombieKnockback", 2.0));
-    aiAttack.staggerSeconds =
-        static_cast<float>(config.Get<double>("combat.zombieStaggerSeconds", 0.3));
-    aiAttack.range = static_cast<float>(config.Get<double>("combat.zombieRange", 1.3));
-    aiAttack.arcDegrees =
-        static_cast<float>(config.Get<double>("combat.zombieArcDegrees", 120.0));
+    aiAttack.normal = LoadZombieAttack(config, "combat.zombieAttacks.normal",
+                                      aiAttack.normal);
+    aiAttack.fast =
+        LoadZombieAttack(config, "combat.zombieAttacks.fast", aiAttack.fast);
+    aiAttack.strong =
+        LoadZombieAttack(config, "combat.zombieAttacks.strong", aiAttack.strong);
+    aiAttack.armored = LoadZombieAttack(config, "combat.zombieAttacks.armored",
+                                        aiAttack.armored);
     s.aiSystem = std::make_unique<ai::AiSystem>(walkable, aiAttack);
 
     ai::PerceptionParams perceptionParams;
@@ -423,11 +795,35 @@ bool WorldSimulation::Init(std::string* error) {
         std::make_unique<ai::PerceptionSystem>(walkable, perceptionParams);
     s.soundSubscription = s.options.events->Subscribe(
         core::kOnSound, [&s](const core::Event& event) {
-            if (s.perceptionSystem == nullptr) {
+            const auto* sound = std::get_if<core::SoundEvent>(&event.payload);
+            if (sound == nullptr) {
                 return;
             }
-            if (const auto* sound = std::get_if<core::SoundEvent>(&event.payload)) {
+            if (s.perceptionSystem != nullptr) {
                 s.perceptionSystem->PushSound(*sound);
+            }
+            if (s.animalSystem != nullptr) {
+                s.animalSystem->PushSound(*sound);
+            }
+        });
+
+    ai::ZombieSpecialParams specialParams;
+    specialParams.howlRange = static_cast<float>(
+        config.Get<double>("baseEvent.howlerRange", specialParams.howlRange));
+    specialParams.howlAbortRange = static_cast<float>(config.Get<double>(
+        "baseEvent.howlerAbortRange", specialParams.howlAbortRange));
+    specialParams.howlWindupSeconds = static_cast<float>(config.Get<double>(
+        "baseEvent.howlerWindupSeconds", specialParams.howlWindupSeconds));
+    specialParams.howlCooldownSeconds = static_cast<float>(config.Get<double>(
+        "baseEvent.howlerCooldownSeconds", specialParams.howlCooldownSeconds));
+    specialParams.howlRadius = static_cast<float>(
+        config.Get<double>("baseEvent.howlerRadius", specialParams.howlRadius));
+    s.zombieSpecialSystem = std::make_unique<ai::ZombieSpecialSystem>(
+        specialParams, [&s](const core::SoundEvent& sound) {
+            if (s.options.events != nullptr) {
+                s.options.events->EmitQueued(core::kOnSound, sound);
+            } else if (s.perceptionSystem != nullptr) {
+                s.perceptionSystem->PushSound(sound);
             }
         });
 
@@ -449,7 +845,85 @@ bool WorldSimulation::Init(std::string* error) {
         static_cast<float>(config.Get<double>("boids.alignmentWeight", 0.4));
     s.boidsSystem = std::make_unique<ai::BoidsSystem>(boidsParams);
 
-    s.combatSystem = std::make_unique<characters::CombatSystem>();
+    characters::WoundParams woundParams;
+    woundParams.severityPerDamage =
+        static_cast<float>(config.Get<double>("wounds.severityPerDamage", 0.02));
+    woundParams.clawSeverityScale =
+        static_cast<float>(config.Get<double>("wounds.clawSeverityScale", 1.2));
+    woundParams.biteSeverityScale =
+        static_cast<float>(config.Get<double>("wounds.biteSeverityScale", 1.6));
+    woundParams.bluntSeverityScale =
+        static_cast<float>(config.Get<double>("wounds.bluntSeverityScale", 1.0));
+    woundParams.clawBleedPerDamage =
+        static_cast<float>(config.Get<double>("wounds.clawBleedPerDamage", 0.035));
+    woundParams.biteBleedPerDamage =
+        static_cast<float>(config.Get<double>("wounds.biteBleedPerDamage", 0.08));
+    woundParams.clawBleedSeconds =
+        static_cast<float>(config.Get<double>("wounds.clawBleedSeconds", 18.0));
+    woundParams.biteBleedSeconds =
+        static_cast<float>(config.Get<double>("wounds.biteBleedSeconds", 30.0));
+    woundParams.maxBleedRate =
+        static_cast<float>(config.Get<double>("wounds.maxBleedRate", 8.0));
+    s.combatRules = LoadCombatRuleConfig(config);
+    s.combatSystem =
+        std::make_unique<characters::CombatSystem>(woundParams, s.combatRules);
+    s.combatSystem->SetBlockFeedbackCallback(
+        [&s](const characters::CombatSystem::BlockFeedback& feedback) {
+            constexpr std::size_t kMaxPendingFeedback = 64;
+            if (s.blockFeedbacks.size() >= kMaxPendingFeedback) {
+                s.blockFeedbacks.erase(s.blockFeedbacks.begin());
+            }
+            s.blockFeedbacks.push_back(feedback);
+        });
+    s.combatSystem->SetHitFeedbackCallback(
+        [&s](const characters::CombatSystem::HitFeedback& feedback) {
+            constexpr std::size_t kMaxPendingFeedback = 64;
+            if (s.hitFeedbacks.size() >= kMaxPendingFeedback) {
+                s.hitFeedbacks.erase(s.hitFeedbacks.begin());
+            }
+            s.hitFeedbacks.push_back(feedback);
+        });
+    s.woundSystem = std::make_unique<characters::WoundSystem>();
+    characters::PainParams painParams;
+    painParams.perSeverity =
+        static_cast<float>(config.Get<double>("pain.perSeverity", 0.65));
+    painParams.bandagedScale =
+        static_cast<float>(config.Get<double>("pain.bandagedScale", 0.5));
+    painParams.maxLevel = static_cast<float>(config.Get<double>("pain.maxLevel", 0.9));
+    painParams.maxMoveSlow =
+        static_cast<float>(config.Get<double>("pain.maxMoveSlow", 0.35));
+    painParams.maxAttackCooldownIncrease = static_cast<float>(
+        config.Get<double>("pain.maxAttackCooldownIncrease", 0.5));
+    s.painSystem = std::make_unique<characters::PainSystem>(painParams);
+    characters::InfectionParams infectionParams;
+    infectionParams.enabled = config.Get<bool>("infection.enabled", true);
+    infectionParams.clawChance =
+        static_cast<float>(config.Get<double>("infection.clawChance", 0.06));
+    infectionParams.biteChance =
+        static_cast<float>(config.Get<double>("infection.biteChance", 0.20));
+    infectionParams.woundRiskBonus =
+        static_cast<float>(config.Get<double>("infection.woundRiskBonus", 0.55));
+    infectionParams.maxChance =
+        static_cast<float>(config.Get<double>("infection.maxChance", 0.75));
+    infectionParams.totalSeconds =
+        static_cast<float>(config.Get<double>("infection.totalSeconds", 900.0));
+    infectionParams.incubatingEnd =
+        static_cast<float>(config.Get<double>("infection.incubatingEnd", 0.30));
+    infectionParams.feverEnd =
+        static_cast<float>(config.Get<double>("infection.feverEnd", 0.70));
+    infectionParams.woundProgressionBonus =
+        static_cast<float>(config.Get<double>("infection.woundProgressionBonus", 0.80));
+    infectionParams.feverFatiguePerSecond = static_cast<float>(
+        config.Get<double>("infection.feverFatiguePerSecond", 0.0015));
+    infectionParams.severeFatiguePerSecond = static_cast<float>(
+        config.Get<double>("infection.severeFatiguePerSecond", 0.0030));
+    infectionParams.severeHealthDrainPerSecond = static_cast<float>(
+        config.Get<double>("infection.severeHealthDrainPerSecond", 0.08));
+    s.infectionParams = infectionParams;
+    s.infectionRng.seed(static_cast<std::uint32_t>(
+        config.Get<int>("infection.seed", 20261024)));
+    s.infectionSystem =
+        std::make_unique<characters::InfectionSystem>(infectionParams);
     const float deathFallSeconds =
         static_cast<float>(config.Get<double>("combat.deathFallSeconds", 0.5));
 
@@ -480,7 +954,8 @@ bool WorldSimulation::Init(std::string* error) {
             const int hour = CurrentZombieSpawnHour(s.options.gameTime);
             const ecs::ZombieVariantKind variant =
                 PickZombieVariant(px, py, hour, ++s.zombieSpawnSerial);
-            return SpawnZombie(world, s.physics.get(), px, py, s.options.events, variant);
+            return SpawnZombie(world, s.physics.get(), px, py, s.options.events,
+                               variant, 0, &s.combatRules);
         },
         [&s](ecs::EcsWorld& world, ecs::Entity entity) {
             if (s.physics == nullptr) {
@@ -498,6 +973,174 @@ bool WorldSimulation::Init(std::string* error) {
         config.Get<double>("health.playerStartHp", static_cast<double>(s.playerMaxHp)));
     s.playerCapacityKg =
         static_cast<float>(config.Get<double>("inventory.playerCapacityKg", 20.0));
+    s.foodSpoilScale = std::clamp(
+        static_cast<float>(config.Get<double>("food.spoilScale", 1.0)), 0.0f,
+        100.0f);
+
+    game::WeatherParams weatherParams;
+    weatherParams.enabled = config.Get<bool>("weather.enabled", true);
+    weatherParams.seed = static_cast<std::uint32_t>(
+        std::max<std::int64_t>(0, config.Get<int>("weather.seed", 20261024)));
+    weatherParams.periodMinutes = static_cast<float>(
+        config.Get<double>("weather.periodMinutes", 180.0));
+    weatherParams.transitionMinutes = static_cast<float>(
+        config.Get<double>("weather.transitionMinutes", 30.0));
+    weatherParams.clearWeight =
+        static_cast<float>(config.Get<double>("weather.clearWeight", 0.45));
+    weatherParams.rainWeight =
+        static_cast<float>(config.Get<double>("weather.rainWeight", 0.25));
+    weatherParams.fogWeight =
+        static_cast<float>(config.Get<double>("weather.fogWeight", 0.17));
+    weatherParams.coldSnapWeight =
+        static_cast<float>(config.Get<double>("weather.coldSnapWeight", 0.13));
+    weatherParams.clearTemperatureC = static_cast<float>(
+        config.Get<double>("weather.clearTemperatureC", 24.0));
+    weatherParams.rainTemperatureC = static_cast<float>(
+        config.Get<double>("weather.rainTemperatureC", 13.0));
+    weatherParams.fogTemperatureC = static_cast<float>(
+        config.Get<double>("weather.fogTemperatureC", 16.0));
+    weatherParams.coldSnapTemperatureC = static_cast<float>(
+        config.Get<double>("weather.coldSnapTemperatureC", -6.0));
+    weatherParams.nightTemperatureDropC = static_cast<float>(
+        config.Get<double>("weather.nightTemperatureDropC", 6.0));
+    weatherParams.rainSightScale = static_cast<float>(
+        config.Get<double>("weather.rainSightScale", 0.80));
+    weatherParams.fogSightScale = static_cast<float>(
+        config.Get<double>("weather.fogSightScale", 0.55));
+    weatherParams.coldSnapSightScale = static_cast<float>(
+        config.Get<double>("weather.coldSnapSightScale", 0.90));
+    weatherParams.rainMoveScale = static_cast<float>(
+        config.Get<double>("weather.rainMoveScale", 0.95));
+    weatherParams.fogMoveScale = static_cast<float>(
+        config.Get<double>("weather.fogMoveScale", 0.90));
+    weatherParams.coldSnapMoveScale = static_cast<float>(
+        config.Get<double>("weather.coldSnapMoveScale", 0.88));
+    weatherParams.rainWetness = static_cast<float>(
+        config.Get<double>("weather.rainWetness", 0.80));
+    weatherParams.fogWetness = static_cast<float>(
+        config.Get<double>("weather.fogWetness", 0.18));
+    weatherParams.coldSnapWetness = static_cast<float>(
+        config.Get<double>("weather.coldSnapWetness", 0.08));
+    s.weatherSystem = std::make_unique<game::WeatherSystem>(weatherParams);
+    if (s.options.fire != nullptr) {
+        game::FireParams fireParams;
+        fireParams.ignitionSeconds = static_cast<float>(
+            config.Get<double>("fire.ignitionSeconds", fireParams.ignitionSeconds));
+        fireParams.wetnessPenalty = static_cast<float>(
+            config.Get<double>("fire.wetnessPenalty", fireParams.wetnessPenalty));
+        fireParams.minIgnitionChance = static_cast<float>(
+            config.Get<double>("fire.minIgnitionChance", fireParams.minIgnitionChance));
+        fireParams.smolderSeconds = static_cast<float>(
+            config.Get<double>("fire.smolderSeconds", fireParams.smolderSeconds));
+        fireParams.spreadIntervalSeconds = static_cast<float>(
+            config.Get<double>("fire.spreadIntervalSeconds",
+                               fireParams.spreadIntervalSeconds));
+        fireParams.spreadChanceScale = static_cast<float>(
+            config.Get<double>("fire.spreadChanceScale",
+                               fireParams.spreadChanceScale));
+        fireParams.rainBurnDecayScale = static_cast<float>(
+            config.Get<double>("fire.rainBurnDecayScale",
+                               fireParams.rainBurnDecayScale));
+        fireParams.maxActiveSources =
+            config.Get<int>("fire.maxActiveSources",
+                            fireParams.maxActiveSources);
+        fireParams.maxSpreadsPerTick =
+            config.Get<int>("fire.maxSpreadsPerTick",
+                            fireParams.maxSpreadsPerTick);
+        fireParams.extinguishRange = static_cast<float>(
+            config.Get<double>("fire.extinguishRange",
+                               fireParams.extinguishRange));
+        fireParams.bareHandsChance = static_cast<float>(
+            config.Get<double>("fire.bareHandsChance",
+                               fireParams.bareHandsChance));
+        fireParams.bareHandsSelfDamage = static_cast<float>(
+            config.Get<double>("fire.bareHandsSelfDamage",
+                               fireParams.bareHandsSelfDamage));
+        fireParams.fireDamagePerSecond = static_cast<float>(
+            config.Get<double>("fire.fireDamagePerSecond",
+                               fireParams.fireDamagePerSecond));
+        fireParams.fireDamageRadius = static_cast<float>(
+            config.Get<double>("fire.fireDamageRadius",
+                               fireParams.fireDamageRadius));
+        fireParams.fireDamageIntervalSeconds = static_cast<float>(
+            config.Get<double>("fire.fireDamageIntervalSeconds",
+                               fireParams.fireDamageIntervalSeconds));
+        fireParams.zombieBurnSeconds = static_cast<float>(
+            config.Get<double>("fire.zombieBurnSeconds",
+                               fireParams.zombieBurnSeconds));
+        fireParams.zombieBurnDamagePerSecond = static_cast<float>(
+            config.Get<double>("fire.zombieBurnDamagePerSecond",
+                               fireParams.zombieBurnDamagePerSecond));
+        fireParams.zombieBurnDamageIntervalSeconds = static_cast<float>(
+            config.Get<double>("fire.zombieBurnDamageIntervalSeconds",
+                               fireParams.zombieBurnDamageIntervalSeconds));
+        fireParams.zombieSpreadIntervalSeconds = static_cast<float>(
+            config.Get<double>("fire.zombieSpreadIntervalSeconds",
+                               fireParams.zombieSpreadIntervalSeconds));
+        fireParams.zombieSpreadChance = static_cast<float>(
+            config.Get<double>("fire.zombieSpreadChance",
+                               fireParams.zombieSpreadChance));
+        fireParams.zombiePanicSeconds = static_cast<float>(
+            config.Get<double>("fire.zombiePanicSeconds",
+                               fireParams.zombiePanicSeconds));
+        fireParams.zombiePanicSpeedScale = static_cast<float>(
+            config.Get<double>("fire.zombiePanicSpeedScale",
+                               fireParams.zombiePanicSpeedScale));
+        fireParams.zombiePanicChaseRadius = static_cast<float>(
+            config.Get<double>("fire.zombiePanicChaseRadius",
+                               fireParams.zombiePanicChaseRadius));
+        s.fireSystem = std::make_unique<game::FireSystem>(
+            *s.options.fire, fireParams,
+            static_cast<std::uint32_t>(
+                std::max<std::int64_t>(0, config.Get<int>("fire.seed", 20261029))));
+    }
+
+    game::ClimateParams climateParams;
+    climateParams.rainWetnessPerSecond = static_cast<float>(
+        config.Get<double>("climate.rainWetnessPerSecond", 0.025));
+    climateParams.dryPerSecond =
+        static_cast<float>(config.Get<double>("climate.dryPerSecond", 0.012));
+    climateParams.fireDryPerSecond = static_cast<float>(
+        config.Get<double>("climate.fireDryPerSecond", 0.05));
+    climateParams.comfortC =
+        static_cast<float>(config.Get<double>("climate.comfortC", 37.0));
+    climateParams.coldStartC =
+        static_cast<float>(config.Get<double>("climate.coldStartC", 18.0));
+    climateParams.coldRate =
+        static_cast<float>(config.Get<double>("climate.coldRate", 0.15));
+    climateParams.bodyResponseSeconds = static_cast<float>(
+        config.Get<double>("climate.bodyResponseSeconds", 120.0));
+    climateParams.indoorWarmthC = static_cast<float>(
+        config.Get<double>("climate.indoorWarmthC", 14.0));
+    climateParams.fireWarmthC =
+        static_cast<float>(config.Get<double>("climate.fireWarmthC", 18.0));
+    climateParams.insulationWarmthC = static_cast<float>(
+        config.Get<double>("climate.insulationWarmthC", 8.0));
+    climateParams.wetCoolingC =
+        static_cast<float>(config.Get<double>("climate.wetCoolingC", 6.0));
+    climateParams.indoorMinBodyC = static_cast<float>(
+        config.Get<double>("climate.indoorMinBodyC", 36.2));
+    climateParams.fireMinBodyC = static_cast<float>(
+        config.Get<double>("climate.fireMinBodyC", 36.8));
+    climateParams.coldWarnC =
+        static_cast<float>(config.Get<double>("climate.coldWarnC", 36.0));
+    climateParams.coldFatigueThresholdC = static_cast<float>(
+        config.Get<double>("climate.coldFatigueThresholdC", 36.0));
+    climateParams.coldFatiguePerSecond = static_cast<float>(
+        config.Get<double>("climate.coldFatiguePerSecond", 0.001));
+    climateParams.hypothermiaThresholdC = static_cast<float>(
+        config.Get<double>("climate.hypothermiaThresholdC", 35.0));
+    climateParams.hypothermiaDamagePerSecond = static_cast<float>(
+        config.Get<double>("climate.hypothermiaDamagePerSecond", 0.15));
+    climateParams.coldMovePenalty = static_cast<float>(
+        config.Get<double>("climate.coldMovePenalty", 0.12));
+    climateParams.coldMoveMin =
+        static_cast<float>(config.Get<double>("climate.coldMoveMin", 0.65));
+    climateParams.wetWarnLevel =
+        static_cast<float>(config.Get<double>("climate.wetWarnLevel", 0.60));
+    s.climateParams = game::SanitizeClimateParams(climateParams);
+    s.campfireWarmthRadius = static_cast<float>(
+        std::max(0.5, config.Get<double>("climate.campfireRadius", 3.0)));
 
     characters::NeedsParams needsParams;
     needsParams.hungerPerDay =
@@ -534,8 +1177,93 @@ bool WorldSimulation::Init(std::string* error) {
         config.Get<double>("needs.starvationHpPerSecond", 0.35));
     needsParams.dehydrationHpPerSecond = static_cast<float>(
         config.Get<double>("needs.dehydrationHpPerSecond", 0.60));
+    needsParams.nutritionHungerRelief = static_cast<float>(
+        config.Get<double>("food.nutritionHungerRelief", 0.25));
+    needsParams.nutritionDamageRelief = static_cast<float>(
+        config.Get<double>("food.nutritionDamageRelief", 0.35));
+
+    s.foodSafety.spoiledPoisonChance = static_cast<float>(
+        config.Get<double>("food.spoiledPoisonChance", 0.85));
+    s.foodSafety.poisonDurationSeconds = static_cast<float>(
+        config.Get<double>("food.poisonDurationSeconds", 45.0));
+    s.foodSafety.poisonDamagePerSecond = static_cast<float>(
+        config.Get<double>("food.poisonDamagePerSecond", 0.12));
+    s.foodSafety.nutritionDecayPerDay = static_cast<float>(
+        config.Get<double>("food.nutritionDecayPerDay", 0.5));
+    s.foodSafety.nutritionPoisonReduction = static_cast<float>(
+        config.Get<double>("food.nutritionPoisonReduction", 0.5));
 
     s.ecs = std::make_unique<ecs::EcsWorld>();
+    if (s.options.spawnAnimals && s.options.animals != nullptr) {
+        game::AnimalSystem::Params animalParams;
+        animalParams.enabled = config.Get<bool>("animals.spawn.enabled", true);
+        animalParams.logAnimals =
+            config.Get<bool>("animals.spawn.logAnimals", false);
+        animalParams.maxLive = config.Get<int>("animals.spawn.maxLive", 36);
+        animalParams.minPlayerDistance = static_cast<float>(
+            config.Get<double>("animals.spawn.minPlayerDistance", 18.0));
+        animalParams.poiRadius = static_cast<float>(
+            config.Get<double>("animals.spawn.poiRadius", 16.0));
+        animalParams.seed = static_cast<std::uint32_t>(std::max<std::int64_t>(
+            0, config.Get<int>("animals.spawn.seed", 20261030)));
+        animalParams.soundWallAttenuation = perceptionParams.wallAttenuation;
+        s.animalSystem = std::make_unique<game::AnimalSystem>(
+            *s.options.animals, *s.world, *s.ecs, s.options.pois,
+            animalParams);
+        s.animalSystem->SetCombat(s.combatSystem.get());
+        ZL_INFO("animals", "动物生成：上限 {}，最小玩家距离 {:.1f}，种子 {}",
+                animalParams.maxLive,
+                static_cast<double>(animalParams.minPlayerDistance),
+                animalParams.seed);
+    }
+    s.combatSystem->SetArmorWearCallback(
+        [&s](ecs::Entity target, float amount) {
+            entt::registry& registry = s.ecs->Registry();
+            auto* equipment = registry.try_get<ecs::Equipment>(target);
+            if (equipment == nullptr) {
+                return;
+            }
+            const auto& slot =
+                equipment->slots[static_cast<std::size_t>(ecs::EquipSlot::Body)];
+            const std::string defId = slot.has_value() ? slot->defId : std::string();
+            if (items::WearEquippedArmor(*equipment, amount)) {
+                ZL_INFO("characters", "护甲损坏：{}（目标稳定 ID {}）", defId,
+                        s.ecs->IdOf(target).id);
+            }
+        });
+    s.combatSystem->SetInfectionExposureCallback(
+        [&s](ecs::Entity target, ecs::DamageType type, float) {
+            if (!s.infectionParams.enabled || s.ecs == nullptr ||
+                !s.ecs->Alive(target)) {
+                return;
+            }
+            entt::registry& registry = s.ecs->Registry();
+            if (!registry.all_of<ecs::PlayerTag>(target)) {
+                return;
+            }
+            auto* infection = registry.try_get<ecs::Infection>(target);
+            if (infection == nullptr) {
+                infection = &registry.emplace<ecs::Infection>(target);
+            }
+            if (infection->stage != ecs::InfectionStage::None) {
+                return;
+            }
+            const auto* wounds = registry.try_get<ecs::Wounds>(target);
+            const ecs::Wounds emptyWounds;
+            const ecs::Wounds& woundRef = wounds != nullptr ? *wounds : emptyWounds;
+            const float chance =
+                characters::ExposureChance(type, woundRef, s.infectionParams);
+            std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
+            const float roll = distribution(s.infectionRng);
+            if (characters::TryInfect(*infection, chance, roll, &woundRef,
+                                      s.infectionParams)) {
+                ZL_INFO("infection",
+                        "玩家感染暴露成功：类型 {}，概率 {:.0f}%，稳定 ID {}",
+                        static_cast<int>(type),
+                        static_cast<double>(chance * 100.0f),
+                        s.ecs->IdOf(target).id);
+            }
+        });
     s.inputSystem = std::make_unique<characters::InputSystem>();
     s.needsSystem = std::make_unique<characters::NeedsSystem>(needsParams);
     s.movementSystem = std::make_unique<characters::MovementSystem>();
@@ -544,6 +1272,39 @@ bool WorldSimulation::Init(std::string* error) {
         std::make_unique<characters::ActionPresentationSystem>();
     s.animationSystem = std::make_unique<characters::AnimationSystem>();
     s.pathFollowSystem = std::make_unique<ai::PathFollowSystem>(s.pathfinding.get());
+    s.settlementNpcSystem = std::make_unique<game::SettlementNpcSystem>(
+        s.options.settlements,
+        [&s](int wx, int wy) { return !s.IsBlocked(wx, wy); });
+    s.settlementNpcSystem->SetDamageCallback(
+        [&s](ecs::Entity source, ecs::Entity target, float damage,
+             ecs::DamageType type) {
+            if (s.combatSystem == nullptr || s.ecs == nullptr ||
+                !s.ecs->Alive(source) || !s.ecs->Alive(target)) {
+                return false;
+            }
+            entt::registry& registry = s.ecs->Registry();
+            const auto* sourcePosition =
+                registry.try_get<ecs::Position>(source);
+            const auto* targetPosition =
+                registry.try_get<ecs::Position>(target);
+            if (sourcePosition == nullptr || targetPosition == nullptr) {
+                return false;
+            }
+            ecs::DamageEvent event;
+            event.sourceId = s.ecs->IdOf(source).id;
+            event.type = type;
+            event.amount = std::max(0.0f, damage);
+            const float dx = targetPosition->x - sourcePosition->x;
+            const float dy = targetPosition->y - sourcePosition->y;
+            const float length = std::sqrt(dx * dx + dy * dy);
+            if (length > 0.0001f) {
+                event.dirX = dx / length;
+                event.dirY = dy / length;
+            }
+            event.knockback = 0.8f;
+            event.staggerSeconds = 0.2f;
+            return s.combatSystem->ApplyDamage(*s.ecs, target, event);
+        });
     s.deathSystem = std::make_unique<characters::DeathSystem>(
         s.physics.get(), deathFallSeconds, s.options.events);
 
@@ -555,8 +1316,75 @@ bool WorldSimulation::Init(std::string* error) {
         s.lodSystem->SetFocus(s.focus.x, s.focus.y);
         s.lodSystem->Update(value);
     });
+    systems.AddSystem("WeatherSystem", [&s](ecs::EcsWorld&, float) {
+        s.UpdateWeather();
+    });
+    systems.AddSystem("FireSystem", [&s](ecs::EcsWorld& value, float dt) {
+        if (s.fireSystem == nullptr) {
+            return;
+        }
+        std::vector<game::FireBurnOut> burnOuts;
+        s.fireSystem->Update(value, dt, s.world.get(),
+                             s.currentWeather.wetnessIntensity, &burnOuts);
+        if (s.world != nullptr) {
+            for (const game::FireBurnOut& burned : burnOuts) {
+                const game::FireBurnResolution resolution =
+                    s.fireSystem->ResolveBurnedCell(*s.world, burned);
+                if (resolution.structureRemoved) {
+                    const world::ChunkCoord coord =
+                        world::ChunkOf(burned.x, burned.y);
+                    world::Chunk* chunk =
+                        FindChunkInWorld(*s.world, coord.cx, coord.cy);
+                    if (chunk != nullptr &&
+                        chunk->State() == world::ChunkState::Loaded) {
+                        s.physics->BuildChunkStatics(coord.cx, coord.cy,
+                                                     *chunk);
+                        s.pathfinding->OnChunkLoaded(*chunk);
+                    }
+                }
+                if (!resolution.structureRemoved || s.options.items == nullptr) {
+                    continue;
+                }
+                for (const game::FireBurnedDrop& drop : resolution.drops) {
+                    (void)game::SpawnGroundItem(
+                        value, *s.options.items,
+                        ecs::ItemInstance{drop.defId, drop.count, 1.0f},
+                        static_cast<float>(burned.x) + 0.5f,
+                        static_cast<float>(burned.y) + 0.5f, burned.z);
+                }
+            }
+        }
+        if (s.world != nullptr) {
+            (void)s.fireSystem->SpreadFromBurningZombies(
+                value, *s.world, dt, s.currentWeather.wetnessIntensity);
+        }
+        const game::FireParams& params = s.fireSystem->Params();
+        if (s.combatSystem != nullptr) {
+            (void)game::ApplyBurningZombieDamage(value, *s.combatSystem,
+                                                 params, dt);
+        }
+        s.fireDamageAccumulator += dt;
+        if (s.combatSystem != nullptr &&
+            s.fireDamageAccumulator >= params.fireDamageIntervalSeconds) {
+            (void)game::ApplyFireDamage(value, *s.combatSystem, params,
+                                        s.fireDamageAccumulator);
+            s.fireDamageAccumulator = 0.0f;
+        }
+    });
     systems.AddSystem("NeedsSystem", [&s](ecs::EcsWorld& value, float dt) {
         s.needsSystem->Update(value, dt);
+    });
+    systems.AddSystem("FoodStateSystem", [&s](ecs::EcsWorld& value, float dt) {
+        if (s.options.gameTime == nullptr) {
+            return;
+        }
+        const double now = s.options.gameTime->TotalGameMinutes();
+        float gameMinutes = 0.0f;
+        if (s.lastFoodGameMinute >= 0.0 && now > s.lastFoodGameMinute) {
+            gameMinutes = static_cast<float>(now - s.lastFoodGameMinute);
+        }
+        s.lastFoodGameMinute = now;
+        game::AdvanceFoodStates(value, dt, gameMinutes, s.foodSafety);
     });
     systems.AddSystem("InputSystem",
                       [&s](ecs::EcsWorld& value, float) { s.inputSystem->Update(value); });
@@ -566,13 +1394,86 @@ bool WorldSimulation::Init(std::string* error) {
     systems.AddSystem("AiSystem", [&s](ecs::EcsWorld& value, float dt) {
         s.aiSystem->Update(value, dt);
     });
+    systems.AddSystem("ZombieSpecialSystem",
+                      [&s](ecs::EcsWorld& value, float dt) {
+                          s.zombieSpecialSystem->Update(value, dt);
+                      });
+    systems.AddSystem("SettlementNpcSystem",
+                      [&s](ecs::EcsWorld& value, float dt) {
+                          if (s.settlementNpcSystem == nullptr) {
+                              return;
+                          }
+                          s.settlementNpcSystem->SetFocus(s.focus.x, s.focus.y);
+                          int hour = 12;
+                          int day = 1;
+                          if (s.options.gameTime != nullptr) {
+                              const auto now = s.options.gameTime->Now();
+                              hour = now.hour;
+                              day = now.day;
+                          }
+                          s.settlementNpcSystem->Update(value, dt, hour, day);
+                      });
     systems.AddSystem("PathFollowSystem", [&s](ecs::EcsWorld& value, float dt) {
         s.pathFollowSystem->Update(value, dt);
     });
     systems.AddSystem("BoidsSystem",
                       [&s](ecs::EcsWorld& value, float) { s.boidsSystem->Update(value); });
+    systems.AddSystem("AnimalSystem", [&s](ecs::EcsWorld&, float dt) {
+        if (s.animalSystem == nullptr) {
+            return;
+        }
+        s.animalSystem->SetFocus(s.focus.x, s.focus.y);
+        s.animalSystem->Update(dt);
+    });
+    systems.AddSystem("ArmorSystem", [&s](ecs::EcsWorld& value, float) {
+        if (s.options.items == nullptr) {
+            return;
+        }
+        entt::registry& registry = value.Registry();
+        registry.view<ecs::PlayerTag, ecs::Equipment>().each(
+            [&](const ecs::Entity entity, const ecs::Equipment& equipment) {
+                const game::PlayerArmor armor =
+                    game::ResolvePlayerArmor(equipment, *s.options.items);
+                registry.emplace_or_replace<ecs::DamageResist>(entity,
+                                                              armor.resist);
+            });
+    });
     systems.AddSystem("CombatSystem", [&s](ecs::EcsWorld& value, float dt) {
         s.combatSystem->Update(value, dt);
+    });
+    systems.AddSystem("WoundSystem", [&s](ecs::EcsWorld& value, float dt) {
+        s.woundSystem->Update(value, dt);
+    });
+    systems.AddSystem("PainSystem", [&s](ecs::EcsWorld& value, float dt) {
+        s.painSystem->Update(value, dt);
+    });
+    systems.AddSystem("InfectionSystem", [&s](ecs::EcsWorld& value, float dt) {
+        s.infectionSystem->Update(value, dt);
+    });
+    systems.AddSystem("ClimateSystem", [&s](ecs::EcsWorld& value, float dt) {
+        s.UpdateClimate(value, dt);
+    });
+    // M15-T1：CombatSystem 只产生磨损请求，由 game 层落到主手 Equipment；
+    // 保持 characters 不依赖 items 模块。
+    systems.AddSystem("WeaponWearSystem", [&s](ecs::EcsWorld& value, float) {
+        entt::registry& registry = value.Registry();
+        for (const characters::CombatSystem::WeaponWearRequest& request :
+             s.combatSystem->GetWeaponWears()) {
+            if (!value.Alive(request.attacker)) {
+                continue;
+            }
+            auto* equipment = registry.try_get<ecs::Equipment>(request.attacker);
+            if (equipment == nullptr) {
+                continue;
+            }
+            const auto& slot =
+                equipment->slots[static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand)];
+            const std::string defId = slot.has_value() ? slot->defId : std::string();
+            if (items::WearEquippedWeapon(*equipment, request.amount)) {
+                ZL_INFO("characters", "武器损坏：{}（攻击者稳定 ID {}）", defId,
+                        value.IdOf(request.attacker).id);
+            }
+        }
     });
     systems.AddSystem("VirtualHordeSystem", [&s](ecs::EcsWorld& value, float dt) {
         float px = 0.0f;
@@ -612,6 +1513,9 @@ bool WorldSimulation::Init(std::string* error) {
                       });
 
     s.focus = s.options.focus;
+    if (s.animalSystem != nullptr) {
+        s.animalSystem->SetFocus(s.focus.x, s.focus.y);
+    }
     s.initialized = true;
     ZL_INFO("sim", "模拟已就绪（无窗口可运行）：{} 个系统，世界 {}×{} chunks",
             systems.Count(), loadedMeta.chunksX, loadedMeta.chunksY);
@@ -630,11 +1534,19 @@ void WorldSimulation::Shutdown() {
         s.options.events->Unsubscribe(s.soundSubscription);
     }
     s.soundSubscription = core::EventBus::kInvalidSubscription;
+    s.blockFeedbacks.clear();
+    s.hitFeedbacks.clear();
     s.spawnLodSystem.reset();
     s.actionPresentationSystem.reset();
     s.animationSystem.reset();
     s.deathSystem.reset();
+    s.animalSystem.reset();
     s.combatSystem.reset();
+    s.woundSystem.reset();
+    s.painSystem.reset();
+    s.infectionSystem.reset();
+    s.fireSystem.reset();
+    s.weatherSystem.reset();
     s.physicsSyncSystem.reset();
     s.movementSystem.reset();
     s.needsSystem.reset();
@@ -642,6 +1554,7 @@ void WorldSimulation::Shutdown() {
     s.pathFollowSystem.reset();
     s.boidsSystem.reset();
     s.lodSystem.reset();
+    s.zombieSpecialSystem.reset();
     s.aiSystem.reset();
     s.perceptionSystem.reset();
     s.pathfinding.reset();
@@ -656,6 +1569,9 @@ void WorldSimulation::Shutdown() {
 void WorldSimulation::SetFocus(float gridX, float gridY) {
     if (std::isfinite(gridX) && std::isfinite(gridY)) {
         m_impl->focus = glm::vec2(gridX, gridY);
+        if (m_impl->animalSystem != nullptr) {
+            m_impl->animalSystem->SetFocus(gridX, gridY);
+        }
     }
 }
 
@@ -676,6 +1592,22 @@ void WorldSimulation::Tick(float dt) {
     Impl& s = *m_impl;
     if (!s.initialized || s.ecs == nullptr) {
         return;
+    }
+    if (s.options.items != nullptr && s.options.gameTime != nullptr) {
+        const double now = s.options.gameTime->TotalGameMinutes();
+        if (now < s.lastSpoilGameMinute) {
+            s.spoilAccumulatorMinutes = 0.0f;
+        } else if (s.lastSpoilGameMinute >= 0.0 &&
+                   now > s.lastSpoilGameMinute) {
+            s.spoilAccumulatorMinutes +=
+                static_cast<float>(now - s.lastSpoilGameMinute);
+            if (s.spoilAccumulatorMinutes >= 1.0f) {
+                const float step = std::floor(s.spoilAccumulatorMinutes);
+                s.AdvanceFoodSpoilage(step);
+                s.spoilAccumulatorMinutes -= step;
+            }
+        }
+        s.lastSpoilGameMinute = now;
     }
     s.ecs->Update(std::max(0.0f, dt));
 }
@@ -786,6 +1718,24 @@ ecs::Entity WorldSimulation::RestoreNetworkPlayer(const save::SavedEntity& snaps
     }
     registry.remove<ecs::Dying>(entity);
     if (resetHealth) {
+        if (auto* wounds = registry.try_get<ecs::Wounds>(entity); wounds != nullptr) {
+            *wounds = ecs::Wounds{};
+        }
+        if (auto* pain = registry.try_get<ecs::Pain>(entity); pain != nullptr) {
+            *pain = ecs::Pain{};
+        }
+        if (auto* infection = registry.try_get<ecs::Infection>(entity);
+            infection != nullptr) {
+            *infection = ecs::Infection{};
+        }
+        if (auto* climate = registry.try_get<ecs::Climate>(entity);
+            climate != nullptr) {
+            *climate = ecs::Climate{};
+        }
+        if (auto* food = registry.try_get<ecs::FoodState>(entity);
+            food != nullptr) {
+            *food = ecs::FoodState{};
+        }
         if (auto* health = registry.try_get<ecs::Health>(entity);
             health != nullptr) {
             health->current = health->max;
@@ -872,7 +1822,8 @@ ecs::Entity WorldSimulation::RespawnNetworkPlayer(const save::SavedEntity& snaps
     return entity;
 }
 
-ecs::Entity WorldSimulation::SpawnZombieAt(float x, float y) {
+ecs::Entity WorldSimulation::SpawnZombieAt(float x, float y,
+                                           std::uint64_t stableId) {
     Impl& s = *m_impl;
     if (!s.initialized || s.ecs == nullptr || !std::isfinite(x) || !std::isfinite(y)) {
         return entt::null;
@@ -880,7 +1831,19 @@ ecs::Entity WorldSimulation::SpawnZombieAt(float x, float y) {
     const int hour = CurrentZombieSpawnHour(s.options.gameTime);
     const ecs::ZombieVariantKind variant =
         PickZombieVariant(x, y, hour, ++s.zombieSpawnSerial);
-    return SpawnZombie(*s.ecs, s.physics.get(), x, y, s.options.events, variant);
+    return SpawnZombie(*s.ecs, s.physics.get(), x, y, s.options.events, variant,
+                       stableId, &s.combatRules);
+}
+
+ecs::Entity WorldSimulation::SpawnZombieAt(float x, float y,
+                                           ecs::ZombieVariantKind variant,
+                                           std::uint64_t stableId) {
+    Impl& s = *m_impl;
+    if (!s.initialized || s.ecs == nullptr || !std::isfinite(x) || !std::isfinite(y)) {
+        return entt::null;
+    }
+    return SpawnZombie(*s.ecs, s.physics.get(), x, y, s.options.events, variant,
+                       stableId, &s.combatRules);
 }
 
 void WorldSimulation::DespawnEntity(ecs::Entity entity) {
@@ -991,7 +1954,8 @@ void WorldSimulation::SpawnDemoPopulation() {
         }
         const ecs::ZombieVariantKind variant =
             PickZombieVariant(px, py, hour, rng());
-        SpawnZombie(*s.ecs, s.physics.get(), px, py, s.options.events, variant);
+        SpawnZombie(*s.ecs, s.physics.get(), px, py, s.options.events, variant,
+                    0, &s.combatRules);
         ++spawned;
     }
     ZL_INFO("sim", "生成 {} 个 AI 游荡者（区域 x[{:.0f},{:.0f}] y[{:.0f},{:.0f}]，"
@@ -1047,6 +2011,12 @@ bool WorldSimulation::LoadSave(const std::string& saveId, std::string* error) {
     }
 
     s.ClearEntities();
+    if (s.animalSystem != nullptr) {
+        s.animalSystem->Reset();
+    }
+    if (s.settlementNpcSystem != nullptr) {
+        s.settlementNpcSystem->Reset();
+    }
     std::vector<ecs::Entity> loaded;
     std::string entityError;
     if (!save::LoadEntities(snapshot, *s.ecs, *s.options.saveComponents, &loaded,
@@ -1055,6 +2025,18 @@ bool WorldSimulation::LoadSave(const std::string& saveId, std::string* error) {
     }
     if (!s.RestoreRuntimeComponents(loaded)) {
         return fail("恢复运行时组件失败");
+    }
+    if (s.settlementNpcSystem != nullptr) {
+        s.ecs->Registry().view<SettlementState>().each(
+            [&](const SettlementState& state) {
+                s.settlementNpcSystem->ApplyState(state);
+            });
+    }
+    if (s.animalSystem != nullptr) {
+        s.animalSystem->LoadState(*s.ecs);
+    }
+    if (s.options.gameTime != nullptr) {
+        s.options.gameTime->SetTotalGameMinutes(metadata.gameMinutes);
     }
 
     if (s.options.activeSaveId != nullptr) {
@@ -1148,8 +2130,66 @@ ai::SpawnLodSystem* WorldSimulation::SpawnLod() {
     return m_impl->spawnLodSystem.get();
 }
 
+ai::ZombieSpecialSystem* WorldSimulation::ZombieSpecial() {
+    return m_impl->zombieSpecialSystem.get();
+}
+
 characters::CombatSystem* WorldSimulation::Combat() {
     return m_impl->combatSystem.get();
+}
+
+std::vector<characters::CombatSystem::BlockFeedback>
+WorldSimulation::TakeBlockFeedbacks() {
+    std::vector<characters::CombatSystem::BlockFeedback> feedbacks;
+    feedbacks.swap(m_impl->blockFeedbacks);
+    return feedbacks;
+}
+
+std::vector<characters::CombatSystem::HitFeedback>
+WorldSimulation::TakeHitFeedbacks() {
+    std::vector<characters::CombatSystem::HitFeedback> feedbacks;
+    feedbacks.swap(m_impl->hitFeedbacks);
+    return feedbacks;
+}
+
+SettlementNpcSystem* WorldSimulation::SettlementNpcs() {
+    return m_impl->settlementNpcSystem.get();
+}
+
+FireSystem* WorldSimulation::Fire() {
+    return m_impl->fireSystem.get();
+}
+
+AnimalSystem* WorldSimulation::Animals() {
+    return m_impl->animalSystem.get();
+}
+
+WeatherState WorldSimulation::CurrentWeather() const {
+    return m_impl->SampleWeather();
+}
+
+void WorldSimulation::SetWeatherOverride(WeatherKind kind,
+                                         float durationMinutes) {
+    Impl& s = *m_impl;
+    if (!s.weatherSystem || !(durationMinutes > 0.0f) ||
+        !std::isfinite(durationMinutes)) {
+        return;
+    }
+    const double now =
+        s.options.gameTime != nullptr ? s.options.gameTime->TotalGameMinutes()
+                                      : 0.0;
+    s.weatherSystem->SetOverride(
+        kind, now + static_cast<double>(durationMinutes));
+    s.UpdateWeather();
+}
+
+void WorldSimulation::ClearWeatherOverride() {
+    Impl& s = *m_impl;
+    if (!s.weatherSystem) {
+        return;
+    }
+    s.weatherSystem->ClearOverride();
+    s.UpdateWeather();
 }
 
 }  // namespace zl::game

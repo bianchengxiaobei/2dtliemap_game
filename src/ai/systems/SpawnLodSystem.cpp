@@ -33,6 +33,15 @@ void SpawnLodSystem::Update(ecs::EcsWorld& world, float dt) {
     world.Registry().view<ecs::AiState, ecs::Position, ecs::Health>().each(
         [&](const ecs::Entity e, const ecs::AiState&, const ecs::Position& pos,
             const ecs::Health& health) {
+            if (world.Registry().any_of<ecs::BaseSiegeZombie>(e)) {
+                return;
+            }
+            if (world.Registry().any_of<ecs::PoiGuard>(e)) {
+                return;
+            }
+            if (world.Registry().any_of<ecs::RandomEventActor>(e)) {
+                return;
+            }
             if (!world.Alive(e) || health.current <= 0.0f ||
                 world.Registry().any_of<ecs::Dying>(e)) {
                 return;

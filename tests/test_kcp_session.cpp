@@ -1,4 +1,4 @@
-#include <doctest/doctest.h>
+﻿#include <doctest/doctest.h>
 
 #include <chrono>
 #include <cstdint>
@@ -341,6 +341,35 @@ TEST_CASE("M13 KCP Session：协议版本不匹配返回明确拒绝原因") {
     SessionReject reject;
     REQUIRE(DecodeSessionReject(message.payload, &reject));
     CHECK(reject.reason == SessionDisconnectReason::ProtocolVersion);
+    CHECK(server.GetStats().rejected >= 1);
+}
+
+TEST_CASE("M24-T7 KCP Session：内容指纹不一致拒绝") {
+    constexpr std::uint64_t contentHash = 0x4D323454374B4350ull;
+    KcpSessionServer server(ServerOptions(contentHash));
+    std::string error;
+    REQUIRE(server.Listen("127.0.0.1", 0, &error));
+
+    KcpClient raw;
+    REQUIRE(raw.Connect("127.0.0.1", server.Port(), &error));
+    REQUIRE(raw.Send(
+        EncodeFrame(EncodeSessionHello(SessionHello{1, contentHash ^ 1u})),
+        &error));
+
+    std::vector<std::uint8_t> received;
+    REQUIRE(WaitUntil([&] {
+        server.Poll();
+        raw.Poll();
+        return raw.Receive(&received);
+    }));
+
+    SessionMessage message;
+    REQUIRE(DecodeSessionMessage(received, &message));
+    CHECK(message.type == SessionMessageType::Reject);
+    SessionReject reject;
+    REQUIRE(DecodeSessionReject(message.payload, &reject));
+    CHECK(reject.reason == SessionDisconnectReason::ContentMismatch);
+    CHECK(server.Sessions().empty());
     CHECK(server.GetStats().rejected >= 1);
 }
 

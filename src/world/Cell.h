@@ -31,6 +31,7 @@ public:
 
     // 世界格坐标直达（chunk 未创建时返回 nullptr）
     GridSquare* GetSquare(int wx, int wy, int z);
+    const GridSquare* GetSquare(int wx, int wy, int z) const;
     GridSquare& GetOrCreateSquare(int wx, int wy, int z);
 
     std::size_t LoadedChunkCount() const;

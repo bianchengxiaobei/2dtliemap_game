@@ -8,9 +8,15 @@
 #include <unordered_map>
 #include <vector>
 
+#include "ai/components/AiComponents.h"
+#include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
 #include "ecs/EcsWorld.h"
+#include "game/FireComponents.h"
+#include "game/HomesteadComponents.h"
+#include "game/SettlementNpc.h"
+#include "game/VehicleComponents.h"
 #include "items/ItemComponents.h"
 #include "net/Replication.h"
 
@@ -27,6 +33,7 @@ inline constexpr std::uint32_t kReplicationArchetypeCharacter = 2;
 inline constexpr std::uint32_t kReplicationArchetypeItem = 3;
 inline constexpr std::uint32_t kReplicationArchetypeEffect = 4;
 inline constexpr std::uint32_t kReplicationArchetypeProjectile = 5;
+inline constexpr std::uint32_t kReplicationArchetypeProp = 6;
 
 inline constexpr std::uint32_t kReplicationPosition =
     net::MakeReplicationComponentId('P', 'O', 'S', 'N');
@@ -46,8 +53,47 @@ inline constexpr std::uint32_t kReplicationEquipment =
     net::MakeReplicationComponentId('E', 'Q', 'I', 'P');
 inline constexpr std::uint32_t kReplicationAction =
     net::MakeReplicationComponentId('A', 'C', 'T', 'N');
+inline constexpr std::uint32_t kReplicationCombatStance =
+    net::MakeReplicationComponentId('C', 'B', 'S', 'T');
 inline constexpr std::uint32_t kReplicationVariant =
     net::MakeReplicationComponentId('Z', 'V', 'A', 'R');
+inline constexpr std::uint32_t kReplicationSpecial =
+    net::MakeReplicationComponentId('Z', 'S', 'P', 'C');
+inline constexpr std::uint32_t kReplicationWounds =
+    net::MakeReplicationComponentId('W', 'N', 'D', 'S');
+inline constexpr std::uint32_t kReplicationPain =
+    net::MakeReplicationComponentId('P', 'A', 'I', 'N');
+inline constexpr std::uint32_t kReplicationInfection =
+    net::MakeReplicationComponentId('I', 'N', 'F', 'C');
+inline constexpr std::uint32_t kReplicationStorage =
+    net::MakeReplicationComponentId('S', 'T', 'R', 'G');
+inline constexpr std::uint32_t kReplicationVehicle =
+    net::MakeReplicationComponentId('V', 'H', 'C', 'L');
+inline constexpr std::uint32_t kReplicationFarmPlot =
+    net::MakeReplicationComponentId('F', 'A', 'R', 'M');
+inline constexpr std::uint32_t kReplicationGenerator =
+    net::MakeReplicationComponentId('G', 'E', 'N', 'R');
+inline constexpr std::uint32_t kReplicationColdStorage =
+    net::MakeReplicationComponentId('C', 'O', 'L', 'D');
+inline constexpr std::uint32_t kReplicationFloodlight =
+    net::MakeReplicationComponentId('F', 'L', 'G', 'T');
+inline constexpr std::uint32_t kReplicationTrap =
+    net::MakeReplicationComponentId('T', 'R', 'A', 'P');
+inline constexpr std::uint32_t kReplicationMerchant =
+    net::MakeReplicationComponentId('M', 'R', 'C', 'H');
+inline constexpr std::uint32_t kReplicationSettlementNpc =
+    net::MakeReplicationComponentId('S', 'T', 'L', 'N');
+inline constexpr std::uint32_t kReplicationLoot =
+    net::MakeReplicationComponentId('L', 'O', 'O', 'T');
+inline constexpr std::uint32_t kReplicationFire =
+    net::MakeReplicationComponentId('F', 'I', 'R', 'E');
+inline constexpr std::uint32_t kReplicationBurning =
+    net::MakeReplicationComponentId('B', 'U', 'R', 'N');
+inline constexpr std::uint32_t kReplicationAnimal =
+    net::MakeReplicationComponentId('A', 'N', 'M', 'L');
+inline constexpr std::uint32_t kReplicationAnimalCorpse =
+    net::MakeReplicationComponentId('A', 'C', 'R', 'P');
+inline constexpr std::size_t kMaxReplicationAnimalSpeciesBytes = 64;
 
 bool RegisterEntityReplicationComponents(net::ReplicationRegistry& registry,
                                          std::string* error = nullptr);
@@ -68,7 +114,32 @@ struct ReplicatedActor {
     ecs::ItemInstance item;
     std::array<std::optional<ecs::ItemInstance>, ecs::kEquipSlotCount> equipment;
     ecs::ActionState action;
+    ecs::CombatStance combatStance;
     ecs::ZombieVariant variant;
+    ecs::ZombieSpecial special;
+    ecs::Wounds wounds;
+    ecs::Pain pain;
+    ecs::Infection infection;
+    ecs::PlayerStorage storage;
+    ecs::Container storageContainer;
+    ecs::Vehicle vehicle;
+    std::uint64_t vehicleDriverStableId = 0;
+    std::uint64_t vehiclePassengerStableId = 0;
+    std::uint64_t vehicleSecondPassengerStableId = 0;
+    ecs::FarmPlot farmPlot;
+    ecs::Generator generator;
+    ecs::ColdStorage coldStorage;
+    ecs::Floodlight floodlight;
+    ecs::SpikeTrap trap;
+    ecs::MerchantStock merchantStock;
+    SettlementNpc settlementNpc;
+    ecs::LootContainer lootContainer;
+    ecs::Container lootContainerItems;
+    ecs::FireSource fireSource;
+    ecs::FireAnchor fireAnchor;
+    ecs::BurningZombie burning;
+    ecs::Animal animal;
+    ecs::AnimalCorpse animalCorpse;
 
     bool hasPosition = false;
     bool hasVelocity = false;
@@ -79,7 +150,26 @@ struct ReplicatedActor {
     bool hasItem = false;
     bool hasEquipment = false;
     bool hasAction = false;
+    bool hasCombatStance = false;
     bool hasVariant = false;
+    bool hasSpecial = false;
+    bool hasWounds = false;
+    bool hasPain = false;
+    bool hasInfection = false;
+    bool hasStorage = false;
+    bool hasVehicle = false;
+    bool hasFarmPlot = false;
+    bool hasGenerator = false;
+    bool hasColdStorage = false;
+    bool hasFloodlight = false;
+    bool hasTrap = false;
+    bool hasMerchantStock = false;
+    bool hasSettlementNpc = false;
+    bool hasLoot = false;
+    bool hasFire = false;
+    bool hasBurning = false;
+    bool hasAnimal = false;
+    bool hasAnimalCorpse = false;
 };
 
 class EntityReplicationProducer {
@@ -87,6 +177,7 @@ public:
     struct Options {
         float aoiRadius = 48.0f;
         std::size_t maxEntities = 256;
+        std::uint64_t viewerStableId = 0;
     };
 
     struct Stats {
@@ -197,7 +288,32 @@ private:
         ecs::ItemInstance item;
         std::array<std::optional<ecs::ItemInstance>, ecs::kEquipSlotCount> equipment;
         ecs::ActionState action;
+        ecs::CombatStance combatStance;
         ecs::ZombieVariant variant;
+        ecs::ZombieSpecial special;
+        ecs::Wounds wounds;
+        ecs::Pain pain;
+        ecs::Infection infection;
+        ecs::PlayerStorage storage;
+        ecs::Container storageContainer;
+        ecs::Vehicle vehicle;
+        std::uint64_t vehicleDriverStableId = 0;
+        std::uint64_t vehiclePassengerStableId = 0;
+        std::uint64_t vehicleSecondPassengerStableId = 0;
+        ecs::FarmPlot farmPlot;
+        ecs::Generator generator;
+        ecs::ColdStorage coldStorage;
+        ecs::Floodlight floodlight;
+        ecs::SpikeTrap trap;
+        ecs::MerchantStock merchantStock;
+        SettlementNpc settlementNpc;
+        ecs::LootContainer lootContainer;
+        ecs::Container lootContainerItems;
+        ecs::FireSource fireSource;
+        ecs::FireAnchor fireAnchor;
+        ecs::BurningZombie burning;
+        ecs::Animal animal;
+        ecs::AnimalCorpse animalCorpse;
         bool hasPosition = false;
         bool hasVelocity = false;
         bool hasHealth = false;
@@ -207,7 +323,26 @@ private:
         bool hasItem = false;
         bool hasEquipment = false;
         bool hasAction = false;
+        bool hasCombatStance = false;
         bool hasVariant = false;
+        bool hasSpecial = false;
+        bool hasWounds = false;
+        bool hasPain = false;
+        bool hasInfection = false;
+        bool hasStorage = false;
+        bool hasVehicle = false;
+        bool hasFarmPlot = false;
+        bool hasGenerator = false;
+        bool hasColdStorage = false;
+        bool hasFloodlight = false;
+        bool hasTrap = false;
+        bool hasMerchantStock = false;
+        bool hasSettlementNpc = false;
+        bool hasLoot = false;
+        bool hasFire = false;
+        bool hasBurning = false;
+        bool hasAnimal = false;
+        bool hasAnimalCorpse = false;
     };
 
     bool DecodePatch(const net::ReplicatedEntity& entity, ActorPatch* patch,

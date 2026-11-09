@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -10,7 +11,7 @@ namespace zl::ui {
 
 inline constexpr int kInventoryBagSlots = 25;
 inline constexpr int kInventoryEquipmentSlots = 2;
-inline constexpr int kInventoryLootSlots = 6;
+inline constexpr int kInventoryLootSlots = 8;
 
 enum class InventoryArea : std::uint8_t {
     Backpack = 0,
@@ -32,6 +33,9 @@ enum class InventoryActionType : std::uint8_t {
     QueueMoveDown,
     QueueRemove,
     QueueSetCount,
+    StoreAll,
+    TakeAll,
+    SortStorage,
 };
 
 struct InventorySlot {
@@ -44,6 +48,7 @@ struct InventorySlot {
     float condition = 1.0f;
     bool damaged = false;
     bool repairAvailable = false;
+    bool perishable = false;
 };
 
 struct InventoryRecipeIngredient {
@@ -66,6 +71,10 @@ struct InventoryRecipe {
     std::string station;
     std::string stationLabel;
     bool stationNearby = true;
+    std::string category;
+    std::string categoryLabel;
+    std::optional<InventoryRecipeIngredient> cookware;
+    std::optional<InventoryRecipeIngredient> fuel;
 };
 
 struct InventoryQueuedCraft {
@@ -102,6 +111,9 @@ struct InventoryState {
     int bagStacks = 0;
     int lootStacks = 0;
     std::string lootTitle = "附近地面";
+    bool lootIsStorage = false;
+    bool lootCanTakeAll = false;
+    std::uint64_t lootEntityId = 0;
     std::string status;
     std::string statusTone = "info";
 };
@@ -110,7 +122,8 @@ inline bool operator==(const InventorySlot& a, const InventorySlot& b) {
     return a.filled == b.filled && a.label == b.label && a.count == b.count &&
            a.usable == b.usable && a.equippable == b.equippable &&
            a.entityId == b.entityId && a.condition == b.condition &&
-           a.damaged == b.damaged && a.repairAvailable == b.repairAvailable;
+           a.damaged == b.damaged && a.repairAvailable == b.repairAvailable &&
+           a.perishable == b.perishable;
 }
 
 inline bool operator==(const InventoryRecipeIngredient& a,
@@ -125,7 +138,9 @@ inline bool operator==(const InventoryRecipe& a, const InventoryRecipe& b) {
            a.ingredients == b.ingredients &&
            a.tools == b.tools && a.estimatedSeconds == b.estimatedSeconds &&
            a.station == b.station && a.stationLabel == b.stationLabel &&
-           a.stationNearby == b.stationNearby;
+           a.stationNearby == b.stationNearby && a.category == b.category &&
+           a.categoryLabel == b.categoryLabel &&
+           a.cookware == b.cookware && a.fuel == b.fuel;
 }
 
 inline bool operator==(const InventoryQueuedCraft& a,
@@ -148,7 +163,9 @@ inline bool operator==(const InventoryState& a, const InventoryState& b) {
            a.capacity == b.capacity && a.bag == b.bag && a.equipment == b.equipment &&
            a.loot == b.loot && a.recipes == b.recipes && a.crafting == b.crafting &&
            a.bagStacks == b.bagStacks && a.lootStacks == b.lootStacks &&
-           a.lootTitle == b.lootTitle && a.status == b.status &&
+           a.lootTitle == b.lootTitle && a.lootIsStorage == b.lootIsStorage &&
+           a.lootCanTakeAll == b.lootCanTakeAll &&
+           a.lootEntityId == b.lootEntityId && a.status == b.status &&
            a.statusTone == b.statusTone;
 }
 

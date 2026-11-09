@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <ctime>
 #include <fstream>
@@ -515,6 +516,9 @@ bool SaveManager::Create(const CreateOptions& options, std::string* outId,
     if (gameVersion.empty()) {
         return Fail(error, "游戏版本不能为空");
     }
+    if (!std::isfinite(options.gameMinutes) || options.gameMinutes < 0.0) {
+        return Fail(error, "存档游戏时间非法");
+    }
 
     EntitySnapshot emptyEntities;
     const EntitySnapshot& sourceEntities =
@@ -546,6 +550,7 @@ bool SaveManager::Create(const CreateOptions& options, std::string* outId,
     metadata.gameVersion = gameVersion;
     metadata.mapId = options.mapId;
     metadata.thumbnail = hasThumbnail ? kSaveThumbnailFile : "";
+    metadata.gameMinutes = options.gameMinutes;
     metadata.players = std::move(players);
 
     const ThumbnailImage* thumbnail = hasThumbnail ? &options.thumbnail : nullptr;
@@ -589,6 +594,12 @@ bool SaveManager::Save(std::string_view id, const SaveOptions& options,
 
     if (options.thumbnail != nullptr && !options.thumbnail->Valid()) {
         return Fail(error, "缩略图数据非法");
+    }
+    if (options.gameMinutes.has_value()) {
+        if (!std::isfinite(*options.gameMinutes) || *options.gameMinutes < 0.0) {
+            return Fail(error, "存档游戏时间非法");
+        }
+        metadata.gameMinutes = *options.gameMinutes;
     }
     const std::vector<std::uint8_t> entityBytes =
         EncodeEntitySnapshot(*options.entities, error);
@@ -641,6 +652,10 @@ SaveManager::LoadResult SaveManager::ReadMetadataAt(
     SqliteMeta database;
     std::string openError;
     if (!database.Open(path, false, &openError)) {
+        Fail(error, openError);
+        return LoadResult::Corrupt;
+    }
+    if (!database.Initialize(&openError)) {
         Fail(error, openError);
         return LoadResult::Corrupt;
     }

@@ -3,16 +3,21 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
 #include "characters/systems/AnimationSystem.h"
 #include "core/Constants.h"
+#include "game/HomesteadComponents.h"
+#include "game/SettlementNpc.h"
+#include "game/StructureComponents.h"
 
 namespace zl::game {
 namespace {
 
-constexpr std::uint16_t kReplicationComponentVersion = 1;
+constexpr std::uint16_t kReplicationComponentVersion = 4;
+constexpr std::size_t kMaxLootReplicationItems = 8;
 constexpr float kMaxLocalPredictionStep = 0.25f;
 
 void SetError(std::string* error, std::string message) {
@@ -23,6 +28,155 @@ void SetError(std::string* error, std::string message) {
 
 bool Finite(float value) {
     return std::isfinite(value);
+}
+
+bool ValidWoundSource(ecs::DamageType type) {
+    return type == ecs::DamageType::Blunt || type == ecs::DamageType::Claw ||
+           type == ecs::DamageType::Bite;
+}
+
+bool ValidWounds(const ecs::Wounds& wounds) {
+    if (wounds.count > ecs::kMaxWounds) {
+        return false;
+    }
+    for (std::uint8_t i = 0; i < wounds.count; ++i) {
+        const ecs::WoundEntry& entry = wounds.entries[i];
+        if (!ValidWoundSource(entry.source) || !Finite(entry.severity) ||
+            !Finite(entry.bleedRate) || !Finite(entry.bleedRemaining) ||
+            !Finite(entry.bleedDuration) || entry.severity < 0.0f ||
+            entry.severity > 1.0f || entry.bleedRate < 0.0f ||
+            entry.bleedRate > 50.0f || entry.bleedRemaining < 0.0f ||
+            entry.bleedDuration < 0.0f || entry.bleedDuration > 3600.0f ||
+            entry.bleedRemaining > entry.bleedDuration ||
+            (entry.bandaged && (entry.bleedRate > 0.0f ||
+                                entry.bleedRemaining > 0.0f))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ValidPain(const ecs::Pain& pain) {
+    return Finite(pain.baseLevel) && pain.baseLevel >= 0.0f && pain.baseLevel <= 1.0f &&
+           Finite(pain.level) && pain.level >= 0.0f && pain.level <= 1.0f &&
+           Finite(pain.moveScale) && pain.moveScale >= 0.05f &&
+           pain.moveScale <= 1.0f && Finite(pain.attackCooldownScale) &&
+           pain.attackCooldownScale >= 1.0f && pain.attackCooldownScale <= 3.0f &&
+           Finite(pain.reliefStrength) && pain.reliefStrength >= 0.0f &&
+           pain.reliefStrength <= 1.0f && Finite(pain.reliefRemaining) &&
+           pain.reliefRemaining >= 0.0f && Finite(pain.reliefDuration) &&
+           pain.reliefDuration >= 0.0f && pain.reliefDuration <= 600.0f &&
+           pain.reliefRemaining <= pain.reliefDuration + 0.001f;
+}
+
+bool ValidInfection(const ecs::Infection& infection) {
+    if (static_cast<std::uint8_t>(infection.stage) >
+            static_cast<std::uint8_t>(ecs::InfectionStage::Severe) ||
+        !Finite(infection.progress) || infection.progress < 0.0f ||
+        infection.progress > 1.0f || !Finite(infection.slowStrength) ||
+        infection.slowStrength < 0.0f || infection.slowStrength > 1.0f ||
+        !Finite(infection.slowRemaining) || infection.slowRemaining < 0.0f ||
+        infection.slowRemaining > 3600.0f ||
+        !Finite(infection.slowDuration) || infection.slowDuration < 0.0f ||
+        infection.slowDuration > 3600.0f ||
+        infection.slowRemaining > infection.slowDuration + 0.001f ||
+        !Finite(infection.timeToNextStage) ||
+        infection.timeToNextStage < 0.0f ||
+        infection.timeToNextStage > 86400.0f) {
+        return false;
+    }
+    if (infection.stage == ecs::InfectionStage::None) {
+        return infection.progress <= 0.0001f &&
+               infection.slowStrength <= 0.0001f &&
+               infection.slowRemaining <= 0.0001f &&
+               infection.timeToNextStage <= 0.001f;
+    }
+    return true;
+}
+
+bool ValidZombieSpecial(const ecs::ZombieSpecial& special) {
+    return static_cast<std::uint8_t>(special.kind) <=
+               static_cast<std::uint8_t>(ecs::ZombieSpecialKind::Breaker) &&
+           Finite(special.cooldown) && special.cooldown >= 0.0f &&
+           special.cooldown <= 3600.0f && Finite(special.windup) &&
+           special.windup >= 0.0f && special.windup <= 60.0f &&
+           Finite(special.windupDuration) && special.windupDuration >= 0.0f &&
+           special.windupDuration <= 60.0f &&
+           special.windup <= special.windupDuration + 0.001f;
+}
+
+bool ValidFireMaterialId(std::string_view id) {
+    return !id.empty() && id.size() <= 64 &&
+           std::all_of(id.begin(), id.end(), [](char c) {
+               return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                      c == '_' || c == '-';
+           });
+}
+
+bool ValidFireSource(const ecs::FireSource& source) {
+    const auto phase = static_cast<std::uint8_t>(source.phase);
+    return ValidFireMaterialId(source.materialId) && phase <= 3 &&
+           Finite(source.ignitionProgress) &&
+           Finite(source.ignitionDuration) &&
+           Finite(source.burnRemaining) && Finite(source.burnDuration) &&
+           Finite(source.smokePerSecond) && Finite(source.heatRadius) &&
+           Finite(source.smolderElapsed) &&
+           Finite(source.spreadAccumulator) &&
+           source.ignitionProgress >= 0.0f &&
+           source.ignitionDuration >= 0.0f &&
+           source.ignitionDuration <= 3600.0f &&
+           source.ignitionProgress <= source.ignitionDuration + 0.001f &&
+           source.burnDuration >= 0.0f &&
+           source.burnDuration <= 1.0e7f && source.burnRemaining >= 0.0f &&
+           source.burnRemaining <= source.burnDuration + 0.001f &&
+           source.smokePerSecond >= 0.0f &&
+           source.smokePerSecond <= 1.0e5f && source.heatRadius >= 0.0f &&
+           source.heatRadius <= 1.0e5f && source.smolderElapsed >= 0.0f &&
+           source.smolderElapsed <= 1.0e6f &&
+           source.spreadAccumulator >= 0.0f &&
+           source.spreadAccumulator <= 1.0e6f;
+}
+
+bool ValidCombatStance(const ecs::CombatStance& stance) {
+    if (!Finite(stance.blockElapsed) || stance.blockElapsed < 0.0f ||
+        stance.blockElapsed > 3600.0f || !Finite(stance.guardBreakLeft) ||
+        stance.guardBreakLeft < 0.0f || stance.guardBreakLeft > 60.0f ||
+        !Finite(stance.dodgeLeft) || stance.dodgeLeft < 0.0f ||
+        stance.dodgeLeft > 60.0f || !Finite(stance.dodgeInvulnLeft) ||
+        stance.dodgeInvulnLeft < 0.0f ||
+        stance.dodgeInvulnLeft > stance.dodgeLeft + 0.001f ||
+        !Finite(stance.dodgeDirX) || !Finite(stance.dodgeDirY)) {
+        return false;
+    }
+    const float directionLength =
+        std::sqrt(stance.dodgeDirX * stance.dodgeDirX +
+                  stance.dodgeDirY * stance.dodgeDirY);
+    if (!Finite(directionLength) || directionLength > 1.5f) {
+        return false;
+    }
+    if (stance.dodgeLeft > 0.0f && directionLength < 0.5f) {
+        return false;
+    }
+    return true;
+}
+
+bool ValidBurningZombie(const ecs::BurningZombie& burning) {
+    return Finite(burning.remaining) && burning.remaining >= 0.0f &&
+           burning.remaining <= 120.0f &&
+           Finite(burning.damageAccumulator) &&
+           burning.damageAccumulator >= 0.0f &&
+           burning.damageAccumulator <= 3600.0f &&
+           Finite(burning.spreadAccumulator) &&
+           burning.spreadAccumulator >= 0.0f &&
+           burning.spreadAccumulator <= 3600.0f &&
+           Finite(burning.panicRemaining) && burning.panicRemaining >= 0.0f &&
+           burning.panicRemaining <= 120.0f &&
+           Finite(burning.panicSpeedScale) &&
+           burning.panicSpeedScale >= 0.5f &&
+           burning.panicSpeedScale <= 3.0f &&
+           Finite(burning.panicChaseRadius) &&
+           burning.panicChaseRadius >= 0.0f &&
+           burning.panicChaseRadius <= 64.0f;
 }
 
 void PutU8(std::vector<std::uint8_t>& out, std::uint8_t value) {
@@ -36,6 +190,12 @@ void PutU16(std::vector<std::uint8_t>& out, std::uint16_t value) {
 
 void PutU32(std::vector<std::uint8_t>& out, std::uint32_t value) {
     for (std::size_t i = 0; i < 4; ++i) {
+        out.push_back(static_cast<std::uint8_t>((value >> (i * 8U)) & 0xFFu));
+    }
+}
+
+void PutU64(std::vector<std::uint8_t>& out, std::uint64_t value) {
+    for (std::size_t i = 0; i < 8; ++i) {
         out.push_back(static_cast<std::uint8_t>((value >> (i * 8U)) & 0xFFu));
     }
 }
@@ -82,6 +242,20 @@ public:
         return true;
     }
 
+    bool U64(std::uint64_t* value) {
+        if (!Has(8)) {
+            return false;
+        }
+        std::uint64_t decoded = 0;
+        for (std::size_t i = 0; i < 8; ++i) {
+            decoded |= static_cast<std::uint64_t>(m_bytes[m_offset + i])
+                       << (i * 8U);
+        }
+        m_offset += 8;
+        *value = decoded;
+        return true;
+    }
+
     bool I32(std::int32_t* value) {
         std::uint32_t raw = 0;
         if (!U32(&raw)) {
@@ -100,9 +274,11 @@ public:
         return true;
     }
 
-    bool String(std::string* value, std::size_t maxBytes) {
+    bool String(std::string* value, std::size_t maxBytes,
+                bool allowEmpty = false) {
         std::uint16_t size = 0;
-        if (!U16(&size) || size > maxBytes || size == 0 || !Has(size)) {
+        if (!U16(&size) || size > maxBytes || (!allowEmpty && size == 0) ||
+            !Has(size)) {
             return false;
         }
         value->assign(m_bytes.begin() + static_cast<std::ptrdiff_t>(m_offset),
@@ -132,6 +308,7 @@ net::ReplicatedComponent MakeComponent(std::uint32_t type,
 }
 
 bool CaptureComponents(entt::registry& registry, entt::entity entity,
+                       std::uint64_t viewerStableId,
                        std::vector<net::ReplicatedComponent>* components,
                        std::string* error) {
     const auto* position = registry.try_get<ecs::Position>(entity);
@@ -244,10 +421,353 @@ bool CaptureComponents(entt::registry& registry, entt::entity entity,
             MakeComponent(kReplicationEquipment, std::move(bytes)));
     }
 
+    if (const auto* stance = registry.try_get<ecs::CombatStance>(entity);
+        stance != nullptr && registry.all_of<ecs::PlayerTag>(entity)) {
+        if (!ValidCombatStance(*stance)) {
+            SetError(error, "复制 CombatStance 状态非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU8(bytes, stance->blocking ? 1u : 0u);
+        PutF32(bytes, stance->blockElapsed);
+        PutF32(bytes, stance->guardBreakLeft);
+        PutF32(bytes, stance->dodgeLeft);
+        PutF32(bytes, stance->dodgeInvulnLeft);
+        PutF32(bytes, stance->dodgeDirX);
+        PutF32(bytes, stance->dodgeDirY);
+        components->push_back(
+            MakeComponent(kReplicationCombatStance, std::move(bytes)));
+    }
+
+    if (const auto* storage = registry.try_get<ecs::PlayerStorage>(entity);
+        storage != nullptr) {
+        const auto* storageOwner =
+            registry.try_get<ecs::StructureOwner>(entity);
+        const bool storageVisible =
+            storageOwner == nullptr || storageOwner->ownerStableId == 0 ||
+            viewerStableId == 0 ||
+            storageOwner->ownerStableId == viewerStableId;
+        if (storageVisible) {
+            const auto* container = registry.try_get<ecs::Container>(entity);
+            if (container == nullptr || storage->maxStacks < 1 ||
+                storage->maxStacks > 6 ||
+                !Finite(container->capacityKg) ||
+                container->capacityKg <= 0.0f ||
+                container->items.size() >
+                    static_cast<std::size_t>(storage->maxStacks)) {
+                SetError(error, "复制 PlayerStorage 负载非法");
+                return false;
+            }
+            std::vector<std::uint8_t> bytes;
+            PutU8(bytes, static_cast<std::uint8_t>(storage->maxStacks));
+            PutF32(bytes, container->capacityKg);
+            PutU16(bytes,
+                   static_cast<std::uint16_t>(container->items.size()));
+            for (const ecs::ItemInstance& item : container->items) {
+                if (!item.Valid() || item.defId.size() > 128 ||
+                    item.count > 9999 || !Finite(item.condition) ||
+                    item.condition < 0.0f || item.condition > 1.0f) {
+                    SetError(error, "复制 PlayerStorage 物品状态非法");
+                    return false;
+                }
+                PutU16(bytes,
+                       static_cast<std::uint16_t>(item.defId.size()));
+                bytes.insert(bytes.end(), item.defId.begin(), item.defId.end());
+                PutU16(bytes, static_cast<std::uint16_t>(item.count));
+                PutF32(bytes, item.condition);
+            }
+            if (bytes.size() > net::kMaxReplicationComponentBytes) {
+                SetError(error, "复制 PlayerStorage 负载超过上限");
+                return false;
+            }
+            components->push_back(
+                MakeComponent(kReplicationStorage, std::move(bytes)));
+        }
+    }
+
+    if (const auto* vehicle = registry.try_get<ecs::Vehicle>(entity);
+        vehicle != nullptr) {
+        const std::uint8_t vehicleType =
+            static_cast<std::uint8_t>(vehicle->type);
+        if (!Finite(vehicle->fuel) || vehicle->fuel < 0.0f ||
+            vehicle->fuel > 1.0f || !Finite(vehicle->condition) ||
+            vehicle->condition < 0.0f || vehicle->condition > 1.0f ||
+            vehicleType > 2 || !Finite(vehicle->heading)) {
+            SetError(error, "澶嶅埗 Vehicle 璐熻浇闈炴硶");
+            return false;
+        }
+        const auto* driver = registry.try_get<ecs::VehicleDriver>(entity);
+        const auto* passenger = registry.try_get<ecs::VehiclePassenger>(entity);
+        std::vector<std::uint8_t> bytes;
+        PutF32(bytes, vehicle->fuel);
+        PutF32(bytes, vehicle->condition);
+        PutU64(bytes, driver != nullptr ? driver->stableId : 0);
+        PutU64(bytes, passenger != nullptr ? passenger->stableId : 0);
+        PutU64(bytes,
+               passenger != nullptr ? passenger->secondStableId : 0);
+        const std::uint8_t flags =
+            static_cast<std::uint8_t>((vehicle->headlights ? 1u : 0u) |
+                                      (vehicleType << 1));
+        PutU8(bytes, flags);
+        PutF32(bytes, std::remainder(vehicle->heading,
+                                     6.283185307179586f));
+        components->push_back(
+            MakeComponent(kReplicationVehicle, std::move(bytes)));
+    }
+
+    if (const auto* plot = registry.try_get<ecs::FarmPlot>(entity);
+        plot != nullptr) {
+        if (plot->cropId.size() > 64 || !Finite(plot->growthMinutes) ||
+            !Finite(plot->waterMinutes) || !Finite(plot->dryMinutes) ||
+            !Finite(plot->growMinutes) || plot->growthMinutes < 0.0f ||
+            plot->waterMinutes < 0.0f || plot->dryMinutes < 0.0f ||
+            plot->growMinutes <= 0.0f ||
+            static_cast<std::uint8_t>(plot->stage) >
+                static_cast<std::uint8_t>(ecs::CropStage::Withered) ||
+            plot->harvestYield < 0 || plot->harvestYield > 9999) {
+            SetError(error, "复制 FarmPlot 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU16(bytes, static_cast<std::uint16_t>(plot->cropId.size()));
+        bytes.insert(bytes.end(), plot->cropId.begin(), plot->cropId.end());
+        PutF32(bytes, plot->growthMinutes);
+        PutF32(bytes, plot->waterMinutes);
+        PutF32(bytes, plot->dryMinutes);
+        PutF32(bytes, plot->growMinutes);
+        PutU8(bytes, static_cast<std::uint8_t>(plot->stage));
+        PutI32(bytes, plot->harvestYield);
+        std::uint8_t flags = 0;
+        if (plot->diseased) {
+            flags |= 1u << 0;
+        }
+        if (plot->fertilized) {
+            flags |= 1u << 1;
+        }
+        PutU8(bytes, flags);
+        components->push_back(
+            MakeComponent(kReplicationFarmPlot, std::move(bytes)));
+    }
+
+    if (const auto* generator = registry.try_get<ecs::Generator>(entity);
+        generator != nullptr) {
+        if (!Finite(generator->fuelMinutes) ||
+            !Finite(generator->radius) || !Finite(generator->load) ||
+            generator->fuelMinutes < 0.0f || generator->radius <= 0.0f ||
+            generator->fuelMinutes > 1.0e7f || generator->radius > 1.0e5f ||
+            generator->load < 0.0f || generator->load > 1.0e6f) {
+            SetError(error, "复制 Generator 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutF32(bytes, generator->fuelMinutes);
+        PutF32(bytes, generator->radius);
+        PutU8(bytes, generator->running ? 1u : 0u);
+        PutF32(bytes, generator->load);
+        components->push_back(
+            MakeComponent(kReplicationGenerator, std::move(bytes)));
+    }
+
+    if (const auto* storage = registry.try_get<ecs::ColdStorage>(entity);
+        storage != nullptr) {
+        components->push_back(MakeComponent(
+            kReplicationColdStorage,
+            {static_cast<std::uint8_t>(storage->powered ? 1u : 0u)}));
+    }
+
+    if (const auto* floodlight = registry.try_get<ecs::Floodlight>(entity);
+        floodlight != nullptr) {
+        components->push_back(MakeComponent(
+            kReplicationFloodlight,
+            {static_cast<std::uint8_t>(floodlight->on ? 1u : 0u),
+             static_cast<std::uint8_t>(floodlight->powered ? 1u : 0u)}));
+    }
+
+    if (const auto* trap = registry.try_get<ecs::SpikeTrap>(entity);
+        trap != nullptr) {
+        if (!Finite(trap->cooldown) || !Finite(trap->cooldownSeconds) ||
+            !Finite(trap->damage) || !Finite(trap->radius) ||
+            !Finite(trap->staggerSeconds) || trap->cooldown < 0.0f ||
+            trap->cooldownSeconds <= 0.0f || trap->damage < 0.0f ||
+            trap->radius <= 0.0f || trap->staggerSeconds < 0.0f ||
+            trap->uses < 0 || trap->uses > 9999) {
+            SetError(error, "复制 SpikeTrap 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU8(bytes, trap->armed ? 1u : 0u);
+        PutF32(bytes, trap->cooldown);
+        PutF32(bytes, trap->cooldownSeconds);
+        PutF32(bytes, trap->damage);
+        PutF32(bytes, trap->radius);
+        PutF32(bytes, trap->staggerSeconds);
+        PutI32(bytes, trap->uses);
+        components->push_back(MakeComponent(kReplicationTrap, std::move(bytes)));
+    }
+
+    if (const auto* merchant = registry.try_get<ecs::MerchantStock>(entity);
+        merchant != nullptr) {
+        if (merchant->restockDay < 0 || merchant->restockDay > 1000000) {
+            SetError(error, "复制 MerchantStock 负载非法");
+            return false;
+        }
+        for (const int count : merchant->stock) {
+            if (count < 0 || count > 9999) {
+                SetError(error, "复制 MerchantStock 负载非法");
+                return false;
+            }
+        }
+        std::vector<std::uint8_t> bytes;
+        for (const int count : merchant->stock) {
+            PutI32(bytes, count);
+        }
+        PutI32(bytes, merchant->restockDay);
+        components->push_back(
+            MakeComponent(kReplicationMerchant, std::move(bytes)));
+    }
+
+    if (const auto* npc = registry.try_get<SettlementNpc>(entity);
+        npc != nullptr) {
+        if (npc->settlementId.empty() ||
+            npc->settlementId.size() > kMaxSettlementStateIdBytes ||
+            static_cast<std::uint8_t>(npc->kind) >
+                static_cast<std::uint8_t>(SettlementNpcKind::Requester) ||
+            static_cast<std::uint8_t>(npc->activity) >
+                static_cast<std::uint8_t>(NpcActivity::Defend) ||
+            !Finite(npc->homeX) || !Finite(npc->homeY) ||
+            !Finite(npc->wanderRadius) || npc->wanderRadius < 0.0f ||
+            npc->wanderRadius > 16.0f) {
+            SetError(error, "复制 SettlementNpc 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU16(bytes, static_cast<std::uint16_t>(npc->settlementId.size()));
+        bytes.insert(bytes.end(), npc->settlementId.begin(),
+                     npc->settlementId.end());
+        PutU8(bytes, static_cast<std::uint8_t>(npc->kind));
+        PutU8(bytes, static_cast<std::uint8_t>(npc->activity));
+        PutF32(bytes, npc->homeX);
+        PutF32(bytes, npc->homeY);
+        PutF32(bytes, npc->wanderRadius);
+        components->push_back(
+            MakeComponent(kReplicationSettlementNpc, std::move(bytes)));
+    }
+
+    if (const auto* loot = registry.try_get<ecs::LootContainer>(entity);
+        loot != nullptr) {
+        const auto* container = registry.try_get<ecs::Container>(entity);
+        if (container == nullptr || loot->tableId.empty() ||
+            loot->tableId.size() > 128 || !Finite(container->capacityKg) ||
+            container->capacityKg <= 0.0f ||
+            container->items.size() > kMaxLootReplicationItems) {
+            SetError(error, "复制 LootContainer 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU16(bytes, static_cast<std::uint16_t>(loot->tableId.size()));
+        bytes.insert(bytes.end(), loot->tableId.begin(), loot->tableId.end());
+        PutU8(bytes, loot->searched ? 1u : 0u);
+        PutF32(bytes, container->capacityKg);
+        PutU16(bytes, static_cast<std::uint16_t>(container->items.size()));
+        for (const ecs::ItemInstance& item : container->items) {
+            if (!item.Valid() || item.defId.size() > 128 || item.count > 9999 ||
+                !Finite(item.condition) || item.condition < 0.0f ||
+                item.condition > 1.0f) {
+                SetError(error, "复制 LootContainer 物品状态非法");
+                return false;
+            }
+            PutU16(bytes, static_cast<std::uint16_t>(item.defId.size()));
+            bytes.insert(bytes.end(), item.defId.begin(), item.defId.end());
+            PutU16(bytes, static_cast<std::uint16_t>(item.count));
+            PutF32(bytes, item.condition);
+        }
+        if (bytes.size() > net::kMaxReplicationComponentBytes) {
+            SetError(error, "复制 LootContainer 负载超过上限");
+            return false;
+        }
+        components->push_back(MakeComponent(kReplicationLoot, std::move(bytes)));
+    }
+
+    if (const auto* animal = registry.try_get<ecs::Animal>(entity);
+        animal != nullptr) {
+        if (animal->speciesId.empty() ||
+            animal->speciesId.size() > kMaxReplicationAnimalSpeciesBytes ||
+            static_cast<std::uint8_t>(animal->kind) >
+                static_cast<std::uint8_t>(ecs::AnimalKind::Dangerous)) {
+            SetError(error, "复制 Animal 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU16(bytes, static_cast<std::uint16_t>(animal->speciesId.size()));
+        bytes.insert(bytes.end(), animal->speciesId.begin(),
+                     animal->speciesId.end());
+        PutU8(bytes, static_cast<std::uint8_t>(animal->kind));
+        components->push_back(MakeComponent(kReplicationAnimal, std::move(bytes)));
+    }
+
+    if (const auto* corpse = registry.try_get<ecs::AnimalCorpse>(entity);
+        corpse != nullptr) {
+        if (corpse->speciesId.empty() ||
+            corpse->speciesId.size() > kMaxReplicationAnimalSpeciesBytes) {
+            SetError(error, "复制 AnimalCorpse 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU16(bytes, static_cast<std::uint16_t>(corpse->speciesId.size()));
+        bytes.insert(bytes.end(), corpse->speciesId.begin(),
+                     corpse->speciesId.end());
+        PutU8(bytes, corpse->harvested ? 1u : 0u);
+        components->push_back(
+            MakeComponent(kReplicationAnimalCorpse, std::move(bytes)));
+    }
+
+    if (const auto* source = registry.try_get<ecs::FireSource>(entity);
+        source != nullptr) {
+        const auto* anchor = registry.try_get<ecs::FireAnchor>(entity);
+        if (anchor == nullptr || !ValidFireSource(*source)) {
+            SetError(error, "复制 FireSource 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutI32(bytes, anchor->x);
+        PutI32(bytes, anchor->y);
+        PutI32(bytes, anchor->z);
+        PutU16(bytes, static_cast<std::uint16_t>(source->materialId.size()));
+        bytes.insert(bytes.end(), source->materialId.begin(),
+                     source->materialId.end());
+        PutU8(bytes, static_cast<std::uint8_t>(source->phase));
+        PutF32(bytes, source->ignitionProgress);
+        PutF32(bytes, source->ignitionDuration);
+        PutF32(bytes, source->burnRemaining);
+        PutF32(bytes, source->burnDuration);
+        PutF32(bytes, source->smokePerSecond);
+        PutF32(bytes, source->heatRadius);
+        PutF32(bytes, source->smolderElapsed);
+        PutF32(bytes, source->spreadAccumulator);
+        components->push_back(MakeComponent(kReplicationFire, std::move(bytes)));
+    }
+
+    if (const auto* burning = registry.try_get<ecs::BurningZombie>(entity);
+        burning != nullptr) {
+        if (!ValidBurningZombie(*burning)) {
+            SetError(error, "复制 BurningZombie 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutF32(bytes, burning->remaining);
+        PutF32(bytes, burning->damageAccumulator);
+        PutF32(bytes, burning->spreadAccumulator);
+        PutF32(bytes, burning->panicRemaining);
+        PutF32(bytes, burning->panicSpeedScale);
+        PutF32(bytes, burning->panicChaseRadius);
+        components->push_back(
+            MakeComponent(kReplicationBurning, std::move(bytes)));
+    }
+
     if (const auto* action = registry.try_get<ecs::ActionState>(entity);
         action != nullptr) {
         if (static_cast<std::uint8_t>(action->action) >
-                static_cast<std::uint8_t>(ecs::ActorAction::Dead) ||
+                static_cast<std::uint8_t>(ecs::ActorAction::Howling) ||
             !Finite(action->elapsed) || !Finite(action->duration) ||
             action->elapsed < 0.0f || action->duration < 0.0f ||
             action->duration > 3600.0f ||
@@ -265,7 +785,7 @@ bool CaptureComponents(entt::registry& registry, entt::entity entity,
     if (const auto* variant = registry.try_get<ecs::ZombieVariant>(entity);
         variant != nullptr) {
         if (static_cast<std::uint8_t>(variant->kind) >
-                static_cast<std::uint8_t>(ecs::ZombieVariantKind::Strong) ||
+                static_cast<std::uint8_t>(ecs::ZombieVariantKind::Armored) ||
             !Finite(variant->speedScale) || variant->speedScale < 0.25f ||
             variant->speedScale > 4.0f || !Finite(variant->damageScale) ||
             variant->damageScale < 0.25f || variant->damageScale > 4.0f ||
@@ -280,6 +800,73 @@ bool CaptureComponents(entt::registry& registry, entt::entity entity,
         PutF32(bytes, variant->damageScale);
         PutF32(bytes, variant->visualScale);
         components->push_back(MakeComponent(kReplicationVariant, std::move(bytes)));
+    }
+
+    if (const auto* special = registry.try_get<ecs::ZombieSpecial>(entity);
+        special != nullptr) {
+        if (!ValidZombieSpecial(*special)) {
+            SetError(error, "复制 ZombieSpecial 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU8(bytes, static_cast<std::uint8_t>(special->kind));
+        PutF32(bytes, special->cooldown);
+        PutF32(bytes, special->windup);
+        PutF32(bytes, special->windupDuration);
+        PutU32(bytes, special->serial);
+        components->push_back(MakeComponent(kReplicationSpecial, std::move(bytes)));
+    }
+
+    if (const auto* wounds = registry.try_get<ecs::Wounds>(entity); wounds != nullptr) {
+        if (!ValidWounds(*wounds)) {
+            SetError(error, "复制实体伤口状态非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU8(bytes, wounds->count);
+        for (std::uint8_t i = 0; i < wounds->count; ++i) {
+            const ecs::WoundEntry& entry = wounds->entries[i];
+            PutU8(bytes, static_cast<std::uint8_t>(entry.source));
+            PutF32(bytes, entry.severity);
+            PutF32(bytes, entry.bleedRate);
+            PutF32(bytes, entry.bleedRemaining);
+            PutF32(bytes, entry.bleedDuration);
+            PutU8(bytes, entry.bandaged ? 1u : 0u);
+        }
+        components->push_back(MakeComponent(kReplicationWounds, std::move(bytes)));
+    }
+
+    if (const auto* pain = registry.try_get<ecs::Pain>(entity); pain != nullptr) {
+        if (!ValidPain(*pain)) {
+            SetError(error, "复制实体疼痛状态非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutF32(bytes, pain->baseLevel);
+        PutF32(bytes, pain->level);
+        PutF32(bytes, pain->moveScale);
+        PutF32(bytes, pain->attackCooldownScale);
+        PutF32(bytes, pain->reliefStrength);
+        PutF32(bytes, pain->reliefRemaining);
+        PutF32(bytes, pain->reliefDuration);
+        components->push_back(MakeComponent(kReplicationPain, std::move(bytes)));
+    }
+
+    if (const auto* infection = registry.try_get<ecs::Infection>(entity);
+        infection != nullptr) {
+        if (!ValidInfection(*infection)) {
+            SetError(error, "复制实体感染状态非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU8(bytes, static_cast<std::uint8_t>(infection->stage));
+        PutF32(bytes, infection->progress);
+        PutF32(bytes, infection->slowStrength);
+        PutF32(bytes, infection->slowRemaining);
+        PutF32(bytes, infection->slowDuration);
+        PutF32(bytes, infection->timeToNextStage);
+        components->push_back(
+            MakeComponent(kReplicationInfection, std::move(bytes)));
     }
 
     std::sort(components->begin(), components->end(),
@@ -367,7 +954,84 @@ bool RegisterEntityReplicationComponents(net::ReplicationRegistry& registry,
                            kReplicationComponentVersion, error)) {
         return false;
     }
-    return registry.Register(kReplicationVariant, "ZombieVariant", 13,
+    if (!registry.Register(kReplicationCombatStance, "CombatStance", 25,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationVariant, "ZombieVariant", 13,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationSpecial, "ZombieSpecial", 17,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationWounds, "Wounds", 73,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationPain, "Pain", 28,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationInfection, "Infection", 21,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationStorage, "PlayerStorage", 900,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationVehicle, "Vehicle", 40,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationFarmPlot, "FarmPlot", 96,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationGenerator, "Generator", 20,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationColdStorage, "ColdStorage", 1,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationFloodlight, "Floodlight", 2,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationTrap, "SpikeTrap", 32,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationMerchant, "MerchantStock", 24,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationSettlementNpc, "SettlementNpc", 80,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationFire, "FireSource", 128,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationBurning, "BurningZombie", 24,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationAnimal, "Animal", 67,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationAnimalCorpse, "AnimalCorpse", 67,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    return registry.Register(kReplicationLoot, "LootContainer",
+                             net::kMaxReplicationComponentBytes,
                              kReplicationComponentVersion, error);
 }
 
@@ -415,17 +1079,38 @@ bool EntityReplicationProducer::Capture(
     const float radiusSq = m_options.aoiRadius * m_options.aoiRadius;
     std::string failure;
 
-    registry.view<ecs::StableId, ecs::Position, ecs::SpriteRef>().each(
+    registry.view<ecs::StableId, ecs::Position>().each(
         [&](const entt::entity entity, const ecs::StableId& stableId,
-            const ecs::Position& position, const ecs::SpriteRef&) {
+            const ecs::Position& position) {
             if (!failure.empty()) {
                 return;
             }
             const bool player = registry.all_of<ecs::PlayerTag>(entity);
+            const bool settlementNpc =
+                registry.all_of<SettlementNpc>(entity);
             const bool item = registry.all_of<ecs::ItemInstance>(entity);
             const bool effect = registry.all_of<ecs::TransientEffect>(entity);
             const bool projectile = registry.all_of<ecs::Projectile>(entity);
-            if (!player && !item && !effect && !projectile &&
+            const bool fire = registry.all_of<ecs::FireSource>(entity);
+            if (fire && !registry.all_of<ecs::FireAnchor>(entity)) {
+                return;
+            }
+            const bool animal = registry.all_of<ecs::Animal>(entity);
+            const bool animalCorpse =
+                registry.all_of<ecs::AnimalCorpse>(entity);
+            const bool vehicle = registry.all_of<ecs::Vehicle>(entity);
+            const bool prop =
+                registry.all_of<ecs::PlayerStorage>(entity) ||
+                registry.all_of<ecs::FarmPlot>(entity) ||
+                registry.all_of<ecs::Generator>(entity) ||
+                registry.all_of<ecs::ColdStorage>(entity) ||
+                registry.all_of<ecs::Floodlight>(entity) ||
+                registry.all_of<ecs::SpikeTrap>(entity) ||
+                registry.all_of<ecs::MerchantStock>(entity) ||
+                registry.all_of<ecs::LootContainer>(entity) ||
+                vehicle || animalCorpse || fire;
+            if (!player && !item && !effect && !projectile && !prop &&
+                !animal && !settlementNpc &&
                 !registry.all_of<ecs::Health>(entity)) {
                 return;
             }
@@ -443,6 +1128,7 @@ bool EntityReplicationProducer::Capture(
             replicated.stableId = stableId.id;
             replicated.archetype =
                 player       ? kReplicationArchetypePlayer
+                : prop       ? kReplicationArchetypeProp
                 : item       ? kReplicationArchetypeItem
                 : projectile ? kReplicationArchetypeProjectile
                 : effect     ? kReplicationArchetypeEffect
@@ -457,8 +1143,12 @@ bool EntityReplicationProducer::Capture(
                 owner != nullptr) {
                 replicated.ownerStableId = owner->stableId;
             }
-            if (!CaptureComponents(registry, entity, &replicated.components,
-                                   &failure)) {
+            if (const auto* owner = registry.try_get<ecs::StructureOwner>(entity);
+                owner != nullptr) {
+                replicated.ownerStableId = owner->ownerStableId;
+            }
+            if (!CaptureComponents(registry, entity, m_options.viewerStableId,
+                                   &replicated.components, &failure)) {
                 return;
             }
             candidates.push_back(Candidate{std::move(replicated), distanceSq});
@@ -754,7 +1444,7 @@ bool EntityReplicationClient::DecodePatch(const net::ReplicatedEntity& entity,
             std::uint8_t action = 0;
             if (!reader.U8(&action) || !reader.F32(&decoded.action.elapsed) ||
                 !reader.F32(&decoded.action.duration) || !reader.AtEnd() ||
-                action > static_cast<std::uint8_t>(ecs::ActorAction::Dead) ||
+                action > static_cast<std::uint8_t>(ecs::ActorAction::Howling) ||
                 !Finite(decoded.action.elapsed) ||
                 !Finite(decoded.action.duration) ||
                 decoded.action.elapsed < 0.0f ||
@@ -766,12 +1456,29 @@ bool EntityReplicationClient::DecodePatch(const net::ReplicatedEntity& entity,
             }
             decoded.action.action = static_cast<ecs::ActorAction>(action);
             decoded.hasAction = true;
+        } else if (component.type == kReplicationCombatStance) {
+            ecs::CombatStance stance;
+            std::uint8_t blocking = 0;
+            if (!reader.U8(&blocking) || blocking > 1 ||
+                !reader.F32(&stance.blockElapsed) ||
+                !reader.F32(&stance.guardBreakLeft) ||
+                !reader.F32(&stance.dodgeLeft) ||
+                !reader.F32(&stance.dodgeInvulnLeft) ||
+                !reader.F32(&stance.dodgeDirX) ||
+                !reader.F32(&stance.dodgeDirY) || !reader.AtEnd() ||
+                !ValidCombatStance(stance)) {
+                SetError(error, "复制 CombatStance 负载非法");
+                return false;
+            }
+            stance.blocking = blocking != 0;
+            decoded.combatStance = stance;
+            decoded.hasCombatStance = true;
         } else if (component.type == kReplicationVariant) {
             std::uint8_t kind = 0;
             if (!reader.U8(&kind) || !reader.F32(&decoded.variant.speedScale) ||
                 !reader.F32(&decoded.variant.damageScale) ||
                 !reader.F32(&decoded.variant.visualScale) || !reader.AtEnd() ||
-                kind > static_cast<std::uint8_t>(ecs::ZombieVariantKind::Strong) ||
+                kind > static_cast<std::uint8_t>(ecs::ZombieVariantKind::Armored) ||
                 !Finite(decoded.variant.speedScale) ||
                 decoded.variant.speedScale < 0.25f ||
                 decoded.variant.speedScale > 4.0f ||
@@ -786,6 +1493,384 @@ bool EntityReplicationClient::DecodePatch(const net::ReplicatedEntity& entity,
             }
             decoded.variant.kind = static_cast<ecs::ZombieVariantKind>(kind);
             decoded.hasVariant = true;
+        } else if (component.type == kReplicationSpecial) {
+            std::uint8_t kind = 0;
+            ecs::ZombieSpecial loaded;
+            if (!reader.U8(&kind) || !reader.F32(&loaded.cooldown) ||
+                !reader.F32(&loaded.windup) ||
+                !reader.F32(&loaded.windupDuration) ||
+                !reader.U32(&loaded.serial) || !reader.AtEnd() ||
+                kind > static_cast<std::uint8_t>(
+                           ecs::ZombieSpecialKind::Breaker) ||
+                !ValidZombieSpecial(loaded)) {
+                SetError(error, "复制 ZombieSpecial 负载非法");
+                return false;
+            }
+            loaded.kind = static_cast<ecs::ZombieSpecialKind>(kind);
+            decoded.special = loaded;
+            decoded.hasSpecial = true;
+        } else if (component.type == kReplicationWounds) {
+            std::uint8_t count = 0;
+            if (!reader.U8(&count) || count > ecs::kMaxWounds) {
+                SetError(error, "复制 Wounds 负载非法");
+                return false;
+            }
+            ecs::Wounds loaded;
+            loaded.count = count;
+            for (std::uint8_t i = 0; i < count; ++i) {
+                std::uint8_t source = 0;
+                std::uint8_t bandaged = 0;
+                ecs::WoundEntry& entry = loaded.entries[i];
+                if (!reader.U8(&source) || !reader.F32(&entry.severity) ||
+                    !reader.F32(&entry.bleedRate) ||
+                    !reader.F32(&entry.bleedRemaining) ||
+                    !reader.F32(&entry.bleedDuration) || !reader.U8(&bandaged) ||
+                    bandaged > 1) {
+                    SetError(error, "复制 Wounds 负载非法");
+                    return false;
+                }
+                entry.source = static_cast<ecs::DamageType>(source);
+                entry.bandaged = bandaged != 0;
+            }
+            if (!reader.AtEnd() || !ValidWounds(loaded)) {
+                SetError(error, "复制 Wounds 负载非法");
+                return false;
+            }
+            decoded.wounds = loaded;
+            decoded.hasWounds = true;
+        } else if (component.type == kReplicationPain) {
+            ecs::Pain loaded;
+            if (!reader.F32(&loaded.baseLevel) || !reader.F32(&loaded.level) ||
+                !reader.F32(&loaded.moveScale) ||
+                !reader.F32(&loaded.attackCooldownScale) ||
+                !reader.F32(&loaded.reliefStrength) ||
+                !reader.F32(&loaded.reliefRemaining) ||
+                !reader.F32(&loaded.reliefDuration) || !reader.AtEnd() ||
+                !ValidPain(loaded)) {
+                SetError(error, "复制 Pain 负载非法");
+                return false;
+            }
+            decoded.pain = loaded;
+            decoded.hasPain = true;
+        } else if (component.type == kReplicationInfection) {
+            std::uint8_t stage = 0;
+            ecs::Infection loaded;
+            if (!reader.U8(&stage) || !reader.F32(&loaded.progress) ||
+                !reader.F32(&loaded.slowStrength) ||
+                !reader.F32(&loaded.slowRemaining) ||
+                !reader.F32(&loaded.slowDuration) ||
+                !reader.F32(&loaded.timeToNextStage) || !reader.AtEnd() ||
+                stage > static_cast<std::uint8_t>(ecs::InfectionStage::Severe)) {
+                SetError(error, "复制 Infection 负载非法");
+                return false;
+            }
+            loaded.stage = static_cast<ecs::InfectionStage>(stage);
+            if (!ValidInfection(loaded)) {
+                SetError(error, "复制 Infection 负载非法");
+                return false;
+            }
+            decoded.infection = loaded;
+            decoded.hasInfection = true;
+        } else if (component.type == kReplicationStorage) {
+            std::uint8_t maxStacks = 0;
+            std::uint16_t itemCount = 0;
+            ecs::Container container;
+            if (!reader.U8(&maxStacks) || maxStacks < 1 || maxStacks > 6 ||
+                !reader.F32(&container.capacityKg) ||
+                !Finite(container.capacityKg) ||
+                container.capacityKg <= 0.0f ||
+                !reader.U16(&itemCount) ||
+                itemCount > static_cast<std::uint16_t>(maxStacks)) {
+                SetError(error, "复制 PlayerStorage 负载非法");
+                return false;
+            }
+            container.items.reserve(itemCount);
+            for (std::uint16_t i = 0; i < itemCount; ++i) {
+                ecs::ItemInstance item;
+                std::uint16_t count = 0;
+                if (!reader.String(&item.defId, 128) ||
+                    !reader.U16(&count) || !reader.F32(&item.condition) ||
+                    count == 0 || count > 9999 ||
+                    !Finite(item.condition) || item.condition < 0.0f ||
+                    item.condition > 1.0f) {
+                    SetError(error, "复制 PlayerStorage 物品状态非法");
+                    return false;
+                }
+                item.count = static_cast<int>(count);
+                container.items.push_back(std::move(item));
+            }
+            if (!reader.AtEnd()) {
+                SetError(error, "复制 PlayerStorage 负载非法");
+                return false;
+            }
+            decoded.storage.maxStacks = static_cast<int>(maxStacks);
+            decoded.storageContainer = std::move(container);
+            decoded.hasStorage = true;
+        } else if (component.type == kReplicationVehicle) {
+            std::uint8_t flags = 0;
+            if (!reader.F32(&decoded.vehicle.fuel) ||
+                !reader.F32(&decoded.vehicle.condition) ||
+                !reader.U64(&decoded.vehicleDriverStableId) ||
+                !reader.U64(&decoded.vehiclePassengerStableId) ||
+                !reader.U64(&decoded.vehicleSecondPassengerStableId) ||
+                !reader.U8(&flags) ||
+                !reader.F32(&decoded.vehicle.heading) || !reader.AtEnd() ||
+                (flags & ~0x07u) != 0 ||
+                ((flags >> 1) & 0x03u) > 2 ||
+                !Finite(decoded.vehicle.fuel) ||
+                decoded.vehicle.fuel < 0.0f || decoded.vehicle.fuel > 1.0f ||
+                !Finite(decoded.vehicle.condition) ||
+                decoded.vehicle.condition < 0.0f ||
+                decoded.vehicle.condition > 1.0f ||
+                !Finite(decoded.vehicle.heading) ||
+                (decoded.vehicleDriverStableId != 0 &&
+                 (decoded.vehicleDriverStableId ==
+                      decoded.vehiclePassengerStableId ||
+                  decoded.vehicleDriverStableId ==
+                      decoded.vehicleSecondPassengerStableId)) ||
+                (decoded.vehiclePassengerStableId != 0 &&
+                 decoded.vehiclePassengerStableId ==
+                     decoded.vehicleSecondPassengerStableId) ||
+                (decoded.vehiclePassengerStableId == 0 &&
+                 decoded.vehicleSecondPassengerStableId != 0)) {
+                SetError(error, "复制 Vehicle 负载非法");
+                return false;
+            }
+            decoded.vehicle.headlights = (flags & 0x01u) != 0;
+            decoded.vehicle.type =
+                static_cast<ecs::VehicleType>((flags >> 1) & 0x03u);
+            decoded.vehicle.heading = std::remainder(
+                decoded.vehicle.heading, 6.283185307179586f);
+            decoded.hasVehicle = true;
+        } else if (component.type == kReplicationFarmPlot) {
+            ecs::FarmPlot loaded;
+            std::uint8_t stage = 0;
+            std::uint8_t flags = 0;
+            if (!reader.String(&loaded.cropId, 64, true) ||
+                !reader.F32(&loaded.growthMinutes) ||
+                !reader.F32(&loaded.waterMinutes) ||
+                !reader.F32(&loaded.dryMinutes) ||
+                !reader.F32(&loaded.growMinutes) ||
+                !reader.U8(&stage) || !reader.I32(&loaded.harvestYield) ||
+                !reader.U8(&flags) || (flags & ~0x03u) != 0 ||
+                !reader.AtEnd() || !Finite(loaded.growthMinutes) ||
+                !Finite(loaded.waterMinutes) || !Finite(loaded.dryMinutes) ||
+                !Finite(loaded.growMinutes) || loaded.growthMinutes < 0.0f ||
+                loaded.waterMinutes < 0.0f || loaded.dryMinutes < 0.0f ||
+                loaded.growMinutes <= 0.0f ||
+                stage > static_cast<std::uint8_t>(ecs::CropStage::Withered) ||
+                loaded.harvestYield < 0 || loaded.harvestYield > 9999) {
+                SetError(error, "复制 FarmPlot 负载非法");
+                return false;
+            }
+            loaded.stage = static_cast<ecs::CropStage>(stage);
+            loaded.diseased = (flags & 0x01u) != 0;
+            loaded.fertilized = (flags & 0x02u) != 0;
+            decoded.farmPlot = std::move(loaded);
+            decoded.hasFarmPlot = true;
+        } else if (component.type == kReplicationGenerator) {
+            std::uint8_t running = 0;
+            if (!reader.F32(&decoded.generator.fuelMinutes) ||
+                !reader.F32(&decoded.generator.radius) ||
+                !reader.U8(&running) || running > 1 ||
+                !reader.F32(&decoded.generator.load) || !reader.AtEnd() ||
+                !Finite(decoded.generator.fuelMinutes) ||
+                !Finite(decoded.generator.radius) ||
+                !Finite(decoded.generator.load) ||
+                decoded.generator.fuelMinutes < 0.0f ||
+                decoded.generator.fuelMinutes > 1.0e7f ||
+                decoded.generator.radius <= 0.0f ||
+                decoded.generator.radius > 1.0e5f ||
+                decoded.generator.load < 0.0f ||
+                decoded.generator.load > 1.0e6f) {
+                SetError(error, "复制 Generator 负载非法");
+                return false;
+            }
+            decoded.generator.running = running != 0;
+            decoded.hasGenerator = true;
+        } else if (component.type == kReplicationColdStorage) {
+            std::uint8_t powered = 0;
+            if (!reader.U8(&powered) || powered > 1 || !reader.AtEnd()) {
+                SetError(error, "复制 ColdStorage 负载非法");
+                return false;
+            }
+            decoded.coldStorage.powered = powered != 0;
+            decoded.hasColdStorage = true;
+        } else if (component.type == kReplicationFloodlight) {
+            std::uint8_t on = 0;
+            std::uint8_t powered = 0;
+            if (!reader.U8(&on) || on > 1 || !reader.U8(&powered) ||
+                powered > 1 || !reader.AtEnd()) {
+                SetError(error, "复制 Floodlight 负载非法");
+                return false;
+            }
+            decoded.floodlight.on = on != 0;
+            decoded.floodlight.powered = powered != 0;
+            decoded.hasFloodlight = true;
+        } else if (component.type == kReplicationTrap) {
+            std::uint8_t armed = 0;
+            if (!reader.U8(&armed) || armed > 1 ||
+                !reader.F32(&decoded.trap.cooldown) ||
+                !reader.F32(&decoded.trap.cooldownSeconds) ||
+                !reader.F32(&decoded.trap.damage) ||
+                !reader.F32(&decoded.trap.radius) ||
+                !reader.F32(&decoded.trap.staggerSeconds) ||
+                !reader.I32(&decoded.trap.uses) || !reader.AtEnd() ||
+                !Finite(decoded.trap.cooldown) ||
+                !Finite(decoded.trap.cooldownSeconds) ||
+                !Finite(decoded.trap.damage) ||
+                !Finite(decoded.trap.radius) ||
+                !Finite(decoded.trap.staggerSeconds) ||
+                decoded.trap.cooldown < 0.0f ||
+                decoded.trap.cooldownSeconds <= 0.0f ||
+                decoded.trap.damage < 0.0f || decoded.trap.radius <= 0.0f ||
+                decoded.trap.staggerSeconds < 0.0f ||
+                decoded.trap.uses < 0 || decoded.trap.uses > 9999) {
+                SetError(error, "复制 SpikeTrap 负载非法");
+                return false;
+            }
+            decoded.trap.armed = armed != 0;
+            decoded.hasTrap = true;
+        } else if (component.type == kReplicationMerchant) {
+            ecs::MerchantStock loaded;
+            for (int& count : loaded.stock) {
+                if (!reader.I32(&count) || count < 0 || count > 9999) {
+                    SetError(error, "复制 MerchantStock 负载非法");
+                    return false;
+                }
+            }
+            if (!reader.I32(&loaded.restockDay) ||
+                loaded.restockDay < 0 || loaded.restockDay > 1000000 ||
+                !reader.AtEnd()) {
+                SetError(error, "复制 MerchantStock 负载非法");
+                return false;
+            }
+            decoded.merchantStock = loaded;
+            decoded.hasMerchantStock = true;
+        } else if (component.type == kReplicationSettlementNpc) {
+            SettlementNpc npc;
+            std::uint8_t kind = 0;
+            std::uint8_t activity = 0;
+            if (!reader.String(&npc.settlementId,
+                               kMaxSettlementStateIdBytes, false) ||
+                !reader.U8(&kind) || kind > 2 || !reader.U8(&activity) ||
+                activity > static_cast<std::uint8_t>(NpcActivity::Defend) ||
+                !reader.F32(&npc.homeX) || !reader.F32(&npc.homeY) ||
+                !reader.F32(&npc.wanderRadius) ||
+                !Finite(npc.homeX) || !Finite(npc.homeY) ||
+                !Finite(npc.wanderRadius) || npc.wanderRadius < 0.0f ||
+                npc.wanderRadius > 16.0f || !reader.AtEnd()) {
+                SetError(error, "复制 SettlementNpc 负载非法");
+                return false;
+            }
+            npc.kind = static_cast<SettlementNpcKind>(kind);
+            npc.activity = static_cast<NpcActivity>(activity);
+            decoded.settlementNpc = std::move(npc);
+            decoded.hasSettlementNpc = true;
+        } else if (component.type == kReplicationAnimal) {
+            std::uint8_t kind = 0;
+            if (!reader.String(&decoded.animal.speciesId,
+                               kMaxReplicationAnimalSpeciesBytes, false) ||
+                !reader.U8(&kind) || !reader.AtEnd() ||
+                kind > static_cast<std::uint8_t>(ecs::AnimalKind::Dangerous)) {
+                SetError(error, "复制 Animal 负载非法");
+                return false;
+            }
+            decoded.animal.kind = static_cast<ecs::AnimalKind>(kind);
+            decoded.hasAnimal = true;
+        } else if (component.type == kReplicationAnimalCorpse) {
+            std::uint8_t harvested = 0;
+            if (!reader.String(&decoded.animalCorpse.speciesId,
+                               kMaxReplicationAnimalSpeciesBytes, false) ||
+                !reader.U8(&harvested) || harvested > 1 || !reader.AtEnd()) {
+                SetError(error, "复制 AnimalCorpse 负载非法");
+                return false;
+            }
+            decoded.animalCorpse.harvested = harvested != 0;
+            decoded.hasAnimalCorpse = true;
+        } else if (component.type == kReplicationLoot) {
+            ecs::LootContainer loot;
+            ecs::Container container;
+            std::uint8_t searched = 0;
+            std::uint16_t itemCount = 0;
+            if (!reader.String(&loot.tableId, 128, false) ||
+                !reader.U8(&searched) || searched > 1 ||
+                !reader.F32(&container.capacityKg) ||
+                !Finite(container.capacityKg) ||
+                container.capacityKg <= 0.0f ||
+                !reader.U16(&itemCount) || itemCount > kMaxLootReplicationItems) {
+                SetError(error, "复制 LootContainer 负载非法");
+                return false;
+            }
+            container.items.reserve(itemCount);
+            for (std::uint16_t i = 0; i < itemCount; ++i) {
+                ecs::ItemInstance item;
+                std::uint16_t count = 0;
+                if (!reader.String(&item.defId, 128, false) ||
+                    !reader.U16(&count) || count == 0 || count > 9999 ||
+                    !reader.F32(&item.condition) ||
+                    !Finite(item.condition) || item.condition < 0.0f ||
+                    item.condition > 1.0f) {
+                    SetError(error, "复制 LootContainer 物品状态非法");
+                    return false;
+                }
+                item.count = static_cast<int>(count);
+                container.items.push_back(std::move(item));
+            }
+            if (!reader.AtEnd()) {
+                SetError(error, "复制 LootContainer 负载非法");
+                return false;
+            }
+            loot.searched = searched != 0;
+            decoded.lootContainer = std::move(loot);
+            decoded.lootContainerItems = std::move(container);
+            decoded.hasLoot = true;
+        } else if (component.type == kReplicationFire) {
+            ecs::FireSource source;
+            std::uint8_t phase = 0;
+            if (!reader.I32(&decoded.fireAnchor.x) ||
+                !reader.I32(&decoded.fireAnchor.y) ||
+                !reader.I32(&decoded.fireAnchor.z) ||
+                !reader.String(&source.materialId, 64, false) ||
+                !reader.U8(&phase) ||
+                !reader.F32(&source.ignitionProgress) ||
+                !reader.F32(&source.ignitionDuration) ||
+                !reader.F32(&source.burnRemaining) ||
+                !reader.F32(&source.burnDuration) ||
+                !reader.F32(&source.smokePerSecond) ||
+                !reader.F32(&source.heatRadius) ||
+                !reader.F32(&source.smolderElapsed) ||
+                !reader.F32(&source.spreadAccumulator) || phase > 3 ||
+                decoded.fireAnchor.x < -1000000 ||
+                decoded.fireAnchor.x > 1000000 ||
+                decoded.fireAnchor.y < -1000000 ||
+                decoded.fireAnchor.y > 1000000 ||
+                decoded.fireAnchor.z < 0 || decoded.fireAnchor.z >= 16 ||
+                !reader.AtEnd()) {
+                SetError(error, "复制 FireSource 负载非法");
+                return false;
+            }
+            source.phase = static_cast<ecs::FirePhase>(phase);
+            if (!ValidFireSource(source)) {
+                SetError(error, "复制 FireSource 负载非法");
+                return false;
+            }
+            decoded.fireSource = std::move(source);
+            decoded.hasFire = true;
+        } else if (component.type == kReplicationBurning) {
+            ecs::BurningZombie burning;
+            if (!reader.F32(&burning.remaining) ||
+                !reader.F32(&burning.damageAccumulator) ||
+                !reader.F32(&burning.spreadAccumulator) ||
+                !reader.F32(&burning.panicRemaining) ||
+                !reader.F32(&burning.panicSpeedScale) ||
+                !reader.F32(&burning.panicChaseRadius) ||
+                !reader.AtEnd() || !ValidBurningZombie(burning)) {
+                SetError(error, "复制 BurningZombie 负载非法");
+                return false;
+            }
+            decoded.burning = burning;
+            decoded.hasBurning = true;
         } else {
             SetError(error, "复制实体包含未知组件类型");
             return false;
@@ -844,9 +1929,92 @@ void EntityReplicationClient::ApplyPatch(const ActorPatch& patch) {
         actor.action = patch.action;
         actor.hasAction = true;
     }
+    if (patch.hasCombatStance) {
+        actor.combatStance = patch.combatStance;
+        actor.hasCombatStance = true;
+    }
     if (patch.hasVariant) {
         actor.variant = patch.variant;
         actor.hasVariant = true;
+    }
+    if (patch.hasSpecial) {
+        actor.special = patch.special;
+        actor.hasSpecial = true;
+    }
+    if (patch.hasWounds) {
+        actor.wounds = patch.wounds;
+        actor.hasWounds = true;
+    }
+    if (patch.hasPain) {
+        actor.pain = patch.pain;
+        actor.hasPain = true;
+    }
+    if (patch.hasInfection) {
+        actor.infection = patch.infection;
+        actor.hasInfection = true;
+    }
+    if (patch.hasStorage) {
+        actor.storage = patch.storage;
+        actor.storageContainer = patch.storageContainer;
+        actor.hasStorage = true;
+    }
+    if (patch.hasVehicle) {
+        actor.vehicle = patch.vehicle;
+        actor.vehicleDriverStableId = patch.vehicleDriverStableId;
+        actor.vehiclePassengerStableId = patch.vehiclePassengerStableId;
+        actor.vehicleSecondPassengerStableId =
+            patch.vehicleSecondPassengerStableId;
+        actor.hasVehicle = true;
+    }
+    if (patch.hasFarmPlot) {
+        actor.farmPlot = patch.farmPlot;
+        actor.hasFarmPlot = true;
+    }
+    if (patch.hasGenerator) {
+        actor.generator = patch.generator;
+        actor.hasGenerator = true;
+    }
+    if (patch.hasColdStorage) {
+        actor.coldStorage = patch.coldStorage;
+        actor.hasColdStorage = true;
+    }
+    if (patch.hasFloodlight) {
+        actor.floodlight = patch.floodlight;
+        actor.hasFloodlight = true;
+    }
+    if (patch.hasTrap) {
+        actor.trap = patch.trap;
+        actor.hasTrap = true;
+    }
+    if (patch.hasMerchantStock) {
+        actor.merchantStock = patch.merchantStock;
+        actor.hasMerchantStock = true;
+    }
+    if (patch.hasSettlementNpc) {
+        actor.settlementNpc = patch.settlementNpc;
+        actor.hasSettlementNpc = true;
+    }
+    if (patch.hasLoot) {
+        actor.lootContainer = patch.lootContainer;
+        actor.lootContainerItems = patch.lootContainerItems;
+        actor.hasLoot = true;
+    }
+    if (patch.hasFire) {
+        actor.fireSource = patch.fireSource;
+        actor.fireAnchor = patch.fireAnchor;
+        actor.hasFire = true;
+    }
+    if (patch.hasBurning) {
+        actor.burning = patch.burning;
+        actor.hasBurning = true;
+    }
+    if (patch.hasAnimal) {
+        actor.animal = patch.animal;
+        actor.hasAnimal = true;
+    }
+    if (patch.hasAnimalCorpse) {
+        actor.animalCorpse = patch.animalCorpse;
+        actor.hasAnimalCorpse = true;
     }
     if (actor.hasAnim) {
         // M14-T3：clip 不进入复制协议；远端用已复制的速度/动作/生命重新推导。

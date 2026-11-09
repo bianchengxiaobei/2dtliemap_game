@@ -8,9 +8,107 @@
   "ggggggdddg",
   "ggggggdddg",
   "ggggggdddg",
-  "ggggggdddg",
-  "ggggggdddg",
-  "ggggggdddg",
-  "ggggggdddg"
+  "wwwwwwdddg",
+  "wwwwwwdddg",
+  "wwwwwwdddg",
+  "wwwwwwdddg"
+ ],
+ "objects": [
+  {
+   "x": 0,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 3,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 6,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 7,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.fridge"
+  },
+  {
+   "x": 5,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.bed"
+  },
+  {
+   "x": 5,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 9,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 0,
+   "y": 7,
+   "w": 5,
+   "h": 3,
+   "id": 17,
+   "name": "poi_motel"
+  }
  ]
 }

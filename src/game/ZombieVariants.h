@@ -3,8 +3,40 @@
 #include <cstdint>
 
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
+#include "characters/systems/CombatRules.h"
 
 namespace zl::game {
+
+inline constexpr float kZombiePoiseNormal = 20.0f;
+inline constexpr float kZombiePoiseFast = 14.0f;
+inline constexpr float kZombiePoiseStrong = 32.0f;
+inline constexpr float kZombiePoiseArmored = 55.0f;
+
+inline float ZombiePoiseMaxFor(
+    ecs::ZombieVariantKind kind,
+    const characters::CombatRuleConfig& config =
+        characters::DefaultCombatRuleConfig()) {
+    switch (kind) {
+        case ecs::ZombieVariantKind::Fast:
+            return config.poiseMaxFast;
+        case ecs::ZombieVariantKind::Strong:
+            return config.poiseMaxStrong;
+        case ecs::ZombieVariantKind::Armored:
+            return config.poiseMaxArmored;
+        case ecs::ZombieVariantKind::Normal:
+        default:
+            return config.poiseMaxNormal;
+    }
+}
+
+inline ecs::Poise MakeZombiePoise(
+    ecs::ZombieVariantKind kind,
+    const characters::CombatRuleConfig& config =
+        characters::DefaultCombatRuleConfig()) {
+    const float max = ZombiePoiseMaxFor(kind, config);
+    return ecs::Poise{max, max, 0.0f};
+}
 
 inline constexpr float kZombieHousePoiX0 = 67.0f;
 inline constexpr float kZombieHousePoiX1 = 79.0f;
@@ -19,6 +51,7 @@ struct ZombieVariantProfile {
     float damageScale = 1.0f;
     float visualScale = 1.0f;
     std::uint32_t tint = 0xFFFFFFFFu;
+    float damageReduction = 0.0f;
 };
 
 struct ZombieVariantWeights {
@@ -30,14 +63,22 @@ struct ZombieVariantWeights {
 };
 
 inline const ZombieVariantProfile& ZombieVariantProfileFor(ecs::ZombieVariantKind kind) {
-    static constexpr ZombieVariantProfile kNormal{1.0f, 1.0f, 1.0f, 1.0f, 0xFFFFFFFFu};
-    static constexpr ZombieVariantProfile kFast{0.7f, 1.55f, 0.8f, 0.9f, 0xFF9FC8FFu};
-    static constexpr ZombieVariantProfile kStrong{1.7f, 0.78f, 1.55f, 1.16f, 0xFFFF8070u};
+    static constexpr ZombieVariantProfile kNormal{1.0f, 1.0f, 1.0f, 1.0f,
+                                                  0xFFFFFFFFu, 0.0f};
+    static constexpr ZombieVariantProfile kFast{0.7f, 1.55f, 0.8f, 0.9f,
+                                                0xFF9FC8FFu, 0.0f};
+    static constexpr ZombieVariantProfile kStrong{1.7f, 0.78f, 1.55f, 1.16f,
+                                                 0xFFFF8070u, 0.0f};
+    static constexpr ZombieVariantProfile kArmored{
+        2.0f, 0.62f, 1.42f, 1.22f, 0xFF9FB8C8u,
+        ecs::kArmoredZombieDamageReduction};
     switch (kind) {
         case ecs::ZombieVariantKind::Fast:
             return kFast;
         case ecs::ZombieVariantKind::Strong:
             return kStrong;
+        case ecs::ZombieVariantKind::Armored:
+            return kArmored;
         case ecs::ZombieVariantKind::Normal:
         default:
             return kNormal;
@@ -50,6 +91,8 @@ inline const char* ZombieVariantName(ecs::ZombieVariantKind kind) {
             return "fast";
         case ecs::ZombieVariantKind::Strong:
             return "strong";
+        case ecs::ZombieVariantKind::Armored:
+            return "armored";
         case ecs::ZombieVariantKind::Normal:
         default:
             return "normal";

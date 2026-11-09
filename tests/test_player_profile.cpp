@@ -42,6 +42,15 @@ TEST_CASE("M13-T8 PlayerProfileStore：身份分配高位 StableId 并跨加载�
     alice.state.health = 42.0f;
     alice.state.healthMax = 100.0f;
     alice.state.knownRecipes.push_back("field_bandage");
+    alice.state.infectionStage = 1;
+    alice.state.infectionProgress = 0.2f;
+    alice.state.infectionTimeToNextStage = 300.0f;
+    alice.state.climateBodyC = 35.9f;
+    alice.state.climateWetness = 0.5f;
+    alice.state.food.valid = true;
+    alice.state.food.nutrition = 0.45f;
+    alice.state.food.poisonRemaining = 8.0f;
+    alice.state.food.poisonDamagePerSecond = 0.12f;
     alice.hasSnapshot = true;
     alice.entity.stableId = alice.stableId;
 
@@ -61,6 +70,15 @@ TEST_CASE("M13-T8 PlayerProfileStore：身份分配高位 StableId 并跨加载�
     CHECK(restored->state.equipment[0].item.defId == "axe");
     REQUIRE(restored->state.knownRecipes.size() == 1);
     CHECK(restored->state.knownRecipes[0] == "field_bandage");
+    CHECK(restored->state.infectionStage == 1);
+    CHECK(restored->state.infectionProgress == doctest::Approx(0.2f));
+    CHECK(restored->state.infectionTimeToNextStage == doctest::Approx(300.0f));
+    CHECK(restored->state.climateBodyC == doctest::Approx(35.9f));
+    CHECK(restored->state.climateWetness == doctest::Approx(0.5f));
+    CHECK(restored->state.food.valid);
+    CHECK(restored->state.food.nutrition == doctest::Approx(0.45f));
+    CHECK(restored->state.food.poisonRemaining == doctest::Approx(8.0f));
+    CHECK(restored->state.food.poisonDamagePerSecond == doctest::Approx(0.12f));
     CHECK(restored->hasSnapshot);
     CHECK(restored->entity.stableId == alice.stableId);
 

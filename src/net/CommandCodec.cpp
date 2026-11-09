@@ -143,8 +143,7 @@ bool DecodeCommand(Reader& reader, Command* command, std::string* error) {
         SetError(error, "命令保留字段非 0");
         return false;
     }
-    if (type < static_cast<std::uint16_t>(CommandType::Move) ||
-        type > static_cast<std::uint16_t>(CommandType::FireProjectile)) {
+    if (!IsValidCommandType(static_cast<CommandType>(type))) {
         SetError(error, "未知命令类型 " + std::to_string(type));
         return false;
     }

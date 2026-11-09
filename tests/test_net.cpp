@@ -10,6 +10,7 @@
 #include "net/CommandCodec.h"
 #include "net/CommandPipeline.h"
 #include "net/Loopback.h"
+#include "net/WorldSound.h"
 
 using namespace zl::net;
 
@@ -64,6 +65,46 @@ TEST_CASE("M12 CommandPacket：全字段往返 + 固定线格式") {
     packet.commands.back().payload.y = -0.25f;
     packet.commands.push_back(MakeCommand(CommandType::PickupEntity, 42, 6));
     packet.commands.back().payload.entityId = 0xAABBCCDDEEFF0011ull;
+    packet.commands.push_back(MakeCommand(CommandType::ChoosePerk, 42, 7));
+    packet.commands.back().payload.index = 2;
+    packet.commands.push_back(MakeCommand(CommandType::PlaceStructure, 42, 8));
+    packet.commands.back().payload.x = 70.0f;
+    packet.commands.back().payload.y = 24.0f;
+    packet.commands.back().payload.index = 1;
+    packet.commands.back().payload.flags = 1;
+    packet.commands.push_back(MakeCommand(CommandType::DemolishStructure, 42, 9));
+    packet.commands.back().payload.x = 70.0f;
+    packet.commands.back().payload.y = 24.0f;
+    packet.commands.push_back(MakeCommand(CommandType::RepairStructure, 42, 10));
+    packet.commands.back().payload.x = 70.0f;
+    packet.commands.back().payload.y = 24.0f;
+    packet.commands.push_back(MakeCommand(CommandType::ToggleDoor, 42, 11));
+    packet.commands.back().payload.x = 70.0f;
+    packet.commands.back().payload.y = 24.0f;
+    packet.commands.push_back(MakeCommand(CommandType::InteractFacility, 42, 12));
+    packet.commands.back().payload.entityId = 0x123456789ull;
+    packet.commands.push_back(MakeCommand(CommandType::TradeOffer, 42, 13));
+    packet.commands.back().payload.entityId = 0x987654321ull;
+    packet.commands.back().payload.index = 3;
+    packet.commands.push_back(MakeCommand(CommandType::EnterVehicle, 42, 14));
+    packet.commands.back().payload.entityId = 0x1122334455667788ull;
+    packet.commands.push_back(MakeCommand(CommandType::ExitVehicle, 42, 15));
+    packet.commands.push_back(MakeCommand(CommandType::ServiceVehicle, 42, 16));
+    packet.commands.back().payload.entityId = 0x8877665544332211ull;
+    packet.commands.push_back(MakeCommand(CommandType::ToggleHeadlights, 42, 17));
+    packet.commands.push_back(MakeCommand(CommandType::HonkHorn, 42, 18));
+    packet.commands.push_back(MakeCommand(CommandType::TakeDriverSeat, 42, 19));
+    packet.commands.push_back(MakeCommand(CommandType::EnterVehiclePassenger, 42, 20));
+    packet.commands.back().payload.entityId = 0x4455667788990011ull;
+    packet.commands.push_back(MakeCommand(CommandType::GiveDriverSeat, 42, 21));
+    packet.commands.push_back(MakeCommand(CommandType::Block, 42, 22));
+    packet.commands.back().payload.flags = kBlockDownFlag;
+    packet.commands.push_back(MakeCommand(CommandType::Dodge, 42, 23));
+    packet.commands.back().payload.x = 0.0f;
+    packet.commands.back().payload.y = -1.0f;
+    packet.commands.push_back(MakeCommand(CommandType::Attack, 42, 24));
+    packet.commands.back().payload.entityId = 0x99AABBCCDDEEFF00ull;
+    packet.commands.back().payload.flags = kAttackHeavyFlag;
 
     std::string error;
     const std::vector<std::uint8_t> bytes = EncodeCommandPacket(packet, &error);
@@ -78,6 +119,35 @@ TEST_CASE("M12 CommandPacket：全字段往返 + 固定线格式") {
     for (std::size_t i = 0; i < packet.commands.size(); ++i) {
         CheckCommandEqual(decoded.commands[i], packet.commands[i]);
     }
+    CHECK(std::string(CommandTypeName(CommandType::EnterVehicle)) ==
+          "EnterVehicle");
+    CHECK(std::string(CommandTypeName(CommandType::ExitVehicle)) ==
+          "ExitVehicle");
+    CHECK(std::string(CommandTypeName(CommandType::ServiceVehicle)) ==
+          "ServiceVehicle");
+    CHECK(std::string(CommandTypeName(CommandType::ToggleHeadlights)) ==
+          "ToggleHeadlights");
+    CHECK(std::string(CommandTypeName(CommandType::HonkHorn)) ==
+          "HonkHorn");
+    CHECK(std::string(CommandTypeName(CommandType::TakeDriverSeat)) ==
+          "TakeDriverSeat");
+    CHECK(std::string(CommandTypeName(CommandType::EnterVehiclePassenger)) ==
+          "EnterVehiclePassenger");
+    CHECK(std::string(CommandTypeName(CommandType::GiveDriverSeat)) ==
+          "GiveDriverSeat");
+    CHECK(std::string(CommandTypeName(CommandType::Block)) == "Block");
+    CHECK(std::string(CommandTypeName(CommandType::Dodge)) == "Dodge");
+    CHECK(IsValidCommandType(CommandType::EnterVehicle));
+    CHECK(IsValidCommandType(CommandType::ExitVehicle));
+    CHECK(IsValidCommandType(CommandType::ServiceVehicle));
+    CHECK(IsValidCommandType(CommandType::ToggleHeadlights));
+    CHECK(IsValidCommandType(CommandType::HonkHorn));
+    CHECK(IsValidCommandType(CommandType::TakeDriverSeat));
+    CHECK(IsValidCommandType(CommandType::EnterVehiclePassenger));
+    CHECK(IsValidCommandType(CommandType::GiveDriverSeat));
+    CHECK(IsValidCommandType(CommandType::Block));
+    CHECK(IsValidCommandType(CommandType::Dodge));
+    CHECK_FALSE(IsValidCommandType(static_cast<CommandType>(50)));
 }
 
 TEST_CASE("M12 CommandPacket：拒绝截断、magic/类型/StableId/NaN/数量/尾部非法") {
@@ -257,4 +327,101 @@ TEST_CASE("M12 LoopbackTransport：字节队列与背压") {
     REQUIRE(DecodeCommandPacket(bytes, &packet));
     CHECK(packet.commands.size() == 1);
     CHECK(transport.ToServerQueued() == 0);
+}
+
+TEST_CASE("M22-F1 CommandPacket：睡眠请求/投票/取消往返") {
+    CommandPacket packet;
+    packet.sequence = 88;
+    Command request = MakeCommand(CommandType::SleepRequest, 42, 21);
+    request.payload.x = 240.0f;
+    request.payload.flags = kSleepUntilDawnFlag;
+    packet.commands.push_back(request);
+    Command vote = MakeCommand(CommandType::SleepVote, 42, 22);
+    vote.payload.flags = kSleepVoteYesFlag;
+    packet.commands.push_back(vote);
+    packet.commands.push_back(MakeCommand(CommandType::SleepCancel, 42, 23));
+
+    std::string error;
+    const std::vector<std::uint8_t> bytes = EncodeCommandPacket(packet, &error);
+    REQUIRE_MESSAGE(!bytes.empty(), error);
+    CommandPacket decoded;
+    REQUIRE(DecodeCommandPacket(bytes, &decoded, &error));
+    REQUIRE(decoded.commands.size() == 3);
+    CheckCommandEqual(decoded.commands[0], packet.commands[0]);
+    CheckCommandEqual(decoded.commands[1], packet.commands[1]);
+    CheckCommandEqual(decoded.commands[2], packet.commands[2]);
+}
+
+TEST_CASE("M23-F1-T11 WorldSound：往返 + 边界 + 截断/非法拒绝") {
+    WorldSoundEvent sound;
+    sound.sourcePlayerStableId = 9007199254740993ull;
+    sound.x = 12.5f;
+    sound.y = -3.25f;
+    sound.z = 1;
+    sound.radius = 28.0f;
+    sound.type = 1;
+    sound.clip = "gunshot";
+
+    std::string error;
+    const std::vector<std::uint8_t> bytes = EncodeWorldSound(sound, &error);
+    REQUIRE_MESSAGE(!bytes.empty(), error);
+    CHECK(bytes.size() == kWorldSoundHeaderSize + sound.clip.size());
+
+    WorldSoundEvent decoded;
+    REQUIRE(DecodeWorldSound(bytes, &decoded, &error));
+    CHECK(decoded.sourcePlayerStableId == sound.sourcePlayerStableId);
+    CHECK(decoded.x == doctest::Approx(sound.x));
+    CHECK(decoded.y == doctest::Approx(sound.y));
+    CHECK(decoded.z == sound.z);
+    CHECK(decoded.radius == doctest::Approx(sound.radius));
+    CHECK(decoded.type == sound.type);
+    CHECK(decoded.clip == sound.clip);
+
+    WorldSoundEvent invalid = sound;
+    invalid.sourcePlayerStableId = 0;
+    CHECK(EncodeWorldSound(invalid, &error).empty());
+    invalid = sound;
+    invalid.type = 7;
+    CHECK(EncodeWorldSound(invalid, &error).empty());
+    invalid = sound;
+    invalid.radius = -1.0f;
+    CHECK(EncodeWorldSound(invalid, &error).empty());
+    invalid = sound;
+    invalid.z = 9;
+    CHECK(EncodeWorldSound(invalid, &error).empty());
+    invalid = sound;
+    invalid.clip = "bad/clip";
+    CHECK(EncodeWorldSound(invalid, &error).empty());
+    invalid = sound;
+    invalid.clip.assign(kMaxWorldSoundClipBytes + 1, 'a');
+    CHECK(EncodeWorldSound(invalid, &error).empty());
+
+    CHECK_FALSE(DecodeWorldSound(std::span<const std::uint8_t>{}, &decoded,
+                                 &error));
+    std::vector<std::uint8_t> bad = bytes;
+    bad[0] ^= 0xFFu;
+    CHECK_FALSE(DecodeWorldSound(bad, &decoded, &error));
+    bad = bytes;
+    bad[4] = 2;
+    CHECK_FALSE(DecodeWorldSound(bad, &decoded, &error));
+    bad = bytes;
+    bad[7] = 1;
+    CHECK_FALSE(DecodeWorldSound(bad, &decoded, &error));
+    bad = bytes;
+    bad[6] = 7;
+    CHECK_FALSE(DecodeWorldSound(bad, &decoded, &error));
+    bad = bytes;
+    for (std::size_t i = 8; i < 16; ++i) {
+        bad[i] = 0;
+    }
+    CHECK_FALSE(DecodeWorldSound(bad, &decoded, &error));
+    bad = bytes;
+    bad.pop_back();
+    CHECK_FALSE(DecodeWorldSound(bad, &decoded, &error));
+    bad = bytes;
+    bad.push_back(0);
+    CHECK_FALSE(DecodeWorldSound(bad, &decoded, &error));
+    bad = bytes;
+    bad.back() = static_cast<std::uint8_t>('/');
+    CHECK_FALSE(DecodeWorldSound(bad, &decoded, &error));
 }

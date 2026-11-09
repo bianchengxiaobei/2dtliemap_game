@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -199,4 +200,75 @@ TEST_CASE("ChunkManager：坏 chunk 文件重试上限后放弃，不崩溃") {
     CHECK(manager.GetStats().totalFailed == 3);
 
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("X-F3 性能基线：49 chunk 卸载、稀疏加载与文件重载") {
+    core::TaskScheduler tasks(2);
+    world::MapLoader::Meta meta;
+    std::string error;
+    REQUIRE(world::MapLoader::LoadMeta(kDemoDir, &meta, &error));
+
+    world::World world;
+    world::ChunkManager manager(world, meta, tasks, 3);
+    manager.Update(55.0f, 55.0f);
+    REQUIRE(PumpUntil(manager, 55.0f, 55.0f,
+                      [&] { return manager.GetStats().loadedChunks == 49; }));
+
+    const auto elapsedMs = [](const std::chrono::steady_clock::time_point& begin) {
+        return std::chrono::duration<double, std::milli>(
+                   std::chrono::steady_clock::now() - begin)
+            .count();
+    };
+
+    constexpr int kCycles = 3;
+    double unloadTotalMs = 0.0;
+    double sparseLoadTotalMs = 0.0;
+    double homeLoadTotalMs = 0.0;
+    for (int cycle = 0; cycle < kCycles; ++cycle) {
+        const std::uint64_t unloadedBefore =
+            manager.GetStats().totalUnloaded;
+        const auto unloadFarStart = std::chrono::steady_clock::now();
+        manager.Update(505.0f, 505.0f);
+        unloadTotalMs += elapsedMs(unloadFarStart);
+        CHECK(manager.GetStats().loadedChunks == 0);
+        CHECK(manager.GetStats().totalUnloaded >= unloadedBefore + 49);
+
+        const auto sparseLoadStart = std::chrono::steady_clock::now();
+        REQUIRE(PumpUntil(manager, 505.0f, 505.0f,
+                          [&] { return manager.GetStats().loadedChunks == 49; }));
+        sparseLoadTotalMs += elapsedMs(sparseLoadStart);
+        CHECK(world.LoadedChunkCount() == 49);
+
+        const std::uint64_t unloadedBeforeHome =
+            manager.GetStats().totalUnloaded;
+        const auto unloadHomeStart = std::chrono::steady_clock::now();
+        manager.Update(55.0f, 55.0f);
+        unloadTotalMs += elapsedMs(unloadHomeStart);
+        CHECK(manager.GetStats().loadedChunks == 0);
+        CHECK(manager.GetStats().totalUnloaded >= unloadedBeforeHome + 49);
+
+        const auto homeLoadStart = std::chrono::steady_clock::now();
+        REQUIRE(PumpUntil(manager, 55.0f, 55.0f,
+                          [&] { return manager.GetStats().loadedChunks == 49; }));
+        homeLoadTotalMs += elapsedMs(homeLoadStart);
+        CHECK(world.LoadedChunkCount() == 49);
+    }
+
+    const double unloadAvgMs =
+        unloadTotalMs / static_cast<double>(kCycles * 2);
+    const double sparseLoadAvgMs =
+        sparseLoadTotalMs / static_cast<double>(kCycles);
+    const double homeLoadAvgMs =
+        homeLoadTotalMs / static_cast<double>(kCycles);
+    std::printf(
+        "[bench] X-F3 chunk：unload=%.3f ms sparseLoad=%.3f ms homeLoad=%.3f ms\n",
+        unloadAvgMs, sparseLoadAvgMs, homeLoadAvgMs);
+    CHECK(unloadAvgMs < 200.0);
+    CHECK(sparseLoadAvgMs < 3000.0);
+    CHECK(homeLoadAvgMs < 3000.0);
+#ifdef NDEBUG
+    CHECK(unloadAvgMs < 20.0);
+    CHECK(sparseLoadAvgMs < 1000.0);
+    CHECK(homeLoadAvgMs < 1000.0);
+#endif
 }

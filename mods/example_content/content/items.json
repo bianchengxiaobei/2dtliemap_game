@@ -1,0 +1,43 @@
+{
+  "format": "items-v1",
+  "items": [
+    {
+      "id": "camp_stew",
+      "name": "营地炖豆",
+      "icon": "mod.camp_stew",
+      "weight": 0.7,
+      "maxStack": 3,
+      "type": "consumable",
+      "use": { "hunger": 0.55, "nutrition": 0.5 },
+      "spoilDays": 1.0
+    },
+    {
+      "id": "pumpkin_seeds",
+      "name": "南瓜种子",
+      "icon": "item.rag",
+      "weight": 0.05,
+      "maxStack": 10,
+      "type": "generic"
+    },
+    {
+      "id": "fresh_pumpkin",
+      "name": "新鲜南瓜",
+      "icon": "item.canned_beans",
+      "weight": 1.2,
+      "maxStack": 2,
+      "type": "consumable",
+      "use": { "hunger": 0.6, "nutrition": 0.55 },
+      "spoilDays": 3.0
+    },
+    {
+      "id": "pumpkin_soup",
+      "name": "南瓜浓汤",
+      "icon": "item.canned_beans",
+      "weight": 0.7,
+      "maxStack": 3,
+      "type": "consumable",
+      "use": { "hunger": 0.75, "thirst": 0.15, "heal": 2, "nutrition": 0.8 },
+      "spoilDays": 2.0
+    }
+  ]
+}

@@ -136,6 +136,7 @@ SaveResult SaveService::Execute(SaveRequest request) {
         options.name = request.name.empty() ? "存档" : request.name;
         options.mapId = request.mapId;
         options.gameVersion = request.gameVersion;
+        options.gameMinutes = request.gameMinutes.value_or(0.0);
         options.players = std::move(request.players);
         options.thumbnail = std::move(request.thumbnail);
         options.entities = &request.entities;
@@ -156,6 +157,7 @@ SaveResult SaveService::Execute(SaveRequest request) {
     options.thumbnail =
         request.thumbnail.Valid() ? &request.thumbnail : nullptr;
     options.chunks = &request.chunks;
+    options.gameMinutes = request.gameMinutes;
     result.ok = m_manager.Save(request.id, options, &result.error);
     if (result.ok) {
         ZL_INFO("save", "后台存档完成：{}", result.id);

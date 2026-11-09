@@ -45,6 +45,14 @@
         ]
       }
     },
+    "tile.floor.water": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "floor_water_1"
+        ]
+      }
+    },
     "wall.brick": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
@@ -61,6 +69,54 @@
         "frames": [
           "wall_door_1",
           "wall_door_2"
+        ]
+      }
+    },
+    "object.wall_h": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "wall_wood_h_1"
+        ]
+      }
+    },
+    "object.wall_v": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "wall_wood_v_1"
+        ]
+      }
+    },
+    "object.door_closed_h": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "door_wood_closed_h_1"
+        ]
+      }
+    },
+    "object.door_closed_v": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "door_wood_closed_v_1"
+        ]
+      }
+    },
+    "object.door_open_h": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "door_wood_open_h_1"
+        ]
+      }
+    },
+    "object.door_open_v": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "door_wood_open_v_1"
         ]
       }
     },
@@ -126,11 +182,99 @@
         ]
       }
     },
+    "object.vehicle": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "vehicle_south"
+        ]
+      }
+    },
+    "object.vehicle_north": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "vehicle_north"
+        ]
+      }
+    },
+    "object.vehicle_east": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "vehicle_east"
+        ]
+      }
+    },
+    "object.vehicle_south": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "vehicle_south"
+        ]
+      }
+    },
+    "object.vehicle_west": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "vehicle_west"
+        ]
+      }
+    },
+    "object.vehicle_southeast": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "vehicle_southeast"
+        ]
+      }
+    },
+    "object.vehicle_southwest": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "vehicle_southwest"
+        ]
+      }
+    },
+    "object.vehicle_northwest": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "vehicle_northwest"
+        ]
+      }
+    },
+    "object.vehicle_northeast": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "vehicle_northeast"
+        ]
+      }
+    },
     "object.locker": {
       "own": {
         "atlas": "assets/own/atlas_own.atlas.json",
         "frames": [
           "locker_1"
+        ]
+      }
+    },
+    "object.bed": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "bed_1"
+        ]
+      }
+    },
+    "object.barricade": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "barricade_1"
         ]
       }
     },
@@ -147,6 +291,135 @@
         "atlas": "assets/own/atlas_own.atlas.json",
         "frames": [
           "extraction_1"
+        ]
+      }
+    },
+    "object.farm_plot": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "floor_dirt_1",
+          "floor_dirt_2"
+        ]
+      }
+    },
+    "object.generator": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "workbench_1"
+        ]
+      }
+    },
+    "object.fridge": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "locker_1"
+        ]
+      }
+    },
+    "object.trap": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "barricade_1"
+        ]
+      }
+    },
+    "object.floodlight": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "workbench_1"
+        ]
+      }
+    },
+    "object.electric_fence": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "barricade_1"
+        ]
+      }
+    },
+    "animal.deer": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "comment": "T8 动物占位轮廓：鹿/兔/野猪独立尺寸与色板",
+        "frames": [
+          "animal_deer_down_0",
+          "animal_deer_down_1",
+          "animal_deer_left_0",
+          "animal_deer_left_1",
+          "animal_deer_right_0",
+          "animal_deer_right_1",
+          "animal_deer_up_0",
+          "animal_deer_up_1"
+        ]
+      }
+    },
+    "animal.rabbit": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "comment": "T8 动物占位轮廓：鹿/兔/野猪独立尺寸与色板",
+        "frames": [
+          "animal_rabbit_down_0",
+          "animal_rabbit_down_1",
+          "animal_rabbit_left_0",
+          "animal_rabbit_left_1",
+          "animal_rabbit_right_0",
+          "animal_rabbit_right_1",
+          "animal_rabbit_up_0",
+          "animal_rabbit_up_1"
+        ]
+      }
+    },
+    "animal.boar": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "comment": "T8 动物占位轮廓：鹿/兔/野猪独立尺寸与色板",
+        "frames": [
+          "animal_boar_down_0",
+          "animal_boar_down_1",
+          "animal_boar_left_0",
+          "animal_boar_left_1",
+          "animal_boar_right_0",
+          "animal_boar_right_1",
+          "animal_boar_up_0",
+          "animal_boar_up_1"
+        ]
+      }
+    },
+    "animal.chicken": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "comment": "M24-T1 鸡占位轮廓：体型缩放 0.55，带鸡冠/尾羽",
+        "frames": [
+          "animal_chicken_down_0",
+          "animal_chicken_down_1",
+          "animal_chicken_left_0",
+          "animal_chicken_left_1",
+          "animal_chicken_right_0",
+          "animal_chicken_right_1",
+          "animal_chicken_up_0",
+          "animal_chicken_up_1"
+        ]
+      }
+    },
+    "animal.goat": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "comment": "M24-T1 山羊占位轮廓：体型缩放 1.0，带山羊角/胡须",
+        "frames": [
+          "animal_goat_down_0",
+          "animal_goat_down_1",
+          "animal_goat_left_0",
+          "animal_goat_left_1",
+          "animal_goat_right_0",
+          "animal_goat_right_1",
+          "animal_goat_up_0",
+          "animal_goat_up_1"
         ]
       }
     },
@@ -533,6 +806,14 @@
         "atlas": "assets/own/atlas_own.atlas.json",
         "frames": [
           "item_radio_part"
+        ]
+      }
+    },
+    "item.wood": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "item_wood"
         ]
       }
     },

@@ -43,6 +43,7 @@ struct SaveMetadata {
     std::string gameVersion;
     std::string mapId;
     std::string thumbnail;
+    double gameMinutes = 0.0;
     std::vector<SavePlayer> players;
 };
 

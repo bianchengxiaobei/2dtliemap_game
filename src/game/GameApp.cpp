@@ -14,8 +14,12 @@
 #include "characters/components/CharacterComponents.h"
 #include "core/Log.h"
 #include "ecs/components/PhysicsComponents.h"
+#include "game/ContentHash.h"
+#include "game/ContentReload.h"
 #include "game/EmbeddedServer.h"
+#include "game/ModContent.h"
 #include "game/NetworkClient.h"
+#include "game/Poi.h"
 #include "game/WorldQueries.h"
 #include "net/PlayerIdentity.h"
 #include "game/ZombieFactory.h"
@@ -43,13 +47,27 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"Quit", "ESCAPE"},      {"Pause", "F1"},       {"CycleSpeed", "F2"},
     {"DemoTasks", "F3"},     {"ReloadBindings", "F5"}, {"ToggleCruise", "F8"},
     {"ToggleDebugOverlay", "F9"}, {"TogglePhysicsDebug", "F10"}, {"DemoKill", "F6"},
-    {"DemoGunshot", "F7"},   // M5-T4：演示开枪（大半径 SoundEvent）
-    {"DemoProjectile", "V"}, // M13-T10：演示发射服务器权威投射物
-    {"Attack", "SPACE"},     // M5-T6：玩家挥击（演示用自动瞄准，M6 接武器/朝向）
+    {"DemoGunshot", "F7"},   // M5-T4：调试枪声（正式枪声走 M23 远程武器）
+    {"DemoProjectile", "V"}, // M23-F1-T4：单机远程开火；联机暂保留演示投射物
+    {"Attack", "SPACE"},     // M5-T6：玩家轻击（演示用自动瞄准，M6 接武器/朝向）
+    {"HeavyAttack", "LSHIFT"},  // M30-T3：玩家重击（单机；联机协议 T6）
+    {"Block", "LCTRL"},      // M30-T4：按住格挡（单机；联机命令 T6）
+    {"Dodge", "Z"},          // M30-T4：闪避（单机；联机命令 T6）
     {"Pickup", "F"},         // M6-T3：拾取最近地面物品
     {"Use", "E"},            // M6-T5：使用消耗品（回血/饱食）
-    {"Equip", "R"},          // M6-T5：装备/卸下主手武器
+    {"FarmCare", "T"},       // F5-T2：农田施肥/杀菌
+    {"FarmSeed", "Q"},       // F5-T2：切换空农田种子
+    {"Equip", "R"},          // M6-T5：装备/卸下；单机主手远程武器时优先换弹
     {"Drop", "G"},           // M6-T5：丢弃背包第一堆
+    {"BuildMode", "B"},      // M16-T1：进入/退出建造模式
+    {"RepairStructure", "H"},// M17-T2：维修最近结构
+    {"RepairAllStructures", "J"}, // M18-F4：批量维修
+    {"DemolishStructure", "X"}, // M17-T2：拆除最近结构
+    {"CharacterPanel", "C"}, // M19-F1：角色技能/Perk 面板
+    {"MissionFocus", "L"},   // M19-F3：切换任务焦点
+    {"MissionAbandon", "K"}, // M19-F3：放弃当前焦点任务
+    {"Vehicle", "ENTER"},
+    {"Headlights", "L"},     // M25-T4-V2：驾驶时切换车灯
     {"QuickSave", "F12"},    // M10-T5：快速存档
     {"MoveUp", "W"},         {"MoveDown", "S"},     {"MoveLeft", "A"},
     {"MoveRight", "D"},
@@ -117,13 +135,177 @@ bool GameApp::Init(int argc, char** argv) {
     }
     m_ctx.recipes = &m_recipeRegistry;
 
+    ModContentResult modContent =
+        LoadModContent(m_config, m_itemRegistry, m_recipeRegistry);
+    m_ctx.modBuildables = std::move(modContent.buildables);
+    m_ctx.modAssetManifests = std::move(modContent.assetManifests);
+    m_ctx.allowDynamicContent =
+        m_config.Get<std::string>("net.mode", "direct") == "direct";
+    m_ctx.contentChanged = [this] { RefreshContentHash(); };
+
     // 1.53 战利品表（M14-T5）：与物品定义交叉校验；失败只让容器搜索不可用。
     const std::string lootFile =
         m_config.Get<std::string>("loot.file", "assets/loot.json");
     if (!m_lootTableRegistry.LoadFile(lootFile, m_itemRegistry)) {
         ZL_WARN("items", "战利品表为空，可搜刮容器不可用（文件: {}）", lootFile);
     }
+    int lootMerged = 0;
+    for (const std::string& modLoot : modContent.lootFiles) {
+        std::string lootError;
+        if (m_lootTableRegistry.MergeFile(modLoot, m_itemRegistry, &lootError)) {
+            ++lootMerged;
+        } else {
+            ZL_WARN("items", "跳过 mod 战利品表 {}：{}", modLoot, lootError);
+        }
+    }
+    if (!modContent.lootFiles.empty()) {
+        ZL_INFO("items", "mod 战利品表合并：{}/{} 个文件，共 {} 张表", lootMerged,
+                modContent.lootFiles.size(), m_lootTableRegistry.Size());
+    }
     m_ctx.lootTables = &m_lootTableRegistry;
+
+    // 1.54 觅食/钓鱼节点（M23-F2a-T1）：先加载基础数据，再按 mod 追加；
+    // 数据只定义区域和产出表，节点位置在已加载 chunk 上确定性规划。
+    const std::string forageFile =
+        m_config.Get<std::string>("forage.file", "assets/forage.json");
+    if (!m_forageRegistry.LoadFile(forageFile, m_lootTableRegistry)) {
+        ZL_WARN("forage", "觅食数据为空，资源节点不可用（文件: {}）", forageFile);
+    }
+    int forageMerged = 0;
+    for (const std::string& modForage : modContent.forageFiles) {
+        std::string forageError;
+        if (m_forageRegistry.MergeFile(modForage, m_lootTableRegistry, &forageError)) {
+            ++forageMerged;
+        } else {
+            ZL_WARN("forage", "跳过 mod 觅食数据 {}：{}", modForage, forageError);
+        }
+    }
+    if (!modContent.forageFiles.empty()) {
+        ZL_INFO("forage", "mod 觅食数据合并：{}/{} 个文件，共 {} 区域 / {} 钓鱼点",
+                forageMerged, modContent.forageFiles.size(),
+                m_forageRegistry.ZoneCount(), m_forageRegistry.SpotCount());
+    }
+    m_ctx.forage = &m_forageRegistry;
+
+    const std::string animalsFile =
+        m_config.Get<std::string>("animals.file", "assets/animals.json");
+    std::string animalsError;
+    if (!m_animalRegistry.LoadFile(animalsFile, m_itemRegistry,
+                                   m_lootTableRegistry, &animalsError)) {
+        ZL_WARN("animals", "动物数据为空（文件: {}）：{}", animalsFile,
+                animalsError);
+    } else {
+        ZL_INFO("animals", "动物物种：{} 项（文件: {}）",
+                m_animalRegistry.Size(), animalsFile);
+    }
+    m_ctx.animals = &m_animalRegistry;
+
+    const std::string cropsFile =
+        m_config.Get<std::string>("crops.file", "assets/crops.json");
+    std::string cropsError;
+    if (!m_cropRegistry.LoadFile(cropsFile, m_itemRegistry, &cropsError)) {
+        ZL_WARN("crops", "作物数据为空，使用 farming 配置回退（文件: {}）：{}",
+                cropsFile, cropsError);
+    }
+    int cropsMerged = 0;
+    for (const std::string& modCrop : modContent.cropFiles) {
+        std::string mergeError;
+        if (m_cropRegistry.MergeFile(modCrop, m_itemRegistry, &mergeError)) {
+            ++cropsMerged;
+        } else {
+            ZL_WARN("crops", "跳过 mod 作物数据 {}：{}", modCrop, mergeError);
+        }
+    }
+    if (m_cropRegistry.Size() > 0) {
+        ZL_INFO("crops",
+                "作物定义：{} 项（mod 文件 {}/{}，文件: {}）",
+                m_cropRegistry.Size(), cropsMerged,
+                modContent.cropFiles.size(), cropsFile);
+    }
+    m_ctx.crops = &m_cropRegistry;
+
+    const std::string fireFile =
+        m_config.Get<std::string>("fire.file", "assets/fire.json");
+    std::string fireError;
+    if (!m_fireRegistry.LoadFile(fireFile, &fireError)) {
+        ZL_WARN("fire", "火焰数据为空，可燃物查询不可用（文件: {}）：{}", fireFile,
+                fireError);
+    } else {
+        ZL_INFO("fire", "火焰材料：{} 项（文件: {}）", m_fireRegistry.Size(),
+                fireFile);
+    }
+    m_ctx.fire = &m_fireRegistry;
+
+    std::string poiError;
+    if (!LoadPoiConfig(m_config, &m_poiConfig, &poiError)) {
+        ZL_ERROR("poi", "POI 配置加载失败：{}", poiError);
+    } else {
+        PoiMergeStats poiStats;
+        if (m_poiConfig.enabled) {
+            for (const std::string& modPoi : modContent.poiFiles) {
+                if (!MergePoiFile(modPoi, &m_poiConfig, &poiStats, &poiError)) {
+                    ZL_WARN("poi", "跳过 mod POI 文件 {}：{}", modPoi, poiError);
+                }
+            }
+        }
+        if (m_poiConfig.enabled) {
+            ZL_INFO("poi", "POI 配置：{} 个区域（指引范围 {:.0f} 格，mod 文件 {}，新增 {}）",
+                    m_poiConfig.defs.size(),
+                    static_cast<double>(m_poiConfig.guideRange),
+                    poiStats.filesLoaded, poiStats.defsAdded);
+        }
+    }
+    m_ctx.poiConfig = &m_poiConfig;
+
+    const nlohmann::json& configRoot = m_config.Raw();
+    if (configRoot.contains("missions") && configRoot["missions"].is_object()) {
+        m_ctx.missionSourceJson = configRoot["missions"].dump();
+    }
+    std::string missionError;
+    if (!LoadMissionConfig(m_config, &m_missionConfig, &missionError)) {
+        ZL_ERROR("missions", "任务配置加载失败：{}", missionError);
+    } else {
+        MissionMergeStats missionStats;
+        if (m_missionConfig.enabled && !modContent.missionFiles.empty()) {
+            if (!MergeMissionFiles(modContent.missionFiles, m_config,
+                                   &m_missionConfig, &missionStats,
+                                   &missionError, &m_ctx.missionSourceJson)) {
+                ZL_WARN("missions", "mod 任务合并失败：{}", missionError);
+            }
+        }
+        if (m_missionConfig.enabled) {
+            ZL_INFO("missions",
+                    "任务配置：{} 条（随机种子 {}，mod 文件 {}，新增 {}）",
+                    m_missionConfig.defs.size(), m_missionConfig.randomSeed,
+                    missionStats.filesLoaded, missionStats.defsAdded);
+        }
+    }
+    m_ctx.missionConfig = &m_missionConfig;
+
+    std::string settlementError;
+    if (!LoadSettlementConfig(m_config, &m_settlements, &settlementError)) {
+        ZL_ERROR("settlement", "聚落配置加载失败：{}", settlementError);
+    } else {
+        SettlementMergeStats settlementStats;
+        if (m_settlements.enabled) {
+            for (const std::string& modSettlement :
+                 modContent.settlementFiles) {
+                if (!MergeSettlementFile(modSettlement, &m_settlements,
+                                         &settlementStats, &settlementError)) {
+                    ZL_WARN("settlement", "跳过 mod 聚落文件 {}：{}",
+                            modSettlement, settlementError);
+                }
+            }
+            ZL_INFO("settlement",
+                    "聚落配置：{} 个（mod 文件 {}，新增 {}）",
+                    m_settlements.defs.size(), settlementStats.filesLoaded,
+                    settlementStats.defsAdded);
+        }
+    }
+    m_ctx.settlements = &m_settlements;
+
+    // 内容指纹覆盖启动时合并后的全部玩法数据，必须在 loot/POI/任务之后计算。
+    RefreshContentHash();
 
     // 1.55 存档管理（M10-T4）：根目录来自 save.root；文件在首次创建时落盘
     save::SaveManager::Options saveOptions;
@@ -179,6 +361,7 @@ bool GameApp::Init(int argc, char** argv) {
     desc.height = m_config.Get<int>("window.height", 720);
     desc.title = m_config.Get<std::string>("window.title", "ZomboidLike");
     desc.vsync = m_config.Get<bool>("window.vsync", true);
+    desc.fullscreen = m_config.Get<bool>("window.fullscreen", false);
     if (!m_window.Create(desc)) {
         return false;
     }
@@ -226,9 +409,12 @@ bool GameApp::Init(int argc, char** argv) {
             }
         }
     });
-    m_window.SetKeyCallback([](int key, int action, int mods) {
-        (void)mods;
+    m_window.SetKeyCallback([this](int key, int action, int mods) {
         if (action == GLFW_PRESS) {
+            if (key == GLFW_KEY_ENTER && (mods & GLFW_MOD_ALT) != 0) {
+                m_window.ToggleFullscreen();
+                return;
+            }
             ZL_TRACE("input", "原始按键按下 key={}", key);
         }
     });
@@ -259,6 +445,12 @@ bool GameApp::Init(int argc, char** argv) {
         simulationOptions.config = &m_config;
         simulationOptions.events = &m_events;
         simulationOptions.gameTime = &m_gameTime;
+        simulationOptions.items = &m_itemRegistry;
+        simulationOptions.animals = &m_animalRegistry;
+        simulationOptions.pois = &m_poiConfig;
+        simulationOptions.settlements = &m_settlements;
+        simulationOptions.spawnAnimals = true;
+        simulationOptions.fire = &m_fireRegistry;
         simulationOptions.tasks = m_tasks.get();
         simulationOptions.saveManager = m_saveManager.get();
         simulationOptions.saveComponents = &m_saveComponents;
@@ -285,6 +477,7 @@ bool GameApp::Init(int argc, char** argv) {
         m_ctx.boids = m_simulation->Boids();
         m_ctx.virtualHordes = m_simulation->VirtualHordes();
         m_ctx.spawnLod = m_simulation->SpawnLod();
+        m_ctx.animalSystem = m_simulation->Animals();
         m_ctx.combat = m_simulation->Combat();
     }
     // 6. 上下文 + 事件探针
@@ -410,6 +603,7 @@ bool GameApp::Init(int argc, char** argv) {
             uiHost->SetEventBus(&m_events);
         }
         m_script.SetModDisabledHandler([this](const std::string& modId) {
+            m_scriptApi.RemoveHudFields(modId);
             if (m_ui != nullptr && m_ui->ScriptHost() != nullptr) {
                 m_ui->ScriptHost()->ReleaseOwner(modId);
             }
@@ -417,30 +611,38 @@ bool GameApp::Init(int argc, char** argv) {
         m_eventBridge = std::make_unique<script::EventBridge>(m_events, m_script);
         // M7-T5：扫描并加载 mods/（目录不存在则跳过；单个 mod 失败不阻断其它）
         script::ModLoader loader(m_script, m_config.Get<std::string>("script.backend", "lua"));
-        const script::ModLoader::Result mods =
-            loader.ScanAndLoad(m_config.Get<std::string>("script.modsDir", "mods"));
-        // M7-T6：热重载监控（后台线程 mtime 轮询；变更在主循环消费 → ReloadMod）
-        if (m_config.Get<bool>("script.hotReload", true)) {
-            std::vector<script::ModWatcher::Entry> watched;
-            for (const std::string& id : mods.loadedIds) {
-                script::ModInfo info;
-                if (m_script.GetModInfo(id, info)) {
-                    watched.push_back(script::ModWatcher::Entry{id, info.rootPath});
-                }
-            }
-            if (!watched.empty()) {
-                const double interval =
-                    m_config.Get<double>("script.hotReloadSeconds", 1.0);
-                m_modWatcher = std::make_unique<script::ModWatcher>(std::move(watched), interval);
-                ZL_INFO("script", "热重载监控已启动：{} 个 mod（轮询 {:.1f}s）",
-                        m_modWatcher->WatchedCount(), interval);
-            }
+        loader.ScanAndLoad(m_config.Get<std::string>("script.modsDir", "mods"));
+        if (m_ctx.dynamicContentCount > 0) {
+            RefreshContentHash();
+            ZL_INFO("script",
+                    "动态内容 {} 项：仅单机可用；联机连接/主机启动将拒绝",
+                    m_ctx.dynamicContentCount);
         }
         ZL_DEBUG("script", "Python 后端：{}", script::PythonBackendVersion());
         ZL_INFO("script", "脚本系统就绪（后端 {} 个，API v{}）", m_script.RuntimeCount(),
                 script::ScriptApi::kApiVersion);
     } else {
         ZL_INFO("script", "脚本系统已禁用（script.enabled=false）");
+    }
+
+    // M7-T6/X3-T1：脚本、content 与 assets 变更监控（后台轮询，主线程消费）
+    if (m_config.Get<bool>("script.hotReload", true) &&
+        !modContent.sources.empty()) {
+        std::vector<script::ModWatcher::Entry> watched;
+        watched.reserve(modContent.sources.size());
+        for (const ModContentSource& source : modContent.sources) {
+            watched.push_back(
+                script::ModWatcher::Entry{source.id, source.root});
+        }
+        const double interval =
+            m_config.Get<double>("script.hotReloadSeconds", 1.0);
+        const double debounce = m_config.Get<double>(
+            "script.contentHotReloadDebounceSeconds", 0.5);
+        m_modWatcher = std::make_unique<script::ModWatcher>(
+            std::move(watched), interval, debounce);
+        ZL_INFO("script",
+                "mod 文件监控已启动：{} 个 mod（轮询 {:.1f}s，内容防抖 {:.1f}s）",
+                m_modWatcher->WatchedCount(), interval, debounce);
     }
 
     // 6.5 玩家命令层（M12/T5）：client=真实 KCP；direct/loopback=本地命令通路。
@@ -576,9 +778,43 @@ void GameApp::MainLoop() {
             }
         }
 
-        // M7-T6：消费热重载通知（轮询线程只通知；重载与脚本执行都在主线程）
+        // M7-T6/X3-T1：轮询线程只通知；脚本重载与内容消费都在主线程
         if (m_modWatcher != nullptr) {
+            bool contentChanged = false;
+            bool assetsChanged = false;
+            for (const script::ModWatcher::ContentChange& change :
+                 m_modWatcher->PollContentChanges()) {
+                ZL_INFO("content",
+                        "检测到 mod 内容文件变更：[{}] content={} assets={}",
+                        change.modId, change.content ? "是" : "否",
+                        change.assets ? "是" : "否");
+                contentChanged = contentChanged || change.content;
+                assetsChanged = assetsChanged || change.assets;
+            }
+            if (assetsChanged) {
+                ZL_INFO("content", "资源文件变更本次只通知；资源热替换仍待后续任务");
+            }
+            if (contentChanged) {
+                const std::string blocked = ContentReloadBlockedReason(
+                    m_ctx.allowDynamicContent, m_networkMode,
+                    m_ctx.dynamicContentCount);
+                if (!blocked.empty()) {
+                    ZL_WARN("content", "mod 内容变更未应用：{}", blocked);
+                    if (m_states.CurrentName() == std::string("WorldDemo")) {
+                        m_ctx.contentNotice = blocked;
+                    }
+                } else {
+                    std::string reloadError;
+                    if (!ReloadContentFromDisk(reloadError)) {
+                        ZL_WARN("content",
+                                "mod 内容热重载失败，保留旧内容：{}", reloadError);
+                    }
+                }
+            }
             for (const std::string& modId : m_modWatcher->PollChanges()) {
+                if (!m_script.IsModLoaded(modId)) {
+                    continue;
+                }
                 if (m_ui != nullptr && m_ui->ScriptHost() != nullptr) {
                     m_ui->ScriptHost()->UnloadOwner(modId);
                 }
@@ -647,6 +883,8 @@ void GameApp::RenderFrame(double frameDt, double alpha) {
                         gameplay);
     }
     if (m_ui) {
+        // UI 刷新绑定渲染帧而非模拟 tick：F1/菜单暂停时 HUD 仍能反映最新状态。
+        m_events.Emit(core::kOnUiFrame);
         m_ui->Render();
     }
     m_renderer.EndFrame();
@@ -798,6 +1036,10 @@ bool GameApp::StartClientOnly(const MultiplayerRequest& request, std::string* er
         }
         return false;
     };
+    if (m_ctx.dynamicContentCount > 0) {
+        ZL_WARN("net", "联机启动被拒绝：{}", kDynamicContentSinglePlayerOnlyMessage);
+        return fail(kDynamicContentSinglePlayerOnlyMessage);
+    }
     if (request.playerName.empty() || request.playerName.size() > 48) {
         return fail("玩家名称需为 1~48 字节");
     }
@@ -811,8 +1053,11 @@ bool GameApp::StartClientOnly(const MultiplayerRequest& request, std::string* er
     NetworkClient::Options options;
     options.host = request.host;
     options.port = request.port;
-    options.contentHash = static_cast<std::uint64_t>(
-        m_config.Get<std::int64_t>("net.contentHash", 0));
+    const std::int64_t configuredContentHash =
+        m_config.Get<std::int64_t>("net.contentHash", 0);
+    options.contentHash = configuredContentHash != 0
+                              ? static_cast<std::uint64_t>(configuredContentHash)
+                              : m_ctx.contentHash;
     options.playerIdentity = m_config.Get<std::string>("net.playerIdentity", "");
     if (!net::IsValidPlayerIdentity(options.playerIdentity)) {
         const std::string identityFile =
@@ -850,8 +1095,10 @@ bool GameApp::StartClientOnly(const MultiplayerRequest& request, std::string* er
     m_networkMode = true;
     m_ctx.networkClient = m_networkClient.get();
     m_ctx.commands = nullptr;
-    ZL_INFO("net", "联机客户端就绪：服务器 {}:{}（身份 {}，名称 {}）", options.host,
-            options.port, options.playerIdentity, options.playerName);
+    m_ctx.allowDynamicContent = false;
+    ZL_INFO("net", "联机客户端就绪：服务器 {}:{}（身份 {}，名称 {}，contentHash={:#x}）",
+            options.host, options.port, options.playerIdentity, options.playerName,
+            options.contentHash);
     return true;
 }
 
@@ -868,6 +1115,11 @@ bool GameApp::StartJoining(const MultiplayerRequest& request,
 bool GameApp::StartHosting(const MultiplayerRequest& request,
                            MultiplayerStartResult& result, std::string& error) {
     StopMultiplayer();
+    if (m_ctx.dynamicContentCount > 0) {
+        ZL_WARN("net", "联机启动被拒绝：{}", kDynamicContentSinglePlayerOnlyMessage);
+        error = kDynamicContentSinglePlayerOnlyMessage;
+        return false;
+    }
     if (request.playerName.empty() || request.playerName.size() > 48) {
         error = "玩家名称需为 1~48 字节";
         return false;
@@ -922,6 +1174,8 @@ void GameApp::StopMultiplayer() {
     } else {
         m_ctx.commands = nullptr;
     }
+    m_ctx.allowDynamicContent =
+        m_config.Get<std::string>("net.mode", "direct") == "direct";
 }
 void GameApp::ApplyInputBindings() {
     m_input.ClearBindings();
@@ -936,6 +1190,11 @@ void GameApp::ApplyInputBindings() {
         m_input.Bind(action, code);
         ZL_DEBUG("input", "键位映射: {} = {}", action, keyName);
     }
+    ZL_INFO("input", "战斗键位：{} 轻击 / {} 重击 / {} 格挡 / {} 闪避",
+            platform::KeyNameFromCode(m_input.KeyCodeFor("Attack")),
+            platform::KeyNameFromCode(m_input.KeyCodeFor("HeavyAttack")),
+            platform::KeyNameFromCode(m_input.KeyCodeFor("Block")),
+            platform::KeyNameFromCode(m_input.KeyCodeFor("Dodge")));
 }
 
 void GameApp::ReloadConfigAndBindings() {
@@ -957,6 +1216,74 @@ void GameApp::ReloadConfigAndBindings() {
         }
         ZL_INFO("input", "键位/音量已按新配置重建（窗口尺寸等其余项需重启生效）");
     }
+}
+
+bool GameApp::ReloadContentFromDisk(std::string& error) {
+    error = ContentReloadBlockedReason(m_ctx.allowDynamicContent, m_networkMode,
+                                       m_ctx.dynamicContentCount);
+    if (!error.empty()) {
+        return false;
+    }
+
+    ContentBundleResult loaded = LoadContentBundle(m_config);
+    if (!loaded.Ok()) {
+        error = std::move(loaded.error);
+        return false;
+    }
+    ContentBundle& bundle = *loaded.bundle;
+    const std::size_t oldItems = m_itemRegistry.Size();
+    const std::size_t oldRecipes = m_recipeRegistry.Size();
+    const std::size_t oldBuildables = m_ctx.modBuildables.size();
+    const std::uint64_t oldContentHash = m_ctx.contentHash;
+
+    m_itemRegistry = std::move(bundle.items);
+    m_recipeRegistry = std::move(bundle.recipes);
+    m_lootTableRegistry = std::move(bundle.lootTables);
+    m_forageRegistry = std::move(bundle.forage);
+    m_animalRegistry = std::move(bundle.animals);
+    m_cropRegistry = std::move(bundle.crops);
+    m_poiConfig = std::move(bundle.poiConfig);
+    m_missionConfig = std::move(bundle.missionConfig);
+    m_settlements = std::move(bundle.settlements);
+    m_ctx.missionSourceJson = std::move(bundle.missionSourceJson);
+    m_ctx.modBuildables = std::move(bundle.modContent.buildables);
+    ++m_ctx.contentReloadCount;
+
+    if (m_ctx.contentChanged) {
+        m_ctx.contentChanged();
+    } else {
+        RefreshContentHash();
+    }
+
+    ZL_INFO("content",
+            "mod 内容热重载成功：物品 {}→{}，配方 {}→{}，建造 mod {}→{}，"
+            "战利品 {}，POI {}，任务 {}",
+            oldItems, m_itemRegistry.Size(), oldRecipes, m_recipeRegistry.Size(),
+            oldBuildables, m_ctx.modBuildables.size(), m_lootTableRegistry.Size(),
+            m_poiConfig.defs.size(), m_missionConfig.defs.size());
+    ZL_INFO("content", "mod 内容指纹刷新：{:#x}→{:#x}", oldContentHash,
+            m_ctx.contentHash);
+    return true;
+}
+
+void GameApp::RefreshContentHash() {
+    std::vector<BuildableDef> buildables = LoadBuildableDefs(m_config);
+    AppendBuildableDefs(buildables, m_ctx.modBuildables);
+    const std::string modsDir =
+        m_config.Get<std::string>("script.modsDir", "mods");
+    const std::uint64_t modsHash = ComputeTreeHash(modsDir);
+    m_ctx.contentHash =
+        ComputeContentHash(m_itemRegistry, m_recipeRegistry, buildables,
+                           m_lootTableRegistry, m_poiConfig, m_missionConfig,
+                           modsHash, &m_forageRegistry, &m_animalRegistry,
+                           &m_cropRegistry, &m_settlements);
+    ZL_INFO("mod-content",
+            "客户端内容指纹刷新：{:#x}（物品 {}，配方 {}，建造 {}，战利品 {}，"
+            "POI {}，任务 {}，动物 {}，作物 {}，聚落 {}，mod 文件树 {:#x}）",
+            m_ctx.contentHash, m_itemRegistry.Size(), m_recipeRegistry.Size(),
+            buildables.size(), m_lootTableRegistry.Size(), m_poiConfig.defs.size(),
+            m_missionConfig.defs.size(), m_animalRegistry.Size(),
+            m_cropRegistry.Size(), m_settlements.defs.size(), modsHash);
 }
 
 }  // namespace zl::game

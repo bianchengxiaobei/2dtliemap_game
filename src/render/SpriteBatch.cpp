@@ -1,6 +1,9 @@
 #include "render/SpriteBatch.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <vector>
 
 #include "core/Log.h"
 #include "render/shaders_generated/fs_sprite.bin.h"
@@ -59,9 +62,48 @@ bool SpriteBatch::Init() {
                                                BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP,
                                            bgfx::copy(&whitePixel, sizeof(whitePixel)));
 
+    constexpr int kSoftSize = 96;
+    std::vector<uint32_t> softPixels(
+        static_cast<size_t>(kSoftSize) * kSoftSize, 0);
+    const float center = (kSoftSize - 1) * 0.5f;
+    const float radius = kSoftSize * 0.5f - 1.0f;
+    for (int y = 0; y < kSoftSize; ++y) {
+        const float dy = (static_cast<float>(y) - center) / radius;
+        for (int x = 0; x < kSoftSize; ++x) {
+            const float dx = (static_cast<float>(x) - center) / radius;
+            const float distance = std::sqrt(dx * dx + dy * dy);
+            if (distance >= 1.0f) {
+                continue;
+            }
+            const float angle = std::atan2(dy, dx);
+            const float wisp =
+                0.90f + 0.08f * std::sin(angle * 5.0f + distance * 7.0f) +
+                0.04f * std::sin(angle * 11.0f - distance * 13.0f);
+            const float edge =
+                std::clamp((1.0f - distance) / 0.45f, 0.0f, 1.0f);
+            const float alpha =
+                edge * edge * (3.0f - 2.0f * edge) * wisp;
+            const uint8_t a = static_cast<uint8_t>(
+                std::clamp(alpha, 0.0f, 1.0f) * 255.0f + 0.5f);
+            softPixels[static_cast<size_t>(y) * kSoftSize + x] =
+                PackColor(255, 255, 255, a);
+        }
+    }
+    m_softParticleTexture = bgfx::createTexture2D(
+        kSoftSize, kSoftSize, false, 1, bgfx::TextureFormat::RGBA8,
+        BGFX_TEXTURE_NONE | BGFX_SAMPLER_U_CLAMP |
+            BGFX_SAMPLER_V_CLAMP,
+        bgfx::copy(softPixels.data(),
+                   static_cast<uint32_t>(softPixels.size() *
+                                         sizeof(uint32_t))));
+
+    const bool softOk = bgfx::isValid(m_softParticleTexture);
+    if (!softOk) {
+        ZL_WARN("render", "软粒子纹理创建失败，载具烟雾回退矩形烟团");
+    }
     const bool ok = bgfx::isValid(m_whiteTexture);
-    ZL_INFO("render", "SpriteBatch 初始化{}（单批上限 {} 四边形）", ok ? "完成" : "失败",
-            kMaxQuadsPerFlush);
+    ZL_INFO("render", "SpriteBatch 初始化{}（单批上限 {} 四边形）",
+            ok ? "完成" : "失败", kMaxQuadsPerFlush);
     return ok;
 }
 
@@ -69,6 +111,10 @@ void SpriteBatch::Shutdown() {
     if (bgfx::isValid(m_whiteTexture)) {
         bgfx::destroy(m_whiteTexture);
         m_whiteTexture = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(m_softParticleTexture)) {
+        bgfx::destroy(m_softParticleTexture);
+        m_softParticleTexture = BGFX_INVALID_HANDLE;
     }
     if (bgfx::isValid(m_program)) {
         bgfx::destroy(m_program);

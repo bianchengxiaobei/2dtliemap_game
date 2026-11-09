@@ -120,6 +120,7 @@ enum class ZombieVariantKind : std::uint8_t {
     Normal = 0,
     Fast = 1,
     Strong = 2,
+    Armored = 3,  // M23-F6-T3：军械守卫，重甲/抗击退（追加在末尾保持旧档兼容）
 };
 
 struct ZombieVariant {
@@ -129,6 +130,47 @@ struct ZombieVariant {
     float visualScale = 1.0f;
 };
 
+// M23-F6-T3：重甲变体的伤害/击退规则。数值由 kind 派生，不新增存档或复制字段。
+inline constexpr float kArmoredZombieDamageReduction = 0.35f;
+inline constexpr float kArmoredZombieKnockbackScale = 0.35f;
+// M30-T5：重甲只对达到该硬直条伤害的近战攻击产生基础硬直；
+// 轻击（<=12）不能无脑打断，重击（>=18）可以。0 表示不参与破防。
+inline constexpr float kArmoredZombieStaggerPoiseThreshold = 16.0f;
+
+inline float ZombieVariantDamageReduction(ZombieVariantKind kind) {
+    return kind == ZombieVariantKind::Armored ? kArmoredZombieDamageReduction
+                                              : 0.0f;
+}
+
+inline float ZombieVariantKnockbackScale(ZombieVariantKind kind) {
+    return kind == ZombieVariantKind::Armored ? kArmoredZombieKnockbackScale
+                                              : 1.0f;
+}
+
+// 非破防轻击对重甲不产生基础硬直；破防长硬直由 CombatSystem 单独写入。
+// 阈值由 CombatRuleConfig.armoredStaggerPoiseThreshold 提供，缺省保持 T5 数值。
+inline float ZombieVariantStaggerScale(
+    ZombieVariantKind kind, float poiseDamage,
+    float armoredThreshold = kArmoredZombieStaggerPoiseThreshold) {
+    if (kind == ZombieVariantKind::Armored && poiseDamage > 0.0f &&
+        poiseDamage < armoredThreshold) {
+        return 0.0f;
+    }
+    return 1.0f;
+}
+
+// M23-F3-T5：僵尸燃烧状态（运行时组件；T6 再接存档/联机）。
+// remaining 是剩余燃烧时间；damageAccumulator/spreadAccumulator 分别驱动
+// 持续伤害与脚下火源传播；panicRemaining 内 AI 会追向最近玩家并加速。
+struct BurningZombie {
+    float remaining = 0.0f;
+    float damageAccumulator = 0.0f;
+    float spreadAccumulator = 0.0f;
+    float panicRemaining = 0.0f;
+    float panicSpeedScale = 1.0f;
+    float panicChaseRadius = 0.0f;
+};
+
 enum class ActorAction : std::uint8_t {
     Idle = 0,
     Moving = 1,
@@ -136,6 +178,7 @@ enum class ActorAction : std::uint8_t {
     Crafting = 3,
     Hit = 4,
     Dead = 5,
+    Howling = 6,  // M20-F3：嚎叫预警/施放（追加在末尾，保持旧快照数值兼容）
 };
 
 struct ActionState {
@@ -151,6 +194,12 @@ struct Health {
     float max = 100.0f;
 };
 
+// M25-T4-V9：仅驾驶中的玩家持有；车辆对爪/咬提供减伤，不免疫其他伤害。
+// 运行时组件，不写存档/复制；服务器与单机在上下车时同步。
+struct VehicleOccupant {
+    float damageReduction = 0.85f;
+};
+
 // M5-T1：需求（PZ 风格：0 = 完全满足，1 = 极限）。衰减与效果接后续里程碑，
 // 本任务只定稿数据形态；数值含义固定为归一化 [0,1]，便于 HUD/脚本统一缩放。
 struct Needs {
@@ -161,6 +210,31 @@ struct Needs {
     float moveScale = 1.0f;
     float damageScale = 1.0f;
     float healthDrainPerSecond = 0.0f;
+    std::uint8_t warning = 0;
+};
+
+// M23-F5-T3：食物营养与中毒。营养是临时饱腹缓冲（0~1），会按游戏时间衰减，
+// 并降低饥饿增速/饥饿伤害；poisonRemaining 表示食物中毒剩余秒数。
+// T3 只做运行时状态，存档/联机复制由 F5-T4 接入。
+struct FoodState {
+    float nutrition = 0.0f;
+    float poisonRemaining = 0.0f;
+    float poisonDamagePerSecond = 0.0f;
+    float poisonTotal = 0.0f;
+};
+
+// M20-F2：体温/潮湿。bodyC 与 wetness 进入存档；ambient/effective/insulation/
+// waterproof/moveScale/warning 每 tick 从天气、房间与篝火重新派生。
+struct Climate {
+    float bodyC = 37.0f;
+    float wetness = 0.0f;
+    float ambientC = 24.0f;
+    float effectiveC = 24.0f;
+    float insulation = 0.0f;
+    float waterproof = 0.0f;
+    float moveScale = 1.0f;
+    bool indoor = false;
+    bool nearFire = false;
     std::uint8_t warning = 0;
 };
 

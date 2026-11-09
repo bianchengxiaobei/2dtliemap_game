@@ -12,6 +12,9 @@
 
 #include <btBulletDynamicsCommon.h>
 
+#include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
+#include "characters/systems/CombatSystem.h"
 #include "characters/systems/MovementSystem.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
@@ -241,6 +244,49 @@ TEST_CASE("全链路：MovementSystem + PhysicsSyncSystem 顶墙 → Position �
     CHECK(position.z == 0);
     // 撞墙后实际速度回写：x 分量被物理归零
     CHECK(world.Registry().get<Velocity>(e).x < 1.0f);
+}
+
+TEST_CASE("M30-T4：闪避位移撞墙不穿墙") {
+    PhysicsWorld physics;
+    world::Chunk chunk(0, 0);
+    FillChunk(chunk, {{5, 5, world::SquareLayer::Wall, "wall.brick", true}});
+    physics.BuildChunkStatics(0, 0, chunk);
+
+    EcsWorld world;
+    const auto e = world.Create();
+    world.Registry().emplace<Position>(e, Position{3.0f, 5.0f, 0});
+    world.Registry().emplace<Velocity>(e, Velocity{0.0f, 0.0f});
+    world.Registry().emplace<zl::ecs::Collider>(e, zl::ecs::Collider{});
+    world.Registry().emplace<zl::ecs::MoveIntent>(e,
+                                                  zl::ecs::MoveIntent{0.0f, 0.0f});
+    zl::ecs::RigidBody rigid;
+    rigid.body = physics.CreateCharacterBody(0.3f, 1.8f, 3.0f, 5.0f, 0);
+    world.Registry().emplace<zl::ecs::RigidBody>(e, rigid);
+
+    const characters::CombatRuleConfig rules =
+        characters::DefaultCombatRuleConfig();
+    zl::ecs::CombatStance stance;
+    stance.dodgeLeft = characters::DodgeDurationSeconds(rules);
+    stance.dodgeInvulnLeft = characters::DodgeInvulnSeconds(rules);
+    stance.dodgeDirX = 1.0f;
+    stance.dodgeDirY = 0.0f;
+    world.Registry().emplace<zl::ecs::CombatStance>(e, stance);
+
+    characters::CombatSystem combat;
+    zl::characters::MovementSystem movement;
+    zl::physics::PhysicsSyncSystem sync(&physics);
+    for (int i = 0; i < 30; ++i) {
+        combat.Update(world, 1.0f / 60.0f);
+        movement.Update(world, 1.0f / 60.0f);
+        sync.Update(world, 1.0f / 60.0f);
+    }
+
+    const Position& position = world.Registry().get<Position>(e);
+    CHECK(position.x > 4.0f);
+    CHECK(position.x < 4.35f);
+    CHECK(position.y == doctest::Approx(5.0f).epsilon(0.05));
+    CHECK(world.Registry().get<zl::ecs::CombatStance>(e).dodgeLeft == 0.0f);
+    CHECK(world.Registry().get<zl::ecs::CombatStance>(e).dodgeInvulnLeft == 0.0f);
 }
 
 TEST_CASE("预算冒烟：500 静态体 + 50 动态体步进（Debug 宽松上限）") {

@@ -1,27 +1,84 @@
 {
  "cx": 3,
  "cy": 1,
+ "floors": [
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "wwwwwwgggg",
+  "wwwwwwgggg"
+ ],
  "objects": [
   {
-   "x": 9,
-   "y": 4,
+   "x": 0,
+   "y": 8,
    "z": 0,
-   "layer": "furniture",
-   "sprite": "decor.grass_tuft"
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
-   "x": 9,
-   "y": 4,
+   "x": 1,
+   "y": 8,
    "z": 0,
-   "layer": "furniture",
-   "sprite": "decor.grass_tuft"
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 3,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 8,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
   },
   {
    "x": 5,
    "y": 9,
    "z": 0,
-   "layer": "furniture",
-   "sprite": "decor.grass_tuft"
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 0,
+   "y": 9,
+   "w": 5,
+   "h": 1,
+   "id": 9,
+   "name": "poi_gas_station"
   }
  ]
 }

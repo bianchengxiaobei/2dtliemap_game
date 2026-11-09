@@ -20,6 +20,7 @@ public:
         std::uint16_t port = 7777;
         std::uint64_t contentHash = 0;
         bool spawnDemoPopulation = true;
+        bool spawnAnimals = true;
         std::string playerProfilesFile;
         float tickRate = 60.0f;
     };
@@ -35,6 +36,7 @@ public:
 
     bool Running() const;
     std::uint16_t Port() const;
+    std::uint64_t ContentHash() const;
 
 private:
     void Loop();

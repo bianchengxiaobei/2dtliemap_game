@@ -78,6 +78,11 @@ void ApplyResult(ecs::EcsWorld& world, const ecs::Entity e, ecs::PathRequest& re
 
 }  // namespace
 
+void PathFollowSystem::SetEnvironmentMoveScale(float scale) {
+    m_environmentMoveScale = std::clamp(std::isfinite(scale) ? scale : 1.0f,
+                                          0.5f, 1.25f);
+}
+
 void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
     entt::registry& registry = world.Registry();
 
@@ -132,6 +137,14 @@ void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
 
             auto* intent = registry.try_get<ecs::MoveIntent>(e);
             auto* request = registry.try_get<ecs::PathRequest>(e);
+            const float environmentMoveScale =
+                registry.any_of<ecs::LocalControl>(e) ? 1.0f
+                                                      : m_environmentMoveScale;
+            const auto* burning = registry.try_get<ecs::BurningZombie>(e);
+            const float panicMoveScale =
+                burning != nullptr && burning->panicRemaining > 0.0f
+                    ? std::clamp(burning->panicSpeedScale, 0.5f, 3.0f)
+                    : 1.0f;
 
             // 手动优先：本地控制实体本 tick 已被 InputSystem 写入非零意图 → 取消路径
             // （覆盖"在路上"与"在途查询"两种状态；输入意图原样保留）
@@ -182,8 +195,10 @@ void PathFollowSystem::Update(ecs::EcsWorld& world, float dt) {
                 }
                 const float length = std::sqrt(dx * dx + dy * dy);
                 if (intent != nullptr) {
-                    intent->x = dx / length * follow.speed;
-                    intent->y = dy / length * follow.speed;
+                    intent->x = dx / length * follow.speed *
+                                environmentMoveScale * panicMoveScale;
+                    intent->y = dy / length * follow.speed *
+                                environmentMoveScale * panicMoveScale;
                 }
                 return;
             }

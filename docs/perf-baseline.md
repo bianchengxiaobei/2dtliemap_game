@@ -132,6 +132,65 @@ vsync on，`audio.device=off`；`autoCruise=true`，圆心 (64,64)、半径 35�
 - `world.chunkAttachBudgetMs=2.0`、`chunkAttachBudget=8`；实测挂接帧 `lastAttachMs`
   0.62ms、预算命中 3 次，单帧未出现数百 ms 的挂接尖峰；至少执行 1 块避免饥饿。
 
+## X-F3 质量基线（2026-10-26）
+
+**场景：12/50/100 僵尸模拟 tick**
+
+- 测试：`test_boids` 的 `X-F3 性能基线：12/50/100 僵尸模拟 tick`；每档 120 tick，焦点 (30,30)，僵尸在半径 1~14 格内追击玩家。
+- 口径：空间索引 → LOD → 感知 → AI → 群体行为 → 战斗 → 移动 → 刷怪/虚拟化扫描 + Flush；**不含物理步进与寻路后台**，与 M5 500 人口基准同口径。
+- 结果（同一台开发机，未固定 CPU 亲和性）：
+
+| 僵尸数 | Debug / ms per tick | Release / ms per tick |
+|---|---:|---:|
+| 12 | 0.43–0.53 | 0.005–0.008 |
+| 50 | 1.66–2.21 | 0.019–0.030 |
+| 100 | 3.37–4.59 | 0.043–0.070 |
+
+- 结论：Release 100 僵尸仍远低于 4ms 预算；Debug 100 僵尸约 3.4–4.6ms，仅作开发参考，不作为性能门槛。测试阈值：Debug <40ms 哨兵，Release <4ms。
+
+**场景：1/16/64 仓库最近查找与存取**
+
+- 测试：`test_storage` 的 `X-F3 性能基线：1/16/64 仓库最近查找与存取`；每档 2000 次 `FindNearestPlayerStorage`，再跑 30 轮“全部仓库 TakeAll→StoreAll”，每仓 6 栈×10 rag。
+- 口径：最近查找平均每次耗时；存取为一轮内全部仓库的取空+存回，含容量/堆数校验，不含 UI。
+
+| 仓库数 | Debug nearest / transfer | Release nearest / transfer |
+|---:|---:|---:|
+| 1 | 0.006–0.008 ms / 0.26–0.40 ms | 0.0000–0.0001 ms / 0.007–0.012 ms |
+| 16 | 0.020–0.032 ms / 4.6–7.7 ms | 0.0003–0.0005 ms / 0.11–0.19 ms |
+| 64 | 0.063–0.124 ms / 20–29 ms | 0.0010–0.0014 ms / 0.47–0.68 ms |
+
+- 结论：仓库数量对最近查找近似线性，64 仓 Release 仍为微秒级；存取吞吐随仓库数线性增长。阈值：Debug nearest<10ms、transfer<100ms；Release nearest<1ms、transfer<10ms。
+
+**场景：49 chunk 卸载、稀疏加载与文件重载**
+
+- 测试：`test_chunkmanager` 的 `X-F3 性能基线：49 chunk 卸载、稀疏加载与文件重载`；3 轮从 village_demo (55,55) 跳到地图外 (505,505) 再返回。
+- 口径：卸载为主线程 `Update` 同步移除 49 块；加载为 `PumpUntil` 到 49 块全部挂接的墙钟时间，含 1ms 轮询与后台调度，不是单块解析耗时。
+
+| 指标 | Debug / ms | Release / ms |
+|---|---:|---:|
+| 卸载 49 块 | 58–84 | 4.7–6.5 |
+| 稀疏窗口加载 49 块 | 172–201 | 173–180 |
+| 文件窗口重载 49 块 | 180–242 | 178–181 |
+
+- 结论：Release 卸载约 5–7ms、窗口加载约 180ms；Debug 卸载约 60–85ms、窗口加载约 180–240ms。阈值：Debug unload<200ms、load<3000ms；Release unload<20ms、load<1000ms。
+- 功能性覆盖仍由 `test_storage` 的容量/堆数/StoreAll/TakeAll/拆除清空、`test_chunkmanager` 的 49 块驻留与卸载、`test_network_world_persistence` 的服务端强制卸载/重载与同 saveId 重启保证。
+
+## M23-F2b-T7 动物更新基线（2026-10-31）
+
+**场景：36 只动物（20 个已加载 chunk，玩家焦点固定）+ 240 tick**
+
+- 测试：`test_animal_spawn` 的 `M23-F2b-T7 动物上限、墙体规避与更新预算`；生成上限 36，连续调用 240 次 `AnimalSystem::Update(0.016f)`，含感知收集/游荡/逃跑/反击/LOD 跳过与统计刷新；不含物理、渲染、复制。
+- 口径：主线程动物系统 Update，Debug/Release 同机；墙体用例另用 1 个 chunk + 阻挡格验证位移不穿墙。
+
+| 指标 | Debug | Release | 预算/结论 |
+|---|---:|---:|---|
+| 36 只平均更新 | 0.62–0.87 ms/tick | **0.017–0.022 ms/tick** | 远低于 4ms 模拟预算 ✔ |
+| 全局上限 | 36 | 36 | 20 chunk 加载后仍恒定 ≤36 ✔ |
+| 未加载快照 | 每 chunk 最多 16 条 | 同左 | 全局 2048 条上限，超出下次按种子重播种 |
+| 存档恢复 | 1 chunk / 2 只 | 同左 | 生命 7.5、Flee 4.25s、已播种不重复生成 ✔ |
+
+- 结论：动物系统在 36 只上限下 Release 约 0.02ms/tick，不是帧预算瓶颈；测试阈值 Debug <35ms、Release <4ms，主要用于捕获回归而不是硬件上限。
+
 ## 已知问题与优化候选
 
 1. **多图集交错 drawcall 高**（placeholder_pz）：M12 已把 stage 0 地面批按纹理聚簇，
@@ -153,6 +212,9 @@ vsync on，`audio.device=off`；`autoCruise=true`，圆心 (64,64)、半径 35�
 | 2026-10-16 | M4 验收 | 物理 500 静态体基准（Debug/Release）+ ECS 10000×3 压力 | Release 0.139ms/帧（<2ms ✔）/ Debug 1.066ms；ECS storage 复用无泄漏 |
 | 2026-10-16 | M5 验收 | 500 僵尸 + 200 虚拟全链模拟 tick + 实机 500 同屏压测 | Release **0.396ms/tick**（<4ms ✔，boids 0.308 主导）；实机 FPS 59、人口 500 恒定守恒 |
 | 2026-10-18 | M12 验收 | Release 500 人口 + 大世界巡航 60s（direct/loopback）、placeholder 地面批、chunk 挂接预算 | 中位 60fps（direct 最低 55 / loopback 57，差异 <10%）；placeholder drawcall 244→71；挂接预算命中、启动 461ms |
+| 2026-10-26 | X-F3 基线 | test_boids 12/50/100 僵尸模拟 tick（120 tick/档，无物理/寻路后台） | Release 0.005–0.008 / 0.019–0.030 / 0.043–0.070 ms/tick；Debug 0.43–0.53 / 1.66–2.21 / 3.37–4.59 ms/tick |
+| 2026-10-26 | X-F3 基线 | 1/16/64 仓库 + 49 chunk 卸载/加载（3 轮） | Release 64 仓 0.0014ms/query、0.68ms/round；chunk unload 4.7–6.5ms、load 173–181ms |
+| 2026-10-31 | F2b-T7 | 36 动物 / 20 chunk / 240 tick | Debug 0.62–0.87ms、Release 0.017–0.022ms/tick；上限 36 稳定；快照 1 chunk/2 只生命+Flee 恢复 |
 
 **场景 D：Debug 240 敌人帧率排查（2026-10-19）**
 

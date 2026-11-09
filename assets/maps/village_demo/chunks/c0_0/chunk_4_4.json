@@ -1,6 +1,18 @@
 {
  "cx": 4,
  "cy": 4,
+ "floors": [
+  "ggggggggww",
+  "ggggggggww",
+  "ggggggggww",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg",
+  "gggggggggg"
+ ],
  "objects": [
   {
    "x": 4,
@@ -8,6 +20,48 @@
    "z": 0,
    "layer": "furniture",
    "sprite": "decor.grass_tuft"
+  },
+  {
+   "x": 8,
+   "y": 0,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 1,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 2,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 9,
+   "y": 0,
+   "w": 1,
+   "h": 2,
+   "id": 16,
+   "name": "poi_fire_station"
   }
  ]
 }

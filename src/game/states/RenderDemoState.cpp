@@ -44,7 +44,8 @@ void RenderDemoState::OnEnter() {
     const std::string manifest =
         config.Get<std::string>("assets.manifest", "assets/asset_manifest.json");
     const std::string provider = config.Get<std::string>("assets.provider", "own");
-    if (!m_ctx.assets->Init(manifest, provider, *m_ctx.atlases)) {
+    if (!m_ctx.assets->Init(manifest, provider, *m_ctx.atlases,
+                            m_ctx.modAssetManifests)) {
         ZL_ERROR("render", "资源初始化失败，地图将为空");
     }
 

@@ -20,7 +20,8 @@ namespace zl::game {
 ecs::Entity SpawnLootContainer(ecs::EcsWorld& world,
                                const items::LootTableRegistry& lootTables,
                                std::string_view tableId, float px, float py, int z,
-                               std::string_view spriteLogical);
+                               std::string_view spriteLogical,
+                               std::uint64_t stableId = 0);
 
 // 村庄出生点附近的两个演示容器；调用方需保证目标 chunk 已加载。
 int SpawnDemoLootContainers(ecs::EcsWorld& world,
@@ -66,5 +67,16 @@ LootTakeResult TakeLootContainerItem(ecs::EcsWorld& world,
                                      ecs::Entity containerEntity,
                                      ecs::Container& playerContainer, int index,
                                      int count = 1);
+
+struct LootTakeAllResult {
+    int moved = 0;
+    int remainingStacks = 0;
+};
+
+// 将容器内所有可容纳物品移到玩家背包；背包满时保留剩余堆叠。
+LootTakeAllResult TakeAllLootContainerItems(ecs::EcsWorld& world,
+                                            const items::ItemRegistry& items,
+                                            ecs::Entity containerEntity,
+                                            ecs::Container& playerContainer);
 
 }  // namespace zl::game

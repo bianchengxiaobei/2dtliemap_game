@@ -20,9 +20,10 @@ struct RepairResult {
     int materialCount = 0;
 };
 
-// 维修指定槽位的武器/工具：要求不可堆叠、condition 在 (0,1)、restore 在 (0,1]，
-// 并在同一容器内消耗 materialCount 个 materialDefId。先在副本上执行，成功后整体替换，
-// 因此失败不会修改耐久或材料。工具损坏（condition<=0）后不可维修。
+// 维修指定槽位的武器/衣物：要求不可堆叠、condition 在 (0,1)、restore 在 (0,1]，
+// 并在同一容器内消耗 materialCount 个 materialDefId；恢复量再乘物品
+// repairEfficiency（0.1~3.0）。先在副本上执行，成功后整体替换，
+// 因此失败不会修改耐久或材料。损坏（condition<=0）后不可维修。
 RepairResult Repair(ecs::Container& container, const ItemRegistry& registry,
                     std::size_t index, std::string_view materialDefId,
                     int materialCount, float restore);

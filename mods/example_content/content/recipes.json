@@ -1,0 +1,31 @@
+{
+  "format": "recipes-v4",
+  "recipes": [
+    {
+      "id": "cook_camp_stew",
+      "name": "营地炖豆",
+      "category": "cooking",
+      "output": { "item": "camp_stew", "count": 1 },
+      "ingredients": [
+        { "item": "canned_beans", "count": 1 },
+        { "item": "energy_bar", "count": 1 }
+      ],
+      "station": "campfire",
+      "time": 2.5
+    },
+    {
+      "id": "cook_pumpkin_soup",
+      "name": "南瓜浓汤",
+      "category": "cooking",
+      "output": { "item": "pumpkin_soup", "count": 1 },
+      "ingredients": [
+        { "item": "fresh_pumpkin", "count": 1 },
+        { "item": "water_bottle", "count": 1 }
+      ],
+      "cookware": { "item": "cooking_pot", "count": 1 },
+      "fuel": { "item": "wood", "count": 1 },
+      "station": "campfire",
+      "time": 2.5
+    }
+  ]
+}

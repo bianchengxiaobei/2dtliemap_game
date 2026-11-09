@@ -1,0 +1,25 @@
+{
+  "format": "crops-v1",
+  "crops": [
+    {
+      "id": "mod_pumpkin",
+      "name": "南瓜",
+      "seedItem": "pumpkin_seeds",
+      "produceItem": "fresh_pumpkin",
+      "growMinutes": 600.0,
+      "waterMinutes": 300.0,
+      "maxWaterMinutes": 600.0,
+      "witherMinutes": 2880.0,
+      "waterUsePerMinute": 1.4,
+      "diseaseChance": 0.08,
+      "harvestYield": 2,
+      "seedYield": 1,
+      "stages": [
+        { "name": "幼苗", "start": 0.0 },
+        { "name": "藤蔓", "start": 0.3 },
+        { "name": "结果", "start": 0.7 },
+        { "name": "成熟", "start": 1.0 }
+      ]
+    }
+  ]
+}

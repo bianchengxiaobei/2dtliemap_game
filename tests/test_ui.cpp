@@ -10,7 +10,10 @@
 #include <doctest/doctest.h>
 
 #include "core/Input.h"
+#include "game/ActionHints.h"
+#include "game/RunStats.h"
 #include "platform/KeyNames.h"
+#include "ui/HudState.h"
 #include "ui/InventoryPanel.h"
 #include "ui/InventoryUi.h"
 #include "ui/MenuPanel.h"
@@ -107,6 +110,24 @@ public:
 private:
     bool& m_flag;
 };
+
+struct LayoutRect {
+    float left = 0.0f;
+    float top = 0.0f;
+    float right = 0.0f;
+    float bottom = 0.0f;
+};
+
+LayoutRect BorderRect(Rml::Element* element) {
+    const Rml::Vector2f offset = element->GetAbsoluteOffset(Rml::BoxArea::Border);
+    const Rml::Vector2f size = element->GetBox().GetSize(Rml::BoxArea::Border);
+    return {offset.x, offset.y, offset.x + size.x, offset.y + size.y};
+}
+
+bool Overlaps(const LayoutRect& a, const LayoutRect& b) {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom &&
+           a.bottom > b.top;
+}
 
 }  // namespace
 
@@ -341,10 +362,136 @@ TEST_CASE("M9-T4 HUD 文档与游戏输入阻断") {
     CHECK(document->GetElementById("hud-speed") != nullptr);
     CHECK(document->GetElementById("hp-fill") != nullptr);
     CHECK(document->GetElementById("stamina-fill") != nullptr);
+    CHECK(document->GetElementById("combat-status") != nullptr);
+    CHECK(document->GetElementById("ranged-status") != nullptr);
+    CHECK(document->GetElementById("forage-status") != nullptr);
+    CHECK(document->GetElementById("fishing-status") != nullptr);
     CHECK(document->GetElementById("needs-status") != nullptr);
+    CHECK(document->GetElementById("wound-status") != nullptr);
+    CHECK(document->GetElementById("pain-status") != nullptr);
+    CHECK(document->GetElementById("armor-status") != nullptr);
+    CHECK(document->GetElementById("infection-status") != nullptr);
+    CHECK(document->GetElementById("weather-status") != nullptr);
+    CHECK(document->GetElementById("weather-overlay") != nullptr);
+    CHECK(document->GetElementById("threat-status") != nullptr);
+    CHECK(document->GetElementById("threat-left") != nullptr);
+    CHECK(document->GetElementById("threat-right") != nullptr);
+    CHECK(document->GetElementById("threat-top") != nullptr);
+    CHECK(document->GetElementById("threat-bottom") != nullptr);
+    Rml::Element* threatLeft = document->GetElementById("threat-left");
+    REQUIRE(threatLeft != nullptr);
+    threatLeft->SetProperty("display", "block");
+    context->Update();
+    CHECK(threatLeft->GetClientWidth() >= 6.0f);
+    CHECK(threatLeft->GetClientHeight() > 0.0f);
     CHECK(document->GetElementById("hud-objective") != nullptr);
+
+    // core_ui 脚本 HUD 使用 mods/core_ui/ui/hud.rml（与 native fallback 是两份文件），
+    // 必须保持同结构；否则脚本路径下新增 HUD 行/边缘提示会静默缺失。
+    Rml::ElementDocument* scriptDocument = context->LoadDocument(
+        std::string(ZL_SOURCE_DIR) + "/mods/core_ui/ui/hud.rml");
+    REQUIRE(scriptDocument != nullptr);
+    CHECK(scriptDocument->GetElementById("combat-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("ranged-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("forage-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("fishing-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("wound-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("pain-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("armor-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("infection-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("weather-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("weather-overlay") != nullptr);
+    CHECK(scriptDocument->GetElementById("threat-status") != nullptr);
+    for (const char* id : {"threat-left", "threat-right", "threat-top", "threat-bottom"}) {
+        CHECK(scriptDocument->GetElementById(id) != nullptr);
+    }
+    Rml::Element* scriptThreatLeft = scriptDocument->GetElementById("threat-left");
+    REQUIRE(scriptThreatLeft != nullptr);
+    scriptThreatLeft->SetProperty("display", "block");
+    context->Update();
+    CHECK(scriptThreatLeft->GetClientWidth() >= 6.0f);
+    CHECK(scriptThreatLeft->GetClientHeight() > 0.0f);
     CHECK(document->GetElementById("objective-text") != nullptr);
     CHECK(document->GetElementById("objective-hint") != nullptr);
+    CHECK(document->GetElementById("poi-guide") != nullptr);
+    CHECK(scriptDocument->GetElementById("poi-guide") != nullptr);
+    CHECK(document->GetElementById("mission-guide") != nullptr);
+    CHECK(scriptDocument->GetElementById("mission-guide") != nullptr);
+    CHECK(document->GetElementById("siege-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("siege-status") != nullptr);
+    CHECK(document->GetElementById("base-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("base-status") != nullptr);
+    for (Rml::ElementDocument* hud : {document, scriptDocument}) {
+        REQUIRE(hud != nullptr);
+        CHECK(hud->GetElementById("mod-fields") != nullptr);
+        for (int i = 0; i < 8; ++i) {
+            CHECK(hud->GetElementById("mod-field-" + std::to_string(i)) !=
+                  nullptr);
+            CHECK(hud->GetElementById("mod-field-label-" +
+                                      std::to_string(i)) != nullptr);
+            CHECK(hud->GetElementById("mod-field-value-" +
+                                      std::to_string(i)) != nullptr);
+        }
+        CHECK(hud->GetElementById("siege-report") != nullptr);
+        CHECK(hud->GetElementById("siege-report-title") != nullptr);
+        CHECK(hud->GetElementById("siege-report-rating") != nullptr);
+        CHECK(hud->GetElementById("siege-report-hint") != nullptr);
+        for (int i = 0; i < 8; ++i) {
+            CHECK(hud->GetElementById("siege-report-line-" +
+                                      std::to_string(i)) != nullptr);
+        }
+    }
+    Rml::Element* reportPanel = document->GetElementById("siege-report");
+    REQUIRE(reportPanel != nullptr);
+    reportPanel->SetProperty("display", "block");
+    context->Update();
+    CHECK(reportPanel->GetClientWidth() >= 1280.0f);
+    CHECK(reportPanel->GetClientHeight() >= 720.0f);
+    reportPanel->SetProperty("display", "none");
+    Rml::Element* baseStatus = document->GetElementById("base-status");
+    REQUIRE(baseStatus != nullptr);
+    baseStatus->SetInnerRML("base");
+    baseStatus->SetProperty("display", "block");
+    context->Update();
+    CHECK(baseStatus->GetClientHeight() > 0.0f);
+    Rml::Element* scriptBaseStatus =
+        scriptDocument->GetElementById("base-status");
+    REQUIRE(scriptBaseStatus != nullptr);
+    scriptBaseStatus->SetInnerRML("base");
+    scriptBaseStatus->SetProperty("display", "block");
+    context->Update();
+    CHECK(scriptBaseStatus->GetClientHeight() > 0.0f);
+    for (Rml::ElementDocument* hud : {document, scriptDocument}) {
+        REQUIRE(hud != nullptr);
+        CHECK(hud->GetElementById("hud-level") != nullptr);
+        CHECK(hud->GetElementById("level-text") != nullptr);
+        CHECK(hud->GetElementById("level-perk") != nullptr);
+        CHECK(hud->GetElementById("level-fill") != nullptr);
+        CHECK(hud->GetElementById("level-xp") != nullptr);
+        CHECK(hud->GetElementById("perk-prompt") != nullptr);
+        CHECK(hud->GetElementById("character-panel") != nullptr);
+        CHECK(hud->GetElementById("character-level") != nullptr);
+        CHECK(hud->GetElementById("character-xp") != nullptr);
+        CHECK(hud->GetElementById("character-xp-fill") != nullptr);
+        CHECK(hud->GetElementById("character-perks") != nullptr);
+        for (int i = 0; i < 4; ++i) {
+            CHECK(hud->GetElementById("character-skill-" + std::to_string(i)) !=
+                  nullptr);
+        }
+        for (int i = 0; i < 3; ++i) {
+            CHECK(hud->GetElementById("perk-choice-" + std::to_string(i)) !=
+                  nullptr);
+        }
+    }
+    Rml::Element* characterPanel =
+        document->GetElementById("character-panel");
+    REQUIRE(characterPanel != nullptr);
+    characterPanel->SetProperty("display", "block");
+    context->Update();
+    CHECK(characterPanel->GetClientWidth() >= 1280.0f);
+    CHECK(characterPanel->GetClientHeight() >= 720.0f);
+    CHECK(document->GetElementById("action-hint") != nullptr);
+    CHECK(scriptDocument->GetElementById("action-hint") != nullptr);
     CHECK(document->GetElementById("notice") != nullptr);
     Rml::Element* firstSlot = document->GetElementById("slot-0");
     REQUIRE(firstSlot != nullptr);
@@ -382,6 +529,386 @@ TEST_CASE("M9-T4 HUD 文档与游戏输入阻断") {
     CHECK(!input.IsGameplayBlocked());
     CHECK(input.IsKeyDown(GLFW_KEY_W));
     CHECK(input.IsMouseButtonDown(0));
+}
+
+TEST_CASE("P1 HUD 1280x720 与 1920x1080 布局") {
+    NullRenderInterface renderInterface;
+    NullSystemInterface systemInterface;
+    Rml::SetRenderInterface(&renderInterface);
+    Rml::SetSystemInterface(&systemInterface);
+    REQUIRE(Rml::Initialise());
+
+    const std::string fontDir = std::string(ZL_SOURCE_DIR) + "/assets/fonts/";
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Regular.otf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Normal));
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Bold.ttf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Bold));
+
+    const Rml::Vector2i sizes[] = {Rml::Vector2i(1280, 720),
+                                    Rml::Vector2i(1920, 1080)};
+    const std::string longObjective =
+        "清剿废弃加油站守军并搜索储物柜，取回维修工具、罐装食物、无线电零件和医疗包，确认安全后返回基地";
+    const std::string longPoi =
+        "POI · 废弃加油站（威胁高）西南 38 格 · 清剿守军并搜索储物柜（工具/零食）";
+    const std::string longMission =
+        "任务：无线电求救 | 搜索房屋工具柜并找到无线电零件 0/1 | 奖励 40 生存经验 | L切换/K放弃";
+    const std::string longEvent =
+        "事件 · 被感染房屋 · 清理屋内感染者 1/3；搜出屋内的感染者藏匿箱 0/1 · 目标东南 38格 · 奖励 60 生存经验 + 急救包×1";
+    const std::string reportLine =
+        "波次 3/3 | 结构损失 2/9 | 存活比例 78% | 破防方向 西北 | 奖励 燃料罐×1";
+    const char* hudPaths[] = {"assets/ui/hud.rml",
+                              "mods/core_ui/ui/hud.rml"};
+
+    for (int sizeIndex = 0; sizeIndex < 2; ++sizeIndex) {
+        const std::string contextName =
+            "p1-hud-" + std::to_string(sizeIndex);
+        Rml::Context* context = Rml::CreateContext(contextName, sizes[sizeIndex]);
+        REQUIRE(context != nullptr);
+
+        for (const char* hudPath : hudPaths) {
+            Rml::ElementDocument* document = context->LoadDocument(
+                std::string(ZL_SOURCE_DIR) + "/" + hudPath);
+            REQUIRE(document != nullptr);
+            document->Show();
+            context->Update();
+
+            Rml::Element* objective = document->GetElementById("hud-objective");
+            Rml::Element* objectiveText =
+                document->GetElementById("objective-text");
+            Rml::Element* objectiveHint =
+                document->GetElementById("objective-hint");
+            Rml::Element* poiGuide = document->GetElementById("poi-guide");
+            Rml::Element* missionGuide =
+                document->GetElementById("mission-guide");
+            Rml::Element* eventGuide =
+                document->GetElementById("event-guide");
+            Rml::Element* modFields = document->GetElementById("mod-fields");
+            Rml::Element* baseStatus =
+                document->GetElementById("base-status");
+            Rml::Element* siegeStatus =
+                document->GetElementById("siege-status");
+            Rml::Element* threatStatus =
+                document->GetElementById("threat-status");
+            Rml::Element* perkPrompt =
+                document->GetElementById("perk-prompt");
+            REQUIRE(objective != nullptr);
+            REQUIRE(objectiveText != nullptr);
+            REQUIRE(objectiveHint != nullptr);
+            REQUIRE(poiGuide != nullptr);
+            REQUIRE(missionGuide != nullptr);
+            REQUIRE(eventGuide != nullptr);
+            REQUIRE(modFields != nullptr);
+            REQUIRE(baseStatus != nullptr);
+            REQUIRE(siegeStatus != nullptr);
+            REQUIRE(threatStatus != nullptr);
+            REQUIRE(perkPrompt != nullptr);
+
+            objectiveText->SetInnerRML(longObjective);
+            objectiveHint->SetInnerRML("目标提示：按 E 交互，按 I 搜刮");
+            poiGuide->SetInnerRML(longPoi);
+            missionGuide->SetInnerRML(longMission);
+            eventGuide->SetInnerRML(longEvent);
+            modFields->SetProperty("display", "block");
+            for (int i = 0; i < 8; ++i) {
+                Rml::Element* row =
+                    document->GetElementById("mod-field-" + std::to_string(i));
+                Rml::Element* label = document->GetElementById(
+                    "mod-field-label-" + std::to_string(i));
+                Rml::Element* value = document->GetElementById(
+                    "mod-field-value-" + std::to_string(i));
+                REQUIRE(row != nullptr);
+                REQUIRE(label != nullptr);
+                REQUIRE(value != nullptr);
+                row->SetProperty("display", "block");
+                label->SetInnerRML("补给站状态标签 " + std::to_string(i + 1));
+                value->SetInnerRML("库存 12/24 · 发电机供电正常 · 低燃料警告未触发");
+            }
+            baseStatus->SetInnerRML(
+                "基地 · 仓库 2（12.5/100.0kg） · 床位 2 · 篝火 1 · 工作台 1 · "
+                "防御 8 完好 / 2 损坏 · 电力：燃料 320 分 · 负载 2.5 · 供电中");
+            siegeStatus->SetInnerRML(
+                "守夜 第 2/3 波 | 来袭 西北 | 预计破口 木墙 120/120");
+            threatStatus->SetInnerRML("受击：撕咬（流血）");
+            perkPrompt->SetInnerRML("升级！按 1/2/3 选择 Perk");
+            baseStatus->SetProperty("display", "block");
+            siegeStatus->SetProperty("display", "block");
+            threatStatus->SetProperty("display", "block");
+            perkPrompt->SetProperty("display", "block");
+            context->Update();
+
+            const LayoutRect objectiveRect = BorderRect(objective);
+            const LayoutRect modFieldsRect = BorderRect(modFields);
+            const LayoutRect baseStatusRect = BorderRect(baseStatus);
+            const LayoutRect siegeStatusRect = BorderRect(siegeStatus);
+            const LayoutRect threatStatusRect = BorderRect(threatStatus);
+            const LayoutRect perkPromptRect = BorderRect(perkPrompt);
+            CHECK(objectiveRect.left >= 0.0f);
+            CHECK(objectiveRect.top >= 0.0f);
+            CHECK(objectiveRect.right <=
+                  static_cast<float>(sizes[sizeIndex].x) - 15.0f);
+            CHECK(objectiveRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
+            CHECK(modFieldsRect.left >= 0.0f);
+            CHECK(modFieldsRect.top >= 0.0f);
+            CHECK(modFieldsRect.right <=
+                  static_cast<float>(sizes[sizeIndex].x) - 15.0f);
+            CHECK(modFieldsRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
+            CHECK(!Overlaps(objectiveRect, modFieldsRect));
+            CHECK(modFieldsRect.top >= objectiveRect.bottom + 8.0f);
+            CHECK(objective->GetScrollHeight() <=
+                  objective->GetClientHeight() + 1.0f);
+            CHECK(modFields->GetScrollHeight() <=
+                  modFields->GetClientHeight() + 1.0f);
+            CHECK(objective->GetClientHeight() > 0.0f);
+            CHECK(poiGuide->GetClientHeight() >= 32.0f);
+            CHECK(missionGuide->GetClientHeight() >= 32.0f);
+            CHECK(eventGuide->GetClientHeight() >= 32.0f);
+            CHECK((zl::ui::HudNoticeSuppressed(true, false, false)));
+            CHECK((zl::ui::HudNoticeSuppressed(false, true, false)));
+            CHECK((zl::ui::HudNoticeSuppressed(false, false, true)));
+            CHECK_FALSE((zl::ui::HudNoticeSuppressed(false, false, false)));
+            CHECK(baseStatusRect.right <= static_cast<float>(sizes[sizeIndex].x));
+            CHECK(baseStatusRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
+            CHECK(siegeStatusRect.right <= static_cast<float>(sizes[sizeIndex].x));
+            CHECK(siegeStatusRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
+            CHECK(threatStatusRect.right <= static_cast<float>(sizes[sizeIndex].x));
+            CHECK(threatStatusRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
+            CHECK(!Overlaps(baseStatusRect, objectiveRect));
+            CHECK(!Overlaps(baseStatusRect, modFieldsRect));
+            CHECK(!Overlaps(siegeStatusRect, objectiveRect));
+            CHECK(!Overlaps(siegeStatusRect, modFieldsRect));
+            CHECK(!Overlaps(threatStatusRect, objectiveRect));
+            CHECK(!Overlaps(threatStatusRect, modFieldsRect));
+            CHECK(!Overlaps(baseStatusRect, siegeStatusRect));
+            CHECK(!Overlaps(siegeStatusRect, threatStatusRect));
+            CHECK(baseStatus->GetScrollHeight() <=
+                  baseStatus->GetClientHeight() + 1.0f);
+            CHECK(siegeStatus->GetScrollHeight() <=
+                  siegeStatus->GetClientHeight() + 1.0f);
+            CHECK(threatStatus->GetScrollHeight() <=
+                  threatStatus->GetClientHeight() + 1.0f);
+            CHECK(perkPromptRect.top >= threatStatusRect.bottom + 8.0f);
+            CHECK(perkPromptRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
+
+            Rml::Element* reportPanel = document->GetElementById("siege-report");
+            Rml::Element* reportCard =
+                document->GetElementById("siege-report-card");
+            Rml::Element* reportTitle =
+                document->GetElementById("siege-report-title");
+            Rml::Element* reportRating =
+                document->GetElementById("siege-report-rating");
+            Rml::Element* reportHint =
+                document->GetElementById("siege-report-hint");
+            REQUIRE(reportPanel != nullptr);
+            REQUIRE(reportCard != nullptr);
+            REQUIRE(reportTitle != nullptr);
+            REQUIRE(reportRating != nullptr);
+            REQUIRE(reportHint != nullptr);
+            reportPanel->SetProperty("display", "block");
+            reportTitle->SetInnerRML("守夜战报");
+            reportRating->SetInnerRML("S");
+            reportHint->SetInnerRML("ESC 关闭");
+            for (int i = 0; i < 8; ++i) {
+                Rml::Element* line = document->GetElementById(
+                    "siege-report-line-" + std::to_string(i));
+                REQUIRE(line != nullptr);
+                line->SetInnerRML(reportLine);
+            }
+            context->Update();
+
+            const LayoutRect reportRect = BorderRect(reportPanel);
+            const LayoutRect cardRect = BorderRect(reportCard);
+            CHECK(reportRect.left >= 0.0f);
+            CHECK(reportRect.top >= 0.0f);
+            CHECK(reportRect.right <= static_cast<float>(sizes[sizeIndex].x));
+            CHECK(reportRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
+            CHECK(cardRect.left >= 0.0f);
+            CHECK(cardRect.top >= 0.0f);
+            CHECK(cardRect.right <= static_cast<float>(sizes[sizeIndex].x));
+            CHECK(cardRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
+            CHECK(reportCard->GetScrollHeight() <=
+                  reportCard->GetClientHeight() + 1.0f);
+            for (int i = 0; i < 8; ++i) {
+                Rml::Element* line = document->GetElementById(
+                    "siege-report-line-" + std::to_string(i));
+                REQUIRE(line != nullptr);
+                CHECK(line->GetClientHeight() > 0.0f);
+                CHECK(BorderRect(line).bottom <= cardRect.bottom + 1.0f);
+            }
+
+            reportPanel->SetProperty("display", "none");
+            context->Update();
+            document->Hide();
+        }
+
+        Rml::RemoveContext(contextName);
+    }
+
+    Rml::Shutdown();
+}
+
+TEST_CASE("P1 HUD 左侧状态堆叠与底部提示布局") {
+    NullRenderInterface renderInterface;
+    NullSystemInterface systemInterface;
+    Rml::SetRenderInterface(&renderInterface);
+    Rml::SetSystemInterface(&systemInterface);
+    REQUIRE(Rml::Initialise());
+
+    const std::string fontDir = std::string(ZL_SOURCE_DIR) + "/assets/fonts/";
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Regular.otf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Normal));
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Bold.ttf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Bold));
+
+    const Rml::Vector2i sizes[] = {Rml::Vector2i(1280, 720),
+                                    Rml::Vector2i(1920, 1080)};
+    const char* hudPaths[] = {"assets/ui/hud.rml",
+                              "mods/core_ui/ui/hud.rml"};
+    const char* statusIds[] = {"ranged-status", "forage-status", "fishing-status",
+                               "needs-status", "wound-status", "pain-status",
+                               "armor-status", "infection-status",
+                               "weather-status"};
+    const char* statusTexts[] = {
+        "手枪 换弹中 42% · 3/8 · 备弹 9",
+        "可觅食 · 森林（2.6 秒）",
+        "可钓鱼 · 静水（需要 鱼饵）",
+        "饥饿：严重（移速 -20%） · 口渴：中度（体力恢复 -10%）",
+        "流血：2 处伤口（1.2 HP/s，未包扎）",
+        "疼痛：严重 75%（近战命中 -20%）",
+        "护甲：减伤 22% · 移速 -6%",
+        "感染：发热期 · 剩余 12:30 · 抑制 03:00",
+        "天气：寒潮 · 体温 34.8°C · 潮湿 68% · 室内"};
+
+    for (int sizeIndex = 0; sizeIndex < 2; ++sizeIndex) {
+        const std::string contextName =
+            "p1-hud-bottom-" + std::to_string(sizeIndex);
+        Rml::Context* context = Rml::CreateContext(contextName, sizes[sizeIndex]);
+        REQUIRE(context != nullptr);
+
+        for (const char* hudPath : hudPaths) {
+            Rml::ElementDocument* document = context->LoadDocument(
+                std::string(ZL_SOURCE_DIR) + "/" + hudPath);
+            REQUIRE(document != nullptr);
+            document->Show();
+            context->Update();
+
+            Rml::Element* level = document->GetElementById("hud-level");
+            Rml::Element* vitals = document->GetElementById("hud-vitals");
+            Rml::Element* hotbar = document->GetElementById("hotbar");
+            Rml::Element* actionHint =
+                document->GetElementById("action-hint");
+            Rml::Element* notice = document->GetElementById("notice");
+            REQUIRE(level != nullptr);
+            REQUIRE(vitals != nullptr);
+            REQUIRE(hotbar != nullptr);
+            REQUIRE(actionHint != nullptr);
+            REQUIRE(notice != nullptr);
+
+            for (std::size_t i = 0; i < 9; ++i) {
+                Rml::Element* status = document->GetElementById(statusIds[i]);
+                REQUIRE(status != nullptr);
+                status->SetInnerRML(statusTexts[i]);
+                status->SetProperty("display", "block");
+            }
+            actionHint->SetInnerRML(
+                "流血中：按 I 打开背包使用绷带；附近木箱按 I 搜刮；受损木墙按 H "
+                "维修；靠近泛光灯按 E 开关；背包已满时奖励掉在脚下");
+            actionHint->SetProperty("display", "block");
+            notice->SetInnerRML(
+                "背包已满，奖励掉落在脚下：燃料罐×1、维修包×1、木材×4、罐装食物×2");
+            notice->SetProperty("display", "block");
+            context->Update();
+
+            const LayoutRect levelRect = BorderRect(level);
+            const LayoutRect vitalsRect = BorderRect(vitals);
+            const LayoutRect hotbarRect = BorderRect(hotbar);
+            const LayoutRect actionRect = BorderRect(actionHint);
+            const LayoutRect noticeRect = BorderRect(notice);
+            CHECK(vitalsRect.left >= 15.0f);
+            CHECK(vitalsRect.right <= static_cast<float>(sizes[sizeIndex].x));
+            CHECK(vitalsRect.top >= 0.0f);
+            CHECK(vitalsRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
+            CHECK(!Overlaps(levelRect, vitalsRect));
+            CHECK(levelRect.bottom <= vitalsRect.top - 8.0f);
+            CHECK(actionRect.bottom <= hotbarRect.top - 4.0f);
+            CHECK(!Overlaps(actionRect, hotbarRect));
+            CHECK(!Overlaps(noticeRect, actionRect));
+            CHECK(noticeRect.top >= 0.0f);
+            CHECK(noticeRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
+
+            Rml::Element* dialoguePanel =
+                document->GetElementById("dialogue-panel");
+            Rml::Element* dialogueSpeaker =
+                document->GetElementById("dialogue-speaker");
+            Rml::Element* dialogueText =
+                document->GetElementById("dialogue-text");
+            Rml::Element* dialogueHint =
+                document->GetElementById("dialogue-hint");
+            REQUIRE(dialoguePanel != nullptr);
+            REQUIRE(dialogueSpeaker != nullptr);
+            REQUIRE(dialogueText != nullptr);
+            REQUIRE(dialogueHint != nullptr);
+            actionHint->SetProperty("display", "none");
+            notice->SetProperty("display", "none");
+            dialoguePanel->SetProperty("display", "block");
+            dialogueSpeaker->SetInnerRML("求助者 · 村庄营地");
+            dialogueText->SetInnerRML("你看起来能帮上忙。营地现在缺人手。");
+            dialogueHint->SetInnerRML(
+                "1-5 选择 · 滚轮定位 · E 确认 · ESC 关闭");
+            for (int i = 0; i < 5; ++i) {
+                Rml::Element* option = document->GetElementById(
+                    "dialogue-option-" + std::to_string(i));
+                REQUIRE(option != nullptr);
+                option->SetInnerRML("[" + std::to_string(i + 1) +
+                                    "] 查看委托与营地状态");
+                option->SetProperty("display", "block");
+            }
+            context->Update();
+
+            const LayoutRect dialogueRect = BorderRect(dialoguePanel);
+            CHECK(dialogueRect.right - dialogueRect.left >= 640.0f);
+            CHECK(dialogueRect.left >= 0.0f);
+            CHECK(dialogueRect.right <= static_cast<float>(sizes[sizeIndex].x));
+            CHECK(dialogueRect.bottom <= hotbarRect.top - 4.0f);
+            CHECK(!Overlaps(dialogueRect, hotbarRect));
+            CHECK(dialogueSpeaker->GetClientHeight() > 0.0f);
+            CHECK(dialogueText->GetClientHeight() > 0.0f);
+            for (int i = 0; i < 5; ++i) {
+                Rml::Element* option = document->GetElementById(
+                    "dialogue-option-" + std::to_string(i));
+                REQUIRE(option != nullptr);
+                CHECK(option->GetClientHeight() > 0.0f);
+            }
+            dialoguePanel->SetProperty("display", "none");
+
+            document->Hide();
+        }
+
+        Rml::RemoveContext(contextName);
+    }
+
+    Rml::Shutdown();
+}
+
+TEST_CASE("M16-T1 mouse press latch survives same-poll release") {
+    zl::core::Input input;
+    input.NewFrame();
+    input.LatchMouseButton(0, true);
+    input.LatchMouseButton(0, false);
+    CHECK(!input.IsMouseButtonDown(0));
+    CHECK(input.IsMouseButtonPressed(0));
+    input.NewFrame();
+    CHECK(!input.IsMouseButtonPressed(0));
+
+    input.NewFrame();
+    input.SetMouseButton(0, true);
+    CHECK(input.IsMouseButtonPressed(0));
+    input.NewFrame();
+    CHECK(input.IsMouseButtonDown(0));
+    CHECK(!input.IsMouseButtonPressed(0));
 }
 
 TEST_CASE("M9-T3 CJK 按需字形与图集预算") {
@@ -459,14 +986,17 @@ TEST_CASE("M9-T5 背包状态渲染与右键菜单") {
     state.playerValid = true;
     state.weight = 4.2f;
     state.capacity = 20.0f;
-    state.bagStacks = 3;
+    state.bagStacks = 4;
     state.bag[0] = zl::ui::InventorySlot{true, "绷带", 3, true, false, 0};
     state.bag[1] = zl::ui::InventorySlot{true, "消防斧", 1, false, true, 0};
     state.bag[2] = zl::ui::InventorySlot{true, "锤子", 1, false, true, 0,
                                          0.6f, true, true};
+    state.bag[3] = zl::ui::InventorySlot{true, "烤豆子", 1, true, false, 0,
+                                         0.5f, false, false, true};
     state.equipment[0] = zl::ui::InventorySlot{true, "消防斧", 1, false, false, 0};
     state.loot[0] = zl::ui::InventorySlot{true, "破布", 2, false, false, 9001};
-    state.lootStacks = 1;
+    state.loot[7] = zl::ui::InventorySlot{true, "木材", 4, false, false, 9002};
+    state.lootStacks = 2;
     state.lootTitle = "容器：木箱";
     panel.SetState(state);
     panel.Show();
@@ -481,15 +1011,20 @@ TEST_CASE("M9-T5 背包状态渲染与右键菜单") {
     CHECK(panel.IsOpen());
     CHECK(bag0->IsClassSet("filled"));
     CHECK(bag1->IsClassSet("filled"));
-    CHECK(!document->GetElementById("bag-slot-3")->IsClassSet("filled"));
+    CHECK(!document->GetElementById("bag-slot-4")->IsClassSet("filled"));
     CHECK(document->GetElementById("bag-name-0")->GetInnerRML() == "绷带");
     CHECK(document->GetElementById("bag-count-0")->GetInnerRML() == "3");
     CHECK(document->GetElementById("bag-name-2")->GetInnerRML() == "锤子 60%");
+    CHECK(document->GetElementById("bag-name-3")->GetInnerRML() ==
+          "烤豆子 新鲜 50%");
     CHECK(document->GetElementById("equip-slot-0")->IsClassSet("filled"));
     CHECK(document->GetElementById("equip-name-0")->GetInnerRML() == "消防斧");
     CHECK(document->GetElementById("loot-slot-0")->IsClassSet("filled"));
     CHECK(document->GetElementById("loot-slot-0")->GetAttribute<Rml::String>("data-entity", "") ==
           "9001");
+    CHECK(document->GetElementById("loot-slot-7")->IsClassSet("filled"));
+    CHECK(document->GetElementById("loot-slot-7")->GetAttribute<Rml::String>("data-entity", "") ==
+          "9002");
     CHECK(document->GetElementById("loot-title")->GetInnerRML() == "容器：木箱");
     CHECK(document->GetElementById("inv-weight")->GetInnerRML().find("4.2 / 20.0") !=
           std::string::npos);
@@ -552,6 +1087,18 @@ TEST_CASE("M9-T5 背包状态渲染与右键菜单") {
     CHECK(actions[3].type == zl::ui::InventoryActionType::Repair);
     CHECK(actions[3].from == zl::ui::InventoryArea::Backpack);
     CHECK(actions[3].fromIndex == 2);
+
+    CHECK_FALSE(document->GetElementById("storage-actions")->IsVisible());
+    state.lootIsStorage = true;
+    state.lootEntityId = 9001;
+    panel.SetState(state);
+    context->Update();
+    CHECK(document->GetElementById("storage-actions")->IsVisible());
+    clickElement(document->GetElementById("storage-store-all"), 0);
+    REQUIRE(actions.size() == 5);
+    CHECK(actions[4].type == zl::ui::InventoryActionType::StoreAll);
+    CHECK(actions[4].from == zl::ui::InventoryArea::Loot);
+    CHECK(actions[4].fromEntityId == 9001);
 
     panel.Shutdown();
     Rml::RemoveContext("inventory");
@@ -639,6 +1186,8 @@ TEST_CASE("M9-T5 背包 1280x720 与 1920x1080 布局") {
         state.playerValid = true;
         state.bag[0] = zl::ui::InventorySlot{true, "绷带", 2, true, false, 0};
         state.bagStacks = 1;
+        state.loot[7] = zl::ui::InventorySlot{true, "木材", 4, false, false, 9002};
+        state.lootStacks = 1;
         panel.SetState(state);
         panel.Show();
         context->Update();
@@ -654,12 +1203,81 @@ TEST_CASE("M9-T5 背包 1280x720 与 1920x1080 布局") {
         CHECK(box.x > 700.0f);
         CHECK(box.y > 500.0f);
         CHECK(panel.Document()->GetElementById("bag-slot-24") != nullptr);
+        Rml::Element* loot7 = panel.Document()->GetElementById("loot-slot-7");
+        REQUIRE(loot7 != nullptr);
+        const Rml::Vector2f lootOffset =
+            loot7->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const Rml::Vector2f lootSize =
+            loot7->GetBox().GetSize(Rml::BoxArea::Border);
+        CHECK(lootSize.x > 0.0f);
+        CHECK(lootSize.y > 0.0f);
+        CHECK(lootOffset.x >= offset.x);
+        CHECK(lootOffset.y >= offset.y);
+        CHECK(lootOffset.x + lootSize.x <= offset.x + box.x);
+        CHECK(lootOffset.y + lootSize.y <= offset.y + box.y);
 
         panel.Shutdown();
         Rml::RemoveContext(name);
     }
     Rml::Shutdown();
 }
+TEST_CASE("M9-T5 core_ui 背包 8 槽布局") {
+    NullRenderInterface renderInterface;
+    NullSystemInterface systemInterface;
+    Rml::SetRenderInterface(&renderInterface);
+    Rml::SetSystemInterface(&systemInterface);
+    REQUIRE(Rml::Initialise());
+
+    const std::string fontDir = std::string(ZL_SOURCE_DIR) + "/assets/fonts/";
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Regular.otf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Normal));
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Bold.ttf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Bold));
+
+    const Rml::Vector2i sizes[] = {Rml::Vector2i(1280, 720),
+                                   Rml::Vector2i(1920, 1080)};
+    const std::string path =
+        std::string(ZL_SOURCE_DIR) + "/mods/core_ui/ui/inventory.rml";
+    for (int i = 0; i < 2; ++i) {
+        const std::string name = "core-inventory-layout-" + std::to_string(i);
+        Rml::Context* context = Rml::CreateContext(name, sizes[i]);
+        REQUIRE(context != nullptr);
+        Rml::ElementDocument* document = context->LoadDocument(path);
+        REQUIRE(document != nullptr);
+        document->Show();
+        context->Update();
+
+        Rml::Element* panel = document->GetElementById("inventory-panel");
+        Rml::Element* loot7 = document->GetElementById("loot-slot-7");
+        REQUIRE(panel != nullptr);
+        REQUIRE(loot7 != nullptr);
+        const Rml::Vector2f panelOffset =
+            panel->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const Rml::Vector2f panelSize =
+            panel->GetBox().GetSize(Rml::BoxArea::Border);
+        const Rml::Vector2f lootOffset =
+            loot7->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const Rml::Vector2f lootSize = loot7->GetBox().GetSize(Rml::BoxArea::Border);
+        CHECK(panelOffset.x >= 0.0f);
+        CHECK(panelOffset.y >= 0.0f);
+        CHECK(panelOffset.x + panelSize.x <= static_cast<float>(sizes[i].x));
+        CHECK(panelOffset.y + panelSize.y <= static_cast<float>(sizes[i].y));
+        CHECK(lootSize.x > 0.0f);
+        CHECK(lootSize.y > 0.0f);
+        CHECK(lootOffset.x >= panelOffset.x);
+        CHECK(lootOffset.y >= panelOffset.y);
+        CHECK(lootOffset.x + lootSize.x <= panelOffset.x + panelSize.x);
+        CHECK(lootOffset.y + lootSize.y <= panelOffset.y + panelSize.y);
+        CHECK(document->GetElementById("bag-slot-24") != nullptr);
+
+        context->UnloadDocument(document);
+        Rml::RemoveContext(name);
+    }
+    Rml::Shutdown();
+}
+
 TEST_CASE("M9-T6/M14-T8 主菜单、暂停菜单、设置页与结算页") {
     NullRenderInterface renderInterface;
     NullSystemInterface systemInterface;
@@ -691,8 +1309,9 @@ TEST_CASE("M9-T6/M14-T8 主菜单、暂停菜单、设置页与结算页") {
     settings.ambientVolume = 20;
     const std::pair<const char*, const char*> bindings[] = {
         {"MoveUp", "W"},      {"MoveDown", "S"}, {"MoveLeft", "A"},
-        {"MoveRight", "D"},   {"Attack", "SPACE"}, {"Pickup", "F"},
-        {"Use", "E"},         {"Equip", "R"},     {"Drop", "G"},
+        {"MoveRight", "D"},   {"Attack", "SPACE"}, {"HeavyAttack", "LSHIFT"},
+        {"Block", "LCTRL"},   {"Dodge", "Z"},    {"Pickup", "F"},
+        {"Use", "E"},         {"Equip", "R"},    {"Drop", "G"},
         {"Pause", "F1"},
     };
     for (const auto& binding : bindings) {
@@ -762,8 +1381,12 @@ TEST_CASE("M9-T6/M14-T8 主菜单、暂停菜单、设置页与结算页") {
     CHECK(applied.musicVolume == 30);
     CHECK(applied.sfxVolume == 60);
     CHECK(applied.ambientVolume == 20);
-    REQUIRE(applied.bindings.size() == 10);
+    REQUIRE(applied.bindings.size() == 13);
     CHECK(applied.bindings[0].key == "Q");
+    CHECK(applied.bindings[6].action == "Block");
+    CHECK(applied.bindings[6].key == "LCTRL");
+    CHECK(applied.bindings[7].action == "Dodge");
+    CHECK(applied.bindings[7].key == "Z");
 
     clickElement("settings-back");
     CHECK(!panel.IsSettingsOpen());
@@ -808,13 +1431,17 @@ TEST_CASE("M9-T6/M14-T8 主菜单、暂停菜单、设置页与结算页") {
     REQUIRE(actions.size() == 5);
     CHECK(actions[4] == zl::ui::MenuActionType::Multiplayer);
 
-    panel.ShowEndScreen(false, "你死了", "你倒在了尸潮中。", "第 2 天 03:15<br/>击杀 7 只僵尸");
+    panel.ShowEndScreen(false, "你死了", "你倒在了尸潮中。",
+                        "死因：撕咬<br/>存活：12 分 34 秒（第 2 天 03:15）<br/>"
+                        "击杀：7 只僵尸<br/>受伤：4 次（累计 96 点）");
     context->Update();
     REQUIRE(panel.IsOpen());
     CHECK(document->GetElementById("end-menu")->IsVisible());
     CHECK(document->GetElementById("end-menu")->IsClassSet("death"));
     CHECK(document->GetElementById("end-title")->GetInnerRML() == "你死了");
-    CHECK(document->GetElementById("end-stats")->GetInnerRML().find("击杀 7") !=
+    CHECK(document->GetElementById("end-stats")->GetInnerRML().find("死因：撕咬") !=
+          std::string::npos);
+    CHECK(document->GetElementById("end-stats")->GetInnerRML().find("击杀：7") !=
           std::string::npos);
     const std::size_t beforeEndEscape = actions.size();
     CHECK(panel.OnEscape());  // 结算页 ESC 不绕过
@@ -830,6 +1457,15 @@ TEST_CASE("M9-T6/M14-T8 主菜单、暂停菜单、设置页与结算页") {
     clickElement("end-main-menu");
     REQUIRE(actions.size() == 7);
     CHECK(actions[6] == zl::ui::MenuActionType::ReturnToMainMenu);
+
+    panel.ShowEndScreen(true, "成功撤离（联机）",
+                        "你已到达撤离点，其他玩家仍在废土中。",
+                        "第 1 天 08:00", false);
+    context->Update();
+    CHECK(!document->GetElementById("end-restart")->IsVisible());
+    CHECK(document->GetElementById("end-main-menu")->IsVisible());
+    CHECK(document->GetElementById("end-hint")->GetInnerRML().find("重新联机") !=
+          std::string::npos);
 
     panel.Hide();
     CHECK(!panel.IsOpen());
@@ -984,12 +1620,22 @@ TEST_CASE("M13-T9 Social 聊天/玩家列表：显示、输入与抑制") {
     context->Update();
     CHECK(panel.IsChatOpen());
     CHECK(panel.Document()->GetElementById("social-chat-input-row")->IsVisible());
+    CHECK(zl::ui::IsInputFocusBlocking(context));
+    zl::core::Input gameplayInput;
+    gameplayInput.Bind("MoveUp", GLFW_KEY_W);
+    gameplayInput.NewFrame();
+    gameplayInput.SetKeyState(GLFW_KEY_W, true);
+    CHECK(gameplayInput.IsActionDown("MoveUp"));
+    gameplayInput.SetGameplayBlocked(zl::ui::IsInputFocusBlocking(context));
+    CHECK(!gameplayInput.IsActionDown("MoveUp"));
+    CHECK(!gameplayInput.IsKeyDown(GLFW_KEY_W));
     auto* input = static_cast<Rml::ElementFormControlInput*>(
         panel.Document()->GetElementById("social-chat-input"));
     input->SetValue("你好");
     CHECK(panel.SubmitChat());
     CHECK(sent == "你好");
     CHECK(!panel.IsChatOpen());
+    CHECK(!zl::ui::IsInputFocusBlocking(context));
 
     panel.SetSuppressed(true);
     context->Update();
@@ -1004,4 +1650,197 @@ TEST_CASE("M13-T9 Social 聊天/玩家列表：显示、输入与抑制") {
     panel.Shutdown();
     Rml::RemoveContext("social");
     Rml::Shutdown();
+}
+
+TEST_CASE("M15-T5 结算统计与 HUD 操作提示文案") {
+    zl::game::RunSummary summary;
+    summary.deathCause = zl::ecs::DamageCause::Bite;
+    summary.day = 2;
+    summary.hour = 3;
+    summary.minute = 7;
+    summary.survivalSeconds = 65.0;
+    summary.kills = 7;
+    summary.injuries = 4;
+    summary.damageTaken = 96.0f;
+    const std::string death = zl::game::RunSummaryText(summary);
+    CHECK(death.find("死因：撕咬") != std::string::npos);
+    CHECK(death.find("存活：1 分 5 秒（第 2 天 03:07）") != std::string::npos);
+    CHECK(death.find("击杀：7 只僵尸") != std::string::npos);
+    CHECK(death.find("受伤：4 次（累计 96 点）") != std::string::npos);
+
+    summary.victory = true;
+    const std::string victory = zl::game::RunSummaryText(summary);
+    CHECK(victory.find("死因") == std::string::npos);
+
+    zl::game::ActionHintState hint;
+    std::string tone;
+    CHECK(zl::game::ActionHintText(hint, &tone).find("WASD") != std::string::npos);
+    CHECK(tone == "info");
+    hint.bleeding = true;
+    CHECK(zl::game::ActionHintText(hint, &tone).find("寻找绷带") != std::string::npos);
+    CHECK(tone == "fail");
+    hint.hasBandage = true;
+    CHECK(zl::game::ActionHintText(hint, &tone).find("使用绷带") != std::string::npos);
+    hint.bleeding = false;
+    hint.inPain = true;
+    CHECK(zl::game::ActionHintText(hint, &tone).find("寻找止痛药") != std::string::npos);
+    CHECK(tone == "warn");
+    hint.hasPainkiller = true;
+    CHECK(zl::game::ActionHintText(hint, &tone).find("使用止痛药") != std::string::npos);
+    hint.inPain = false;
+    hint.nearbyContainer = "木箱";
+    CHECK(zl::game::ActionHintText(hint, &tone) == "按 I 搜刮 木箱");
+    hint.nearbyContainer.clear();
+    hint.nearbyBed = "床";
+    CHECK(zl::game::ActionHintText(hint, &tone) == "按 E 睡觉：床");
+    hint.nearbyBed.clear();
+    hint.nearbyCampfire = "篝火";
+    CHECK(zl::game::ActionHintText(hint, &tone) == "按 E 点燃：篝火");
+    hint.campfireState = "燃烧";
+    CHECK(zl::game::ActionHintText(hint, &tone).find("按 E 熄灭") !=
+          std::string::npos);
+    CHECK(tone == "warn");
+    hint.campfireState.clear();
+    hint.nearbyCampfire.clear();
+    hint.nearbyFire = "木墙";
+    hint.fireState = "燃烧";
+    hint.fireExtinguishItem = "灭火器";
+    hint.fireExtinguishChance = 0.95f;
+    std::string fireHint = zl::game::ActionHintText(hint, &tone);
+    CHECK(fireHint.find("火灾：木墙燃烧") != std::string::npos);
+    CHECK(fireHint.find("用灭火器") != std::string::npos);
+    CHECK(fireHint.find("95%") != std::string::npos);
+    CHECK(fireHint.find("会受伤") == std::string::npos);
+    CHECK(tone == "fail");
+    hint.fireExtinguishBareHands = true;
+    hint.fireExtinguishItem.clear();
+    hint.fireExtinguishChance = 0.15f;
+    fireHint = zl::game::ActionHintText(hint, &tone);
+    CHECK(fireHint.find("徒手拍打") != std::string::npos);
+    CHECK(fireHint.find("会受伤") != std::string::npos);
+    hint.fireState = "阴燃";
+    (void)zl::game::ActionHintText(hint, &tone);
+    CHECK(tone == "warn");
+    hint.nearbyFire.clear();
+    hint.fireState.clear();
+    hint.nearbyItem = "绷带";
+    CHECK(zl::game::ActionHintText(hint, &tone) == "按 F 拾取 绷带");
+    CHECK(tone == "info");
+}
+
+TEST_CASE("M23-F1-T8 远程武器 HUD 弹药/换弹/空仓文案") {
+    zl::ui::HudState state;
+    std::string tone;
+    CHECK(zl::ui::RangedStatusText(state, &tone).empty());
+    CHECK(tone == "info");
+
+    state.rangedValid = true;
+    state.rangedName = "手枪";
+    state.rangedLoaded = 8;
+    state.rangedMagazine = 8;
+    state.rangedReserve = 16;
+    CHECK(zl::ui::RangedStatusText(state, &tone) == "手枪 8/8 · 备弹 16");
+    CHECK(tone == "info");
+
+    state.rangedLoaded = 2;
+    CHECK(zl::ui::RangedStatusText(state, &tone).find("弹药不足") !=
+          std::string::npos);
+    CHECK(tone == "warn");
+
+    state.rangedLoaded = 0;
+    CHECK(zl::ui::RangedStatusText(state, &tone).find("空仓") !=
+          std::string::npos);
+    CHECK(zl::ui::RangedStatusText(state, &tone).find("R 换弹") !=
+          std::string::npos);
+    CHECK(tone == "fail");
+
+    state.rangedReloading = true;
+    state.rangedReloadProgress = 0.42f;
+    CHECK(zl::ui::RangedStatusText(state, &tone) ==
+          "手枪 换弹中 42% · 0/8 · 备弹 16");
+    CHECK(tone == "warn");
+
+    state.rangedReloading = false;
+    state.rangedLoaded = 1;
+    state.rangedReserve = 0;
+    CHECK(zl::ui::RangedStatusText(state, &tone).find("备弹耗尽") !=
+          std::string::npos);
+    CHECK(tone == "warn");
+
+    zl::game::ActionHintState hint;
+    hint.hasRangedWeapon = true;
+    hint.rangedEmpty = true;
+    CHECK(zl::game::ActionHintText(hint, &tone).find("空仓：按 R 换弹") !=
+          std::string::npos);
+    hint.rangedEmpty = false;
+    hint.rangedReloading = true;
+    CHECK(zl::game::ActionHintText(hint, &tone).find("换弹中") !=
+          std::string::npos);
+}
+
+TEST_CASE("M23-F2a-T5 觅食/钓鱼 HUD 状态文案") {
+    zl::ui::HudState state;
+    std::string tone;
+    CHECK(zl::ui::ForageStatusText(state, &tone).empty());
+    CHECK(zl::ui::FishingStatusText(state, &tone).empty());
+    CHECK(tone == "info");
+
+    state.forageValid = true;
+    state.forageName = "森林";
+    state.forageSeconds = 2.6f;
+    CHECK(zl::ui::ForageStatusText(state, &tone) ==
+          "可觅食 · 森林（2.6 秒）");
+    CHECK(tone == "info");
+
+    state.forageMissingTool = true;
+    state.forageToolName = "树枝";
+    CHECK(zl::ui::ForageStatusText(state, &tone) ==
+          "可觅食 · 森林（需要 树枝）");
+    CHECK(tone == "warn");
+
+    state.forageMissingTool = false;
+    state.forageExhausted = true;
+    state.forageRespawnMinutes = 4.2;
+    CHECK(zl::ui::ForageStatusText(state, &tone) ==
+          "觅食 · 森林（已耗尽，约 5 分钟刷新）");
+    CHECK(tone == "warn");
+
+    state.forageExhausted = false;
+    state.forageSearching = true;
+    state.forageProgress = 0.42f;
+    CHECK(zl::ui::ForageStatusText(state, &tone) == "觅食中 · 森林 42%");
+    CHECK(tone == "info");
+
+    state.fishingValid = true;
+    state.fishingName = "静水";
+    state.fishingSeconds = 5.0f;
+    CHECK(zl::ui::FishingStatusText(state, &tone) ==
+          "可钓鱼 · 静水（5.0 秒）");
+    CHECK(tone == "info");
+
+    state.fishingMissingRod = true;
+    state.fishingRodName = "鱼竿";
+    CHECK(zl::ui::FishingStatusText(state, &tone) ==
+          "可钓鱼 · 静水（需要 鱼竿）");
+    CHECK(tone == "warn");
+
+    state.fishingMissingRod = false;
+    state.fishingMissingBait = true;
+    state.fishingBaitName = "鱼饵";
+    CHECK(zl::ui::FishingStatusText(state, &tone) ==
+          "可钓鱼 · 静水（需要 鱼饵）");
+    CHECK(tone == "warn");
+
+    state.fishingMissingBait = false;
+    state.fishingWaiting = true;
+    state.fishingProgress = 0.42f;
+    CHECK(zl::ui::FishingStatusText(state, &tone) == "钓鱼中 · 静水 42%");
+    CHECK(tone == "info");
+
+    state.fishingWaiting = false;
+    state.fishingBiting = true;
+    state.fishingBiteRemaining = 1.16f;
+    CHECK(zl::ui::FishingStatusText(state, &tone) ==
+          "咬钩！静水（1.2 秒） · E 收杆");
+    CHECK(tone == "warn");
 }

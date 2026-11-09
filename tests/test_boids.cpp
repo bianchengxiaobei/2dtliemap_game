@@ -373,3 +373,83 @@ TEST_CASE("M5 基准：500 僵尸 + 200 虚拟化的模拟 tick 计时") {
     CHECK(avgMs < 4.0);  // docs/02 预算：模拟 tick < 4ms（Release）
 #endif
 }
+
+TEST_CASE("X-F3 性能基线：12/50/100 僵尸模拟 tick") {
+    for (const int liveCount : {12, 50, 100}) {
+        ecs::EcsWorld world;
+        ecs::SpatialIndex index;
+        ai::LodSystem lod;
+        ai::PerceptionSystem perception([](int, int) { return true; });
+        ai::AiSystem ai([](int, int) { return true; });
+        ai::BoidsSystem boids;
+        characters::CombatSystem combat;
+        characters::MovementSystem movement;
+        ai::VirtualHordeStore virtualHordes;
+        ai::SpawnLodSystem spawnLod(
+            [](int, int) { return true; },
+            [](ecs::EcsWorld& w, float px, float py) {
+                const ecs::Entity e = w.Create();
+                w.Registry().emplace<ecs::Position>(e, ecs::Position{px, py, 0});
+                w.Registry().emplace<ecs::Health>(e, ecs::Health{100.0f, 100.0f});
+                w.Registry().emplace<ecs::AiState>(e, ecs::AiState{});
+                return e;
+            },
+            [](ecs::EcsWorld&, ecs::Entity) {}, virtualHordes);
+        entt::registry& r = world.Registry();
+
+        const ecs::Entity player = world.Create();
+        r.emplace<ecs::Position>(player, ecs::Position{30.0f, 30.0f, 0});
+        r.emplace<ecs::PlayerTag>(player);
+        lod.SetFocus(30.0f, 30.0f);
+
+        std::mt19937 rng(20261026u + static_cast<std::uint32_t>(liveCount));
+        std::uniform_real_distribution<float> angleU(0.0f, 6.2831853f);
+        std::uniform_real_distribution<float> radiusU(1.0f, 14.0f);
+        for (int i = 0; i < liveCount; ++i) {
+            const float a = angleU(rng);
+            const float rad = radiusU(rng);
+            const float px = 30.0f + std::cos(a) * rad;
+            const float py = 30.0f + std::sin(a) * rad;
+            const ecs::Entity e = world.Create();
+            r.emplace<ecs::Position>(e, ecs::Position{px, py, 0});
+            r.emplace<ecs::Velocity>(e, ecs::Velocity{});
+            r.emplace<ecs::Health>(e, ecs::Health{100.0f, 100.0f});
+            r.emplace<ecs::AiState>(e, ecs::AiState{});
+            ecs::PerceptionState percep;
+            percep.lastKnownX = px;
+            percep.lastKnownY = py;
+            r.emplace<ecs::PerceptionState>(e, percep);
+            r.emplace<ecs::MoveIntent>(e, ecs::MoveIntent{});
+            r.emplace<ecs::PathRequest>(e, ecs::PathRequest{});
+            ecs::PathFollow follow;
+            follow.speed = 2.0f;
+            r.emplace<ecs::PathFollow>(e, follow);
+            r.emplace<ecs::LodState>(e, ecs::LodState{});
+        }
+
+        constexpr int kTicks = 120;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < kTicks; ++i) {
+            index.Update(world);
+            lod.Update(world);
+            perception.Update(world, kDt);
+            ai.Update(world, kDt);
+            boids.Update(world);
+            combat.Update(world, kDt);
+            movement.Update(world, kDt);
+            spawnLod.SetFocus(30.0f, 30.0f);
+            spawnLod.Update(world, kDt);
+            world.Flush();
+        }
+        const double elapsedMs =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                .count();
+        const double avgMs = elapsedMs / kTicks;
+        std::printf("[bench] X-F3 12/50/100：%d 僵尸 avg=%.3f ms/tick\n", liveCount,
+                    avgMs);
+        CHECK(avgMs < 40.0);
+#ifdef NDEBUG
+        CHECK(avgMs < 4.0);
+#endif
+    }
+}

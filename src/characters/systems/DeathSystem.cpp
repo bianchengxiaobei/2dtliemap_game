@@ -1,7 +1,9 @@
 #include "characters/systems/DeathSystem.h"
 
+#include <utility>
 #include <vector>
 
+#include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
 #include "core/EventBus.h"
 #include "core/GameEvents.h"
@@ -25,7 +27,8 @@ void DeathSystem::Update(ecs::EcsWorld& world, float dt) {
     // 先收集（不在 view 遍历中改结构；Alive 过滤本 tick 已入销毁队列的实体）
     std::vector<ecs::Entity> dead;
     registry.view<ecs::Health>().each([&](const ecs::Entity e, const ecs::Health& health) {
-        if (health.current <= 0.0f && world.Alive(e)) {
+        if (health.current <= 0.0f && world.Alive(e) &&
+            !registry.any_of<ecs::NoCombatTarget>(e)) {
             dead.push_back(e);
         }
     });
@@ -72,9 +75,16 @@ void DeathSystem::Update(ecs::EcsWorld& world, float dt) {
             z = position->z;
         }
         const std::uint64_t sourceId = world.IdOf(e).id;
+        std::string animalSpecies;
+        if (const auto* animal = registry.try_get<ecs::Animal>(e);
+            animal != nullptr) {
+            animalSpecies = animal->speciesId;
+        }
 
         // M7-T4：死亡事件（排队：tick 末统一派发；killer 暂无追踪，未知 = 0）
-        if (m_events != nullptr) {
+        // M23-F4-T5：友方聚落 NPC 不计入僵尸击杀/任务进度。
+        const bool friendlyNpc = registry.all_of<ecs::FriendlyNpc>(e);
+        if (m_events != nullptr && animalSpecies.empty() && !friendlyNpc) {
             if (registry.all_of<ecs::PlayerTag>(e)) {
                 m_events->EmitQueued(core::kOnPlayerDeath,
                                      core::PlayerEvent{sourceId, x, y, z});
@@ -85,7 +95,9 @@ void DeathSystem::Update(ecs::EcsWorld& world, float dt) {
         }
 
         // 尸体（延迟创建：与销毁同 tick 入队，Flush 统一生效；日志在 Flush 时输出）
-        world.QueueCreate([x, y, z, sourceId](ecs::EcsWorld& w) {
+        world.QueueCreate([x, y, z, sourceId,
+                           animalSpecies = std::move(animalSpecies)](
+                              ecs::EcsWorld& w) {
             const ecs::Entity corpse = w.Create();
             entt::registry& reg = w.Registry();
             reg.emplace<ecs::Position>(corpse, ecs::Position{x, y, z});
@@ -93,6 +105,10 @@ void DeathSystem::Update(ecs::EcsWorld& world, float dt) {
                 corpse,
                 ecs::SpriteRef{ecs::HashName(kCorpseSpriteName), 0, 0xFFFFFFFFu});
             reg.emplace<ecs::Corpse>(corpse, ecs::Corpse{sourceId});
+            if (!animalSpecies.empty()) {
+                reg.emplace<ecs::AnimalCorpse>(
+                    corpse, ecs::AnimalCorpse{animalSpecies, false});
+            }
             ZL_INFO(kLogModule, "实体死亡：稳定 ID {}（格 ({:.1f}, {:.1f}) z={}）→ 尸体（稳定 ID {}）",
                     sourceId, x, y, z, w.IdOf(corpse).id);
             return corpse;

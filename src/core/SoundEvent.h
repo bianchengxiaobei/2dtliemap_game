@@ -21,6 +21,7 @@ enum class SoundType : std::uint8_t {
     Footstep = 3,      // 玩家脚步（M11-T3；clip 区分地面材质）
     ZombieGrowl = 4,   // 僵尸低吼（M11-T3）
     Ui = 5,            // UI 点击/拾取（M11-T3；2D 播放）
+    Vehicle = 6,       // 载具引擎/行驶噪音（M25-T4）
 };
 
 struct SoundEvent {
