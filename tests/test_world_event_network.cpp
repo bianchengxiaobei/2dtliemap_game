@@ -15,9 +15,12 @@
 
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/ProgressionComponents.h"
+#include "core/Config.h"
 #include "ecs/components/CommonComponents.h"
 #include "ecs/components/PhysicsComponents.h"
 #include "game/NetworkClient.h"
+#include "game/SettlementReputation.h"
+#include "game/StrategicState.h"
 #include "game/WorldEventDirector.h"
 #include "game/WorldEventRuntime.h"
 #include "game/WorldSimulation.h"
@@ -146,6 +149,49 @@ std::filesystem::path MakeEventConfig(
         {"enabled", true},
         {"file", eventFile.generic_string()},
         {"randomSeed", 12345},
+        {"detailRadius", 32.0},
+    };
+    const std::filesystem::path configFile = dir / "game.json";
+    WriteText(configFile, config.dump(2));
+    return configFile;
+}
+
+std::filesystem::path MakeActualEventConfig(
+    const std::filesystem::path& root, const std::filesystem::path& dir,
+    std::string_view definitionId, int durationMinutes,
+    std::string_view region) {
+    std::ifstream eventsInput(root / "assets" / "world_events.json");
+    REQUIRE(eventsInput.is_open());
+    nlohmann::json events;
+    eventsInput >> events;
+    nlohmann::json definition;
+    for (const nlohmann::json& def : events["defs"]) {
+        if (def.value("id", "") == definitionId) {
+            definition = def;
+            break;
+        }
+    }
+    REQUIRE_FALSE(definition.is_null());
+    definition["minDay"] = 1;
+    definition["maxDay"] = 1;
+    definition["warningMinutes"] = 0;
+    definition["durationMinutes"] = durationMinutes;
+    definition["region"] = region;
+    nlohmann::json filtered;
+    filtered["format"] = "world-events-v1";
+    filtered["defs"] = nlohmann::json::array({definition});
+    const std::filesystem::path eventFile = dir / "world_events.json";
+    WriteText(eventFile, filtered.dump(2));
+
+    std::ifstream configInput(root / "config" / "game.json");
+    REQUIRE(configInput.is_open());
+    nlohmann::json config;
+    configInput >> config;
+    config["game"]["startHour"] = 0;
+    config["worldEvents"] = {
+        {"enabled", true},
+        {"file", eventFile.generic_string()},
+        {"randomSeed", 20261113},
         {"detailRadius", 32.0},
     };
     const std::filesystem::path configFile = dir / "game.json";
@@ -678,6 +724,275 @@ TEST_CASE("M33-F2-T5 服务器重启与客户端重连恢复事件") {
         restored.Shutdown();
     }
 
+    std::error_code cleanupError;
+    std::filesystem::remove_all(dir, cleanupError);
+}
+
+TEST_CASE("M33-F2-T7 双客户端实际内容事件 15 分钟窗口、结算与重启恢复") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    REQUIRE(std::filesystem::exists(root / "config" / "game.json"));
+    ScopedWorkingDirectory cwd(root);
+
+    core::Config contentConfig;
+    REQUIRE(contentConfig.LoadFile((root / "config" / "game.json").string()));
+    game::WorldEventConfig content;
+    std::string error;
+    REQUIRE(game::LoadWorldEventConfig(contentConfig, &content, &error));
+    CHECK(content.enabled);
+    CHECK(content.defs.size() == 6u);
+    REQUIRE(content.Find("world_survivor_distress") != nullptr);
+    REQUIRE(content.Find("world_caravan_aftermath") != nullptr);
+
+    const std::filesystem::path dir = TempDir("delivery");
+    const std::filesystem::path saveRoot = dir / "saves";
+    const std::filesystem::path configPath =
+        MakeActualEventConfig(root, dir, "world_survivor_distress", 720,
+                              "north_fields");
+    const std::string profilePath = (dir / "players.bin").string();
+    std::string saveId;
+    CreateEmptySave(saveRoot, "village_demo_m31", &saveId);
+    REQUIRE_FALSE(saveId.empty());
+
+    const std::uint64_t contentHash = 0x4D3332543744454Cull;
+    std::vector<std::string> args;
+    std::vector<const char*> argv;
+    server::ServerHost::Options options =
+        MakeHostOptions(root, saveRoot, configPath, profilePath, contentHash,
+                        saveId, &args, &argv);
+
+    std::string eventId;
+    {
+        server::ServerHost host;
+        REQUIRE_MESSAGE(host.Init(options, &error), error);
+        REQUIRE(host.NetworkPort() != 0);
+        game::WorldEventDirector* director =
+            host.Simulation().WorldEvents();
+        REQUIRE(director != nullptr);
+
+        game::NetworkClient first(
+            ClientOptions(host.NetworkPort(), contentHash, "f2t7-a"));
+        game::NetworkClient second(
+            ClientOptions(host.NetworkPort(), contentHash, "f2t7-b"));
+        std::vector<game::NetworkClient*> clients{&first, &second};
+        REQUIRE(first.Connect(&error));
+        REQUIRE(second.Connect(&error));
+        REQUIRE(PumpUntil(host, clients, 10000, [&] {
+            return first.IsConnected() && second.IsConnected() &&
+                   first.HasPlayerState() && second.HasPlayerState() &&
+                   first.HasWorldEventState() &&
+                   second.HasWorldEventState() && host.SessionCount() == 2;
+        }));
+        REQUIRE(PumpUntil(host, clients, 5000, [&] {
+            return !director->Events().empty();
+        }));
+        const game::WorldEventInstance event = director->Events().front();
+        eventId = event.id;
+        CHECK(event.defId == "world_survivor_distress");
+        CHECK(event.regionId == "north_fields");
+        CHECK(event.stageKind == game::WorldEventStageKind::Reach);
+        if (host.GameMinutes() < event.activeMinute) {
+            host.AdvanceGameMinutes(
+                static_cast<double>(event.activeMinute) -
+                host.GameMinutes() + 1.0);
+        }
+        host.RunForTicks(2);
+        const game::WorldEventInstance* active = director->Find(eventId);
+        REQUIRE(active != nullptr);
+        REQUIRE(active->status == game::WorldEventStatus::Active);
+        REQUIRE(TeleportServerPlayer(host, first.PlayerStableId(), active->x,
+                                     active->y));
+        REQUIRE(TeleportServerPlayer(host, second.PlayerStableId(), active->x,
+                                     active->y));
+        host.RunForTicks(3);
+        REQUIRE(PumpUntil(host, clients, 5000, [&] {
+            const net::WorldEventSnapshotEntry* a =
+                FindClientEvent(first, eventId);
+            const net::WorldEventSnapshotEntry* b =
+                FindClientEvent(second, eventId);
+            return a != nullptr && b != nullptr && a->status == 2u &&
+                   b->status == 2u;
+        }));
+        int actors = 0;
+        REQUIRE(PumpUntil(host, clients, 8000, [&] {
+            actors = 0;
+            host.Simulation().Ecs().Registry()
+                .view<ecs::WorldEventActor>()
+                .each([&](const ecs::WorldEventActor&) { ++actors; });
+            return actors >= 4;
+        }));
+
+        host.AdvanceGameMinutes(15.0);
+        host.RunForTicks(2);
+        const game::WorldEventInstance* midway = director->Find(eventId);
+        REQUIRE(midway != nullptr);
+        CHECK(midway->status == game::WorldEventStatus::Active);
+        CHECK(midway->stageProgress >= 0);
+
+        REQUIRE(director->ReportStageProgress(
+            eventId, game::WorldEventStageKind::Defend,
+            "event_distress_zombie", 4, &error));
+        host.RunForTicks(2);
+        const game::WorldEventInstance* ready = director->Find(eventId);
+        REQUIRE(ready != nullptr);
+        CHECK(ready->stagesComplete);
+
+        ecs::Entity firstEntity =
+            host.Simulation().Ecs().FindById(first.PlayerStableId());
+        ecs::Entity secondEntity =
+            host.Simulation().Ecs().FindById(second.PlayerStableId());
+        REQUIRE(static_cast<bool>(firstEntity != entt::null));
+        REQUIRE(static_cast<bool>(secondEntity != entt::null));
+        auto* firstProgression =
+            host.Simulation().Ecs().Registry().try_get<ecs::Progression>(
+                firstEntity);
+        auto* secondProgression =
+            host.Simulation().Ecs().Registry().try_get<ecs::Progression>(
+                secondEntity);
+        REQUIRE(firstProgression != nullptr);
+        REQUIRE(secondProgression != nullptr);
+        const float firstXp = firstProgression->xp;
+        const float secondXp = secondProgression->xp;
+        const int firstLevel = firstProgression->level;
+        const int secondLevel = secondProgression->level;
+        const game::StrategicRegionState* regionBefore =
+            host.Simulation().Strategic() != nullptr
+                ? host.Simulation().Strategic()->FindRegion("north_fields")
+                : nullptr;
+        const float pressureBefore =
+            regionBefore != nullptr ? regionBefore->pressure : 0.0f;
+
+        net::Command choose;
+        choose.type = net::CommandType::ChooseWorldEvent;
+        choose.playerStableId = first.PlayerStableId();
+        choose.payload.index = 0;
+        REQUIRE_MESSAGE(first.SendCommand(choose, &error), error);
+        REQUIRE(PumpUntil(host, clients, 5000, [&] {
+            const net::WorldEventSnapshotEntry* a =
+                FindClientEvent(first, eventId);
+            const net::WorldEventSnapshotEntry* b =
+                FindClientEvent(second, eventId);
+            return a != nullptr && b != nullptr && a->status == 3u &&
+                   b->status == 3u && a->choiceId == "escort" &&
+                   b->choiceId == "escort";
+        }));
+        CHECK((firstProgression->level > firstLevel ||
+               firstProgression->xp > firstXp));
+        CHECK((secondProgression->level > secondLevel ||
+               secondProgression->xp > secondXp));
+        CHECK(game::SettlementReputationScoreFor(
+                  host.Simulation().Ecs(), firstEntity, "north_fields") == 15);
+        CHECK(game::SettlementReputationScoreFor(
+                  host.Simulation().Ecs(), secondEntity, "north_fields") ==
+              15);
+        if (host.Simulation().Strategic() != nullptr) {
+            const game::StrategicRegionState* regionAfter =
+                host.Simulation().Strategic()->FindRegion("north_fields");
+            REQUIRE(regionAfter != nullptr);
+            CHECK(regionAfter->pressure < pressureBefore);
+        }
+
+        first.Close();
+        second.Close();
+        host.Shutdown();
+    }
+
+    {
+        server::ServerHost restored;
+        REQUIRE_MESSAGE(restored.Init(options, &error), error);
+        game::NetworkClient first(
+            ClientOptions(restored.NetworkPort(), contentHash, "f2t7-a"));
+        game::NetworkClient second(
+            ClientOptions(restored.NetworkPort(), contentHash, "f2t7-b"));
+        std::vector<game::NetworkClient*> clients{&first, &second};
+        REQUIRE(first.Connect(&error));
+        REQUIRE(second.Connect(&error));
+        REQUIRE(PumpUntil(restored, clients, 10000, [&] {
+            return first.HasPlayerState() && second.HasPlayerState() &&
+                   first.HasWorldEventState() &&
+                   second.HasWorldEventState();
+        }));
+        REQUIRE(PumpUntil(restored, clients, 5000, [&] {
+            const net::WorldEventSnapshotEntry* a =
+                FindClientEvent(first, eventId);
+            const net::WorldEventSnapshotEntry* b =
+                FindClientEvent(second, eventId);
+            return a != nullptr && b != nullptr && a->status == 3u &&
+                   b->status == 3u && a->choiceId == "escort" &&
+                   b->choiceId == "escort";
+        }));
+
+        ecs::Entity firstEntity =
+            restored.Simulation().Ecs().FindById(first.PlayerStableId());
+        REQUIRE(static_cast<bool>(firstEntity != entt::null));
+        CHECK(game::SettlementReputationScoreFor(
+                  restored.Simulation().Ecs(), firstEntity, "north_fields") ==
+              15);
+        game::WorldEventSettlement outcome;
+        REQUIRE(restored.Simulation().SettleWorldEvent(
+            eventId, firstEntity, &outcome, &error));
+        CHECK(outcome.alreadyApplied);
+        CHECK(game::SettlementReputationScoreFor(
+                  restored.Simulation().Ecs(), firstEntity, "north_fields") ==
+              15);
+
+        first.Close();
+        second.Close();
+        restored.Shutdown();
+    }
+
+    std::error_code cleanupError;
+    std::filesystem::remove_all(dir, cleanupError);
+}
+
+TEST_CASE("M33-F2-T7 链后续事件可单独排期并复制到客户端") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    REQUIRE(std::filesystem::exists(root / "config" / "game.json"));
+    ScopedWorkingDirectory cwd(root);
+
+    const std::filesystem::path dir = TempDir("chain_schedule");
+    const std::filesystem::path saveRoot = dir / "saves";
+    const std::filesystem::path configPath = MakeActualEventConfig(
+        root, dir, "world_caravan_aftermath", 1430, "village_core");
+    const std::string profilePath = (dir / "players.bin").string();
+    std::string saveId;
+    CreateEmptySave(saveRoot, "village_demo_m31", &saveId);
+    REQUIRE_FALSE(saveId.empty());
+
+    const std::uint64_t contentHash = 0x4D33325437434841ull;
+    std::vector<std::string> args;
+    std::vector<const char*> argv;
+    server::ServerHost::Options options =
+        MakeHostOptions(root, saveRoot, configPath, profilePath, contentHash,
+                        saveId, &args, &argv);
+    server::ServerHost host;
+    std::string error;
+    REQUIRE_MESSAGE(host.Init(options, &error), error);
+    game::NetworkClient client(
+        ClientOptions(host.NetworkPort(), contentHash, "f2t7-chain"));
+    std::vector<game::NetworkClient*> clients{&client};
+    REQUIRE(client.Connect(&error));
+    REQUIRE(PumpUntil(host, clients, 10000, [&] {
+        return client.HasPlayerState() && client.HasWorldEventState();
+    }));
+    game::WorldEventDirector* director = host.Simulation().WorldEvents();
+    REQUIRE(director != nullptr);
+    REQUIRE(PumpUntil(host, clients, 3000, [&] {
+        return !director->Events().empty();
+    }));
+    const game::WorldEventInstance event = director->Events().front();
+    CHECK(event.defId == "world_caravan_aftermath");
+    host.AdvanceGameMinutes(10.0);
+    host.RunForTicks(2);
+    const game::WorldEventInstance* active = director->Find(event.id);
+    REQUIRE(active != nullptr);
+    CHECK(active->status == game::WorldEventStatus::Active);
+    REQUIRE(PumpUntil(host, clients, 3000, [&] {
+        const net::WorldEventSnapshotEntry* saved =
+            FindClientEvent(client, event.id);
+        return saved != nullptr && saved->status == 2u;
+    }));
+    client.Close();
+    host.Shutdown();
     std::error_code cleanupError;
     std::filesystem::remove_all(dir, cleanupError);
 }

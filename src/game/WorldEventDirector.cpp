@@ -73,6 +73,15 @@ bool IsTerminal(WorldEventStatus status) {
            status == WorldEventStatus::Expired;
 }
 
+bool IsChainTarget(const WorldEventConfig& config, std::string_view id) {
+    for (const WorldEventDef& def : config.defs) {
+        if (def.nextEvent == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Near(float x, float y, const std::vector<glm::vec2>& focuses,
           float radius) {
     if (!std::isfinite(radius) || radius < 0.0f) {
@@ -592,7 +601,8 @@ void WorldEventDirector::SetStage(WorldEventInstance& event,
 const WorldEventDef* WorldEventDirector::SelectDefinition(int day) const {
     std::uint64_t total = 0;
     for (const WorldEventDef& def : m_config.defs) {
-        if (day < def.minDay || day > def.maxDay) {
+        if (day < def.minDay || day > def.maxDay ||
+            IsChainTarget(m_config, def.id)) {
             continue;
         }
         const auto last = m_lastDefDay.find(def.id);
@@ -610,7 +620,8 @@ const WorldEventDef* WorldEventDirector::SelectDefinition(int day) const {
         HashKey(m_config.randomSeed, day, "definition") % total;
     std::uint64_t cursor = 0;
     for (const WorldEventDef& def : m_config.defs) {
-        if (day < def.minDay || day > def.maxDay) {
+        if (day < def.minDay || day > def.maxDay ||
+            IsChainTarget(m_config, def.id)) {
             continue;
         }
         const auto last = m_lastDefDay.find(def.id);

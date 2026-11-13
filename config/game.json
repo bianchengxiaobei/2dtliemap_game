@@ -1397,7 +1397,7 @@
     }
   },
   "worldEvents": {
-    "enabled": false,
+    "enabled": true,
     "file": "assets/world_events.json",
     "randomSeed": 20261113
   },

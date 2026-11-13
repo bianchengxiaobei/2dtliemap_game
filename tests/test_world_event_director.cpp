@@ -1,5 +1,6 @@
 ﻿#include <cstdint>
 #include <limits>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -314,6 +315,25 @@ TEST_CASE("M33-F2-T2 世界事件：迟到加载不无提示激活，非法恢�
     invalid.front().deadlineMinute = invalid.front().activeMinute;
     CHECK_FALSE(restored.Restore(invalid, 1, 0.0, &error));
     CHECK(restored.Find(sourceId) != nullptr);
+}
+
+TEST_CASE("M33-F2-T6 链后续事件不参与随机主排期") {
+    game::WorldEventDirector director = MakeDirector();
+    std::set<std::string> seen;
+    for (int day = 1; day <= 10; ++day) {
+        const double start = static_cast<double>(day - 1) * 1440.0;
+        director.Update(start, {});
+        for (const game::WorldEventInstance& event : director.Events()) {
+            if (!seen.insert(event.id).second) {
+                continue;
+            }
+            CHECK(event.day == day);
+            CHECK(event.defId == "caravan_ambush");
+        }
+        director.Update(start + 1439.0, {});
+    }
+    CHECK(seen.size() == 10u);
+    CHECK(EventsForDef(director, "caravan_aftermath").empty());
 }
 
 TEST_CASE("M33-F2-T2 世界事件：显式区域与冷却日") {

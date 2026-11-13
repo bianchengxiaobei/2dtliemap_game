@@ -11,6 +11,20 @@ EVENTS = ROOT / "assets" / "world_events.json"
 ITEMS = ROOT / "assets" / "items.json"
 STAGE_KINDS = {"reach", "interact", "kill", "loot", "defend", "choice"}
 MAX_CHAIN = 8
+PRIMARY_EVENTS = {
+    "world_caravan_ambush": "商队伏击",
+    "world_survivor_distress": "幸存者求救",
+    "world_migrating_horde": "迁徙尸潮",
+    "world_infected_house": "感染房屋",
+    "world_supply_contest": "空投争夺",
+}
+M24_EVENT_IDS = {
+    "event_supply_drop",
+    "event_wandering_horde",
+    "event_infected_house",
+    "event_survivor_ambush",
+    "event_cold_snap",
+}
 
 
 def valid_token(value):
@@ -176,13 +190,39 @@ class WorldEventDataTest(unittest.TestCase):
         cls.items = {item["id"] for item in
                      json.loads(ITEMS.read_text(encoding="utf-8"))["items"]}
 
-    def test_disabled_placeholder_and_config_contract(self):
+    def test_content_pack_and_config_contract(self):
         world_events = self.config["worldEvents"]
-        self.assertFalse(world_events["enabled"])
+        self.assertTrue(world_events["enabled"])
         self.assertEqual(world_events["file"], "assets/world_events.json")
         self.assertIsInstance(world_events["randomSeed"], int)
         self.assertEqual(self.doc["format"], "world-events-v1")
-        self.assertEqual(self.doc["defs"], [])
+        self.assertEqual(len(self.doc["defs"]), 6)
+        by_id = {event["id"]: event for event in self.doc["defs"]}
+        self.assertEqual(set(PRIMARY_EVENTS), set(by_id) - {
+            "world_caravan_aftermath"})
+        for event_id, name in PRIMARY_EVENTS.items():
+            event = by_id[event_id]
+            self.assertEqual(event["name"], name)
+            self.assertEqual(len(event["stages"]), 2)
+            self.assertIn(len(event["choices"]), (2, 3))
+            self.assertEqual(validate_event(event, self.items), [])
+            self.assertFalse(set(by_id) & M24_EVENT_IDS)
+            for stage in event["stages"]:
+                target = stage.get("target", "")
+                if target:
+                    self.assertNotIn(target, M24_EVENT_IDS)
+        self.assertEqual(by_id["world_caravan_ambush"]["nextEvent"],
+                         "world_caravan_aftermath")
+        self.assertEqual(by_id["world_caravan_aftermath"]["stages"],
+                         [{"kind": "choice", "radius": 6,
+                           "description": "与商队处理后续"}])
+        for event in by_id.values():
+            self.assertIn(event["durationMinutes"], range(72, 241))
+            self.assertGreaterEqual(event["failureReputation"], -8)
+            for choice in event["choices"]:
+                self.assertLessEqual(choice.get("rewardXp", 0), 140)
+                self.assertLessEqual(choice.get("rewardItemCount", 1), 12)
+                self.assertLessEqual(abs(choice.get("reputation", 0)), 20)
 
     def test_legal_event_and_defaults(self):
         caravan = {

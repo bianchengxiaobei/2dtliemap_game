@@ -383,6 +383,6 @@ M33-F1-T2 起追加聚落会自动获得独立商人/守卫/求助者与库存�
 
 - 双客户端跨聚落用例：两个玩家分别在 `village_haven` 与 `north_fields` 交易、接取并完成 `settlement_help`/`north_blood_drive`；验证各聚落库存独立、交易 +1、任务 +10、最终声望各 11 且对方聚落为 0，服务器重启后声望、任务完成状态和库存恢复；用例位于 `tests/test_settlement_network.cpp`。
 - 旧档/旧客户端：`SettlementReputation` 缺失按空/初始值，`MissionLog v1` 无来源仍可读且 `rewardClaimed` 不被重置，`PlayerState v20` 聚落声望摘要默认空；覆盖见 `tests/test_entity_save.cpp`、`tests/test_player_state.cpp`、`tests/test_settlement_integration.cpp`。
-- 2026-11-13 基线：`M33-F1*` 26/26（657 assertions）、`M23-F4-*` 27/27（559 assertions）；M33-F2-T5 后全量 Debug **976/976（139988 assertions）**、Release **976/976（140002 assertions）**、Python **104/104**；1280 烟测沿用 `build/m33_f1_t6_smoke/` 与 F2-T4 的 `build/m33_f2_t4_smoke/`；F2-T5 联机行为见 `tests/test_world_event_network.cpp`。
+- 2026-11-13 基线：`M33-F1*` 26/26（657 assertions）、`M23-F4-*` 27/27（559 assertions）；M33-F2-T7 后全量 Debug **980/980（140222 assertions）**、Release **980/980（140236 assertions）**、Python **104/104**；1280 烟测沿用 `build/m33_f1_t6_smoke/`、`build/m33_f2_t7_dual_smoke/`；F2-T5/T7 联机行为见 `tests/test_world_event_network.cpp`。
 - 限制仍为：交易 UI 只有买入、报价固定 5 档、`dialogueProfile` 仅内置口吻、`merchantStock` 不能改商品表、`recruit` 留给 F3、无防御聚落不自动夜袭。
 

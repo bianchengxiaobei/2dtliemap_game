@@ -6565,9 +6565,7 @@ void WorldDemoState::RefreshHud() {
                 ? "warn"
                 : "info";
     }
-    if (!m_networkMode) {
-        RefreshWorldEventHud(hud);
-    }
+    RefreshWorldEventHud(hud);
     SyncDialogueHud(hud);
     if (networkState && !m_networkPlayerAlive && m_noticeTimer <= 0.0f) {
         hud.notice = "等待复活";

@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-11-13 M33-F2-T7 F2 回归与交付
+
+**范围**：完成 F2 世界事件回归与交付：实际内容双客户端 15 游戏分钟流程、链后续独立排期、服务器重启/重复结算、网络 HUD 刷新修复、M33-F2/M31/M24/M32/M23-F4 定向和全量 Debug/Release/Python、1280 双客户端烟测与文档收口。
+
+**实现**：新增 `M33-F2-T7 双客户端实际内容事件 15 分钟窗口、结算与重启恢复`：加载实际 `world_survivor_distress`，在 `north_fields` 完成 Reach + Defend 两阶段，双客户端共享快照；推进 15 游戏分钟后选择 `escort`，验证双方各得 +15 声望、经验、压力 -8，服务器重启后保留 Resolved 快照与声望，重复 `SettleWorldEvent` 返回 `alreadyApplied` 且不二次加声望。新增 `M33-F2-T7 链后续事件可单独排期并复制到客户端`，确保 `world_caravan_aftermath` 在只含该定义的配置中可独立排期。修复 `WorldDemoState::RefreshHud` 只在单机调用 `RefreshWorldEventHud` 的问题：网络客户端虽然收到 `ZLW2` 快照，但事件面板不刷新；现在统一调用，网络模式内部委托 `RefreshNetworkWorldEventHud`。
+
+**验证**：`M33-F2-T7*` **2/2（79 assertions）**，`M33-F2*` 定向 **27/27（698 assertions）**，`M33-F1* + M23-F4* + M31* + M24* + M32*` **174/174（6203 assertions）**；Debug **980/980（140222 assertions）**、Release **980/980（140236 assertions）**、Python **104/104**。Release 首轮命中既有 M31-T9 写盘快照 `maxSnapshotMs` 阈值与 M30-T6 闪避时序 flake，隔离 **2/2**、**2/2** 通过后全量复跑通过。1280 双客户端烟测 `build/m33_f2_t7_dual_smoke/`：A/B 连接同一服务器，使用实际 `world_caravan_aftermath`（临时排期窗口/区域），事件在约 00:10 进行中、00:23 已解决；A 发送 `E` + `1` 后服务器日志 `world event choice: 与商队交易`，两客户端均显示声望 5、经验 40、汤罐头、区域压力 -2 的结果面板；截图 `client_a_event_1280.png`、`client_b_event_1280.png`、`client_a_near_event_1280.png`、`client_b_near_event_1280.png`、`client_a_event_result_1280.png`、`client_b_event_result_1280.png`，三份 stderr 为空。
+
+**限制/下一步**：15 分钟为游戏时间窗口，不是墙钟计时；双客户端烟测使用固定链后续事件缩短路径，5 类事件未逐一自然实机完成；终态内容清理、鼠标选项、独立聊天频道与离线参与者补发未做。F2 检查表 6/6 通过，下一步进入 F3-T1 幸存者同伴。
+
+## 2026-11-13 M33-F2-T6 事件内容包 v1
+
+**范围**：填入 5 类可交互世界事件与 1 个商队后续链，启用默认内容，补内容/平衡/去重/排期测试和 1280 内容包烟测；不做 T7 双客户端 15 分钟全流程。
+
+**实现**：`assets/world_events.json` 新增 `world_caravan_ambush`（商队伏击）、`world_survivor_distress`（幸存者求救）、`world_migrating_horde`（迁徙尸潮）、`world_infected_house`（感染房屋）、`world_supply_contest`（空投争夺）和链后续 `world_caravan_aftermath`（商队余波）。5 个主事件均为 Reach + Kill/Defend 两阶段，各 2–3 个选项；商队伏击通过 `nextEvent` 进入次日余波。`WorldEventDirector::SelectDefinition` 新增链目标过滤，`world_caravan_aftermath` 只能由链触发，不能被每日随机排期独立刷出。事件 ID 使用 `world_` 前缀，避开 M24 `event_*` 随机任务；同日最多 1 个事件、站点唯一，跨日使用 cooldown。持续时间 90–240 游戏分钟（默认 `dayLengthMinutes=60` 下约 3.75–10 现实分钟），选项奖励上限 140 XP，物品数量不超过同风险 POI，声望约 ±20、失败不低于 -8；`config/game.json` 的 `worldEvents.enabled` 改为 true。
+
+**验证**：新增 T6 内容加载/分支/奖励边界/M24 ID 去重用例与链目标不参与随机排期用例；`M33-F2-T6*` **2/2（155 assertions）**，Debug **978/978（140143 assertions）**、Release **978/978（140157 assertions）**、Python **104/104**。Debug 全量首轮唯一失败为既有 `M23-F2b-T6` 动物剥取联机等待超时，隔离 **2/2（52 assertions）** 通过后全量复跑通过。1280 烟测 `build/m33_f2_t6_smoke/` 使用实际 `world_survivor_distress`（临时只改排期窗口/区域并传送至诊所）：日志生成 4 个事件敌人，阶段完成后选择“护送至聚落”，HUD 显示声望 +15、经验 +100、区域压力 -8；截图 `world_event_content_panel_1280.png`、`world_event_content_progress_1280.png`、`world_event_content_choice_1280.png`、`world_event_content_result_1280.png`，stderr 为空。
+
+**限制/下一步**：烟测用临时排期和传送缩短路径，5 类事件尚未逐一自然实机完成；链后续只有数据/排期覆盖，没有独立截图；终态内容清理、鼠标选项与独立聊天频道未做。T7 做 `M33-F2*`/M31/M24/战略/存档/网络全量回归、双客户端 15 分钟流程和文档收口。
+
 ## 2026-11-13 M33-F2-T5 服务器权威、复制与持久化
 
 **范围**：把 F2 世界事件从单机 HUD 接到服务器权威快照、选择命令、参与者结算、manifest 存档与重连恢复；不做 T6 事件内容包和 T7 全流程验收。

@@ -1,10 +1,13 @@
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -260,4 +263,70 @@ TEST_CASE("M33-F2-T1 世界事件奖励引用与 mod 追加") {
     emptyDoc.enabled = true;
     CHECK_FALSE(game::MergeWorldEventJson(
         EventDocument(""), "empty", &emptyDoc, nullptr, &error, &items));
+}
+
+TEST_CASE("M33-F2-T6 事件内容包 v1：加载、分支、平衡与 M24 去重") {
+    core::Config config;
+    REQUIRE(config.LoadFile(std::string(ZL_SOURCE_DIR) + "/config/game.json"));
+    items::ItemRegistry items;
+    REQUIRE(items.LoadFile(std::string(ZL_SOURCE_DIR) + "/assets/items.json"));
+
+    game::WorldEventConfig events;
+    std::string error;
+    REQUIRE(game::LoadWorldEventConfig(config, &events, &error, &items));
+    CHECK(error.empty());
+    CHECK(events.enabled);
+    REQUIRE(events.defs.size() == 6u);
+
+    const std::pair<const char*, const char*> required[] = {
+        {"world_caravan_ambush", "商队伏击"},
+        {"world_survivor_distress", "幸存者求救"},
+        {"world_migrating_horde", "迁徙尸潮"},
+        {"world_infected_house", "感染房屋"},
+        {"world_supply_contest", "空投争夺"},
+    };
+    const std::set<std::string> m24EventIds = {
+        "event_supply_drop", "event_wandering_horde",
+        "event_infected_house", "event_survivor_ambush",
+        "event_cold_snap"};
+    for (const auto& [id, name] : required) {
+        const game::WorldEventDef* def = events.Find(id);
+        REQUIRE(def != nullptr);
+        CHECK(def->name == name);
+        CHECK(m24EventIds.count(def->id) == 0);
+        REQUIRE(def->stages.size() == 2u);
+        CHECK(def->stages[0].kind == game::WorldEventStageKind::Reach);
+        CHECK((def->stages[1].kind == game::WorldEventStageKind::Kill ||
+               def->stages[1].kind == game::WorldEventStageKind::Defend));
+        CHECK(def->stages[1].count > 0);
+        CHECK(def->stages[1].count <= 8);
+        CHECK(def->choices.size() >= 2u);
+        CHECK(def->choices.size() <= 3u);
+        CHECK(def->durationMinutes >= 72);
+        CHECK(def->durationMinutes <= 240);
+        CHECK(def->failureReputation >= -8);
+        bool hasPositive = false;
+        bool hasNegative = false;
+        for (const game::WorldEventChoiceDef& choice : def->choices) {
+            CHECK(choice.rewardXp <= 140.0f);
+            CHECK(choice.rewardItemCount <= 12);
+            CHECK(std::abs(choice.reputation) <= 20);
+            hasPositive = hasPositive || choice.reputation > 0;
+            hasNegative = hasNegative || choice.reputation < 0;
+        }
+        CHECK(hasPositive);
+        CHECK(hasNegative);
+    }
+
+    const game::WorldEventDef* caravan =
+        events.Find("world_caravan_ambush");
+    REQUIRE(caravan != nullptr);
+    CHECK(caravan->nextEvent == "world_caravan_aftermath");
+    const game::WorldEventDef* aftermath =
+        events.Find("world_caravan_aftermath");
+    REQUIRE(aftermath != nullptr);
+    CHECK(aftermath->name == "商队余波");
+    REQUIRE(aftermath->stages.size() == 1u);
+    CHECK(aftermath->stages[0].kind == game::WorldEventStageKind::Choice);
+    CHECK(aftermath->choices.size() == 2u);
 }
