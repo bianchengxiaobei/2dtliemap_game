@@ -18,6 +18,7 @@
 #include "game/NetworkClient.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/WorldEvent.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
 #include "items/RecipeRegistry.h"
@@ -129,13 +130,25 @@ TEST_CASE("M13-T9 内嵌主机：自动内容指纹下可连接并收发社交�
                                           nullptr, &error),
             error);
     }
+    zl::game::WorldEventConfig clientWorldEvents;
+    REQUIRE_MESSAGE(zl::game::LoadWorldEventConfig(
+                        clientConfig, &clientWorldEvents, &error, &clientItems),
+                    error);
+    for (const std::string& modWorldEvent :
+         clientModContent.worldEventFiles) {
+        REQUIRE_MESSAGE(
+            zl::game::MergeWorldEventFile(modWorldEvent, &clientWorldEvents,
+                                          nullptr, &error, &clientItems),
+            error);
+    }
     const std::uint64_t clientModsHash = zl::game::ComputeTreeHash(
         clientConfig.Get<std::string>("script.modsDir", "mods"));
     CHECK(zl::game::ComputeContentHash(clientItems, clientRecipes,
                                        clientBuildables, clientLoot, clientPois,
                                        clientMissions, clientModsHash,
                                        &clientForage, &clientAnimals,
-                                       &clientCrops, &clientSettlements) ==
+                                       &clientCrops, &clientSettlements,
+                                       &clientWorldEvents) ==
           server.ContentHash());
 
     zl::game::NetworkClient::Options clientOptions;

@@ -433,6 +433,15 @@ bool LoadMissionConfig(const core::Config& config, MissionConfig* out,
             ZL_WARN(kLogModule, "任务 '{}' minDay 非法，已跳过", def.id);
             continue;
         }
+        if (entry.contains("minSettlementReputation") &&
+            !ReadInt(entry, "minSettlementReputation",
+                     kSettlementReputationMinScore,
+                     kSettlementReputationMaxScore,
+                     &def.minSettlementReputation)) {
+            ZL_WARN(kLogModule,
+                    "任务 '{}' minSettlementReputation 非法，已跳过", def.id);
+            continue;
+        }
         if (entry.contains("chance") &&
             !ReadFloat(entry, "chance", 0.0f, 1.0f, &def.chance)) {
             ZL_WARN(kLogModule, "任务 '{}' chance 非法，已跳过", def.id);
@@ -810,6 +819,12 @@ std::string MissionEventGuideText(const MissionDef& def,
 }
 
 int MissionFocusPriority(const MissionDef& def) {
+    // M31-T10: the authored vertical-slice chain is the main line. It must
+    // outrank nearby mod/side missions so HUD/map guidance stays on the
+    // intended route; random events still use the separate event guide.
+    if (def.chain == "m31_slice") {
+        return -1;
+    }
     if (def.kind == MissionKind::Random) {
         return 0;
     }
@@ -889,6 +904,14 @@ bool MissionCanActivate(const MissionDef& def, const ecs::MissionLog& log,
         return false;
     }
     return day >= state->day + std::max(1, def.retryDays);
+}
+
+bool MissionMeetsSettlementReputation(const MissionDef& def, int score) {
+    return std::clamp(score, kSettlementReputationMinScore,
+                      kSettlementReputationMaxScore) >=
+           std::clamp(def.minSettlementReputation,
+                      kSettlementReputationMinScore,
+                      kSettlementReputationMaxScore);
 }
 
 int MissionDeadlineDay(const MissionDef& def,

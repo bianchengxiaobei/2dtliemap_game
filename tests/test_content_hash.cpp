@@ -1,11 +1,13 @@
 ﻿#include <doctest/doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "core/Config.h"
 #include "game/Animals.h"
 #include "game/BuildingRules.h"
 #include "game/ContentHash.h"
@@ -14,6 +16,7 @@
 #include "game/Missions.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/WorldEvent.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
 #include "items/RecipeRegistry.h"
@@ -170,8 +173,96 @@ std::uint64_t Hash(const Content& content,
 
 }  // namespace
 
-TEST_CASE("M24-T7 内容指纹版本保持 v13") {
-    CHECK(zl::game::kContentHashVersion == 13u);
+TEST_CASE("M33-F2-T3 内容指纹版本升级到 v17") {
+    CHECK(zl::game::kContentHashVersion == 17u);
+    Content content;
+    REQUIRE(content.Load(0.5f, 1.0f));
+    const std::vector<game::BuildableDef> buildables = Buildables();
+    game::MissionConfig missions;
+    missions.enabled = true;
+    game::MissionDef def;
+    def.id = "hash_reputation";
+    def.name = "指纹声望";
+    def.chain = "hash_reputation";
+    def.kind = game::MissionKind::Once;
+    def.source = game::MissionSource::Npc;
+    def.task = game::MissionTaskKind::Help;
+    def.minSettlementReputation = -100;
+    missions.defs.push_back(def);
+    const std::uint64_t without = Hash(content, buildables, EmptyLoot(),
+                                       EmptyPois(), missions);
+    missions.defs[0].minSettlementReputation = 20;
+    const std::uint64_t with = Hash(content, buildables, EmptyLoot(),
+                                    EmptyPois(), missions);
+    CHECK(without != with);
+}
+
+TEST_CASE("M33-F2-T1 内容指纹纳入世界事件") {
+    Content content;
+    REQUIRE(content.Load(0.5f, 1.0f));
+    const std::vector<game::BuildableDef> buildables = Buildables();
+    game::WorldEventConfig events;
+    events.enabled = true;
+    events.randomSeed = 7;
+    game::WorldEventDef def;
+    def.id = "hash_event";
+    def.name = "指纹事件";
+    def.kind = "caravan";
+    def.minDay = 2;
+    def.maxDay = 30;
+    def.weight = 1.0f;
+    def.cooldownDays = 3;
+    def.region = "village_core";
+    def.stages.push_back(game::WorldEventStageDef{
+        game::WorldEventStageKind::Kill, "zombie", 2, 6.0f, "清理"});
+    def.choices.push_back(game::WorldEventChoiceDef{
+        "rescue", "救援", 10, 40.0f, "ammo_9mm", 2});
+    def.nextEvent = "hash_event_after";
+    events.defs.push_back(def);
+    game::WorldEventDef after;
+    after.id = "hash_event_after";
+    after.name = "指纹后续";
+    after.stages.push_back(game::WorldEventStageDef{
+        game::WorldEventStageKind::Choice, "", 1, 4.0f, ""});
+    after.choices.push_back(
+        game::WorldEventChoiceDef{"leave", "离开", 0, 0.0f, "", 1});
+    events.defs.push_back(after);
+
+    const auto hash = [&] {
+        return game::ComputeContentHash(
+            content.items, content.recipes, buildables, EmptyLoot(),
+            EmptyPois(), EmptyMissions(), 0, nullptr, nullptr, nullptr,
+            nullptr, &events);
+    };
+    const std::uint64_t base = hash();
+    CHECK(base != game::ComputeContentHash(
+                       content.items, content.recipes, buildables, EmptyLoot(),
+                       EmptyPois(), EmptyMissions(), 0, nullptr, nullptr,
+                       nullptr, nullptr, nullptr));
+
+    events.defs[0].stages[0].count = 3;
+    const std::uint64_t changedStage = hash();
+    CHECK(changedStage != base);
+
+    events.defs[0].stages[0].count = 2;
+    events.defs[0].choices[0].rewardItemCount = 3;
+    const std::uint64_t changedReward = hash();
+    CHECK(changedReward != base);
+
+    events.defs[0].choices[0].rewardItemCount = 2;
+    events.defs[0].choices[0].pressure = -10;
+    const std::uint64_t changedPressure = hash();
+    CHECK(changedPressure != base);
+
+    events.defs[0].choices[0].pressure = 0;
+    events.defs[0].failurePressure = 8;
+    const std::uint64_t changedFailure = hash();
+    CHECK(changedFailure != base);
+
+    events.defs[0].failurePressure = 5;
+    events.defs[0].nextEvent = "hash_event_after";
+    events.randomSeed = 8;
+    CHECK(hash() != base);
 }
 
 TEST_CASE("X-F2b：内容指纹确定且非零") {
@@ -481,6 +572,10 @@ TEST_CASE("M23-F4-T1 内容指纹纳入聚落数据") {
     game::SettlementDef def;
     def.id = "village_haven";
     def.name = "村庄营地";
+    def.regionId = "village_core";
+    def.services = zl::game::kAllSettlementServices;
+    def.startingReputation = 5;
+    def.dialogueProfile = "village_haven";
     def.centerX = 70.5f;
     def.centerY = 24.5f;
     def.safeRadius = 10.5f;
@@ -523,4 +618,89 @@ TEST_CASE("M23-F4-T1 内容指纹纳入聚落数据") {
         content.items, content.recipes, buildables, EmptyLoot(), EmptyPois(),
         EmptyMissions(), 0, nullptr, nullptr, nullptr, &settlements);
     CHECK(changedDefense != changed);
+
+    settlements.defs[0].defense.guardHealth -= 1.0f;
+    settlements.defs[0].regionId = "south_farmland";
+    const std::uint64_t changedRegion = game::ComputeContentHash(
+        content.items, content.recipes, buildables, EmptyLoot(), EmptyPois(),
+        EmptyMissions(), 0, nullptr, nullptr, nullptr, &settlements);
+    CHECK(changedRegion != with);
+
+    settlements.defs[0].regionId = "village_core";
+    settlements.defs[0].services = zl::game::kDefaultSettlementServices;
+    const std::uint64_t changedServices = game::ComputeContentHash(
+        content.items, content.recipes, buildables, EmptyLoot(), EmptyPois(),
+        EmptyMissions(), 0, nullptr, nullptr, nullptr, &settlements);
+    CHECK(changedServices != with);
+
+    settlements.defs[0].services = zl::game::kAllSettlementServices;
+    settlements.defs[0].startingReputation = 6;
+    const std::uint64_t changedReputation = game::ComputeContentHash(
+        content.items, content.recipes, buildables, EmptyLoot(), EmptyPois(),
+        EmptyMissions(), 0, nullptr, nullptr, nullptr, &settlements);
+    CHECK(changedReputation != with);
+
+    settlements.defs[0].startingReputation = 5;
+    settlements.defs[0].dialogueProfile = "north_fields";
+    const std::uint64_t changedDialogue = game::ComputeContentHash(
+        content.items, content.recipes, buildables, EmptyLoot(), EmptyPois(),
+        EmptyMissions(), 0, nullptr, nullptr, nullptr, &settlements);
+    CHECK(changedDialogue != with);
+
+    settlements.defs[0].dialogueProfile = "village_haven";
+    settlements.reputation.sources.trade = 2;
+    const std::uint64_t changedReputationConfig = game::ComputeContentHash(
+        content.items, content.recipes, buildables, EmptyLoot(), EmptyPois(),
+        EmptyMissions(), 0, nullptr, nullptr, nullptr, &settlements);
+    CHECK(changedReputationConfig != with);
+}
+
+TEST_CASE("M33-F1-T6 第四聚落与新任务进入内容指纹") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    core::Config config;
+    REQUIRE(config.LoadFile(root / "config" / "game.json"));
+    config.Set("settlements.file", (root / "assets" / "settlements.json")
+                                       .generic_string());
+    game::SettlementConfig settlements;
+    game::MissionConfig missions;
+    std::string error;
+    REQUIRE_MESSAGE(game::LoadSettlementConfig(config, &settlements, &error),
+                    error);
+    REQUIRE_MESSAGE(game::LoadMissionConfig(config, &missions, &error),
+                    error);
+    REQUIRE(settlements.defs.size() == 4u);
+    const game::SettlementDef* river = settlements.Find("river_camp");
+    REQUIRE(river != nullptr);
+    REQUIRE(missions.Find("river_fish_supply") != nullptr);
+
+    Content content;
+    REQUIRE(content.Load(0.5f, 1.0f));
+    const std::vector<game::BuildableDef> buildables = Buildables();
+    const auto hash = [&] {
+        return game::ComputeContentHash(
+            content.items, content.recipes, buildables, EmptyLoot(),
+            EmptyPois(), missions, 0, nullptr, nullptr, nullptr,
+            &settlements);
+    };
+    const std::uint64_t base = hash();
+
+    auto riverIt = std::find_if(
+        settlements.defs.begin(), settlements.defs.end(),
+        [](const game::SettlementDef& def) { return def.id == "river_camp"; });
+    REQUIRE(riverIt != settlements.defs.end());
+    --riverIt->merchantStock[0];
+    const std::uint64_t changedSettlement = hash();
+    CHECK(changedSettlement != base);
+    ++riverIt->merchantStock[0];
+
+    auto missionIt = std::find_if(
+        missions.defs.begin(), missions.defs.end(),
+        [](const game::MissionDef& def) { return def.id == "river_fish_supply"; });
+    REQUIRE(missionIt != missions.defs.end());
+    missionIt->minSettlementReputation = 0;
+    const std::uint64_t changedMission = hash();
+    CHECK(changedMission != base);
+    CHECK(hash() == changedMission);
+    missionIt->minSettlementReputation = -39;
+    CHECK(hash() == base);
 }

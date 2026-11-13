@@ -405,6 +405,14 @@ TEST_CASE("M15-T5：Python HUD 暴露操作提示字段") {
     f.ctx.hudState.missionTone = "warn";
     f.ctx.hudState.eventGuide = "事件 · 被感染房屋 · 清理感染者 1/3 · 目标东南 38格";
     f.ctx.hudState.eventTone = "warn";
+    f.ctx.hudState.regionGuide = "区域 · 村庄核心 · 最近路标 村庄避风港";
+    f.ctx.hudState.regionTone = "info";
+    f.ctx.hudState.settlementGuide =
+        "聚落 · 村庄营地 · 声望 中立（0） · 服务 交易/委托/防御/招募 · 防御 正常";
+    f.ctx.hudState.settlementTone = "info";
+    f.ctx.hudState.strategicGuide =
+        "战略争夺 · 河谷 · 守住归人类/失守沦陷 · M 地图支援";
+    f.ctx.hudState.strategicTone = "warn";
     f.ctx.hudState.progressionValid = true;
     f.ctx.hudState.progressionLevel = 3;
     f.ctx.hudState.progressionXp = 42.0f;
@@ -496,6 +504,12 @@ assert h['missionGuide'] == '任务[电台] 无线电求救 · 搜索工具柜 0
 assert h['missionTone'] == 'warn'
 assert h['eventGuide'] == '事件 · 被感染房屋 · 清理感染者 1/3 · 目标东南 38格'
 assert h['eventTone'] == 'warn'
+assert h['regionGuide'] == '区域 · 村庄核心 · 最近路标 村庄避风港'
+assert h['regionTone'] == 'info'
+assert h['settlementGuide'] == '聚落 · 村庄营地 · 声望 中立（0） · 服务 交易/委托/防御/招募 · 防御 正常'
+assert h['settlementTone'] == 'info'
+assert h['strategicGuide'] == '战略争夺 · 河谷 · 守住归人类/失守沦陷 · M 地图支援'
+assert h['strategicTone'] == 'warn'
 assert h['progressionValid'] is True
 assert h['progressionLevel'] == 3
 assert abs(h['progressionXp'] - 42.0) < 0.001

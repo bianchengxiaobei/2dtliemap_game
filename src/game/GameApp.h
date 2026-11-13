@@ -37,6 +37,8 @@
 #include "game/Missions.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/StrategicState.h"
+#include "game/WorldEvent.h"
 #include "game/WorldSimulation.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
@@ -59,6 +61,7 @@
 #include "ui/UiSystem.h"
 #include "world/ChunkManager.h"
 #include "world/World.h"
+#include "world/WorldSelection.h"
 
 namespace zl::save {
 class SaveService;
@@ -102,6 +105,7 @@ private:
     void StopMultiplayer();
 
     core::Config m_config;
+    world::WorldSelection m_worldSelection;
     core::EventBus m_events;
     core::Input m_input;
     core::GameTime m_gameTime;
@@ -139,6 +143,8 @@ private:
     PoiConfig m_poiConfig;
     MissionConfig m_missionConfig;
     SettlementConfig m_settlements;
+    WorldEventConfig m_worldEvents;
+    StrategicConfig m_strategic;
 
     // 存档管理（M10-T4/T5）：save.root 下的元数据、原子写盘与 zl-save 后台线程
     std::unique_ptr<save::SaveManager> m_saveManager;

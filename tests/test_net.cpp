@@ -147,7 +147,8 @@ TEST_CASE("M12 CommandPacket：全字段往返 + 固定线格式") {
     CHECK(IsValidCommandType(CommandType::GiveDriverSeat));
     CHECK(IsValidCommandType(CommandType::Block));
     CHECK(IsValidCommandType(CommandType::Dodge));
-    CHECK_FALSE(IsValidCommandType(static_cast<CommandType>(50)));
+    CHECK(IsValidCommandType(CommandType::ChooseWorldEvent));
+    CHECK_FALSE(IsValidCommandType(static_cast<CommandType>(51)));
 }
 
 TEST_CASE("M12 CommandPacket：拒绝截断、magic/类型/StableId/NaN/数量/尾部非法") {

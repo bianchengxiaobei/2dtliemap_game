@@ -73,6 +73,12 @@ void NetworkClient::ClearReplication() {
     m_hasPlayerState = false;
     m_socialState = {};
     m_hasSocialState = false;
+    m_strategicState = {};
+    m_hasStrategicState = false;
+    m_strategicResult = {};
+    m_hasStrategicResult = false;
+    m_worldEventState = {};
+    m_hasWorldEventState = false;
     m_playerStableId = 0;
     m_pendingChunkDiffs.clear();
     m_pendingWorldSounds.clear();
@@ -192,6 +198,12 @@ void NetworkClient::HandleMessage(std::span<const std::uint8_t> message) {
         m_hasPlayerState = false;
         m_socialState = {};
         m_hasSocialState = false;
+        m_strategicState = {};
+        m_hasStrategicState = false;
+        m_strategicResult = {};
+        m_hasStrategicResult = false;
+        m_worldEventState = {};
+        m_hasWorldEventState = false;
         ++m_stats.assignments;
         if (!m_replication.SetLocalPlayer(m_playerStableId,
                                           m_options.localPredictionSpeed)) {
@@ -219,6 +231,66 @@ void NetworkClient::HandleMessage(std::span<const std::uint8_t> message) {
         m_socialState = std::move(state);
         m_hasSocialState = true;
         ++m_stats.socialStatesReceived;
+        return;
+    }
+
+    if (message.size() >= 4 &&
+        ReadU32Le(message.data()) == net::kWorldEventSnapshotMagic) {
+        net::WorldEventSnapshot snapshot;
+        std::string error;
+        if (!net::DecodeWorldEventSnapshot(message, &snapshot, &error)) {
+            m_stats.lastError = error;
+            ZL_WARN("net", "世界事件快照消息无效：{}", error);
+            m_session.Close();
+            return;
+        }
+        if (m_hasWorldEventState &&
+            snapshot.sequence < m_worldEventState.sequence) {
+            return;
+        }
+        m_worldEventState = std::move(snapshot);
+        m_hasWorldEventState = true;
+        ++m_stats.worldEventSnapshotsReceived;
+        return;
+    }
+
+    if (message.size() >= 4 &&
+        ReadU32Le(message.data()) == net::kStrategicSnapshotMagic) {
+        net::StrategicSnapshot snapshot;
+        std::string error;
+        if (!net::DecodeStrategicSnapshot(message, &snapshot, &error)) {
+            m_stats.lastError = error;
+            ZL_WARN("net", "战略快照消息无效：{}", error);
+            m_session.Close();
+            return;
+        }
+        if (m_hasStrategicState &&
+            snapshot.sequence < m_strategicState.sequence) {
+            return;
+        }
+        m_strategicState = std::move(snapshot);
+        m_hasStrategicState = true;
+        ++m_stats.strategicSnapshotsReceived;
+        return;
+    }
+
+    if (message.size() >= 4 &&
+        ReadU32Le(message.data()) == net::kStrategicResultMagic) {
+        net::StrategicRequestResult result;
+        std::string error;
+        if (!net::DecodeStrategicResult(message, &result, &error)) {
+            m_stats.lastError = error;
+            ZL_WARN("net", "战略结果消息无效：{}", error);
+            m_session.Close();
+            return;
+        }
+        if (m_hasStrategicResult &&
+            result.sequence < m_strategicResult.sequence) {
+            return;
+        }
+        m_strategicResult = std::move(result);
+        m_hasStrategicResult = true;
+        ++m_stats.strategicResultsReceived;
         return;
     }
 
@@ -375,6 +447,43 @@ bool NetworkClient::SendChat(const std::string& text, std::string* error) {
         return fail(sendError.empty() ? "聊天消息发送失败" : sendError);
     }
     ++m_stats.chatMessagesSent;
+    return true;
+}
+
+bool NetworkClient::SendStrategicRequest(net::StrategicRequestAction action,
+                                         const std::string& regionId,
+                                         std::int32_t amount,
+                                         std::string* error) {
+    auto fail = [&](const std::string& message) {
+        m_stats.lastError = message;
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (!IsConnected()) {
+        return fail("会话未连接");
+    }
+    if (m_playerStableId == 0) {
+        return fail("服务器尚未分配玩家");
+    }
+    net::StrategicRequest request;
+    request.sequence = m_strategicRequestSequence;
+    request.action = action;
+    request.regionId = regionId;
+    request.amount = amount;
+    std::string encodeError;
+    const std::vector<std::uint8_t> bytes =
+        net::EncodeStrategicRequest(request, &encodeError);
+    if (bytes.empty()) {
+        return fail(encodeError.empty() ? "战略请求编码失败" : encodeError);
+    }
+    std::string sendError;
+    if (!m_session.Send(bytes, &sendError)) {
+        return fail(sendError.empty() ? "战略请求发送失败" : sendError);
+    }
+    ++m_strategicRequestSequence;
+    ++m_stats.strategicRequestsSent;
     return true;
 }
 

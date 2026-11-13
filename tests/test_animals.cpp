@@ -1,4 +1,4 @@
-#include <doctest/doctest.h>
+﻿#include <doctest/doctest.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -217,7 +217,7 @@ TEST_CASE("M23-F2b-T1 Animal/Flee/AnimalCorpse 存档往返") {
     std::string error;
     REQUIRE(save::RegisterBuiltinComponents(components, &error));
     CHECK(error.empty());
-    CHECK(components.Size() == 45u);
+    CHECK(components.Size() == 46u);
 
     ecs::EcsWorld source;
     const ecs::Entity animal = source.Create();

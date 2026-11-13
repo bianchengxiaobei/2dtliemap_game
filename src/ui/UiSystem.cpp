@@ -24,6 +24,7 @@
 #include "ui/MenuPanel.h"
 #include "ui/MultiplayerPanel.h"
 #include "ui/SocialPanel.h"
+#include "ui/WorldMapUi.h"
 #include "ui/RmlBgfxRenderInterface.h"
 #include "ui/RmlSystemInterface.h"
 #include "ui/ScriptUiHost.h"
@@ -228,6 +229,37 @@ bool UiSystem::EnsureHudDocument() {
     m_poiGuideElement = m_hudDocument->GetElementById("poi-guide");
     m_missionGuideElement = m_hudDocument->GetElementById("mission-guide");
     m_eventGuideElement = m_hudDocument->GetElementById("event-guide");
+    m_worldEventPanelElement =
+        m_hudDocument->GetElementById("world-event-panel");
+    m_worldEventNameElement =
+        m_hudDocument->GetElementById("world-event-title");
+    m_worldEventMetaElement =
+        m_hudDocument->GetElementById("world-event-meta");
+    m_worldEventStageElement =
+        m_hudDocument->GetElementById("world-event-stage");
+    m_worldEventHintElement =
+        m_hudDocument->GetElementById("world-event-hint");
+    m_worldEventResultElement =
+        m_hudDocument->GetElementById("world-event-result");
+    m_worldEventOptionsElement =
+        m_hudDocument->GetElementById("world-event-options");
+    m_worldEventLogElement =
+        m_hudDocument->GetElementById("world-event-log");
+    for (int i = 0; i < 8; ++i) {
+        m_worldEventOptionElements[static_cast<std::size_t>(i)] =
+            m_hudDocument->GetElementById("world-event-option-" +
+                                          std::to_string(i));
+    }
+    for (int i = 0; i < 6; ++i) {
+        m_worldEventLogLines[static_cast<std::size_t>(i)] =
+            m_hudDocument->GetElementById("world-event-log-" +
+                                          std::to_string(i));
+    }
+    m_regionGuideElement = m_hudDocument->GetElementById("region-guide");
+    m_settlementGuideElement =
+        m_hudDocument->GetElementById("settlement-guide");
+    m_strategicGuideElement =
+        m_hudDocument->GetElementById("strategic-guide");
     m_siegeStatusElement = m_hudDocument->GetElementById("siege-status");
     m_baseStatusElement = m_hudDocument->GetElementById("base-status");
     m_modFieldsElement = m_hudDocument->GetElementById("mod-fields");
@@ -294,6 +326,27 @@ bool UiSystem::EnsureHudDocument() {
     }
     AddClickHandler(m_hudDocument, "hud-bag", [this] { ToggleInventory(); });
     ZL_INFO("ui", "核心 UI 按需加载：HUD");
+    return true;
+}
+
+bool UiSystem::EnsureWorldMapPanel() {
+    if (m_worldMap != nullptr) {
+        return true;
+    }
+    if (m_worldMapLoadAttempted || m_context == nullptr) {
+        return false;
+    }
+    m_worldMapLoadAttempted = true;
+    auto panel = std::make_unique<WorldMapPanel>();
+    if (!panel->Init(*m_context, "assets/ui/worldmap.rml")) {
+        return false;
+    }
+    m_worldMap = std::move(panel);
+    m_worldMap->SetCloseHandler(m_worldMapCloseHandler);
+    m_worldMap->SetSelectHandler(m_worldMapSelectHandler);
+    m_worldMap->SetStrategicActionHandler(
+        m_worldMapStrategicActionHandler);
+    ZL_INFO("ui", "核心 UI 按需加载：世界地图");
     return true;
 }
 
@@ -499,6 +552,14 @@ void UiSystem::Shutdown() {
         m_social->Shutdown();
         m_social.reset();
     }
+    if (m_worldMap != nullptr) {
+        m_worldMap->Shutdown();
+        m_worldMap.reset();
+    }
+    m_worldMapLoadAttempted = false;
+    m_worldMapCloseHandler = nullptr;
+    m_worldMapSelectHandler = nullptr;
+    m_worldMapStrategicActionHandler = nullptr;
     m_counterElement = nullptr;
     m_disableSampleElement = nullptr;
     m_volumeElement = nullptr;
@@ -530,6 +591,19 @@ void UiSystem::Shutdown() {
     m_poiGuideElement = nullptr;
     m_missionGuideElement = nullptr;
     m_eventGuideElement = nullptr;
+    m_worldEventPanelElement = nullptr;
+    m_worldEventNameElement = nullptr;
+    m_worldEventMetaElement = nullptr;
+    m_worldEventStageElement = nullptr;
+    m_worldEventHintElement = nullptr;
+    m_worldEventResultElement = nullptr;
+    m_worldEventOptionsElement = nullptr;
+    m_worldEventLogElement = nullptr;
+    m_worldEventOptionElements.fill(nullptr);
+    m_worldEventLogLines.fill(nullptr);
+    m_regionGuideElement = nullptr;
+    m_settlementGuideElement = nullptr;
+    m_strategicGuideElement = nullptr;
     m_siegeStatusElement = nullptr;
     m_baseStatusElement = nullptr;
     m_modFieldsElement = nullptr;
@@ -636,7 +710,8 @@ void UiSystem::Update(core::Input& input) {
                                 multiplayerOpenAtStart);
     }
     if (input.IsKeyPressed(GLFW_KEY_F11) && !menuOpenAtStart &&
-        !multiplayerOpenAtStart && !IsInventoryOpen()) {
+        !multiplayerOpenAtStart && !IsInventoryOpen() &&
+        !IsWorldMapOpen()) {
         ToggleVisible();
     }
 
@@ -647,7 +722,8 @@ void UiSystem::Update(core::Input& input) {
             if (m_nativeHudNeedsFullRefresh) {
                 ApplyHudState(m_hudCache, true);
             }
-            if (IsMenuOpen() || IsInventoryOpen() || IsMultiplayerOpen()) {
+            if (IsMenuOpen() || IsInventoryOpen() || IsMultiplayerOpen() ||
+                IsWorldMapOpen()) {
                 m_hudDocument->Hide();
             } else {
                 m_hudDocument->Show();
@@ -828,13 +904,16 @@ void UiSystem::Render() {
     }
     if (!m_visible && m_hudDocument == nullptr &&
         !IsInventoryOpen() && !IsMenuOpen() && !IsMultiplayerOpen() &&
-        !IsSocialVisible() &&
+        !IsWorldMapOpen() && !IsSocialVisible() &&
         (m_scriptUi == nullptr || !m_scriptUi->HasVisibleDocuments())) {
         return;
     }
     const glm::mat4 view(1.0f);
     const glm::mat4 projection = glm::ortho(0.0f, static_cast<float>(m_width),
                                             static_cast<float>(m_height), 0.0f, -1.0f, 1.0f);
+    if (IsWorldMapOpen() && m_scriptUi != nullptr) {
+        m_scriptUi->SetGroupVisible(kHudGroup, false);
+    }
     bgfx::setViewTransform(static_cast<bgfx::ViewId>(render::ViewId::UI),
                            glm::value_ptr(view), glm::value_ptr(projection));
     // 状态/脚本在 UiSystem::Update 之后修改文本或加载文档；渲染前再布局一次，
@@ -884,6 +963,61 @@ void UiSystem::SetHudState(const HudState& state) {
     }
     m_hudCache = state;
     m_hudCacheValid = true;
+}
+
+void UiSystem::SetWorldMapState(const game::WorldMapState& state, bool open) {
+    if (!open) {
+        if (m_worldMap != nullptr) {
+            m_worldMap->SetState(state, false);
+        }
+        if (m_scriptUi != nullptr) {
+            m_scriptUi->SetGroupVisible("hud", true);
+        }
+        return;
+    }
+    if (!EnsureWorldMapPanel()) {
+        return;
+    }
+    m_worldMap->SetCloseHandler(m_worldMapCloseHandler);
+    m_worldMap->SetSelectHandler(m_worldMapSelectHandler);
+    m_worldMap->SetStrategicActionHandler(
+        m_worldMapStrategicActionHandler);
+    m_worldMap->SetState(state, true);
+    if (m_hudDocument != nullptr) {
+        m_hudDocument->Hide();
+    }
+    if (m_scriptUi != nullptr) {
+        m_scriptUi->SetGroupVisible("hud", false);
+    }
+}
+
+bool UiSystem::IsWorldMapOpen() const {
+    return m_worldMap != nullptr && m_worldMap->IsOpen();
+}
+
+void UiSystem::SetWorldMapCloseHandler(std::function<void()> handler) {
+    m_worldMapCloseHandler = std::move(handler);
+    if (m_worldMap != nullptr) {
+        m_worldMap->SetCloseHandler(m_worldMapCloseHandler);
+    }
+}
+
+void UiSystem::SetWorldMapSelectHandler(
+    std::function<void(const std::string&)> handler) {
+    m_worldMapSelectHandler = std::move(handler);
+    if (m_worldMap != nullptr) {
+        m_worldMap->SetSelectHandler(m_worldMapSelectHandler);
+    }
+}
+
+void UiSystem::SetWorldMapStrategicActionHandler(
+    std::function<void(const std::string&,
+                       game::WorldMapStrategicAction)> handler) {
+    m_worldMapStrategicActionHandler = std::move(handler);
+    if (m_worldMap != nullptr) {
+        m_worldMap->SetStrategicActionHandler(
+            m_worldMapStrategicActionHandler);
+    }
 }
 
 void UiSystem::ApplyHudState(const HudState& state, bool force) {
@@ -1112,16 +1246,28 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
         state.missionGuide != m_hudCache.missionGuide ||
         state.missionTone != m_hudCache.missionTone ||
         state.eventGuide != m_hudCache.eventGuide ||
-        state.eventTone != m_hudCache.eventTone) {
+        state.eventTone != m_hudCache.eventTone ||
+        state.regionGuide != m_hudCache.regionGuide ||
+        state.regionTone != m_hudCache.regionTone ||
+        state.settlementGuide != m_hudCache.settlementGuide ||
+        state.settlementTone != m_hudCache.settlementTone ||
+        state.strategicGuide != m_hudCache.strategicGuide ||
+        state.strategicTone != m_hudCache.strategicTone) {
         setText(m_objectiveElement, state.objective);
         setText(m_objectiveHintElement, state.objectiveHint);
         setText(m_poiGuideElement, state.poiGuide);
         setText(m_missionGuideElement, state.missionGuide);
         setText(m_eventGuideElement, state.eventGuide);
+        setText(m_regionGuideElement, state.regionGuide);
+        setText(m_settlementGuideElement, state.settlementGuide);
+        setText(m_strategicGuideElement, state.strategicGuide);
         if (m_objectivePanelElement != nullptr) {
             m_objectivePanelElement->SetProperty(
                 "display", state.objective.empty() && state.missionGuide.empty() &&
-                                   state.eventGuide.empty()
+                                   state.eventGuide.empty() &&
+                                   state.regionGuide.empty() &&
+                                   state.settlementGuide.empty() &&
+                                   state.strategicGuide.empty()
                                ? "none"
                                : "block");
         }
@@ -1157,6 +1303,125 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
                                           state.eventTone == "ok");
             m_eventGuideElement->SetClass("status-fail",
                                           state.eventTone == "fail");
+        }
+        if (m_regionGuideElement != nullptr) {
+            m_regionGuideElement->SetProperty(
+                "display", state.regionGuide.empty() ? "none" : "block");
+            m_regionGuideElement->SetClass("status-warn",
+                                           state.regionTone == "warn");
+            m_regionGuideElement->SetClass("status-ok",
+                                           state.regionTone == "ok");
+        }
+        if (m_settlementGuideElement != nullptr) {
+            m_settlementGuideElement->SetProperty(
+                "display", state.settlementGuide.empty() ? "none" : "block");
+            m_settlementGuideElement->SetClass(
+                "status-warn", state.settlementTone == "warn");
+            m_settlementGuideElement->SetClass(
+                "status-fail", state.settlementTone == "fail");
+            m_settlementGuideElement->SetClass(
+                "status-ok", state.settlementTone == "ok");
+        }
+        if (m_strategicGuideElement != nullptr) {
+            m_strategicGuideElement->SetProperty(
+                "display", state.strategicGuide.empty() ? "none" : "block");
+            m_strategicGuideElement->SetClass(
+                "status-warn", state.strategicTone == "warn");
+            m_strategicGuideElement->SetClass(
+                "status-fail", state.strategicTone == "fail");
+        }
+    }
+    const bool worldEventChanged =
+        first || state.worldEventVisible != m_hudCache.worldEventVisible ||
+        state.worldEventCanChoose != m_hudCache.worldEventCanChoose ||
+        state.worldEventChoiceOpen != m_hudCache.worldEventChoiceOpen ||
+        state.worldEventName != m_hudCache.worldEventName ||
+        state.worldEventMeta != m_hudCache.worldEventMeta ||
+        state.worldEventStage != m_hudCache.worldEventStage ||
+        state.worldEventHint != m_hudCache.worldEventHint ||
+        state.worldEventTone != m_hudCache.worldEventTone ||
+        state.worldEventResult != m_hudCache.worldEventResult ||
+        state.worldEventResultTone != m_hudCache.worldEventResultTone ||
+        state.worldEventOptions != m_hudCache.worldEventOptions ||
+        state.worldEventOptionCount != m_hudCache.worldEventOptionCount ||
+        state.worldEventLog != m_hudCache.worldEventLog ||
+        state.worldEventLogCount != m_hudCache.worldEventLogCount;
+    if (worldEventChanged) {
+        if (m_worldEventPanelElement != nullptr) {
+            m_worldEventPanelElement->SetProperty(
+                "display", state.worldEventVisible ? "block" : "none");
+            m_worldEventPanelElement->SetClass(
+                "status-warn", state.worldEventTone == "warn");
+            m_worldEventPanelElement->SetClass(
+                "status-ok", state.worldEventTone == "ok");
+            m_worldEventPanelElement->SetClass(
+                "status-fail", state.worldEventTone == "fail");
+        }
+        setModText(m_worldEventNameElement, state.worldEventName);
+        setModText(m_worldEventMetaElement, state.worldEventMeta);
+        setModText(m_worldEventStageElement, state.worldEventStage);
+        setModText(m_worldEventHintElement, state.worldEventHint);
+        setModText(m_worldEventResultElement, state.worldEventResult);
+        if (m_worldEventResultElement != nullptr) {
+            m_worldEventResultElement->SetProperty(
+                "display", state.worldEventVisible &&
+                                   !state.worldEventResult.empty()
+                               ? "block"
+                               : "none");
+            m_worldEventResultElement->SetClass(
+                "status-ok", state.worldEventResultTone == "ok");
+            m_worldEventResultElement->SetClass(
+                "status-fail", state.worldEventResultTone == "fail");
+        }
+        if (m_worldEventHintElement != nullptr) {
+            m_worldEventHintElement->SetProperty(
+                "display", state.worldEventVisible &&
+                                   !state.worldEventHint.empty()
+                               ? "block"
+                               : "none");
+        }
+        const bool showOptions =
+            state.worldEventVisible && state.worldEventCanChoose &&
+            state.worldEventOptionCount > 0;
+        if (m_worldEventOptionsElement != nullptr) {
+            m_worldEventOptionsElement->SetProperty(
+                "display", showOptions ? "block" : "none");
+        }
+        for (std::size_t i = 0; i < m_worldEventOptionElements.size(); ++i) {
+            Rml::Element* option = m_worldEventOptionElements[i];
+            if (option == nullptr) {
+                continue;
+            }
+            const bool visible =
+                showOptions &&
+                static_cast<int>(i) < state.worldEventOptionCount;
+            option->SetProperty("display", visible ? "block" : "none");
+            if (visible) {
+                setModText(option,
+                           state.worldEventOptions[i]);
+                option->SetClass("active",
+                                 state.worldEventChoiceOpen);
+            }
+        }
+        if (m_worldEventLogElement != nullptr) {
+            m_worldEventLogElement->SetProperty(
+                "display",
+                state.worldEventVisible && state.worldEventLogCount > 0
+                    ? "block"
+                    : "none");
+        }
+        for (std::size_t i = 0; i < m_worldEventLogLines.size(); ++i) {
+            Rml::Element* line = m_worldEventLogLines[i];
+            if (line == nullptr) {
+                continue;
+            }
+            const bool visible =
+                state.worldEventVisible &&
+                static_cast<int>(i) < state.worldEventLogCount;
+            line->SetProperty("display", visible ? "block" : "none");
+            if (visible) {
+                setModText(line, state.worldEventLog[i]);
+            }
         }
     }
     if (first || state.siegeStatus != m_hudCache.siegeStatus ||

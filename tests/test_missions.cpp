@@ -36,7 +36,7 @@ TEST_CASE("M24-T3 内置任务配置包含一次性链与每日/随机事件") {
     REQUIRE(game::LoadMissionConfig(config, &missions, &error));
     CHECK(error.empty());
     REQUIRE(missions.enabled);
-    REQUIRE(missions.defs.size() == 31u);
+    REQUIRE(missions.defs.size() == 35u);
 
     std::set<std::string> chains;
     for (const std::string& id :
@@ -55,11 +55,19 @@ TEST_CASE("M24-T3 内置任务配置包含一次性链与每日/随机事件") {
     for (const game::MissionDef& def : missions.defs) {
         all_chains.insert(def.chain);
     }
-    CHECK(all_chains.size() == 19u);
+    CHECK(all_chains.size() == 22u);
     CHECK(missions.Find("hospital_quarantine")->prerequisite ==
           "hospital_supply");
     CHECK(missions.Find("military_extract")->prerequisite ==
           "military_armory");
+    const game::MissionDef* refugee = missions.Find("refugee_relief");
+    REQUIRE(refugee != nullptr);
+    CHECK(refugee->task == game::MissionTaskKind::Help);
+    REQUIRE(refugee->objectives.size() == 2u);
+    CHECK(refugee->objectives[0].kind ==
+          game::MissionObjectiveKind::CollectItem);
+    CHECK(refugee->objectives[0].target == "canned_beans");
+    CHECK(refugee->objectives[1].kind == game::MissionObjectiveKind::Reach);
     REQUIRE(missions.Find("hospital_quarantine")->objectives.size() == 2u);
     CHECK(missions.Find("hospital_quarantine")->objectives[0].kind ==
           game::MissionObjectiveKind::Loot);
@@ -185,6 +193,43 @@ TEST_CASE("M24-T3 内置任务配置包含一次性链与每日/随机事件") {
     CHECK(settlement_supply->objectives.size() == 2u);
     CHECK(settlement_supply->objectives[0].target ==
           "poi_hospital_supplies");
+
+    const game::MissionDef* north_blood =
+        missions.Find("north_blood_drive");
+    const game::MissionDef* south_harvest =
+        missions.Find("south_harvest_help");
+    const game::MissionDef* river_fish =
+        missions.Find("river_fish_supply");
+    REQUIRE(north_blood != nullptr);
+    REQUIRE(south_harvest != nullptr);
+    REQUIRE(river_fish != nullptr);
+    CHECK(north_blood->chain == "north_clinic");
+    CHECK(north_blood->task == game::MissionTaskKind::Help);
+    CHECK(north_blood->minSettlementReputation == -39);
+    CHECK(north_blood->timeLimitDays == 2);
+    CHECK(north_blood->objectives[0].target == "bandage");
+    CHECK(north_blood->objectives[0].count == 3);
+    CHECK(south_harvest->chain == "south_farm");
+    CHECK(south_harvest->task == game::MissionTaskKind::Supply);
+    CHECK(south_harvest->minSettlementReputation == 0);
+    CHECK(south_harvest->timeLimitDays == 3);
+    CHECK(south_harvest->objectives[0].target == "wild_berries");
+    CHECK(south_harvest->objectives[0].count == 4);
+    CHECK(river_fish->chain == "river_camp");
+    CHECK(river_fish->task == game::MissionTaskKind::Supply);
+    CHECK(river_fish->minSettlementReputation == -39);
+    CHECK(river_fish->timeLimitDays == 2);
+    CHECK(river_fish->objectives[0].target == "small_fish");
+    CHECK(river_fish->objectives[0].count == 3);
+    for (const game::MissionDef* def :
+         {north_blood, south_harvest, river_fish}) {
+        CHECK(def->kind == game::MissionKind::Once);
+        CHECK(def->source == game::MissionSource::Npc);
+        CHECK_FALSE(def->autoActivate);
+        CHECK(def->retryDays == 1);
+        CHECK(def->prerequisite.empty());
+        CHECK_FALSE(def->reward.label.empty());
+    }
 
     const game::MissionDef* super_stock = missions.Find("super_stock");
     const game::MissionDef* super_return = missions.Find("super_return");

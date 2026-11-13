@@ -1,0 +1,309 @@
+{
+ "cx": 33,
+ "cy": 7,
+ "objects": [
+  {
+   "x": 2,
+   "y": 0,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 7,
+   "y": 0,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 1,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 1,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 7,
+   "y": 1,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 1,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 2,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 3,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 4,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 4,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 7,
+   "y": 4,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 4,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 5,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 3,
+   "y": 5,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 5,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 5,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 5,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 6,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 6,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 6,
+   "y": 6,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 6,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "decor.grass_tuft"
+  },
+  {
+   "x": 0,
+   "y": 7,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 4,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 5,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 7,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 8,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 2,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 3,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 7,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  }
+ ]
+}

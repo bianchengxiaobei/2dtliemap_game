@@ -19,6 +19,8 @@ public:
         std::string bindHost = "0.0.0.0";
         std::uint16_t port = 7777;
         std::uint64_t contentHash = 0;
+        std::string mapDir;
+        std::string contentFile;
         bool spawnDemoPopulation = true;
         bool spawnAnimals = true;
         std::string playerProfilesFile;

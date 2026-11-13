@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -10,7 +11,9 @@
 #include <vector>
 
 #include "save/ChunkDiff.h"
+#include "save/RegionEntityBuckets.h"
 #include "save/SaveTypes.h"
+#include "save/WorldManifest.h"
 
 namespace zl::world {
 class Chunk;
@@ -32,7 +35,23 @@ public:
 
     struct LoadReport {
         bool usedBackup = false;
+        bool usedWorldManifest = false;
+        std::size_t entityBuckets = 0;
         std::string warning;
+    };
+
+    // M31-T9: coarse on-disk accounting for save-size/file-count budgets.
+    // MeasureStorage must be called while no background save is in flight.
+    struct StorageStats {
+        bool valid = false;
+        std::size_t files = 0;
+        std::size_t chunkFiles = 0;
+        std::size_t bucketFiles = 0;
+        std::uint64_t totalBytes = 0;
+        std::uint64_t chunkBytes = 0;
+        std::uint64_t bucketBytes = 0;
+        std::uint64_t manifestBytes = 0;
+        std::uint64_t entityBytes = 0;
     };
 
     struct Options {
@@ -48,12 +67,16 @@ public:
         std::vector<SavePlayer> players;
         ThumbnailImage thumbnail;
         const EntitySnapshot* entities = nullptr;
+        const WorldManifest* manifest = nullptr;
+        const std::vector<EntityBucket>* buckets = nullptr;
         std::vector<ChunkDiff> chunks;
     };
 
     struct SaveOptions {
         const EntitySnapshot* entities = nullptr;
         const ThumbnailImage* thumbnail = nullptr;
+        const WorldManifest* manifest = nullptr;
+        const std::vector<EntityBucket>* buckets = nullptr;
         const std::vector<ChunkDiff>* chunks = nullptr;
         std::optional<double> gameMinutes;
     };
@@ -71,7 +94,10 @@ public:
     std::filesystem::path HeaderPath(std::string_view id) const;
     std::filesystem::path EntitiesPath(std::string_view id) const;
     std::filesystem::path ThumbnailPath(std::string_view id) const;
+    std::filesystem::path WorldManifestPath(std::string_view id) const;
     bool Exists(std::string_view id) const;
+    StorageStats MeasureStorage(std::string_view id,
+                               std::string* error = nullptr) const;
 
     bool List(std::vector<SaveMetadata>* out,
               std::string* error = nullptr) const;
@@ -80,6 +106,9 @@ public:
                             std::string* error = nullptr) const;
     LoadResult ReadHeader(std::string_view id, SaveHeader* header,
                           std::string* error = nullptr) const;
+    LoadResult ReadWorldManifest(std::string_view id, WorldManifest* manifest,
+                                 std::string* error = nullptr,
+                                 LoadReport* report = nullptr) const;
 
     bool Create(const CreateOptions& options, std::string* outId = nullptr,
                 std::string* error = nullptr);
@@ -96,6 +125,8 @@ public:
 
     bool SaveChunk(std::string_view id, const world::Chunk& chunk,
                    std::string* error = nullptr) const;
+    bool SaveChunkDiff(std::string_view id, const ChunkDiff& diff,
+                       std::string* error = nullptr) const;
     LoadResult LoadChunk(std::string_view id, world::Chunk& chunk,
                          std::string* error = nullptr,
                          LoadReport* report = nullptr) const;
@@ -112,6 +143,8 @@ private:
                          const SaveMetadata& metadata,
                          const std::vector<std::uint8_t>& entityBytes,
                          const ThumbnailImage* thumbnail,
+                         const WorldManifest* manifest,
+                         const std::vector<EntityBucket>* buckets,
                          const std::vector<ChunkDiff>* chunks,
                          std::string* error) const;
     bool WriteChunks(const std::filesystem::path& dir,
@@ -122,9 +155,13 @@ private:
                               SaveMetadata* metadata, std::string* error) const;
     LoadResult ReadHeaderAt(const std::filesystem::path& dir, std::string_view id,
                             SaveHeader* header, std::string* error) const;
+    LoadResult ReadWorldManifestAt(const std::filesystem::path& dir,
+                                   WorldManifest* manifest,
+                                   std::string* error) const;
     LoadResult LoadAt(const std::filesystem::path& dir, std::string_view id,
                       const ComponentRegistry& registry, EntitySnapshot* entities,
-                      SaveMetadata* metadata, std::string* error) const;
+                      SaveMetadata* metadata, std::string* error,
+                      LoadReport* report) const;
     LoadResult LoadChunkAt(const std::filesystem::path& dir, std::string_view id,
                            world::Chunk& chunk, std::string* error) const;
     bool ExistsAt(const std::filesystem::path& dir, std::string_view id) const;

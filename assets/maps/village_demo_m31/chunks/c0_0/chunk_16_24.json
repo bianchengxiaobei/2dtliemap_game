@@ -1,0 +1,30 @@
+{
+ "cx": 16,
+ "cy": 24,
+ "objects": [
+  {
+   "x": 8,
+   "y": 7,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 9,
+   "y": 7,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  }
+ ]
+}

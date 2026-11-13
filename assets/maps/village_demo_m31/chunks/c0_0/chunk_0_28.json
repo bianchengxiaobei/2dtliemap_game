@@ -1,0 +1,39 @@
+{
+ "cx": 0,
+ "cy": 28,
+ "floors": [
+  "aagggggggg",
+  "aagggggggg",
+  "aagggggggg",
+  "aagggggggg",
+  "aagggggggg",
+  "aagggggggg",
+  "aagggggggg",
+  "aagggggggg",
+  "aagggggggg",
+  "aagggggggg"
+ ],
+ "objects": [
+  {
+   "x": 5,
+   "y": 1,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "decor.grass_tuft"
+  },
+  {
+   "x": 4,
+   "y": 3,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "decor.grass_tuft"
+  },
+  {
+   "x": 6,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "decor.grass_tuft"
+  }
+ ]
+}

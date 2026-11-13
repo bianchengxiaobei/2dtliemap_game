@@ -26,6 +26,8 @@ bool EmbeddedServer::Start(const Options& options, std::string* error) {
     hostOptions.port = options.port;
     hostOptions.portOverride = true;
     hostOptions.contentHash = options.contentHash;
+    hostOptions.mapDir = options.mapDir;
+    hostOptions.contentFile = options.contentFile;
     hostOptions.spawnDemoPopulation = options.spawnDemoPopulation;
     hostOptions.spawnAnimals = options.spawnAnimals;
     hostOptions.spawnLocalPlayer = false;

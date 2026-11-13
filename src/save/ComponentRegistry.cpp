@@ -25,6 +25,7 @@
 #include "game/MissionComponents.h"
 #include "game/PoiComponents.h"
 #include "game/SettlementNpc.h"
+#include "game/SettlementReputation.h"
 #include "game/StructureComponents.h"
 #include "game/VehicleComponents.h"
 #include "items/ItemComponents.h"
@@ -469,6 +470,91 @@ bool ReadSettlementState(BinaryReader& reader, game::SettlementState* state) {
         loaded.settlements.push_back(std::move(entry));
     }
     *state = std::move(loaded);
+    return true;
+}
+
+bool WriteSettlementReputation(const game::SettlementReputation& reputation,
+                               BinaryWriter& writer) {
+    if (reputation.settlements.size() >
+            game::kMaxSettlementReputationEntries ||
+        reputation.appliedKeys.size() > game::kMaxSettlementReputationKeys ||
+        !writer.Write(
+            static_cast<std::uint16_t>(reputation.settlements.size()))) {
+        return false;
+    }
+    std::unordered_set<std::string> seen;
+    for (const game::SettlementReputationEntry& entry :
+         reputation.settlements) {
+        if (!game::IsValidSettlementReputationId(entry.settlementId) ||
+            !seen.insert(entry.settlementId).second ||
+            entry.score < game::kSettlementReputationMinScore ||
+            entry.score > game::kSettlementReputationMaxScore) {
+            return false;
+        }
+        if (!writer.WriteString(entry.settlementId,
+                                game::kMaxSettlementReputationIdBytes) ||
+            !writer.Write(static_cast<std::int32_t>(entry.score))) {
+            return false;
+        }
+    }
+    if (!writer.Write(
+            static_cast<std::uint16_t>(reputation.appliedKeys.size()))) {
+        return false;
+    }
+    seen.clear();
+    for (const std::string& key : reputation.appliedKeys) {
+        if (key.empty() ||
+            key.size() > game::kMaxSettlementReputationKeyBytes ||
+            !seen.insert(key).second ||
+            !writer.WriteString(key, game::kMaxSettlementReputationKeyBytes)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ReadSettlementReputation(BinaryReader& reader,
+                              game::SettlementReputation* reputation) {
+    std::uint16_t entryCount = 0;
+    if (!reader.Read(entryCount) ||
+        entryCount > game::kMaxSettlementReputationEntries ||
+        reputation == nullptr) {
+        return false;
+    }
+    game::SettlementReputation loaded;
+    loaded.settlements.reserve(entryCount);
+    std::unordered_set<std::string> seen;
+    for (std::uint16_t i = 0; i < entryCount; ++i) {
+        game::SettlementReputationEntry entry;
+        std::int32_t score = 0;
+        if (!reader.ReadString(entry.settlementId,
+                               game::kMaxSettlementReputationIdBytes) ||
+            !game::IsValidSettlementReputationId(entry.settlementId) ||
+            !seen.insert(entry.settlementId).second ||
+            !reader.Read(score) ||
+            score < game::kSettlementReputationMinScore ||
+            score > game::kSettlementReputationMaxScore) {
+            return false;
+        }
+        entry.score = static_cast<int>(score);
+        loaded.settlements.push_back(std::move(entry));
+    }
+    std::uint16_t keyCount = 0;
+    if (!reader.Read(keyCount) ||
+        keyCount > game::kMaxSettlementReputationKeys) {
+        return false;
+    }
+    loaded.appliedKeys.reserve(keyCount);
+    seen.clear();
+    for (std::uint16_t i = 0; i < keyCount; ++i) {
+        std::string key;
+        if (!reader.ReadString(key, game::kMaxSettlementReputationKeyBytes) ||
+            key.empty() || !seen.insert(key).second) {
+            return false;
+        }
+        loaded.appliedKeys.push_back(std::move(key));
+    }
+    *reputation = std::move(loaded);
     return true;
 }
 
@@ -1552,7 +1638,9 @@ bool WriteMissionLog(const ecs::MissionLog& log, BinaryWriter& writer) {
     for (const ecs::MissionRunState& state : log.missions) {
         if (!ValidRecipeId(state.id) || !ValidMissionLogDay(state.day) ||
             state.progress.size() > 8 ||
-            static_cast<std::uint8_t>(state.status) > 2) {
+            static_cast<std::uint8_t>(state.status) > 2 ||
+            (!state.settlementId.empty() &&
+             !ValidSettlementStateId(state.settlementId))) {
             return false;
         }
         for (const int value : state.progress) {
@@ -1589,6 +1677,10 @@ bool WriteMissionLog(const ecs::MissionLog& log, BinaryWriter& writer) {
             if (!writer.Write(static_cast<std::int32_t>(value))) {
                 return false;
             }
+        }
+        if (!writer.WriteString(state->settlementId,
+                                game::kMaxSettlementReputationIdBytes)) {
+            return false;
         }
     }
     return true;
@@ -1632,6 +1724,14 @@ bool ReadMissionLog(BinaryReader& reader, ecs::MissionLog* log) {
                 return false;
             }
             state.progress.push_back(value);
+        }
+        if (reader.Header().version >= kSaveComponentVersionMissionLog) {
+            if (!reader.ReadString(state.settlementId,
+                                   game::kMaxSettlementReputationIdBytes) ||
+                (!state.settlementId.empty() &&
+                 !ValidSettlementStateId(state.settlementId))) {
+                return false;
+            }
         }
         if (std::any_of(loaded.missions.begin(), loaded.missions.end(),
                         [&](const ecs::MissionRunState& existing) {
@@ -1984,7 +2084,8 @@ bool RegisterBuiltinComponents(ComponentRegistry& registry, std::string* error) 
             [](BinaryReader& reader, ecs::MissionLog* log) {
                 return ReadMissionLog(reader, log);
             },
-            kSaveComponentVersion, error)) {
+            kSaveComponentVersionMissionLog, error,
+            kSaveComponentVersion)) {
         return false;
     }
 
@@ -2068,6 +2169,19 @@ bool RegisterBuiltinComponents(ComponentRegistry& registry, std::string* error) 
             },
             [](BinaryReader& reader, game::SettlementState* state) {
                 return ReadSettlementState(reader, state);
+            },
+            kSaveComponentVersion, error)) {
+        return false;
+    }
+
+    if (!registry.Register<game::SettlementReputation>(
+            kSaveComponentSettlementReputation, "SettlementReputation",
+            [](const game::SettlementReputation& reputation,
+               BinaryWriter& writer) {
+                return WriteSettlementReputation(reputation, writer);
+            },
+            [](BinaryReader& reader, game::SettlementReputation* reputation) {
+                return ReadSettlementReputation(reader, reputation);
             },
             kSaveComponentVersion, error)) {
         return false;

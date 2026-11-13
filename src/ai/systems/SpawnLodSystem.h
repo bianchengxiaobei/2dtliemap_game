@@ -71,6 +71,12 @@ public:
         m_focusY = y;
     }
 
+    // M31-T5: biome/region density gradient relative to the map default.
+    // The base populationTarget remains the config value; this only scales the
+    // target while the player is in a region with a different spawn density.
+    void SetDensityScale(float scale);
+    float DensityScale() const { return m_densityScale; }
+
     void Update(ecs::EcsWorld& world, float dt);
     const Stats& GetStats() const { return m_stats; }
 
@@ -93,6 +99,7 @@ private:
 
     float m_focusX = 0.0f;
     float m_focusY = 0.0f;
+    float m_densityScale = 1.0f;
     float m_materializeAccum = 0.0f;
     float m_virtualizeAccum = 0.0f;
     float m_refillAccum = 0.0f;

@@ -181,7 +181,8 @@ float FireSpreadChance(const Flammability& flammability, float wetness,
 
 std::size_t ApplyFireDamage(ecs::EcsWorld& ecs,
                             characters::CombatSystem& combat,
-                            const FireParams& params, float elapsedSeconds) {
+                            const FireParams& params, float elapsedSeconds,
+                            std::vector<FireDamageCredit>* credits) {
     const FireParams sanitized = SanitizeFireParams(params);
     if (!(elapsedSeconds > 0.0f) ||
         !(sanitized.fireDamagePerSecond > 0.0f) ||
@@ -192,13 +193,15 @@ std::size_t ApplyFireDamage(ecs::EcsWorld& ecs,
         float x = 0.0f;
         float y = 0.0f;
         int z = 0;
+        std::uint64_t ownerStableId = 0;
     };
     std::vector<FirePoint> fires;
     ecs.Registry().view<ecs::FireSource, ecs::Position>().each(
         [&](const ecs::Entity, const ecs::FireSource& source,
             const ecs::Position& position) {
             if (source.phase == ecs::FirePhase::Burning) {
-                fires.push_back(FirePoint{position.x, position.y, position.z});
+                fires.push_back(FirePoint{position.x, position.y, position.z,
+                                          source.ownerStableId});
             }
         });
     if (fires.empty()) {
@@ -217,6 +220,7 @@ std::size_t ApplyFireDamage(ecs::EcsWorld& ecs,
                 return;
             }
             bool inFire = false;
+            std::uint64_t fireOwner = 0;
             for (const FirePoint& fire : fires) {
                 if (fire.z != position.z) {
                     continue;
@@ -225,32 +229,50 @@ std::size_t ApplyFireDamage(ecs::EcsWorld& ecs,
                 const float dy = position.y - fire.y;
                 if (dx * dx + dy * dy <= radiusSq) {
                     inFire = true;
-                    break;
+                    if (fireOwner == 0) {
+                        fireOwner = fire.ownerStableId;
+                    }
                 }
             }
             if (!inFire) {
                 return;
             }
             // M23-F3-T5：僵尸进入燃烧区才获得燃烧状态；玩家不会获得该组件。
-            if (ecs.Registry().all_of<ecs::ZombieVariant>(entity) &&
-                !ecs.Registry().any_of<ecs::BurningZombie>(entity)) {
-                ecs::BurningZombie burning;
-                burning.remaining = sanitized.zombieBurnSeconds;
-                burning.panicRemaining = sanitized.zombiePanicSeconds;
-                burning.panicSpeedScale = sanitized.zombiePanicSpeedScale;
-                burning.panicChaseRadius = sanitized.zombiePanicChaseRadius;
-                ecs.Registry().emplace<ecs::BurningZombie>(entity, burning);
-                if (auto* perception =
-                        ecs.Registry().try_get<ecs::PerceptionState>(entity);
-                    perception != nullptr) {
-                    perception->alertness = 1.0f;
+            if (ecs.Registry().all_of<ecs::ZombieVariant>(entity)) {
+                if (!ecs.Registry().any_of<ecs::BurningZombie>(entity)) {
+                    ecs::BurningZombie burning;
+                    burning.ownerStableId = fireOwner;
+                    burning.remaining = sanitized.zombieBurnSeconds;
+                    burning.panicRemaining = sanitized.zombiePanicSeconds;
+                    burning.panicSpeedScale = sanitized.zombiePanicSpeedScale;
+                    burning.panicChaseRadius = sanitized.zombiePanicChaseRadius;
+                    ecs.Registry().emplace<ecs::BurningZombie>(entity,
+                                                               burning);
+                    if (auto* perception =
+                            ecs.Registry().try_get<ecs::PerceptionState>(
+                                entity);
+                        perception != nullptr) {
+                        perception->alertness = 1.0f;
+                    }
+                } else if (auto* burning =
+                               ecs.Registry().try_get<ecs::BurningZombie>(
+                                   entity);
+                           burning != nullptr && fireOwner != 0 &&
+                           burning->ownerStableId == 0) {
+                    burning->ownerStableId = fireOwner;
                 }
             }
+            const float healthBefore = health.current;
             ecs::DamageEvent event;
             event.type = ecs::DamageType::Fire;
             event.amount = damage;
             if (combat.ApplyDamage(ecs, entity, event)) {
                 ++hitCount;
+                const float actual = std::max(0.0f, healthBefore - health.current);
+                if (credits != nullptr && fireOwner != 0 && actual > 0.0f) {
+                    credits->push_back(FireDamageCredit{
+                        fireOwner, ecs.IdOf(entity).id, actual});
+                }
             }
         });
     return hitCount;
@@ -259,7 +281,8 @@ std::size_t ApplyFireDamage(ecs::EcsWorld& ecs,
 std::size_t ApplyBurningZombieDamage(ecs::EcsWorld& ecs,
                                      characters::CombatSystem& combat,
                                      const FireParams& params,
-                                     float elapsedSeconds) {
+                                     float elapsedSeconds,
+                                     std::vector<FireDamageCredit>* credits) {
     const FireParams sanitized = SanitizeFireParams(params);
     if (!std::isfinite(elapsedSeconds) || !(elapsedSeconds > 0.0f)) {
         return 0;
@@ -282,6 +305,7 @@ std::size_t ApplyBurningZombieDamage(ecs::EcsWorld& ecs,
             if (sanitized.zombieBurnDamagePerSecond > 0.0f &&
                 burning.damageAccumulator >=
                     sanitized.zombieBurnDamageIntervalSeconds) {
+                const float healthBefore = health.current;
                 ecs::DamageEvent event;
                 event.type = ecs::DamageType::Fire;
                 event.amount = sanitized.zombieBurnDamagePerSecond *
@@ -289,6 +313,14 @@ std::size_t ApplyBurningZombieDamage(ecs::EcsWorld& ecs,
                 burning.damageAccumulator = 0.0f;
                 if (combat.ApplyDamage(ecs, entity, event)) {
                     ++hitCount;
+                    const float actual =
+                        std::max(0.0f, healthBefore - health.current);
+                    if (credits != nullptr && burning.ownerStableId != 0 &&
+                        actual > 0.0f) {
+                        credits->push_back(FireDamageCredit{
+                            burning.ownerStableId, ecs.IdOf(entity).id,
+                            actual});
+                    }
                 }
             } else if (!(sanitized.zombieBurnDamagePerSecond > 0.0f)) {
                 burning.damageAccumulator = 0.0f;
@@ -438,6 +470,7 @@ void FireSystem::Update(ecs::EcsWorld& ecs, float dt,
         int x = 0;
         int y = 0;
         int z = 0;
+        std::uint64_t ownerStableId = 0;
     };
     std::vector<SpreadPulse> pulses;
     entt::registry& registry = ecs.Registry();
@@ -471,7 +504,8 @@ void FireSystem::Update(ecs::EcsWorld& ecs, float dt,
             }
             source.spreadAccumulator =
                 ClampNonNegative(source.spreadAccumulator - interval);
-            pulses.push_back(SpreadPulse{anchor->x, anchor->y, anchor->z});
+            pulses.push_back(SpreadPulse{anchor->x, anchor->y, anchor->z,
+                                         source.ownerStableId});
         });
 
     if (world == nullptr || pulses.empty() ||
@@ -487,6 +521,7 @@ void FireSystem::Update(ecs::EcsWorld& ecs, float dt,
         int x = 0;
         int y = 0;
         int z = 0;
+        std::uint64_t ownerStableId = 0;
         const FireMaterialDef* material = nullptr;
     };
     constexpr int kDirections[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
@@ -518,8 +553,8 @@ void FireSystem::Update(ecs::EcsWorld& ecs, float dt,
             if (material == nullptr) {
                 continue;
             }
-            candidates.push_back(
-                SpreadCandidate{x, y, pulse.z, material});
+            candidates.push_back(SpreadCandidate{
+                x, y, pulse.z, pulse.ownerStableId, material});
         }
     }
 
@@ -550,8 +585,12 @@ void FireSystem::Update(ecs::EcsWorld& ecs, float dt,
                               m_params) != FireIgnitionResult::Ignited) {
                 continue;
             }
+            if (candidate.ownerStableId != 0) {
+                existing->ownerStableId = candidate.ownerStableId;
+            }
         } else {
             ecs::FireSource fired;
+            fired.ownerStableId = candidate.ownerStableId;
             if (TryIgniteFire(fired, *candidate.material, 0.0f, 0.0f,
                               m_params) != FireIgnitionResult::Ignited) {
                 continue;
@@ -567,7 +606,8 @@ void FireSystem::Update(ecs::EcsWorld& ecs, float dt,
 FireIgnitionResult FireSystem::IgniteAt(ecs::EcsWorld& ecs,
                                         world::World& world, int wx, int wy,
                                         int z, float wetness,
-                                        std::string* error) {
+                                        std::string* error,
+                                        std::uint64_t ownerStableId) {
     auto fail = [&](const std::string& message) {
         if (error != nullptr) {
             *error = message;
@@ -608,6 +648,9 @@ FireIgnitionResult FireSystem::IgniteAt(ecs::EcsWorld& ecs,
     if (existing != nullptr) {
         const FireIgnitionResult result =
             TryIgniteFire(*existing, *material, wetness, roll, m_params);
+        if (result == FireIgnitionResult::Ignited && ownerStableId != 0) {
+            existing->ownerStableId = ownerStableId;
+        }
         if (result == FireIgnitionResult::TooWet) {
             fail("环境过于潮湿，点火失败（成功率 " +
                  std::to_string(static_cast<int>(
@@ -620,6 +663,7 @@ FireIgnitionResult FireSystem::IgniteAt(ecs::EcsWorld& ecs,
     }
 
     ecs::FireSource candidate;
+    candidate.ownerStableId = ownerStableId;
     const FireIgnitionResult result =
         TryIgniteFire(candidate, *material, wetness, roll, m_params);
     if (result != FireIgnitionResult::Ignited) {
@@ -884,6 +928,7 @@ std::size_t FireSystem::SpreadFromBurningZombies(
         int x = 0;
         int y = 0;
         int z = 0;
+        std::uint64_t ownerStableId = 0;
     };
     std::vector<BurningCell> cells;
     ecs.Registry().view<ecs::BurningZombie, ecs::Position>().each(
@@ -899,7 +944,8 @@ std::size_t FireSystem::SpreadFromBurningZombies(
                 m_params.zombieSpreadIntervalSeconds);
             cells.push_back(BurningCell{
                 static_cast<int>(std::floor(position.x)),
-                static_cast<int>(std::floor(position.y)), position.z});
+                static_cast<int>(std::floor(position.y)), position.z,
+                burning.ownerStableId});
         });
     if (cells.empty()) {
         return 0;
@@ -919,7 +965,8 @@ std::size_t FireSystem::SpreadFromBurningZombies(
             continue;
         }
         if (IgniteAt(ecs, world, cell.x, cell.y, cell.z, ambientWetness,
-                     nullptr) != FireIgnitionResult::Ignited) {
+                     nullptr, cell.ownerStableId) !=
+            FireIgnitionResult::Ignited) {
             continue;
         }
         ++created;

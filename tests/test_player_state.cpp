@@ -242,8 +242,8 @@ TEST_CASE("M13-T7 玩家状态协议：背包/装备/配方/制作往返") {
     CHECK(decoded.objective.valid);
     CHECK(decoded.objective.step == 2);
 
-    // v20 尾部为战斗体力/姿态；剥离后得到 v19 负载。
-    const std::size_t combatTail = 1 + 4 + 4 + 1 + 4 + 4 + 4;
+    // v21 尾部为聚落声望，v20 尾部为战斗体力/姿态；剥离后得到 v19 负载。
+    const std::size_t combatTail = 2 + 1 + 4 + 4 + 1 + 4 + 4 + 4;
     REQUIRE(bytes.size() > combatTail);
     std::vector<std::uint8_t> legacyV19(
         bytes.begin(),
@@ -791,6 +791,50 @@ TEST_CASE("M23-F4-T6 玩家状态协议：聚落权威状态往返") {
     error.clear();
     CHECK(net::EncodePlayerState(invalid, &error).empty());
     CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("M33-F1-T4 玩家状态协议：聚落声望摘要往返与 v20 缺省") {
+    net::PlayerState state;
+    state.playerStableId = 7;
+    state.settlementReputation.push_back(
+        net::PlayerSettlementReputation{"village_haven", 25});
+    state.settlementReputation.push_back(
+        net::PlayerSettlementReputation{"north_fields", -10});
+
+    std::string error;
+    const std::vector<std::uint8_t> bytes =
+        net::EncodePlayerState(state, &error);
+    REQUIRE_MESSAGE(!bytes.empty(), error);
+    net::PlayerState decoded;
+    REQUIRE_MESSAGE(net::DecodePlayerState(bytes, &decoded, &error), error);
+    REQUIRE(decoded.settlementReputation.size() == 2u);
+    CHECK(decoded.settlementReputation[0].id == "village_haven");
+    CHECK(decoded.settlementReputation[0].score == 25);
+    CHECK(decoded.settlementReputation[1].id == "north_fields");
+    CHECK(decoded.settlementReputation[1].score == -10);
+
+    net::PlayerState duplicate = state;
+    duplicate.settlementReputation[1].id = "village_haven";
+    CHECK(net::EncodePlayerState(duplicate, &error).empty());
+    net::PlayerState invalidScore = state;
+    invalidScore.settlementReputation[0].score = 101;
+    CHECK(net::EncodePlayerState(invalidScore, &error).empty());
+    net::PlayerState invalidId = state;
+    invalidId.settlementReputation[0].id = "Village Haven";
+    CHECK(net::EncodePlayerState(invalidId, &error).empty());
+
+    net::PlayerState empty;
+    empty.playerStableId = 7;
+    std::vector<std::uint8_t> legacyV20 =
+        net::EncodePlayerState(empty, &error);
+    REQUIRE(legacyV20.size() > 2u);
+    legacyV20.resize(legacyV20.size() - 2u);
+    legacyV20[4] = 20;
+    legacyV20[5] = 0;
+    net::PlayerState legacyDecoded;
+    REQUIRE_MESSAGE(net::DecodePlayerState(legacyV20, &legacyDecoded, &error),
+                    error);
+    CHECK(legacyDecoded.settlementReputation.empty());
 }
 
 TEST_CASE("M25-T3 玩家状态协议：载具驾驶态往返与校验") {

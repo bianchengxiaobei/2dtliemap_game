@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <memory>
 #include <string>
@@ -20,6 +21,7 @@
 #include "game/ModContent.h"
 #include "game/NetworkClient.h"
 #include "game/Poi.h"
+#include "game/StrategicDirector.h"
 #include "game/WorldQueries.h"
 #include "net/PlayerIdentity.h"
 #include "game/ZombieFactory.h"
@@ -36,6 +38,8 @@
 #include "script/PythonSupport.h"
 #include "ui/ScriptUiHost.h"
 #include "world/MapLoader.h"
+#include "world/WorldGraph.h"
+#include "world/WorldSelection.h"
 
 namespace zl::game {
 namespace {
@@ -64,6 +68,7 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"RepairAllStructures", "J"}, // M18-F4：批量维修
     {"DemolishStructure", "X"}, // M17-T2：拆除最近结构
     {"CharacterPanel", "C"}, // M19-F1：角色技能/Perk 面板
+    {"WorldMap", "M"},       // M31-T7：世界地图/发现/导航
     {"MissionFocus", "L"},   // M19-F3：切换任务焦点
     {"MissionAbandon", "K"}, // M19-F3：放弃当前焦点任务
     {"Vehicle", "ENTER"},
@@ -76,7 +81,8 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"PanRight", "RIGHT"},   {"ToggleFreeCam", "F4"},
     // M9-T4：快捷栏 1~5
     {"Hotbar1", "1"},        {"Hotbar2", "2"},      {"Hotbar3", "3"},
-    {"Hotbar4", "4"},        {"Hotbar5", "5"},
+    {"Hotbar4", "4"},        {"Hotbar5", "5"},      {"Hotbar6", "6"},
+    {"Hotbar7", "7"},        {"Hotbar8", "8"},
 };
 
 double NowSeconds() {
@@ -119,6 +125,24 @@ bool GameApp::Init(int argc, char** argv) {
     m_config.LoadFile(configPath);
     m_config.ApplyCommandLine(argc, argv);
     core::SetLogLevel(m_config.Get<std::string>("log.level", "debug"));
+
+    // M31-T10: single-player defaults to the vertical-slice map/content.
+    // Keep a profile config alive for the initial content load; the base
+    // config is still used for settings, saves and legacy fallback.
+    m_worldSelection = world::ResolveWorldSelection(m_config, false);
+    core::Config contentProfile;
+    const core::Config* contentConfig = &m_config;
+    if (!m_worldSelection.contentFile.empty()) {
+        if (!contentProfile.LoadFile(m_worldSelection.contentFile)) {
+            ZL_ERROR("world", "M31 内容配置加载失败：{}", m_worldSelection.contentFile);
+            return false;
+        }
+        contentConfig = &contentProfile;
+    }
+    ZL_INFO("world", "地图选择：{}（{}；内容 {}）", m_worldSelection.mapDir,
+            m_worldSelection.m31 ? "M31 垂直切片" : "旧地图",
+            m_worldSelection.contentFile.empty() ? "config/game.json"
+                                                 : m_worldSelection.contentFile);
 
     // 1.5 物品定义注册表（M6-T1）：启动加载 + 校验；失败不阻断启动（空表降级）
     const std::string itemsFile = m_config.Get<std::string>("items.file", "assets/items.json");
@@ -237,7 +261,7 @@ bool GameApp::Init(int argc, char** argv) {
     m_ctx.fire = &m_fireRegistry;
 
     std::string poiError;
-    if (!LoadPoiConfig(m_config, &m_poiConfig, &poiError)) {
+    if (!LoadPoiConfig(*contentConfig, &m_poiConfig, &poiError)) {
         ZL_ERROR("poi", "POI 配置加载失败：{}", poiError);
     } else {
         PoiMergeStats poiStats;
@@ -257,17 +281,17 @@ bool GameApp::Init(int argc, char** argv) {
     }
     m_ctx.poiConfig = &m_poiConfig;
 
-    const nlohmann::json& configRoot = m_config.Raw();
+    const nlohmann::json& configRoot = contentConfig->Raw();
     if (configRoot.contains("missions") && configRoot["missions"].is_object()) {
         m_ctx.missionSourceJson = configRoot["missions"].dump();
     }
     std::string missionError;
-    if (!LoadMissionConfig(m_config, &m_missionConfig, &missionError)) {
+    if (!LoadMissionConfig(*contentConfig, &m_missionConfig, &missionError)) {
         ZL_ERROR("missions", "任务配置加载失败：{}", missionError);
     } else {
         MissionMergeStats missionStats;
         if (m_missionConfig.enabled && !modContent.missionFiles.empty()) {
-            if (!MergeMissionFiles(modContent.missionFiles, m_config,
+            if (!MergeMissionFiles(modContent.missionFiles, *contentConfig,
                                    &m_missionConfig, &missionStats,
                                    &missionError, &m_ctx.missionSourceJson)) {
                 ZL_WARN("missions", "mod 任务合并失败：{}", missionError);
@@ -303,6 +327,46 @@ bool GameApp::Init(int argc, char** argv) {
         }
     }
     m_ctx.settlements = &m_settlements;
+
+    std::string worldEventError;
+    if (!LoadWorldEventConfig(m_config, &m_worldEvents, &worldEventError,
+                              &m_itemRegistry)) {
+        ZL_ERROR("world-events", "world event config load failed: {}",
+                 worldEventError);
+    } else {
+        WorldEventMergeStats worldEventStats;
+        if (m_worldEvents.enabled) {
+            for (const std::string& modWorldEvent :
+                 modContent.worldEventFiles) {
+                if (!MergeWorldEventFile(modWorldEvent, &m_worldEvents,
+                                         &worldEventStats, &worldEventError,
+                                         &m_itemRegistry)) {
+                    ZL_WARN("world-events",
+                            "skipping mod world event file {}: {}",
+                            modWorldEvent, worldEventError);
+                }
+            }
+            ZL_INFO("world-events",
+                    "world events: {} definitions (mod files {}, added {})",
+                    m_worldEvents.defs.size(), worldEventStats.filesLoaded,
+                    worldEventStats.defsAdded);
+        }
+    }
+    m_ctx.worldEvents = &m_worldEvents;
+
+    const std::string strategicFile =
+        m_config.Get<std::string>("strategic.file", "assets/strategic.json");
+    std::string strategicError;
+    if (!LoadStrategicConfig(strategicFile, &m_strategic, &strategicError)) {
+        ZL_WARN("strategic", "战略配置不可用（文件: {}）：{}", strategicFile,
+                strategicError);
+        m_strategic.enabled = false;
+    } else {
+        ZL_INFO("strategic",
+                "战略配置：{} 个区域（tick {} 分钟，预警 {} / {} 小时）",
+                m_strategic.regions.size(), m_strategic.tickMinutes,
+                m_strategic.warningHours, m_strategic.remoteWarningHours);
+    }
 
     // 内容指纹覆盖启动时合并后的全部玩法数据，必须在 loot/POI/任务之后计算。
     RefreshContentHash();
@@ -446,17 +510,22 @@ bool GameApp::Init(int argc, char** argv) {
         simulationOptions.events = &m_events;
         simulationOptions.gameTime = &m_gameTime;
         simulationOptions.items = &m_itemRegistry;
+        simulationOptions.lootTables = &m_lootTableRegistry;
         simulationOptions.animals = &m_animalRegistry;
         simulationOptions.pois = &m_poiConfig;
         simulationOptions.settlements = &m_settlements;
+        simulationOptions.worldEvents = &m_worldEvents;
+        simulationOptions.strategic = &m_strategic;
         simulationOptions.spawnAnimals = true;
         simulationOptions.fire = &m_fireRegistry;
         simulationOptions.tasks = m_tasks.get();
         simulationOptions.saveManager = m_saveManager.get();
+        simulationOptions.saveService = m_saveService.get();
         simulationOptions.saveComponents = &m_saveComponents;
         simulationOptions.activeSaveId = &m_ctx.activeSaveId;
         simulationOptions.activeSaveUseBackup = &m_ctx.activeSaveUseBackup;
         simulationOptions.saveWarning = &m_ctx.saveWarning;
+        simulationOptions.mapDir = m_worldSelection.mapDir;
         simulationOptions.focus = glm::vec2(70.0f, 18.0f);
         m_simulation = std::make_unique<WorldSimulation>(simulationOptions);
         std::string simulationError;
@@ -467,6 +536,7 @@ bool GameApp::Init(int argc, char** argv) {
         m_ctx.simulation = m_simulation.get();
         m_ctx.world = &m_simulation->World();
         m_ctx.chunkManager = &m_simulation->Chunks();
+        m_ctx.worldGraph = m_simulation->Graph();
         m_ctx.physics = &m_simulation->Physics();
         m_ctx.pathfinding = m_simulation->Pathfinding();
         m_ctx.ecs = &m_simulation->Ecs();
@@ -856,6 +926,36 @@ void GameApp::Tick(double tickDt) {
         // 网络客户端只流式加载地图和渲染副本；AI/物理/战斗全部由服务器权威推进。
         if (!m_networkMode) {
             m_simulation->Tick(static_cast<float>(tickDt));
+            StrategicTickInput strategic;
+            strategic.gameMinute =
+                static_cast<std::int64_t>(m_gameTime.TotalGameMinutes());
+            strategic.anyPlayerOnline = true;
+            strategic.detailedEnabled = true;
+            std::string playerRegion;
+            if (m_simulation->Graph() != nullptr &&
+                m_simulation->Player() != entt::null) {
+                const auto* position =
+                    m_simulation->Ecs().Registry().try_get<ecs::Position>(
+                        m_simulation->Player());
+                if (position != nullptr) {
+                    if (const world::WorldRegion* region =
+                            m_simulation->Graph()->RegionAt(position->x,
+                                                            position->y);
+                        region != nullptr) {
+                        playerRegion = region->id;
+                        strategic.playerRegions.push_back(playerRegion);
+                    }
+                }
+            }
+            std::string strategicError;
+            if (!m_simulation->TickStrategic(strategic, nullptr,
+                                             &strategicError)) {
+                ZL_WARN("strategic", "战略 tick 失败：{}", strategicError);
+            }
+            m_simulation->UpdateRegionalSiege(
+                static_cast<float>(tickDt),
+                m_gameTime.GetSpeed() == core::GameTime::Speed::Paused,
+                playerRegion);
         }
     }
     if (auto* state = m_states.Current()) {
@@ -1130,6 +1230,8 @@ bool GameApp::StartHosting(const MultiplayerRequest& request,
     options.port = request.port;
     options.contentHash = static_cast<std::uint64_t>(
         m_config.Get<std::int64_t>("net.contentHash", 0));
+    options.mapDir = m_worldSelection.mapDir;
+    options.contentFile = m_worldSelection.contentFile;
     options.spawnDemoPopulation = true;
     options.playerProfilesFile =
         m_config.Get<std::string>("net.playerProfilesFile",
@@ -1225,7 +1327,16 @@ bool GameApp::ReloadContentFromDisk(std::string& error) {
         return false;
     }
 
-    ContentBundleResult loaded = LoadContentBundle(m_config);
+    core::Config contentProfile;
+    const core::Config* contentConfig = &m_config;
+    if (!m_worldSelection.contentFile.empty()) {
+        if (!contentProfile.LoadFile(m_worldSelection.contentFile)) {
+            error = "M31 内容配置加载失败：" + m_worldSelection.contentFile;
+            return false;
+        }
+        contentConfig = &contentProfile;
+    }
+    ContentBundleResult loaded = LoadContentBundle(m_config, contentConfig);
     if (!loaded.Ok()) {
         error = std::move(loaded.error);
         return false;
@@ -1245,6 +1356,7 @@ bool GameApp::ReloadContentFromDisk(std::string& error) {
     m_poiConfig = std::move(bundle.poiConfig);
     m_missionConfig = std::move(bundle.missionConfig);
     m_settlements = std::move(bundle.settlements);
+    m_worldEvents = std::move(bundle.worldEvents);
     m_ctx.missionSourceJson = std::move(bundle.missionSourceJson);
     m_ctx.modBuildables = std::move(bundle.modContent.buildables);
     ++m_ctx.contentReloadCount;
@@ -1257,10 +1369,11 @@ bool GameApp::ReloadContentFromDisk(std::string& error) {
 
     ZL_INFO("content",
             "mod 内容热重载成功：物品 {}→{}，配方 {}→{}，建造 mod {}→{}，"
-            "战利品 {}，POI {}，任务 {}",
+            "战利品 {}，POI {}，任务 {}，世界事件 {}",
             oldItems, m_itemRegistry.Size(), oldRecipes, m_recipeRegistry.Size(),
             oldBuildables, m_ctx.modBuildables.size(), m_lootTableRegistry.Size(),
-            m_poiConfig.defs.size(), m_missionConfig.defs.size());
+            m_poiConfig.defs.size(), m_missionConfig.defs.size(),
+            m_worldEvents.defs.size());
     ZL_INFO("content", "mod 内容指纹刷新：{:#x}→{:#x}", oldContentHash,
             m_ctx.contentHash);
     return true;
@@ -1276,14 +1389,15 @@ void GameApp::RefreshContentHash() {
         ComputeContentHash(m_itemRegistry, m_recipeRegistry, buildables,
                            m_lootTableRegistry, m_poiConfig, m_missionConfig,
                            modsHash, &m_forageRegistry, &m_animalRegistry,
-                           &m_cropRegistry, &m_settlements);
+                           &m_cropRegistry, &m_settlements, &m_worldEvents);
     ZL_INFO("mod-content",
             "客户端内容指纹刷新：{:#x}（物品 {}，配方 {}，建造 {}，战利品 {}，"
-            "POI {}，任务 {}，动物 {}，作物 {}，聚落 {}，mod 文件树 {:#x}）",
+            "POI {}，任务 {}，动物 {}，作物 {}，聚落 {}，世界事件 {}，mod 文件树 {:#x}）",
             m_ctx.contentHash, m_itemRegistry.Size(), m_recipeRegistry.Size(),
             buildables.size(), m_lootTableRegistry.Size(), m_poiConfig.defs.size(),
             m_missionConfig.defs.size(), m_animalRegistry.Size(),
-            m_cropRegistry.Size(), m_settlements.defs.size(), modsHash);
+            m_cropRegistry.Size(), m_settlements.defs.size(),
+            m_worldEvents.defs.size(), modsHash);
 }
 
 }  // namespace zl::game

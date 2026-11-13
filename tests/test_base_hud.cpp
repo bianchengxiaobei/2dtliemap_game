@@ -131,6 +131,22 @@ TEST_CASE("M21-F1c siege report tolerates missing prefix and ratings") {
     CHECK(lines[0] == "基地失守");
 }
 
+TEST_CASE("M32-T20 defense report parses into panel lines") {
+    std::array<std::string, 8> lines{};
+    const int count = zl::ui::BuildDefenseReportLines(
+        "守城战报 · south_farmland · 守住 · t20-first 贡献+50 经验+80",
+        &lines);
+    REQUIRE(count == 3);
+    CHECK(lines[0] == "south_farmland");
+    CHECK(lines[1] == "守住");
+    CHECK(lines[2] == "t20-first 贡献+50 经验+80");
+    CHECK(lines[3].empty());
+
+    CHECK(zl::ui::BuildDefenseReportLines("", &lines) == 0);
+    CHECK(zl::ui::BuildDefenseReportLines("守城战报 · 守住", &lines) == 1);
+    CHECK(lines[0] == "守住");
+}
+
 TEST_CASE("F5-T2 base status reports farm stages and crop warnings") {
     zl::ui::HudState state;
     state.baseActive = true;

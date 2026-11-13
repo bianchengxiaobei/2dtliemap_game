@@ -9,6 +9,8 @@
 #include "save/EntityStore.h"
 #include "save/SaveManager.h"
 #include "save/SaveService.h"
+#include "world/Chunk.h"
+#include "world/GridSquare.h"
 
 using namespace zl;
 
@@ -101,4 +103,41 @@ TEST_CASE("M10-T5 后台存档失败回传明确错误") {
     REQUIRE(results.size() == 1u);
     CHECK_FALSE(results[0].ok);
     CHECK_FALSE(results[0].error.empty());
+}
+
+TEST_CASE("M31-T4 后台 chunk 写入与主存档顺序隔离") {
+    TempRoot root("zl_save_service_chunk_queue");
+    save::SaveManager manager({root.path, "service-m31"});
+    REQUIRE(manager.EnsureRoot());
+    save::SaveManager::CreateOptions createOptions;
+    createOptions.name = "M31 queue";
+    createOptions.mapId = "village_demo_m31";
+    createOptions.gameVersion = "service-m31";
+    save::EntitySnapshot empty;
+    createOptions.entities = &empty;
+    std::string id;
+    std::string error;
+    REQUIRE(manager.Create(createOptions, &id, &error));
+
+    world::Chunk source(0, 0);
+    source.Square(1, 1, 0).SetFloor({"tile.floor.wood", 0, 0});
+    source.CaptureBaseline();
+    source.Square(1, 1, 0).SetFloor({"tile.floor.dirt", 0, 0});
+    save::ChunkDiff diff;
+    REQUIRE(save::CaptureChunkDiff(source, &diff, &error));
+
+    save::SaveService service(manager);
+    REQUIRE(service.RequestChunk(id, diff, &error));
+    CHECK(error.empty());
+    service.WaitIdle();
+    CHECK(service.PendingChunkWrites() == 0u);
+    CHECK(service.FailedChunkWrites() == 0u);
+
+    world::Chunk target(0, 0);
+    target.Square(1, 1, 0).SetFloor({"tile.floor.wood", 0, 0});
+    target.CaptureBaseline();
+    REQUIRE(manager.LoadChunk(id, target, &error) ==
+            save::SaveManager::LoadResult::Ok);
+    REQUIRE(target.Square(1, 1, 0).Floor() != nullptr);
+    CHECK(target.Square(1, 1, 0).Floor()->sprite == "tile.floor.dirt");
 }

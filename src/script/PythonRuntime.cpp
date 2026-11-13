@@ -546,6 +546,34 @@ struct PythonRuntime::Impl {
             out["missionTone"] = state.missionTone;
             out["eventGuide"] = state.eventGuide;
             out["eventTone"] = state.eventTone;
+            out["worldEventVisible"] = state.worldEventVisible;
+            out["worldEventCanChoose"] = state.worldEventCanChoose;
+            out["worldEventChoiceOpen"] = state.worldEventChoiceOpen;
+            out["worldEventName"] = state.worldEventName;
+            out["worldEventMeta"] = state.worldEventMeta;
+            out["worldEventStage"] = state.worldEventStage;
+            out["worldEventHint"] = state.worldEventHint;
+            out["worldEventTone"] = state.worldEventTone;
+            out["worldEventResult"] = state.worldEventResult;
+            out["worldEventResultTone"] = state.worldEventResultTone;
+            out["worldEventOptionCount"] = state.worldEventOptionCount;
+            out["worldEventLogCount"] = state.worldEventLogCount;
+            py::list worldEventOptions;
+            for (const std::string& option : state.worldEventOptions) {
+                worldEventOptions.append(option);
+            }
+            out["worldEventOptions"] = worldEventOptions;
+            py::list worldEventLog;
+            for (const std::string& line : state.worldEventLog) {
+                worldEventLog.append(line);
+            }
+            out["worldEventLog"] = worldEventLog;
+            out["regionGuide"] = state.regionGuide;
+            out["regionTone"] = state.regionTone;
+            out["settlementGuide"] = state.settlementGuide;
+            out["settlementTone"] = state.settlementTone;
+            out["strategicGuide"] = state.strategicGuide;
+            out["strategicTone"] = state.strategicTone;
             out["siegeStatus"] = state.siegeStatus;
             out["siegeTone"] = state.siegeTone;
             out["siegeReportOpen"] = state.siegeReportOpen;

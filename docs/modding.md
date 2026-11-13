@@ -1,6 +1,6 @@
 # ZomboidLike Mod 开发指南（Lua / Python 可选，API v1）
 
-> 适用版本：M7/M8 脚本系统 v1 + X-F2a 内容文件 / X-F2b-1 内容指纹 / X-F2b-2a 图集资源 / X-F2b-2b 搜刮表与 POI / X-F2b-2c 任务与事件 / X-F2b-2d HUD 字段 / X-F2b-2e 动态内容（物品、配方、建造、POI、任务） / M23-F5 作物、烹饪、食物状态与存档联机 / M23-F2b 动物与狩猎 / M23-F4 聚落 / X-F3-T1~T6 内容文件监听、事务热重载、指纹/联机策略、仅单机动态内容边界、测试与文档收口 · 参考示例：`mods/example_hello`、`mods/example_reactive`、`mods/example_ui`、`mods/example_content`
+> 适用版本：M7/M8 脚本系统 v1 + X-F2a 内容文件 / X-F2b-1 内容指纹 / X-F2b-2a 图集资源 / X-F2b-2b 搜刮表与 POI / X-F2b-2c 任务与事件 / X-F2b-2d HUD 字段 / X-F2b-2e 动态内容（物品、配方、建造、POI、任务） / M23-F5 作物、烹饪、食物状态与存档联机 / M23-F2b 动物与狩猎 / M23-F4 聚落 / M33-F1-T6 四聚落任务池/口吻 / X-F3-T1~T6 内容文件监听、事务热重载、指纹/联机策略、仅单机动态内容边界、测试与文档收口 · 参考示例：`mods/example_hello`、`mods/example_reactive`、`mods/example_ui`、`mods/example_content`
 > （示例目录都同时带 `scripts/main.lua` 与 `scripts/main.py`，用 `script.backend` 切换；`example_content` 另带物品/配方/建造/搜刮表/POI/任务数据与图集）
 > 设计稿（内部实现说明）：`docs/03-脚本系统设计.md`
 
@@ -156,7 +156,7 @@ M18-F4 建造项扩展字段（均为可选）：`spriteVertical`/`openSprite`/`
 
 M19-F2/F6-T1/T2/T3/M24-T2 POI 数据（当前内置 11 个固定区域：加油站/诊所/农场仓/圣玛丽医院/军事检查站/超市/警察局/消防站/汽车旅馆/教堂/仓库，另支持 mod 追加；联机由服务器按已加载 chunk 生成并同步）：`config/game.json` 的 `pois.defs[]` 每项包含 `id/name/threat(1..3)/markerX/markerY/containers[]/enemies/task`；`containers[]` 为 `{x,y,tableId,sprite}`，`enemies` 为 `{count,kind:"normal|fast|strong|mixed|armored",armoredCount?,radius}`，`task` 为 `{description,targetTable,rewardXp,rewardItem,rewardCount}`。`targetTable` 必须指向该 POI 自己的某个容器表；基础搜刮表在 `assets/loot.json`（`loot-v1`），mod 可在 `content/loot.json` 追加。任务完成条件为目标表首次搜索 + 该 POI 的 `PoiGuard` 全部清除；完成状态存 `PoiTasks`，奖励物品只支持已注册 id。内置地图建筑坐标在 `tools/gen_map.py` 的 `POI_SPECS`，修改后需重新生成地图并同步 `marker/containers` 配置；生成器 v5 的医院用 `interiorWalls` 生成带门洞隔墙，军事检查站复用 `object.barricade` 路障；M24-T2 的超市/警察局/消防站/汽车旅馆/教堂/仓库各自至少 3 个容器、独立掉落表与自动任务（T3 为仓库追加第 4 个中继货架 `poi_warehouse_relay`），均不新增 tile 集。F6-T2 的医院为威胁 2/7 名 mixed 守军，药房/物资箱含 `tainted_bandage`；军事检查站为威胁 3/9 名 strong 守军，军械柜保底手枪 1+9mm 16+霰弹 8，容量 24、rolls 4。M24-T2 的超市/旅馆为威胁 1，警察局/消防站/教堂为威胁 2 且各 1 名重甲，仓库为威胁 3/8 strong/2 重甲；目标表分别为 `poi_supermarket_storage`、`poi_motel_storage`、`poi_police_armory`、`poi_fire_gear`、`poi_church_supplies`、`poi_warehouse_valuables`。M24-T6 将超市食品架/仓库食品区 rolls 调为 3（仓库罐头汤保底 1）、警察局枪柜 9mm 保底 6、仓库贵重品柜霰弹单条 max 6，保持单 POI 食物 ≤1.5 日、警局 9mm 12~24、仓库霰弹 6~10 的期望区间；修改这些表后需同步 `tools/tests/test_m24_balance.py`。F6-T3 起 `enemies.armoredCount`（0~count，默认 0）把前 N 名守军替换为 `armored` 军械守卫：2.0 HP/0.62 速度/14.5 咬击，爪/咬/钝减伤 35%、击退 ×0.35，火焰/调试伤害不减；内置军事检查站 `armoredCount=2`（2 精英 + 7 strong）。`armoredCount` 与 kind 均进入内容指纹。mod POI 不生成房间，需自行保证坐标可达；新增 POI 需同时补房间、容器、搜刮表与玩家可达性测试。
 
-M19-F3/F6-T4/F4-T4/M24-T3/T4 任务数据（当前内置 31 条、10 条一次性链、8 个随机事件；联机由服务器权威推进并同步）：`config/game.json` 的 `missions.defs[]` 每项包含 `id/name/chain/order/kind/source/task?/prerequisite/minDay/chance/autoActivate?/timeLimitDays?/retryDays?/objectives/reward`。`kind` 为 `once|daily|random`；`source` 为 `radio|note|npc|base`；`task` 可选 `generic|help|escort|clear|supply`，仅用于委托类型/HUD 标签，缺省 generic。`autoActivate` 默认 true；设为 false 时不会自动接取、每日刷新或随机触发，只能由对话/脚本等显式接取（当前聚落四段链）。`timeLimitDays` 为 0 或省略表示不限时，否则在接取日 + N 天到期失败；`retryDays` 默认 1，失败/放弃后需等待该天数才可重接。`objectives[]` 每项为 `{kind,target,count,description}`，其中 `kind` 支持 `collect|interact|kill|loot|poi|reach`，`loot` 的 `target` 可为 `any` 或搜刮表 id，`poi` 指向 `pois.defs[].id`，`reach` 另需 `x/y/radius`。`reward` 支持 `xp/skill/item/itemCount/extraItem/extraItemCount/blueprint/label`；`extraItem` 为可选的第二件奖励（如伏击的止痛药），`blueprint` 为配方 id，完成后直接写入 `KnownRecipes`。`building.types[]` 的 `requiresMission` 可把设施绑定到任务完成状态（当前 `rain_collector` = `farm_tools`）。任务完成/进度写入玩家 `MissionLog` 存档组件；新增任务需同步 Python `test_mission_data.py` 的引用校验。F6-T4 新增医院/军事两条两段链（`hospital_supply→hospital_quarantine`、`military_armory→military_extract`）与两个随机击杀事件；链首用 `poi` 目标读取 `PoiTasks.completed`，链尾用特定 `loot` 表 + `reach`。F4-T4 新增四段聚落链 `settlement_help→settlement_escort→settlement_clear→settlement_supply`（求助/护送/清剿/物资），由 `assets/settlements.json` 的 `missionPool` 提供给求助者；护送当前为“医院南门接应 + 返回村庄”的路线目标，不生成跟随 NPC。F6-T5/F4-T4 起 once 任务失败后记录失败日，按 `retryDays` 重试；前置未完成不会提前解锁，已完成/进行中不会重复接取，奖励仅在 Active→Completed 时发放一次。M24-T3 追加 `super_stock→super_return`、`police_case→police_return`、`motel_guest→motel_return`、`relay_recover→relay_extract`；中继链 `relay_recover` 前置 `radio_repair`，同时要求搜索 `poi_warehouse_relay` 并持有 `relay_part`。任务叙事写入 `objectives[].description` 与 POI `task.description`；HUD 会按当前未完成目标解析 POI marker、匹配 loot 表容器、reach 坐标或电台坐标，追加“目标<方位> <距离>格”。M24-T4 追加 `event_wandering_horde`（第 3 天/0.50/8 杀）、`event_infected_house`（第 2 天/0.55/3 杀+`event_infected_cache`）、`event_survivor_ambush`（第 4 天/0.40/2 名）、`event_cold_snap`（第 2 天/0.35/到达村庄）；随机事件总数 8。空投 `event_supply_drop` 保持 `loot any×2`，由 `game/RandomEvents` 生成 2 个 `event_supply_crate`；事件箱/敌人按 `RandomEventStableId(mission,day,index)` 去重，事件敌人标签随存档保存。事件内容只由单机 `UpdateMissions` 或服务器 `TickServerMissions` 生成，网络客户端不本地生成；寒潮使用 `WeatherSystem` 临时覆盖 15 游戏分钟，不写存档字段。mod 任务若复用 `event_` 前缀并依赖事件内容，需要自行提供同 id 的 `RandomEvents` 内容计划，否则只作为普通随机任务。
+M19-F3/F6-T4/F4-T4/M24-T3/T4/M33-F1-T6 任务数据（当前内置 35 条、13 条一次性链、8 个随机事件；联机由服务器权威推进并同步）：`config/game.json` 的 `missions.defs[]` 每项包含 `id/name/chain/order/kind/source/task?/prerequisite/minDay/minSettlementReputation?/chance/autoActivate?/timeLimitDays?/retryDays?/objectives/reward`。`kind` 为 `once|daily|random`；`source` 为 `radio|note|npc|base`；`task` 可选 `generic|help|escort|clear|supply`，仅用于委托类型/HUD 标签，缺省 generic。`autoActivate` 默认 true；设为 false 时不会自动接取、每日刷新或随机触发，只能由对话/脚本等显式接取（当前聚落四段链与北部/南部/河畔单点任务）。`timeLimitDays` 为 0 或省略表示不限时，否则在接取日 + N 天到期失败；`retryDays` 默认 1，失败/放弃后需等待该天数才可重接。`minSettlementReputation` 为可选 -100~100，缺省 -100；聚落任务按当前聚落分数过滤，未达到时对话显示锁定提示。`objectives[]` 每项为 `{kind,target,count,description}`，其中 `kind` 支持 `collect|interact|kill|loot|poi|reach`，`loot` 的 `target` 可为 `any` 或搜刮表 id，`poi` 指向 `pois.defs[].id`，`reach` 另需 `x/y/radius`。`reward` 支持 `xp/skill/item/itemCount/extraItem/extraItemCount/blueprint/label`；`extraItem` 为可选的第二件奖励（如伏击的止痛药），`blueprint` 为配方 id，完成后直接写入 `KnownRecipes`。`building.types[]` 的 `requiresMission` 可把设施绑定到任务完成状态（当前 `rain_collector` = `farm_tools`）。任务完成/进度写入玩家 `MissionLog` 存档组件；新增任务需同步 Python `test_mission_data.py` 的引用校验。M33-F1-T6 追加 `north_blood_drive`（诊所绷带）、`south_harvest_help`（农场野果）、`river_fish_supply`（桥头小鱼）3 条聚落任务，分别由北部诊所、南部农场、河畔营地独立 `missionPool` 提供；均 `source=npc`、`autoActivate=false`、2–3 天时限、1 天重试，最低声望 -39/0/-39。F6-T4 新增医院/军事两条两段链（`hospital_supply→hospital_quarantine`、`military_armory→military_extract`）与两个随机击杀事件；链首用 `poi` 目标读取 `PoiTasks.completed`，链尾用特定 `loot` 表 + `reach`。F4-T4 新增四段聚落链 `settlement_help→settlement_escort→settlement_clear→settlement_supply`（求助/护送/清剿/物资），由 `assets/settlements.json` 的 `missionPool` 提供给求助者；护送当前为“医院南门接应 + 返回村庄”的路线目标，不生成跟随 NPC。F6-T5/F4-T4 起 once 任务失败后记录失败日，按 `retryDays` 重试；前置未完成不会提前解锁，已完成/进行中不会重复接取，奖励仅在 Active→Completed 时发放一次。M24-T3 追加 `super_stock→super_return`、`police_case→police_return`、`motel_guest→motel_return`、`relay_recover→relay_extract`；中继链 `relay_recover` 前置 `radio_repair`，同时要求搜索 `poi_warehouse_relay` 并持有 `relay_part`。任务叙事写入 `objectives[].description` 与 POI `task.description`；HUD 会按当前未完成目标解析 POI marker、匹配 loot 表容器、reach 坐标或电台坐标，追加“目标<方位> <距离>格”。M24-T4 追加 `event_wandering_horde`（第 3 天/0.50/8 杀）、`event_infected_house`（第 2 天/0.55/3 杀+`event_infected_cache`）、`event_survivor_ambush`（第 4 天/0.40/2 名）、`event_cold_snap`（第 2 天/0.35/到达村庄）；随机事件总数 8。空投 `event_supply_drop` 保持 `loot any×2`，由 `game/RandomEvents` 生成 2 个 `event_supply_crate`；事件箱/敌人按 `RandomEventStableId(mission,day,index)` 去重，事件敌人标签随存档保存。事件内容只由单机 `UpdateMissions` 或服务器 `TickServerMissions` 生成，网络客户端不本地生成；寒潮使用 `WeatherSystem` 临时覆盖 15 游戏分钟，不写存档字段。mod 任务若复用 `event_` 前缀并依赖事件内容，需要自行提供同 id 的 `RandomEvents` 内容计划，否则只作为普通随机任务。
 M19-F4 装备数据（武器/衣物）：weapon 继续使用 `combat`；clothing 可新增 `armor{claw,bite,blunt,wear,moveScale,insulation,waterproof}`，各字段均为 0~1（`moveScale` 0.5~1.0），`condition` 会在运行时按比例削弱减伤。weapon/clothing 可新增 `repairEfficiency`（0.1~3.0，缺省 1.0），维修包恢复量 = `inventory.repairAmount × repairEfficiency`。内置新增 `machete`/`baseball_bat`/`crowbar` 与 `leather_jacket`/`raincoat`/`riot_vest`，图标复用现有占位资源；`insulation/waterproof` 已由 M20-F2 用于体温/潮湿结算（保暖降低失温、防水减少淋湿）。护甲只读取躯干槽，减伤在 `CombatSystem` 写伤口之前生效。
 
 M30 战斗 2.0 配置（T7）：`config/game.json` 的 `combat.rules.*` 共 43 项，包括 `staminaMax/staminaRegenPerSecond/staminaRegenDelaySeconds/staminaExhaustedThreshold/staminaExhaustedSeconds/fatigueMaxPenalty/fatigueRegenPenalty`、`heavy*` 9 项、`block*` 8 项、`parry*` 5 项、`dodge*` 5 项、`poise*` 4 项、`poiseMaxNormal/Fast/Strong/Armored` 4 项与 `armoredStaggerPoiseThreshold`。缺失键使用 `CombatRuleConfig` 默认值；NaN/越界在 `SanitizeCombatRuleConfig` 回退或钳制；单机/服务器共用 `WorldSimulation::LoadCombatRuleConfig`，命令行 `--combat.rules.<key>=...` 同样生效。武器 `combat{stamina,windup,poise,blockReduction,blockStamina,heavy}` 仍按物品数据覆盖全局规则；旧扁平 `combat` 继续兼容。
@@ -189,7 +189,8 @@ mods/my_content_mod/
 │  ├─ forage.json
 │  ├─ pois.json
 │  ├─ missions.json
-│  └─ settlements.json
+│  ├─ settlements.json
+│  └─ world_events.json
 └─ assets/
    ├─ asset_manifest.json
    └─ atlas_example.atlas.json
@@ -234,10 +235,11 @@ mods/my_content_mod/
 - `pois.json` 只追加新 POI id，重复 id 跳过；基础 `pois.enabled` 为 `false` 时不加载 mod POI，`guideRange` 仍由基础配置决定。mod POI 不创建地图房间/墙体，坐标和容器可达性由作者保证。
 - `missions.json` 只在基础 `missions.enabled=true` 时追加任务/事件；任务 id 重复、条目无效、前置缺失或成环时整份文件跳过，已有任务不变。前置可引用基础任务或同批次更早文件的任务；同一文件内可自由引用。格式见 3.6.5。
 - `settlements.json` 只在基础 `settlements.enabled=true` 时追加聚落；重复 id 跳过，条目无效跳过，格式错误/无有效定义时整份文件跳过。安全区/NPC 点位/库存/任务池格式见 3.6.3.4。
-- X3-T2 起单机（`net.mode=direct`）且没有脚本动态内容时，修改 `content/*.json` 会在防抖后重新构建独立 `ContentBundle`；items/recipes/buildings/loot/forage/animals/crops/POI/missions/settlements 全部校验通过才一次性替换，失败保留旧内容并在日志输出 `mod 内容热重载失败，保留旧内容`。成功后记录旧→新内容指纹，`WorldDemoState` 下一次 tick 重建建造目录并复制新 POI/任务/聚落配置。`assets/*.json` 仍只通知、需重启；联机/主机只告警并提示重启服务器和所有客户端后重连；X3-T4 确认动态内容仅单机，联机热重载拒绝显示 5 秒 HUD 提示，均不替换注册表/不刷新指纹。X3-T5 已用 3 用例锁定失败原子性、未变指纹、五类动态内容联机拒绝与旧档未知物品；X3-T6 完成文档收口。脚本与 `mod.json` 的现有热重载继续生效。
+- `world_events.json` 只在基础 `worldEvents.enabled=true` 时追加世界事件；重复 id/坏字段/坏链跳过，无有效定义时整份文件跳过。格式见 3.6.3.5；T3 已接生成/结算，T4/T5 再接 UI 与网络/存档。
+- X3-T2 起单机（`net.mode=direct`）且没有脚本动态内容时，修改 `content/*.json` 会在防抖后重新构建独立 `ContentBundle`；items/recipes/buildings/loot/forage/animals/crops/POI/missions/settlements/world_events 全部校验通过才一次性替换，失败保留旧内容并在日志输出 `mod 内容热重载失败，保留旧内容`。成功后记录旧→新内容指纹，`WorldDemoState` 下一次 tick 重建建造目录并复制新 POI/任务/聚落配置。`assets/*.json` 仍只通知、需重启；联机/主机只告警并提示重启服务器和所有客户端后重连；X3-T4 确认动态内容仅单机，联机热重载拒绝显示 5 秒 HUD 提示，均不替换注册表/不刷新指纹。X3-T5 已用 3 用例锁定失败原子性、未变指纹、五类动态内容联机拒绝与旧档未知物品；X3-T6 完成文档收口。脚本与 `mod.json` 的现有热重载继续生效。
 - 示例 `mods/example_content` 新增 `mod_pumpkin`（南瓜作物，种子/产物）、`pumpkin_soup`（南瓜浓汤）、`cook_pumpkin_soup`（锅具+木材的南瓜汤配方）、`camp_stew`（营地炖豆）、`cook_camp_stew`（篝火配方）、`mod_supply_crate`（35kg/4 堆补给箱）、`mod_camp_cache`（补给箱搜刮表）、`mod_depot`（补给站 POI）、`mod_depot_supply`（补给站任务）和 `depot_status`（HUD 字段）；同时用 `mod.camp_stew`/`mod.supply_crate` 演示 mod 本地图集绑定，验证“无需改 C++ 新增作物→种子/产物→锅具燃料烹饪 + 可建造仓库 + 资源名 + 搜刮表/POI/任务 + HUD 字段”。
 
-当前限制：HUD 字段已支持（见 3.7），物品/配方/建造/POI/任务可用 `Content` API 在单机运行时追加（见 3.6.6）；X3-T2 的 content 事务热重载仅限单机且无脚本动态内容，X3-T3 起联机只拒绝并要求重启+重连，X3-T4 确认动态内容仅单机、联机注册/启动拒绝并显示 HUD 提示，assets 仍只通知并需重启；新增/删除整个 mod 目录仍需重启（监听器只跟踪启动时来源），已生成实体/容器/NPC 和旧档中已删除物品 id 不回溯迁移；X3-T5 锁定旧档未知 mod 物品仍保留 `defId`，但名称/重量/图标不可用，直到重新安装对应 mod 或手动清理。动态内容不写存档、禁 mod 不回滚，联机时客户端与服务器必须安装相同的物品/配方/作物/建造/搜刮表/觅食钓鱼数据/POI/任务/聚落内容；启动时会自动校验内容指纹（见 3.6.3），热重载成功后重算，但脚本/图集/地图/事件尚未纳入。启动时 POI/任务定义同时进入客户端与服务器内容指纹；服务器按已加载 chunk 生成 POI 容器/守军，并由 `TickServerMissions` 权威推进任务日志、奖励与放弃命令，联机客户端跳过本地 `UpdateMissions`。`Content` API 动态追加仍是单机能力，联机连接/主机启动会被拒绝；Mod HUD 字段只显示在客户端。
+当前限制：HUD 字段已支持（见 3.7），物品/配方/建造/POI/任务可用 `Content` API 在单机运行时追加（见 3.6.6）；X3-T2 的 content 事务热重载仅限单机且无脚本动态内容，X3-T3 起联机只拒绝并要求重启+重连，X3-T4 确认动态内容仅单机、联机注册/启动拒绝并显示 HUD 提示，assets 仍只通知并需重启；新增/删除整个 mod 目录仍需重启（监听器只跟踪启动时来源），已生成实体/容器/NPC 和旧档中已删除物品 id 不回溯迁移；X3-T5 锁定旧档未知 mod 物品仍保留 `defId`，但名称/重量/图标不可用，直到重新安装对应 mod 或手动清理。动态内容不写存档、禁 mod 不回滚，联机时客户端与服务器必须安装相同的物品/配方/作物/建造/搜刮表/觅食钓鱼数据/POI/任务/聚落/世界事件内容；启动时会自动校验内容指纹（见 3.6.3），热重载成功后重算，但脚本/图集/地图/M24 运行时随机事件内容尚未纳入。启动时 POI/任务定义同时进入客户端与服务器内容指纹；服务器按已加载 chunk 生成 POI 容器/守军，并由 `TickServerMissions` 权威推进任务日志、奖励与放弃命令，联机客户端跳过本地 `UpdateMissions`。`Content` API 动态追加仍是单机能力，联机连接/主机启动会被拒绝；Mod HUD 字段只显示在客户端。
 
 ### 3.6.2 Mod 图集与资源绑定（X-F2b-2a）
 
@@ -280,7 +282,7 @@ mod 可以在 `mods/<id>/assets/asset_manifest.json` 声明新的逻辑资源名
 
 ### 3.6.3 内容指纹与联机握手（X-F2b-1）
 
-客户端与服务器启动时都会对**最终生效**的物品、配方、建造项、搜刮表、觅食/钓鱼数据、动物数据、作物数据、POI、任务与聚落计算 64 位内容指纹（`game::ComputeContentHash`，v13），覆盖定义顺序和全部字段（含名称、图标、重量、战斗/护甲、配方分类/材料/工具/锅具/燃料/时间、建造成本/耐久/容量、战利品权重/min/max、觅食区域/钓点密度/刷新/工具/鱼饵、动物速度/警觉/逃跑/伤害/尸体搜索/掉落表/生成权重、作物阶段/水耗/病害/产量/种子、POI 容器/守军/任务奖励、任务类型/目标/前置/自动接取/时限/重试/随机权重、聚落安全区/NPC 点位/库存/补货日/任务池/夜袭防御等），并在 KCP 握手的 `Hello/Welcome` 中比较；不一致会拒绝连接。
+客户端与服务器启动时都会对**最终生效**的物品、配方、建造项、搜刮表、觅食/钓鱼数据、动物数据、作物数据、POI、任务、聚落与世界事件计算 64 位内容指纹（`game::ComputeContentHash`，v17），覆盖定义顺序和全部字段（含名称、图标、重量、战斗/护甲、配方分类/材料/工具/锅具/燃料/时间、建造成本/耐久/容量、战利品权重/min/max、觅食区域/钓点密度/刷新/工具/鱼饵、动物速度/警觉/逃跑/伤害/尸体搜索/掉落表/生成权重、作物阶段/水耗/病害/产量/种子、POI 容器/守军/任务奖励、任务类型/目标/前置/自动接取/时限/重试/最低声望/随机权重、聚落安全区/NPC 点位/库存/补货日/任务池/夜袭防御/区域与服务/初始声望/对话口吻、声望等级阈值/来源增量/价格倍率/每日上限、世界事件阶段/选项/奖励/压力/失败后果/冷却/预警/持续时间/nextEvent 等），并在 KCP 握手的 `Hello/Welcome` 中比较；不一致会拒绝连接。
 
 `net.contentHash` 默认 `0`，表示自动计算；仅在需要手动覆盖时填写非 0 值，此时客户端与服务器必须一致。该指纹用于避免玩法数据顺序或数值不同造成的联机错位；脚本、图集/贴图、地图与事件内容尚未纳入，仍需双方安装同一份游戏内容。
 
@@ -350,7 +352,7 @@ mod 可以在 `mods/<id>/assets/asset_manifest.json` 声明新的逻辑资源名
 ```
 
 - mod 文件放在 `mods/<id>/content/crops.json`；每个文件按事务追加，id 或种子冲突、物品引用缺失、阶段非法时整份跳过，不修改已有作物。mod 作物可以引用同 mod 或更早加载 mod 的物品。
-- `config/game.json` 的 `crops.file` 指向基础文件；未加载到时单机/服务器回退旧 `farming.*` 单作物参数。X3-T2 起单机 content 热重载会重读作物数据；文件树和 CropDef 都进入内容指纹 v13。
+- `config/game.json` 的 `crops.file` 指向基础文件；未加载到时单机/服务器回退旧 `farming.*` 单作物参数。X3-T2 起单机 content 热重载会重读作物数据；文件树和 CropDef 都进入内容指纹（M33-F1-T1 起 v14）。
 - 当前种植 E 使用客户端当前选择的种子（空田 `Q` 在可用种子间循环）；`T` 使用 `fertilizer` 施肥一次或使用 `fungicide` 杀菌；E 继续浇水/收获/清理。示例见 `mods/example_content/content/crops.json`（南瓜）。
 - F5-T2 规则由 `config/game.json` 的 `farming` 段控制：`fertilizerYieldBonus`、`diseaseChance`（无作物数据时的回退）、`diseaseDryFraction`、`diseaseYieldPenalty`、`rainWaterPerMinute` 与 `season.{spring,summer,autumn,winter}{Growth,Disease}`。雨天自动补水；夏季病害风险更高、冬季生长更慢；缺水累计达到阈值后作物进入病害，施肥/杀菌状态写入 `FarmPlot` 并存档（`FARM` v2）与复制（`ZLR1` v3）。
 - HUD 的状态文本显示生长阶段、缺水/水分钟、已施肥、病害和季节；基地状态行显示农田总数及生长/成熟/缺水/病害计数。脚本字段见 §3.6.7 的 `baseFarm*`。
@@ -398,28 +400,68 @@ mod 可以在 `mods/<id>/assets/asset_manifest.json` 声明新的逻辑资源名
 }
 ```
 
-- 示例的 `loot.json` 还在 `mod_camp_cache` 中放入 `pumpkin_seeds`，形成“搜刮种子→种植南瓜→锅具/燃料烹饪→营养食物”的完整链路。作物/物品/配方按 mod 文件事务合并；引用缺失、id/种子冲突、配方字段非法会整体跳过该文件。X3-T2 起单机修改农业/烹饪 content 后会事务热重载，内容进入内容指纹 v13；联机客户端与服务器必须使用相同内容。示例契约由 `test_mod_content.cpp` 与 `tools/tests/test_f5_mod_example.py` 回归。
+- 示例的 `loot.json` 还在 `mod_camp_cache` 中放入 `pumpkin_seeds`，形成“搜刮种子→种植南瓜→锅具/燃料烹饪→营养食物”的完整链路。作物/物品/配方按 mod 文件事务合并；引用缺失、id/种子冲突、配方字段非法会整体跳过该文件。X3-T2 起单机修改农业/烹饪 content 后会事务热重载，内容进入内容指纹（M33-F1-T1 起 v14，F1-T5 起 v15）；联机客户端与服务器必须使用相同内容。示例契约由 `test_mod_content.cpp` 与 `tools/tests/test_f5_mod_example.py` 回归。
 
-### 3.6.3.4 聚落数据（M23-F4-T1/T5/T8）
+### 3.6.3.4 聚落数据（M23-F4-T1/T5/T8 / M33-F1-T6）
 
 完整字段、范围、默认值、运行时/存档/联机边界和 mod 检查清单见 [settlementformat.md](settlementformat.md)。本节是 mod 作者需要的最小契约。
 
 `assets/settlements.json` 使用 `format: "settlements-v1"`，根节点 `defs` 数组定义聚落；`config/game.json` 的 `settlements.enabled/file` 控制基础文件。必填字段：`id/name/centerX/centerY/safeRadius/npcPoints/merchantStock/restockDays/missionPool`。
 
 - `id` 为 1~64 字节小写 `[a-z0-9_.]`；`name` 1~128 字节；`safeRadius` 1~128 格。安全区只用于点位校验、躲避、威胁和夜袭，不是物理禁区。
-- `npcPoints[]`：`{id,kind,x,y,wanderRadius}`，`kind` 为 `merchant|guard|requester`；1~16 项，至少各 1 个，id 唯一，坐标必须满足在安全圆内；`wanderRadius` 0~16。每类当前只生成**第一个**匹配点，额外点只进入指纹。
-- `merchantStock`：固定 5 项整数（0~99），对应现有 5 档报价；运行时按每档 `maxStock` 夹紧，补货重置为 `maxStock` 而不是配置初值。`restockDays` 为 1~30 天，主聚落会覆盖 `trading.restockDays`。
+- `npcPoints[]`：`{id,kind,x,y,wanderRadius}`，`kind` 为 `merchant|guard|requester`；1~16 项，id 唯一，坐标必须满足在安全圆内；`wanderRadius` 0~16。M33-F1-T6 起至少 1 个 merchant，且至少 1 个 guard 或 requester（无防御小聚落可只有 merchant+requester）。每个聚落只生成一个商人（取第一个 merchant 点）；守卫/求助者按所有匹配点逐点生成。
+- `merchantStock`：固定 5 项整数（0~99），对应现有 5 档报价；运行时按每档 `maxStock` 夹紧，补货重置为 `maxStock` 而不是配置初值。`restockDays` 为 1~30 天，按该聚落商人独立使用，不再覆盖全局 `trading.restockDays`。
 - `missionPool`：1~32 个唯一任务 id（每个 1~64 字节），按顺序选择第一个可接任务；同池同时只允许一条 Active。解析时不校验任务是否存在，运行时忽略缺失/不可激活项。推荐任务使用 `source: "npc"`、`autoActivate: false`、`kind: "once"`。
 - 可选 `defense`（M23-F4-T5，缺省关闭）：`enabled/minDay/nightStartHour/nightEndHour/activationRadius/spawnRadius/baseRaiders/raidersPerNight/maxRaiders/guardBehavior/guardHealth/guardDamage/guardRange/guardAttackSeconds/raiderHealth/raiderDamage/raiderRange/raiderAttackSeconds/raiderSpeed`。`minDay` 1~10000；小时 0~23 且起止不同，支持跨午夜；`guardBehavior` 为 `defend|retreat`；数量/血量/伤害/速度均有上限。夜袭数量为 `baseRaiders + max(0, nightKey-minDay) * raidersPerNight`，再夹紧 `maxRaiders`；守卫生命、失守与当晚标记由 `STLS` v1 保存，夜袭 active 不跨档恢复。
 
-mod 可在 `content/settlements.json` 追加同格式 `defs`，只允许新增 id；单条非法跳过，整份文件无有效定义时失败。X3-T2 起单机 content 热重载会重读聚落数据，联机/主机或存在脚本动态内容时仍需重启；聚落字段进入内容指纹 v13。联机双方必须安装相同内容；服务器权威处理 `AcceptSettlementMission=39` 和 `TradeOffer=21`，失守/夜袭时拒绝接取与交易，客户端只读 `ZLR1` NPC 与 `PlayerState v16` 聚落状态。
+mod 可在 `content/settlements.json` 追加同格式 `defs`，只允许新增 id；单条非法跳过，整份文件无有效定义时失败。M33-F1-T1 起可选 `regionId/services/startingReputation/dialogueProfile` 已进入数据契约与指纹；`services` 不得重复，`startingReputation` 为 -100~100。X3-T2 起单机 content 热重载会重读聚落数据，联机/主机或存在脚本动态内容时仍需重启；聚落字段与任务 `minSettlementReputation` 进入内容指纹 v15，M33-F2-T3 起整体指纹为 v17。`services` 同时控制交易/委托入口和实际夜袭/守卫防御；Hostile 只拒绝交易/委托/招募，防御仍可参与。`dialogueProfile` 只选择内置开场口吻，未知值回退通用文本。M33-F1-T6 起生成点若被挤到安全区外会跳过并下一帧重试。联机双方必须安装相同内容；服务器权威处理 `AcceptSettlementMission=39` 和 `TradeOffer=21`，失守/夜袭时拒绝接取与交易，客户端只读 `ZLR1` NPC 与 `PlayerState v21` 聚落状态/声望摘要。
 
 扩展边界：
 
-- **当前只有 `defs[0]` 主聚落完整接线**：商人、守卫、求助者生成和对话/交易入口都以第一个定义为准。后续追加聚落会加载并进入指纹，若开启 `defense` 还会出现在防御状态读取中，但不会自动生成 NPC/商人，也没有独立入口；要替换主聚落需在启动配置中改 `settlements.file`，不能靠 mod 覆盖内置 id。
-- 对话树为代码内置，`settlement.name` 只进入说话人；当前没有对话 JSON，不能通过内容文件新增 NPC 类型、对话节点/选项或结果。
-- 交易报价全局固定 5 档，不能按聚落改商品/价格；守卫策略只有 `defend/retreat`。新增类型/策略需改 C++。
+- **M33-F1-T2/T3/T4/T5/T6 起所有聚落均接线**：单机/服务器按 `settlementId` 和点位生成独立商人/守卫/求助者，商人库存与补货周期按聚落隔离；旧存档未绑定商人迁移到最近聚落并保留库存。死亡/失守不补生，战略恢复后重建。交易面板按商人 StableId 绑定，服务器反查聚落；对话/任务/HUD/地图按 NPC 聚落路由。M33-F1-T4 新增玩家级 `SettlementReputation`（`settlementId -> score` + 幂等键）、任务来源 `MissionLog v2`、每日交易上限与 `PlayerState v21` 声望摘要；单机/服务器任务、交易、守城/事件结算已接声望。M33-F1-T5 已接价格倍率、任务最低声望、五档对话态度与 `services` 硬限制。M33-F1-T6 新增 `river_camp`、四聚落独立任务池/库存/口吻；自定义对话节点与按聚落商品表仍需改 C++。
+- 对话树为代码内置，`settlement.name` 只进入说话人，`dialogueProfile` 只选择内置开场口吻；当前没有对话 JSON，不能通过内容文件新增 NPC 类型、对话节点/选项或结果。
+- 交易报价全局固定 5 档，不能按聚落改商品表；实际价格按声望买卖倍率调整。守卫策略只有 `defend/retreat`。新增类型/策略需改 C++。
 - 追加聚落不会创建地图房间、墙体、床或容器；坐标、地面和可达性由地图/POI 作者保证。
+
+### 3.6.3.5 世界事件数据、排期、UI 与联机（M33-F2-T1/T2/T3/T4/T5）
+
+`assets/world_events.json` 使用 `format: "world-events-v1"`，根节点 `defs` 数组定义世界事件；`config/game.json` 的 `worldEvents.enabled/file/randomSeed` 控制基础文件。M33-F2-T1 建立数据契约与加载，M33-F2-T2 新增 `WorldEventDirector` 确定性排期与状态机，M33-F2-T3 新增生成计划/稳定 id/结果账本与经验/物品/声望/区域压力结算；当前基础文件仍为空占位且 `enabled=false`，不会生成事件。启用后每日至多 1 个事件，按 `randomSeed`/日期/定义权重/区域面积权重选择定义和区域，站点优先区域 POI；同一天重复 Update 不会重复排期，事件链默认排到次日。`Scheduled` 在 `activeMinute-warningMinutes` 进入 `Warning`，`Active` 使用绝对截止分钟，阶段推进/选择/超时/失败由导演维护；玩家离开只降级为摘要并记 `downgraded`，不会暂停计时。T3 在 Active 且进入详细半径时按 `Kill/Defend` 阶段生成僵尸、按 `Loot` 阶段生成容器，StableId 由事件 id/序号确定；击杀生成目标会推进当前 Kill/Defend 阶段。选择/失败/超时结果通过 `WorldSimulation::SettleWorldEvent` 一次结算，使用事件 id+玩家 StableId 幂等。M33-F2-T4 已接单机 HUD 事件面板：显示事件名/区域/状态/倒计时/阶段/选项效果/结果和 6 条电台记录；玩家在事件点 6 格内按 `E` 打开选项、`1–8` 选择、`ESC` 收起，离开范围会关闭选择并提示返回现场；导演进入 Resolved/Failed/Expired 后单机 HUD 自动结算一次。世界地图为 Warning/Active 事件绘制可点击橙色标记并支持导航。原生 HUD 与 `mods/core_ui` 同步，Lua/Python `Hud.GetState` 暴露 `worldEvent*` 字段。M33-F2-T5 已接服务器权威：服务器广播 `ZLW2` 事件快照（独立 magic，旧客户端忽略），客户端只发送 `ChooseWorldEvent`（索引）命令；服务器复核 Active/阶段/距离/索引后按参与者结算一次，重复/远端/终态选择拒绝，超时由服务器自动结算。manifest 升 **v6**，记录事件快照与结果账本键，服务器重启、客户端重连和单机读档恢复同一事件；离线的参与者不会在事件结束时补发奖励。
+
+```json
+{
+  "format": "world-events-v1",
+  "defs": [
+    {
+      "id": "caravan_ambush",
+      "name": "商队伏击",
+      "kind": "caravan",
+      "minDay": 3,
+      "maxDay": 60,
+      "weight": 1.0,
+      "cooldownDays": 5,
+      "warningMinutes": 120,
+      "durationMinutes": 30,
+      "region": "any",
+      "stages": [
+        { "kind": "reach", "radius": 8, "description": "赶到商队遇袭点" },
+        { "kind": "kill", "target": "event_caravan_raider", "count": 3 }
+      ],
+      "choices": [
+        { "id": "rescue", "label": "护送商队", "reputation": 15, "rewardXp": 80, "pressure": -10 },
+        { "id": "rob", "label": "抢走货物", "reputation": -25, "rewardItem": "ammo_9mm", "rewardItemCount": 2, "pressure": 8 }
+      ],
+      "nextEvent": "caravan_aftermath",
+      "failureReputation": -5,
+      "failurePressure": 8
+    }
+  ]
+}
+```
+
+- 必填 `id/name/stages/choices`；`id` 为 1~64 字节小写 `[a-z0-9_.]` 且全局唯一，`name` 1~128 字节。可选字段默认 `kind="custom"`、`minDay=1`、`maxDay=100000`、`weight=1.0`、`cooldownDays=1`、`warningMinutes=60`、`durationMinutes=30`、`region="any"`、`failureReputation=-5`、`failurePressure=5`。
+- `stages` 1~8 项：`kind` 为 `reach|interact|kill|loot|defend|choice`；`interact/kill/loot` 必须有 `target`；`count` 1~999，`radius` 0.5~128，`description` 0~256 字节。`choices` 1~8 项：`id/label` 必填，`reputation` -100~100，`rewardXp` 0~1000000，`rewardItem` 必须是已注册物品，`rewardItemCount` 1~9999，`pressure` -100~100（正值增加区域压力，负值缓解）。失败/超时使用事件的 `failureReputation/failurePressure`（声望 -100~100，压力 0~100）。
+- `nextEvent` 只能引用已加载事件（基础、更早 mod 或同文件）；缺失引用、自环、循环链或超过 8 段深度的事件会被跳过。单条非法定义跳过并告警；mod 文件无有效定义时整份拒绝，基础文件全部非法时加载失败。空 `defs` 或 `worldEvents.enabled=false` 表示无事件。
+- `mods/<id>/content/world_events.json` 必须有 `format` 和非空 `defs`，按加载顺序追加；重复 id、坏字段/坏奖励引用/坏链跳过，不能覆盖基础事件。M33-F2-T3 起世界事件字段进入内容指纹 v17；单机 content 热重载会随 `ContentBundle` 事务重读，联机仍需重启服务器和全部客户端后重连。M33-F2-T2 起 `WorldSimulation::WorldEventSystem` 使用加载后的配置排期；T3 已接生成/结算，T4 已接单机事件 HUD/电台/地图与自动超时结算，T5 已接服务器快照/选择命令/manifest v6/重连恢复；终态内容清理、鼠标选项、独立聊天频道和离线参与者补发仍未接入，且热重载后导演配置副本不会自动重建（联机需重启服务器和全部客户端）。
 
 ### 3.6.4 Mod 搜刮表、觅食/钓鱼节点与 POI（X-F2b-2b / M23-F2a-T1/T3/T6）
 
@@ -574,7 +616,7 @@ mod 可在 `content/settlements.json` 追加同格式 `defs`，只允许新增 i
 - 每个 mod 的 `missions.json` 是一个事务：任意任务条目无效、id 与基础/已接受任务重复、前置不存在或前置链成环时，整份文件跳过且已有任务不变。
 - 前置可引用基础任务或同批次更早加载文件的任务；同一文件内可自由引用。不要引用更晚加载的 mod。
 - 任务 HUD、焦点切换、奖励发放、存档字段和放弃逻辑完全复用 M19-F3；单机运行 `UpdateMissions`，联机客户端跳过本地更新，由服务器 `TickServerMissions` 权威推进并同步日志/奖励。任务定义参与内容指纹。
-- 示例 `mods/example_content` 的 `mod_depot_supply` 以 `poi` 目标完成 `mod_depot`，启动后基础 31 条任务变为 32 条并自动接取。
+- 示例 `mods/example_content` 的 `mod_depot_supply` 以 `poi` 目标完成 `mod_depot`，启动后基础 35 条任务变为 36 条并自动接取。
 
 ### 3.6.6 运行时动态内容（X-F2b-2e）
 

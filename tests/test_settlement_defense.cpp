@@ -196,6 +196,56 @@ TEST_CASE("M23-F4-T5 撤退策略与远离营地不触发夜袭") {
 }
 
 
+TEST_CASE("M32-T4 外部战略围攻复用守卫与平民撤离") {
+    DefenseFixture fixture(MakeDefenseSettlement());
+    REQUIRE(fixture.system.BeginExternalDefense(fixture.world, "raid_haven"));
+    CHECK(fixture.system.RaidActive("raid_haven"));
+    CHECK(fixture.system.SpawnExternalWave(fixture.world, "raid_haven", 2,
+                                           0) == 2);
+    CHECK(fixture.system.LiveRaiders(fixture.world, "raid_haven") == 2);
+
+    fixture.system.Update(fixture.world, 0.016f, 12, 1);
+    CHECK(fixture.system.RaidActive("raid_haven"));
+    CHECK(fixture.system.GetStats().defending == 1);
+    CHECK(fixture.system.GetStats().shelter == 2);
+    CHECK(fixture.world.Registry()
+              .get<game::SettlementNpc>(fixture.requester)
+              .activity == game::NpcActivity::Shelter);
+    CHECK_FALSE(fixture.world.Registry().all_of<ecs::NoCombatTarget>(
+        fixture.guard));
+
+    fixture.MoveRaiderNextToGuard();
+    for (int i = 0; i < 20; ++i) {
+        fixture.system.Update(fixture.world, 0.02f, 12, 1);
+    }
+    CHECK(fixture.system.LiveRaiders(fixture.world, "raid_haven") < 2);
+
+    fixture.system.EndExternalDefense(fixture.world, "raid_haven", false,
+                                      "战略围攻击退");
+    CHECK_FALSE(fixture.system.RaidActive("raid_haven"));
+    CHECK(fixture.system.LiveRaiders(fixture.world, "raid_haven") == 0);
+    CHECK(fixture.world.Registry().all_of<ecs::NoCombatTarget>(
+        fixture.guard));
+    CHECK(fixture.system.NoticeText().find("击退") != std::string::npos);
+}
+
+TEST_CASE("M32-T4 外部战略围攻失守标记聚落") {
+    DefenseFixture fixture(MakeDefenseSettlement());
+    REQUIRE(fixture.system.BeginExternalDefense(fixture.world, "raid_haven"));
+    REQUIRE(fixture.system.SpawnExternalWave(fixture.world, "raid_haven", 1,
+                                             1) == 1);
+    auto* health =
+        fixture.world.Registry().try_get<ecs::Health>(fixture.guard);
+    REQUIRE(health != nullptr);
+    health->current = 0.0f;
+    fixture.system.EndExternalDefense(fixture.world, "raid_haven", true,
+                                      "守卫倒下");
+    CHECK(fixture.system.IsFallen("raid_haven"));
+    CHECK_FALSE(fixture.system.RaidActive("raid_haven"));
+    CHECK(fixture.system.LiveRaiders(fixture.world, "raid_haven") == 0);
+    CHECK(fixture.system.NoticeTone() == "fail");
+}
+
 TEST_CASE("M23-F4-T6 聚落守卫生命与夜袭进度存档往返") {
     game::SettlementConfig config = MakeDefenseSettlement();
     ecs::EcsWorld source;
@@ -327,4 +377,99 @@ TEST_CASE("M23-F4-T7 同一晚读档不会重复触发夜袭") {
 
     restored.Update(restoredWorld, 0.016f, 22, 11);
     CHECK(restored.RaidActive("raid_haven"));
+}
+
+TEST_CASE("M32-T5 失守撤离、反攻波次与恢复聚落") {
+    DefenseFixture fixture(MakeDefenseSettlement());
+    fixture.system.MarkFallen(fixture.world, "raid_haven");
+    CHECK(fixture.system.IsFallen("raid_haven"));
+    CHECK_FALSE(fixture.system.BeginExternalDefense(fixture.world,
+                                                    "raid_haven"));
+    CHECK(fixture.world.Alive(fixture.merchant));
+    CHECK_FALSE(fixture.world.Alive(fixture.guard));
+    CHECK_FALSE(fixture.world.Alive(fixture.requester));
+    CHECK(fixture.system.GuardHealthForSpawn("raid_haven", 77.0f) ==
+          doctest::Approx(0.0f));
+
+    REQUIRE(fixture.system.BeginExternalReclaim(fixture.world, "raid_haven"));
+    CHECK(fixture.system.RaidActive("raid_haven"));
+    CHECK(fixture.system.SpawnExternalWave(fixture.world, "raid_haven", 2,
+                                           0) == 2);
+    CHECK(fixture.system.LiveRaiders(fixture.world, "raid_haven") == 2);
+    fixture.system.EndExternalReclaim(fixture.world, "raid_haven", true,
+                                      "反攻波次击退");
+    CHECK_FALSE(fixture.system.RaidActive("raid_haven"));
+    CHECK(fixture.system.LiveRaiders(fixture.world, "raid_haven") == 0);
+    CHECK(fixture.system.IsFallen("raid_haven"));
+    CHECK(fixture.system.NoticeText().find("击退") != std::string::npos);
+
+    fixture.system.RestoreSettlement(fixture.world, "raid_haven");
+    CHECK_FALSE(fixture.system.IsFallen("raid_haven"));
+    CHECK(fixture.system.GuardHealthForSpawn("raid_haven", 77.0f) ==
+          doctest::Approx(77.0f));
+    CHECK(fixture.system.NoticeTone() == "ok");
+}
+
+TEST_CASE("M32-T6 守卫自主迎击普通感染者并保护平民") {
+    game::SettlementConfig config = MakeDefenseSettlement();
+    config.defs[0].defense.guardEngageRadius = 8.0f;
+    DefenseFixture fixture(std::move(config));
+    REQUIRE(fixture.system.BeginExternalDefense(fixture.world, "raid_haven"));
+    ecs::Entity zombie = fixture.world.Create();
+    auto& registry = fixture.world.Registry();
+    registry.emplace<ecs::Position>(zombie, ecs::Position{31.5f, 20.5f, 0});
+    registry.emplace<ecs::Health>(zombie, ecs::Health{20.0f, 20.0f});
+    registry.emplace<ecs::AiState>(zombie, ecs::AiState{});
+
+    fixture.system.Update(fixture.world, 0.016f, 12, 1);
+    CHECK(fixture.system.GetStats().defending == 1);
+    CHECK(fixture.system.GetStats().shelter == 2);
+    CHECK(fixture.world.Registry()
+              .get<game::SettlementNpc>(fixture.guard)
+              .activity == game::NpcActivity::Defend);
+
+    fixture.system.Update(fixture.world, 0.02f, 12, 1);
+    fixture.system.Update(fixture.world, 0.02f, 12, 1);
+    CHECK(fixture.world.Registry().get<ecs::Health>(zombie).current <= 0.0f);
+}
+TEST_CASE("M32-T11 战略掠夺者波次使用独立外观") {
+    DefenseFixture raiders(MakeDefenseSettlement());
+    REQUIRE(raiders.system.BeginExternalDefense(raiders.world, "raid_haven"));
+    REQUIRE(raiders.system.SpawnExternalWave(
+                raiders.world, "raid_haven", 1, 0,
+                game::ContestedFaction::Raiders) == 1);
+    const ecs::Entity raider = raiders.FirstRaider();
+    REQUIRE(raider != ecs::EcsWorld::kNull);
+    const auto* sprite =
+        raiders.world.Registry().try_get<ecs::SpriteRef>(raider);
+    const auto* raid =
+        raiders.world.Registry().try_get<game::SettlementRaidZombie>(raider);
+    REQUIRE(sprite != nullptr);
+    REQUIRE(raid != nullptr);
+    CHECK(sprite->sprite == ecs::HashName("character.placeholder"));
+    CHECK(sprite->tint == 0xFFFF8060u);
+    CHECK(raid->faction == game::ContestedFaction::Raiders);
+
+    DefenseFixture infected(MakeDefenseSettlement());
+    REQUIRE(infected.system.BeginExternalDefense(infected.world,
+                                                  "raid_haven"));
+    REQUIRE(infected.system.SpawnExternalWave(infected.world, "raid_haven",
+                                               1, 0) == 1);
+    const auto* infectedSprite = infected.world.Registry().try_get<ecs::SpriteRef>(
+        infected.FirstRaider());
+    REQUIRE(infectedSprite != nullptr);
+    CHECK(infectedSprite->sprite == ecs::HashName("character.zombie"));
+    CHECK(infectedSprite->tint == 0xFF8080FFu);
+}
+
+TEST_CASE("M33-F1-T5 防御服务未启用时不触发夜袭") {
+    game::SettlementConfig config = MakeDefenseSettlement();
+    config.defs[0].services &= ~game::kSettlementServiceDefense;
+    DefenseFixture fixture(config);
+    CHECK_FALSE(fixture.system.DefenseEnabled("raid_haven"));
+    fixture.system.Update(fixture.world, 0.1f, 23, 1);
+    CHECK(fixture.FirstRaider() == ecs::EcsWorld::kNull);
+    CHECK(fixture.world.Registry()
+              .get<game::SettlementNpc>(fixture.guard)
+              .activity != game::NpcActivity::Defend);
 }

@@ -474,6 +474,36 @@ struct LuaRuntime::Impl {
             out["missionTone"] = state.missionTone;
             out["eventGuide"] = state.eventGuide;
             out["eventTone"] = state.eventTone;
+            out["worldEventVisible"] = state.worldEventVisible;
+            out["worldEventCanChoose"] = state.worldEventCanChoose;
+            out["worldEventChoiceOpen"] = state.worldEventChoiceOpen;
+            out["worldEventName"] = state.worldEventName;
+            out["worldEventMeta"] = state.worldEventMeta;
+            out["worldEventStage"] = state.worldEventStage;
+            out["worldEventHint"] = state.worldEventHint;
+            out["worldEventTone"] = state.worldEventTone;
+            out["worldEventResult"] = state.worldEventResult;
+            out["worldEventResultTone"] = state.worldEventResultTone;
+            out["worldEventOptionCount"] = state.worldEventOptionCount;
+            out["worldEventLogCount"] = state.worldEventLogCount;
+            sol::table worldEventOptions =
+                NewTable(ts.L, state.worldEventOptions.size());
+            for (std::size_t i = 0; i < state.worldEventOptions.size(); ++i) {
+                worldEventOptions[i + 1] = state.worldEventOptions[i];
+            }
+            out["worldEventOptions"] = worldEventOptions;
+            sol::table worldEventLog =
+                NewTable(ts.L, state.worldEventLog.size());
+            for (std::size_t i = 0; i < state.worldEventLog.size(); ++i) {
+                worldEventLog[i + 1] = state.worldEventLog[i];
+            }
+            out["worldEventLog"] = worldEventLog;
+            out["regionGuide"] = state.regionGuide;
+            out["regionTone"] = state.regionTone;
+            out["settlementGuide"] = state.settlementGuide;
+            out["settlementTone"] = state.settlementTone;
+            out["strategicGuide"] = state.strategicGuide;
+            out["strategicTone"] = state.strategicTone;
             out["siegeStatus"] = state.siegeStatus;
             out["siegeTone"] = state.siegeTone;
             out["siegeReportOpen"] = state.siegeReportOpen;

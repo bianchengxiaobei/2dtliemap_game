@@ -4,6 +4,10 @@
     {
       "id": "village_haven",
       "name": "村庄营地",
+      "regionId": "village_core",
+      "services": ["trade", "missions", "defense", "recruit"],
+      "startingReputation": 0,
+      "dialogueProfile": "village_haven",
       "centerX": 75.0,
       "centerY": 26.5,
       "safeRadius": 8.0,
@@ -58,6 +62,186 @@
         "settlement_escort",
         "settlement_clear",
         "settlement_supply"
+      ]
+    },
+    {
+      "id": "north_fields",
+      "name": "北部诊所",
+      "regionId": "north_fields",
+      "services": ["trade", "missions", "defense"],
+      "startingReputation": 0,
+      "dialogueProfile": "north_fields",
+      "centerX": 150.0,
+      "centerY": 64.0,
+      "safeRadius": 6.0,
+      "npcPoints": [
+        {
+          "id": "clinic_merchant",
+          "kind": "merchant",
+          "x": 149.0,
+          "y": 63.0,
+          "wanderRadius": 1.0
+        },
+        {
+          "id": "clinic_guard",
+          "kind": "guard",
+          "x": 150.0,
+          "y": 63.0,
+          "wanderRadius": 1.5
+        },
+        {
+          "id": "clinic_civilian",
+          "kind": "requester",
+          "x": 152.0,
+          "y": 63.0,
+          "wanderRadius": 1.5
+        }
+      ],
+      "merchantStock": [3, 1, 0, 2, 0],
+      "restockDays": 2,
+      "defense": {
+        "enabled": true,
+        "minDay": 9999,
+        "nightStartHour": 22,
+        "nightEndHour": 5,
+        "activationRadius": 20.0,
+        "spawnRadius": 13.0,
+        "baseRaiders": 0,
+        "raidersPerNight": 0,
+        "maxRaiders": 0,
+        "guardBehavior": "defend",
+        "guardHealth": 100.0,
+        "guardDamage": 16.0,
+        "guardRange": 1.5,
+        "guardAttackSeconds": 1.0,
+        "raiderHealth": 50.0,
+        "raiderDamage": 5.0,
+        "raiderRange": 1.35,
+        "raiderAttackSeconds": 1.5,
+        "raiderSpeed": 2.1
+      },
+      "missionPool": [
+        "north_blood_drive"
+      ]
+    },
+    {
+      "id": "south_farmland",
+      "name": "南部农场",
+      "regionId": "south_farmland",
+      "services": ["trade", "missions", "defense", "recruit"],
+      "startingReputation": 0,
+      "dialogueProfile": "south_farmland",
+      "centerX": 110.0,
+      "centerY": 210.0,
+      "safeRadius": 8.0,
+      "npcPoints": [
+        {
+          "id": "farm_merchant",
+          "kind": "merchant",
+          "x": 114.0,
+          "y": 216.0,
+          "wanderRadius": 1.0
+        },
+        {
+          "id": "farm_guard",
+          "kind": "guard",
+          "x": 110.0,
+          "y": 216.0,
+          "wanderRadius": 2.0
+        },
+        {
+          "id": "farm_civilian_a",
+          "kind": "requester",
+          "x": 108.0,
+          "y": 216.0,
+          "wanderRadius": 2.0
+        },
+        {
+          "id": "farm_civilian_b",
+          "kind": "requester",
+          "x": 112.0,
+          "y": 216.0,
+          "wanderRadius": 2.0
+        }
+      ],
+      "merchantStock": [4, 1, 1, 1, 0],
+      "restockDays": 2,
+      "defense": {
+        "enabled": true,
+        "minDay": 9999,
+        "nightStartHour": 22,
+        "nightEndHour": 5,
+        "activationRadius": 24.0,
+        "spawnRadius": 13.0,
+        "baseRaiders": 0,
+        "raidersPerNight": 0,
+        "maxRaiders": 0,
+        "guardBehavior": "defend",
+        "guardHealth": 120.0,
+        "guardDamage": 18.0,
+        "guardRange": 1.6,
+        "guardAttackSeconds": 0.9,
+        "raiderHealth": 50.0,
+        "raiderDamage": 5.0,
+        "raiderRange": 1.35,
+        "raiderAttackSeconds": 1.5,
+        "raiderSpeed": 2.1
+      },
+      "missionPool": [
+        "south_harvest_help"
+      ]
+    },
+    {
+      "id": "river_camp",
+      "name": "河畔营地",
+      "regionId": "riverlands",
+      "services": ["trade", "missions"],
+      "startingReputation": 0,
+      "dialogueProfile": "river_camp",
+      "centerX": 216.0,
+      "centerY": 120.0,
+      "safeRadius": 4.5,
+      "npcPoints": [
+        {
+          "id": "river_trader",
+          "kind": "merchant",
+          "x": 217.0,
+          "y": 118.0,
+          "wanderRadius": 0.5
+        },
+        {
+          "id": "river_requester",
+          "kind": "requester",
+          "x": 215.0,
+          "y": 122.0,
+          "wanderRadius": 0.5
+        }
+      ],
+      "merchantStock": [2, 2, 1, 2, 1],
+      "restockDays": 1,
+      "defense": {
+        "enabled": false,
+        "minDay": 9999,
+        "nightStartHour": 22,
+        "nightEndHour": 5,
+        "activationRadius": 18.0,
+        "spawnRadius": 12.0,
+        "baseRaiders": 0,
+        "raidersPerNight": 0,
+        "maxRaiders": 0,
+        "guardBehavior": "retreat",
+        "guardHealth": 80.0,
+        "guardDamage": 12.0,
+        "guardRange": 1.4,
+        "guardAttackSeconds": 1.2,
+        "raiderHealth": 45.0,
+        "raiderDamage": 4.0,
+        "raiderRange": 1.3,
+        "raiderAttackSeconds": 1.6,
+        "raiderSpeed": 2.0
+      },
+      "missionPool": [
+        "river_fish_supply"
       ]
     }
   ]

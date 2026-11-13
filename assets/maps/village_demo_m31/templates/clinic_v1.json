@@ -1,0 +1,75 @@
+{
+ "format": "zomboidlike-poi-template-v1",
+ "id": "clinic_v1",
+ "name": "废弃诊所",
+ "w": 14,
+ "h": 10,
+ "anchor": {
+  "x": 7,
+  "y": 5
+ },
+ "floorLegend": {
+  "g": "tile.floor.grass",
+  "d": "tile.floor.dirt",
+  "w": "tile.floor.wood"
+ },
+ "floorRows": [
+  "gggggdddddgggg",
+  "gwwwwwwwwwwwwg",
+  "gwwwwwwwwwwwwg",
+  "gwwwwwwwwwwwwg",
+  "gwwwwwwwwwwwwg",
+  "gwwwwwwwwwwwwg",
+  "gwwwwwwwwwwwwg",
+  "gwwwwwwwwwwwwg",
+  "gwwwwwwwwwwwwg",
+  "gggggggggggggg"
+ ],
+ "objectLegend": {
+  "#": {
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  "D": {
+   "layer": "wall",
+   "sprite": "wall.door"
+  },
+  "B": {
+   "layer": "furniture",
+   "sprite": "object.bed"
+  },
+  "W": {
+   "layer": "furniture",
+   "sprite": "object.workbench"
+  },
+  "C": {
+   "layer": "furniture",
+   "sprite": "object.crate"
+  },
+  "R": {
+   "layer": "furniture",
+   "sprite": "object.barricade"
+  }
+ },
+ "objectRows": [
+  "..............",
+  ".######D#####.",
+  ".#..........#.",
+  ".#.B......B.#.",
+  ".#.B......B.#.",
+  ".#....W.....#.",
+  ".#...C......#.",
+  ".#..........#.",
+  ".############.",
+  ".............."
+ ],
+ "rooms": [
+  {
+   "x": 2,
+   "y": 2,
+   "w": 10,
+   "h": 6,
+   "name": "poi_clinic"
+  }
+ ]
+}

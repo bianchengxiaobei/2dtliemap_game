@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <unordered_set>
 #include <utility>
@@ -20,8 +22,10 @@
 #include "save/BinaryWriter.h"
 #include "save/ChunkDiffStore.h"
 #include "save/EntityStore.h"
+#include "save/RegionEntityBuckets.h"
 #include "save/SqliteMeta.h"
 #include "save/Thumbnail.h"
+#include "save/WorldManifest.h"
 #include "world/Chunk.h"
 
 namespace zl::save {
@@ -158,6 +162,136 @@ FileReadResult ReadFile(const std::filesystem::path& path,
         }
     }
     return FileReadResult::Ok;
+}
+
+bool ParseChunkFileName(std::string_view name, std::int32_t* chunkX,
+                        std::int32_t* chunkY) {
+    constexpr std::string_view kPrefix = "chunk_";
+    constexpr std::string_view kSuffix = ".bin";
+    if (!name.starts_with(kPrefix) || !name.ends_with(kSuffix)) {
+        return false;
+    }
+    const std::string_view body =
+        name.substr(kPrefix.size(), name.size() - kPrefix.size() - kSuffix.size());
+    const std::size_t separator = body.find('_');
+    if (separator == std::string_view::npos || separator == 0 ||
+        separator + 1 >= body.size()) {
+        return false;
+    }
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+    const auto xResult =
+        std::from_chars(body.data(), body.data() + separator, x);
+    const auto yResult =
+        std::from_chars(body.data() + separator + 1, body.data() + body.size(), y);
+    if (xResult.ec != std::errc{} || xResult.ptr != body.data() + separator ||
+        yResult.ec != std::errc{} || yResult.ptr != body.data() + body.size()) {
+        return false;
+    }
+    *chunkX = x;
+    *chunkY = y;
+    return true;
+}
+
+bool CollectChunkFiles(const std::filesystem::path& worldDir,
+                       std::vector<ManifestChunk>* out, std::string* error) {
+    out->clear();
+    std::error_code ec;
+    std::filesystem::directory_iterator it(worldDir, ec);
+    if (ec) {
+        if (ec == std::errc::no_such_file_or_directory) {
+            return true;
+        }
+        return Fail(error, "遍历 chunk 目录失败: " + ec.message());
+    }
+    for (const auto& entry : it) {
+        if (!entry.is_regular_file(ec) || ec) {
+            continue;
+        }
+        const std::string name = entry.path().filename().string();
+        std::int32_t chunkX = 0;
+        std::int32_t chunkY = 0;
+        if (!ParseChunkFileName(name, &chunkX, &chunkY)) {
+            continue;
+        }
+        out->push_back(ManifestChunk{chunkX, chunkY, true});
+    }
+    std::sort(out->begin(), out->end(),
+              [](const ManifestChunk& left, const ManifestChunk& right) {
+                  if (left.chunkX != right.chunkX) {
+                      return left.chunkX < right.chunkX;
+                  }
+                  return left.chunkY < right.chunkY;
+              });
+    return true;
+}
+
+bool RemoveManagedEntityFiles(const std::filesystem::path& worldDir,
+                              std::string* error) {
+    std::error_code ec;
+    std::filesystem::directory_iterator it(worldDir, ec);
+    if (ec) {
+        if (ec == std::errc::no_such_file_or_directory) {
+            return true;
+        }
+        return Fail(error, "遍历实体桶目录失败: " + ec.message());
+    }
+    for (const auto& entry : it) {
+        if (!entry.is_regular_file(ec) || ec) {
+            continue;
+        }
+        const std::string name = entry.path().filename().string();
+        if (name.starts_with("entities_") && name.ends_with(".bin")) {
+            std::filesystem::remove(entry.path(), ec);
+            if (ec) {
+                return Fail(error, "删除旧实体桶失败: " + ec.message());
+            }
+        }
+    }
+    return true;
+}
+
+bool WriteWorldManifestData(const std::filesystem::path& dir,
+                            const WorldManifest& manifest,
+                            const std::vector<EntityBucket>* buckets,
+                            std::string* error) {
+    if (buckets != nullptr) {
+        if (!RemoveManagedEntityFiles(dir / "world", error)) {
+            return false;
+        }
+    }
+
+    WorldManifest output = manifest;
+    if (buckets != nullptr) {
+        output.buckets.clear();
+        for (const EntityBucket& bucket : *buckets) {
+            if (!ValidateEntitySnapshot(bucket.entities, error)) {
+                return false;
+            }
+            const std::string file = EntityBucketFile(bucket.id);
+            const std::vector<std::uint8_t> bytes =
+                EncodeEntitySnapshot(bucket.entities, error);
+            if (bytes.empty() ||
+                !WriteFile(dir / "world" / file, bytes, error)) {
+                return false;
+            }
+            output.buckets.push_back(ManifestEntityBucket{
+                bucket.id, file,
+                static_cast<std::uint32_t>(bucket.entities.entities.size())});
+        }
+    }
+    if (!CollectChunkFiles(dir / "world", &output.chunks, error)) {
+        return false;
+    }
+    if (!ValidateWorldManifest(output, error)) {
+        return false;
+    }
+    const std::vector<std::uint8_t> bytes =
+        EncodeWorldManifest(output, error);
+    if (bytes.empty()) {
+        return false;
+    }
+    return WriteFile(dir / "world" / kWorldManifestFile, bytes, error);
 }
 
 std::vector<std::uint8_t> EncodeHeader(const SaveHeader& header,
@@ -304,6 +438,11 @@ std::filesystem::path SaveManager::ThumbnailPath(std::string_view id) const {
     return SavePath(id) / kSaveThumbnailFile;
 }
 
+std::filesystem::path SaveManager::WorldManifestPath(
+    std::string_view id) const {
+    return WorldDir(id) / kWorldManifestFile;
+}
+
 bool SaveManager::ExistsAt(const std::filesystem::path& dir,
                            std::string_view id) const {
     if (!ValidSaveId(id)) {
@@ -316,6 +455,71 @@ bool SaveManager::ExistsAt(const std::filesystem::path& dir,
 bool SaveManager::Exists(std::string_view id) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return ExistsAt(SavePath(id), id);
+}
+
+SaveManager::StorageStats SaveManager::MeasureStorage(
+    std::string_view id, std::string* error) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    StorageStats stats;
+    if (!ValidSaveId(id)) {
+        Fail(error, "存档 id 非法");
+        return stats;
+    }
+    const std::filesystem::path root = SavePath(id);
+    std::error_code ec;
+    if (!std::filesystem::is_directory(root, ec) || ec) {
+        Fail(error, "存档不存在: " + std::string(id));
+        return stats;
+    }
+
+    std::filesystem::recursive_directory_iterator it(
+        root, std::filesystem::directory_options::skip_permission_denied, ec);
+    const std::filesystem::recursive_directory_iterator end;
+    if (ec) {
+        Fail(error, "遍历存档目录失败: " + ec.message());
+        return stats;
+    }
+    for (; it != end; it.increment(ec)) {
+        if (ec) {
+            Fail(error, "遍历存档目录失败: " + ec.message());
+            return stats;
+        }
+        const bool regular = it->is_regular_file(ec);
+        if (ec) {
+            Fail(error, "读取存档文件类型失败: " + ec.message());
+            return stats;
+        }
+        if (!regular) {
+            continue;
+        }
+        const std::uint64_t bytes = it->file_size(ec);
+        if (ec) {
+            Fail(error, "读取存档文件大小失败: " + ec.message());
+            return stats;
+        }
+        const std::string name = it->path().filename().string();
+        ++stats.files;
+        stats.totalBytes += bytes;
+        const bool chunk = name.starts_with("chunk_") && name.ends_with(".bin");
+        const bool bucket = name.starts_with("entities_") &&
+                            name.ends_with(".bin");
+        if (chunk) {
+            ++stats.chunkFiles;
+            stats.chunkBytes += bytes;
+        } else if (bucket) {
+            ++stats.bucketFiles;
+            stats.bucketBytes += bytes;
+        } else if (name == kWorldManifestFile) {
+            stats.manifestBytes += bytes;
+        } else if (name == kSaveEntitiesFile) {
+            stats.entityBytes += bytes;
+        }
+    }
+    stats.valid = true;
+    if (error != nullptr) {
+        error->clear();
+    }
+    return stats;
 }
 
 bool SaveManager::CommitGeneration(std::string_view id, bool copyExisting,
@@ -452,8 +656,9 @@ bool SaveManager::WriteChunks(const std::filesystem::path& dir,
 bool SaveManager::WriteGeneration(
     const std::filesystem::path& dir, const SaveHeader& header,
     const SaveMetadata& metadata, const std::vector<std::uint8_t>& entityBytes,
-    const ThumbnailImage* thumbnail, const std::vector<ChunkDiff>* chunks,
-    std::string* error) const {
+    const ThumbnailImage* thumbnail, const WorldManifest* manifest,
+    const std::vector<EntityBucket>* buckets,
+    const std::vector<ChunkDiff>* chunks, std::string* error) const {
     std::error_code ec;
     std::filesystem::create_directories(dir / "world", ec);
     if (ec) {
@@ -472,6 +677,20 @@ bool SaveManager::WriteGeneration(
     }
     if (chunks != nullptr && !WriteChunks(dir, *chunks, error)) {
         return false;
+    }
+    if (manifest != nullptr) {
+        if (!WriteWorldManifestData(dir, *manifest, buckets, error)) {
+            return false;
+        }
+    } else {
+        std::error_code removeEc;
+        std::filesystem::remove(dir / "world" / kWorldManifestFile, removeEc);
+        if (removeEc) {
+            return Fail(error, "删除旧 world manifest 失败: " + removeEc.message());
+        }
+        if (!RemoveManagedEntityFiles(dir / "world", error)) {
+            return false;
+        }
     }
 
     SqliteMeta database;
@@ -519,6 +738,17 @@ bool SaveManager::Create(const CreateOptions& options, std::string* outId,
     if (!std::isfinite(options.gameMinutes) || options.gameMinutes < 0.0) {
         return Fail(error, "存档游戏时间非法");
     }
+    if (options.manifest != nullptr) {
+        if (!ValidateWorldManifest(*options.manifest, error)) {
+            return false;
+        }
+        if (options.manifest->identity.mapId != options.mapId) {
+            return Fail(error, "world manifest mapId 与存档 mapId 不一致");
+        }
+    }
+    if (options.buckets != nullptr && options.manifest == nullptr) {
+        return Fail(error, "实体区域桶缺少 world manifest");
+    }
 
     EntitySnapshot emptyEntities;
     const EntitySnapshot& sourceEntities =
@@ -557,8 +787,10 @@ bool SaveManager::Create(const CreateOptions& options, std::string* outId,
     if (!CommitGeneration(
             id, false,
             [&](const std::filesystem::path& dir, std::string* writeError) {
-                return WriteGeneration(dir, header, metadata, entityBytes, thumbnail,
-                                       &options.chunks, writeError);
+                return WriteGeneration(
+                    dir, header, metadata, entityBytes, thumbnail,
+                    options.manifest, options.buckets, &options.chunks,
+                    writeError);
             },
             error)) {
         return false;
@@ -601,6 +833,17 @@ bool SaveManager::Save(std::string_view id, const SaveOptions& options,
         }
         metadata.gameMinutes = *options.gameMinutes;
     }
+    if (options.manifest != nullptr) {
+        if (!ValidateWorldManifest(*options.manifest, error)) {
+            return false;
+        }
+        if (options.manifest->identity.mapId != metadata.mapId) {
+            return Fail(error, "world manifest mapId 与存档 mapId 不一致");
+        }
+    }
+    if (options.buckets != nullptr && options.manifest == nullptr) {
+        return Fail(error, "实体区域桶缺少 world manifest");
+    }
     const std::vector<std::uint8_t> entityBytes =
         EncodeEntitySnapshot(*options.entities, error);
     if (entityBytes.empty()) {
@@ -622,7 +865,8 @@ bool SaveManager::Save(std::string_view id, const SaveOptions& options,
         id, true,
         [&](const std::filesystem::path& dir, std::string* writeError) {
             return WriteGeneration(dir, header, metadata, entityBytes,
-                                   options.thumbnail, options.chunks, writeError);
+                                   options.thumbnail, options.manifest,
+                                   options.buckets, options.chunks, writeError);
         },
         error);
 }
@@ -707,6 +951,37 @@ SaveManager::LoadResult SaveManager::ReadHeaderAt(
     return ReadHeaderFile(bytes, header, error);
 }
 
+SaveManager::LoadResult SaveManager::ReadWorldManifestAt(
+    const std::filesystem::path& dir, WorldManifest* manifest,
+    std::string* error) const {
+    if (manifest == nullptr) {
+        Fail(error, "world manifest 输出为空");
+        return LoadResult::Corrupt;
+    }
+    std::vector<std::uint8_t> bytes;
+    const FileReadResult read =
+        ReadFile(dir / "world" / kWorldManifestFile, &bytes, error);
+    if (read == FileReadResult::Missing) {
+        if (error != nullptr) {
+            error->clear();
+        }
+        return LoadResult::NotFound;
+    }
+    if (read == FileReadResult::Error) {
+        return LoadResult::Corrupt;
+    }
+
+    WorldManifest loaded;
+    std::string decodeError;
+    if (!DecodeWorldManifest(bytes, &loaded, &decodeError)) {
+        Fail(error, decodeError);
+        return IsVersionError(decodeError) ? LoadResult::Incompatible
+                                           : LoadResult::Corrupt;
+    }
+    *manifest = std::move(loaded);
+    return LoadResult::Ok;
+}
+
 SaveManager::LoadResult SaveManager::ReadMetadata(
     std::string_view id, SaveMetadata* metadata, std::string* error) const {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -717,6 +992,49 @@ SaveManager::LoadResult SaveManager::ReadHeader(
     std::string_view id, SaveHeader* header, std::string* error) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return ReadHeaderAt(SavePath(id), id, header, error);
+}
+
+SaveManager::LoadResult SaveManager::ReadWorldManifest(
+    std::string_view id, WorldManifest* manifest, std::string* error,
+    LoadReport* report) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!ValidSaveId(id)) {
+        Fail(error, "存档 id 非法");
+        return LoadResult::NotFound;
+    }
+
+    const LoadResult primary =
+        ReadWorldManifestAt(SavePath(id), manifest, error);
+    if (primary != LoadResult::Corrupt) {
+        return primary;
+    }
+
+    const std::filesystem::path backup = BackupPath(id);
+    std::error_code ec;
+    if (!std::filesystem::is_directory(backup, ec) || ec) {
+        return primary;
+    }
+
+    const std::string primaryError =
+        error != nullptr ? *error : std::string("主存档 manifest 不可读");
+    WorldManifest backupManifest;
+    std::string backupError;
+    const LoadResult backupResult =
+        ReadWorldManifestAt(backup, &backupManifest, &backupError);
+    if (backupResult != LoadResult::Ok) {
+        Fail(error, primaryError + "；备份 manifest 恢复失败: " + backupError);
+        return primary;
+    }
+
+    *manifest = std::move(backupManifest);
+    if (report != nullptr) {
+        report->usedBackup = true;
+        report->warning = "主存档 manifest 损坏，已回退备份：" + primaryError;
+    }
+    if (error != nullptr) {
+        error->clear();
+    }
+    return LoadResult::Ok;
 }
 
 bool SaveManager::List(std::vector<SaveMetadata>* out, std::string* error) const {
@@ -820,7 +1138,7 @@ bool SaveManager::List(std::vector<SaveMetadata>* out, std::string* error) const
 SaveManager::LoadResult SaveManager::LoadAt(
     const std::filesystem::path& dir, std::string_view id,
     const ComponentRegistry& registry, EntitySnapshot* entities,
-    SaveMetadata* metadata, std::string* error) const {
+    SaveMetadata* metadata, std::string* error, LoadReport* report) const {
     (void)registry;
     SaveMetadata loadedMetadata;
     const LoadResult metaResult =
@@ -862,6 +1180,70 @@ SaveManager::LoadResult SaveManager::LoadAt(
                                            : LoadResult::Corrupt;
     }
 
+    WorldManifest manifest;
+    const LoadResult manifestResult =
+        ReadWorldManifestAt(dir, &manifest, error);
+    if (manifestResult == LoadResult::Incompatible) {
+        return manifestResult;
+    }
+    if (manifestResult == LoadResult::Corrupt) {
+        return manifestResult;
+    }
+
+    if (manifestResult == LoadResult::Ok) {
+        if (manifest.identity.mapId != loadedMetadata.mapId) {
+            Fail(error, "world manifest mapId 与存档元数据不一致");
+            return LoadResult::Corrupt;
+        }
+        std::unordered_set<std::uint64_t> ids;
+        for (const SavedEntity& entity : loadedEntities.entities) {
+            ids.insert(entity.stableId);
+        }
+        for (const ManifestEntityBucket& bucket : manifest.buckets) {
+            if (!IsSafeEntityBucketFile(bucket.file)) {
+                Fail(error, "实体桶文件路径非法");
+                return LoadResult::Corrupt;
+            }
+            std::vector<std::uint8_t> bucketBytes;
+            const FileReadResult bucketRead =
+                ReadFile(dir / "world" / bucket.file, &bucketBytes, error);
+            if (bucketRead == FileReadResult::Missing) {
+                Fail(error, "实体桶不存在: " + bucket.file);
+                return LoadResult::Corrupt;
+            }
+            if (bucketRead == FileReadResult::Error) {
+                return LoadResult::Corrupt;
+            }
+            EntitySnapshot bucketEntities;
+            std::string bucketError;
+            if (!DecodeEntitySnapshot(bucketBytes, &bucketEntities,
+                                      &bucketError)) {
+                Fail(error, "实体桶读取失败: " + bucketError);
+                return IsVersionError(bucketError) ? LoadResult::Incompatible
+                                                   : LoadResult::Corrupt;
+            }
+            if (bucketEntities.entities.size() != bucket.entityCount) {
+                Fail(error, "实体桶数量与 manifest 不一致: " + bucket.file);
+                return LoadResult::Corrupt;
+            }
+            for (SavedEntity& entity : bucketEntities.entities) {
+                if (!ids.insert(entity.stableId).second) {
+                    Fail(error, "实体桶包含重复 StableId");
+                    return LoadResult::Corrupt;
+                }
+                loadedEntities.entities.push_back(std::move(entity));
+            }
+        }
+        std::sort(loadedEntities.entities.begin(), loadedEntities.entities.end(),
+                  [](const SavedEntity& left, const SavedEntity& right) {
+                      return left.stableId < right.stableId;
+                  });
+        if (report != nullptr) {
+            report->usedWorldManifest = true;
+            report->entityBuckets = manifest.buckets.size();
+        }
+    }
+
     *entities = std::move(loadedEntities);
     if (metadata != nullptr) {
         *metadata = std::move(loadedMetadata);
@@ -885,7 +1267,7 @@ SaveManager::LoadResult SaveManager::Load(
 
     const std::filesystem::path primary = SavePath(id);
     const LoadResult primaryResult =
-        LoadAt(primary, id, registry, entities, metadata, error);
+        LoadAt(primary, id, registry, entities, metadata, error, report);
     if (primaryResult == LoadResult::Ok) {
         return LoadResult::Ok;
     }
@@ -904,9 +1286,11 @@ SaveManager::LoadResult SaveManager::Load(
         error != nullptr ? *error : std::string("主存档不可读");
     EntitySnapshot backupEntities;
     SaveMetadata backupMetadata;
+    LoadReport backupReport;
     std::string backupError;
     const LoadResult backupResult = LoadAt(
-        backup, id, registry, &backupEntities, &backupMetadata, &backupError);
+        backup, id, registry, &backupEntities, &backupMetadata, &backupError,
+        &backupReport);
     if (backupResult != LoadResult::Ok) {
         Fail(error, primaryError + "；备份恢复失败: " + backupError +
                        "；建议删除该存档或使用备份目录");
@@ -920,6 +1304,8 @@ SaveManager::LoadResult SaveManager::Load(
     }
     if (report != nullptr) {
         report->usedBackup = true;
+        report->usedWorldManifest = backupReport.usedWorldManifest;
+        report->entityBuckets = backupReport.entityBuckets;
         report->warning = "主存档损坏，已回退备份：" + primaryError;
     }
     if (error != nullptr) {
@@ -984,6 +1370,19 @@ bool SaveManager::SaveChunk(std::string_view id, const world::Chunk& chunk,
     }
     ChunkDiffStore store(SavePath(id));
     return store.SaveChunk(chunk, error);
+}
+
+bool SaveManager::SaveChunkDiff(std::string_view id, const ChunkDiff& diff,
+                                std::string* error) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!ValidSaveId(id)) {
+        return Fail(error, "存档 id 非法");
+    }
+    if (!ExistsAt(SavePath(id), id)) {
+        return Fail(error, "存档不存在: " + std::string(id));
+    }
+    ChunkDiffStore store(SavePath(id));
+    return store.Save(diff, error);
 }
 
 SaveManager::LoadResult SaveManager::LoadChunkAt(

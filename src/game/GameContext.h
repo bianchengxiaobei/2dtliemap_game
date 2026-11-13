@@ -74,6 +74,7 @@ class SpriteBatch;
 namespace zl::world {
 class ChunkManager;
 class World;
+class WorldGraph;
 }  // namespace zl::world
 
 namespace zl::audio {
@@ -98,6 +99,7 @@ class WorldSimulation;
 struct MissionConfig;
 struct PoiConfig;
 struct SettlementConfig;
+struct WorldEventConfig;
 
 struct MultiplayerRequest {
     std::string host;
@@ -159,6 +161,8 @@ struct GameContext {    core::Config* config = nullptr;
     // 世界与流式加载（M3 起）
     world::World* world = nullptr;
     world::ChunkManager* chunkManager = nullptr;
+    // M31-T5: road/region/density graph; null for legacy maps.
+    world::WorldGraph* worldGraph = nullptr;
 
     // ECS（M4 起）
     ecs::EcsWorld* ecs = nullptr;
@@ -202,6 +206,7 @@ struct GameContext {    core::Config* config = nullptr;
     PoiConfig* poiConfig = nullptr;
     MissionConfig* missionConfig = nullptr;
     SettlementConfig* settlements = nullptr;
+    WorldEventConfig* worldEvents = nullptr;
     std::string missionSourceJson;
 
     std::vector<BuildableDef> modBuildables;

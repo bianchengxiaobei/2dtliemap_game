@@ -13,6 +13,7 @@
 #include "game/ModContent.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/WorldEvent.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
 #include "items/RecipeRegistry.h"
@@ -49,7 +50,8 @@ void MakeMod(const std::filesystem::path& root, const std::string& id,
              const std::string& loot = {}, const std::string& pois = {},
              const std::string& missions = {},
              const std::string& forage = {},
-             const std::string& settlements = {}) {
+             const std::string& settlements = {},
+             const std::string& worldEvents = {}) {
     const std::filesystem::path dir = root / id;
     WriteText(dir / "mod.json",
               "{\"id\":\"" + id + "\",\"loadOrder\":" +
@@ -77,6 +79,9 @@ void MakeMod(const std::filesystem::path& root, const std::string& id,
     }
     if (!settlements.empty()) {
         WriteText(dir / "content" / "settlements.json", settlements);
+    }
+    if (!worldEvents.empty()) {
+        WriteText(dir / "content" / "world_events.json", worldEvents);
     }
 }
 
@@ -447,7 +452,7 @@ TEST_CASE("X-F2：示例 mod 内容文件可被合并") {
     REQUIRE(gameConfig.LoadFile(root / "config" / "game.json"));
     game::MissionConfig baseMissions;
     REQUIRE(game::LoadMissionConfig(gameConfig, &baseMissions, &error));
-    REQUIRE(baseMissions.defs.size() == 31u);
+    REQUIRE(baseMissions.defs.size() == 35u);
     game::MissionMergeStats missionStats;
     REQUIRE(game::MergeMissionFiles(result.missionFiles, gameConfig,
                                     &baseMissions, &missionStats, &error));
@@ -457,7 +462,7 @@ TEST_CASE("X-F2：示例 mod 内容文件可被合并") {
     REQUIRE(baseMissions.Find("mod_depot_supply") != nullptr);
     CHECK(baseMissions.Find("mod_depot_supply")->objectives.front().target ==
           "mod_depot");
-    CHECK(baseMissions.defs.size() == 32u);
+    CHECK(baseMissions.defs.size() == 36u);
     std::vector<game::BuildableDef> defs = game::LoadBuildableDefs(gameConfig);
     CHECK(defs.size() == 15);
     CHECK(game::AppendBuildableDefs(defs, result.buildables) >= 1);
@@ -553,6 +558,43 @@ TEST_CASE("M23-F4-T1 mod settlements.json 进入内容结果并可追加") {
                                       &settlements, nullptr, &error));
     CHECK(settlements.Find("mod_haven") != nullptr);
     CHECK(settlements.defs[0].restockDays == 2);
+}
+
+TEST_CASE("M33-F2-T1 mod world_events.json enters content result") {
+    TempRoot root("world_events");
+    const std::filesystem::path baseItems = root.path / "base_items.json";
+    const std::filesystem::path baseRecipes = root.path / "base_recipes.json";
+    WriteText(baseItems, kBaseItems);
+    WriteText(baseRecipes, kBaseRecipes);
+    MakeMod(root.path / "mods", "world_event_mod", 20, "", "", "", "", "", "",
+            "", "", R"({
+      "format": "world-events-v1",
+      "defs": [{
+        "id": "mod_event",
+        "name": "妯＄粍浜嬩欢",
+        "stages": [{ "kind": "reach", "radius": 5 }],
+        "choices": [{ "id": "leave", "label": "绂诲紑" }]
+      }]
+    })");
+
+    core::Config config;
+    config.Set("items.file", baseItems.generic_string());
+    config.Set("recipes.file", baseRecipes.generic_string());
+    config.Set("script.modsDir", (root.path / "mods").generic_string());
+    items::ItemRegistry items;
+    items::RecipeRegistry recipes;
+    REQUIRE(items.LoadFile(baseItems));
+    REQUIRE(recipes.LoadFile(baseRecipes, items));
+    const game::ModContentResult result =
+        game::LoadModContent(config, items, recipes);
+    REQUIRE(result.worldEventFiles.size() == 1u);
+
+    game::WorldEventConfig events;
+    events.enabled = true;
+    std::string error;
+    REQUIRE(game::MergeWorldEventFile(result.worldEventFiles.front(), &events,
+                                      nullptr, &error, &items));
+    CHECK(events.Find("mod_event") != nullptr);
 }
 
 TEST_CASE("X3-T1：ModContentResult 暴露所有有效 mod 根目录供监听") {

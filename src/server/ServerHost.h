@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <atomic>
 #include <cstddef>
@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#include <glm/glm.hpp>
 
 #include "net/SocialProtocol.h"
 #include "ecs/EcsWorld.h"
@@ -25,7 +27,9 @@
 #include "game/ProgressionRules.h"
 #include "game/Settlement.h"
 #include "game/Sleeping.h"
+#include "game/StrategicState.h"
 #include "game/VehicleSpike.h"
+#include "game/WorldEvent.h"
 #include "items/LootTable.h"
 #include "items/RangedWeapon.h"
 #include "net/PlayerState.h"
@@ -54,6 +58,9 @@ class RecipeRegistry;
 
 namespace zl::net {
 struct Command;
+struct StrategicRequest;
+struct StrategicSnapshot;
+struct WorldEventSnapshot;
 class KcpSessionServer;
 class ReplicationRegistry;
 }  // namespace zl::net
@@ -89,6 +96,10 @@ public:
         std::string configPath = "config/game.json";
         int argc = 0;
         const char* const* argv = nullptr;
+        // Embedded/launcher overrides. Empty keeps the automatic selection.
+        std::string mapDir;
+        std::string contentFile;
+        std::string saveRoot;
         std::string loadSaveId;
         bool spawnDemoPopulation = true;
         bool spawnLocalPlayer = true;
@@ -135,6 +146,7 @@ public:
         std::uint64_t snapshotFailures = 0;
         std::uint64_t structureDiffsSent = 0;
         std::uint64_t structureDiffFailures = 0;
+        std::uint64_t structureChunksFiltered = 0;
         std::uint64_t playerStatesSent = 0;
         std::uint64_t playerStateFailures = 0;
         std::uint64_t socialStatesSent = 0;
@@ -142,6 +154,15 @@ public:
         std::uint64_t chatMessagesRejected = 0;
         std::uint64_t gunshots = 0;
         std::uint64_t worldSoundsSent = 0;
+        std::uint64_t strategicSnapshotsSent = 0;
+        std::uint64_t strategicSnapshotFailures = 0;
+        std::uint64_t strategicRequestsReceived = 0;
+        std::uint64_t strategicRequestsRejected = 0;
+        std::uint64_t strategicRequestsRateLimited = 0;
+        std::uint64_t worldEventSnapshotsSent = 0;
+        std::uint64_t worldEventSnapshotFailures = 0;
+        std::uint64_t worldEventChoicesReceived = 0;
+        std::uint64_t worldEventChoicesRejected = 0;
         std::uint64_t projectilesFired = 0;
         std::uint64_t projectilesHit = 0;
         std::uint64_t effectsSpawned = 0;
@@ -263,6 +284,10 @@ private:
         bool survivalScanned = false;
         bool assignmentSent = false;
         bool needsFullSnapshot = true;
+        bool needsStrategicSnapshot = true;
+        bool needsWorldEventSnapshot = true;
+        std::uint32_t lastStrategicRequestSequence = 0;
+        std::uint32_t strategicRequestsThisTick = 0;
         std::uint64_t lastStructureSyncTick = 0;
         std::uint64_t lastBuildTick = 0;
         bool buildUsed = false;
@@ -373,11 +398,47 @@ private:
     SessionPlayer* FindSessionByPlayerStableId(std::uint64_t stableId);
     // X-F1 2b-2b：服务器权威世界落盘（结构 diff + 实体/仓库存物；不含玩家实体）。
     bool SaveWorld(const char* reason);
+    // M31-T8：每会话兴趣窗口并集；无会话时退回默认出生点。
+    std::vector<glm::vec2> CollectInterestFocuses() const;
+    bool ProfilePosition(const PlayerProfile& profile, glm::vec2* out) const;
+    void StreamServerInterest();
     void RestoreServerForageState();
     void StoreServerForageState();
     void StoreServerSettlementState();
     void FillPlayerState(const SessionPlayer& session, net::PlayerState* state);
     void BroadcastSnapshots();
+    // M32-T7：服务器权威战略快照；旧客户端忽略未知 magic。
+    void BroadcastStrategicSnapshots();
+    bool BuildStrategicSnapshot(net::StrategicSnapshot* snapshot,
+                                std::string* error) const;
+    bool HandleStrategicRequest(std::uint64_t sessionId,
+                                SessionPlayer& session,
+                                const net::StrategicRequest& request,
+                                std::string* error);
+    // M33-F2-T5: authoritative interactive world events.
+    void BroadcastWorldEventSnapshots();
+    bool BuildWorldEventSnapshot(net::WorldEventSnapshot* snapshot,
+                                 std::string* error) const;
+    void TrackServerWorldEventParticipants();
+    void SettleTerminalServerWorldEvents();
+    bool ChooseServerWorldEvent(SessionPlayer& session,
+                                const net::Command& command,
+                                std::string* error);
+    void SettleServerWorldEventParticipants(std::string_view eventId);
+    void AddStrategicContribution(std::uint64_t stableId,
+                                  std::string_view regionId, int points);
+    void UpdateStrategicContributionRewards();
+    void RewardStrategicContributors(const game::StrategicRegionState& region);
+    void RewardSiegeContributors(
+        std::string_view regionId,
+        const std::unordered_map<std::uint64_t, int>& contribution,
+        int rewardPool);
+    void RecordSiegeDefenseDamage(std::uint64_t playerStableId,
+                                  ecs::Entity target, float damage);
+    void ResetSiegeDefenseLedger();
+    void CheckSiegeGuardKills();
+    void DrainFireDamageCredits();
+    void ProcessRegionalSiegeResult();
     // X-F1 阶段 1：把服务器已加载 chunk 中玩家修改过的格按单格 ZLCD 下发。
     void BroadcastStructureDiffs();
     // X-F1 阶段 2：服务器权威建造命令与增量结构同步。
@@ -460,6 +521,8 @@ private:
     void DriveServerSiegeZombies();
     void BroadcastServerNotice(const std::string& text,
                                const std::string& tone);
+    void PublishSiegeReport(const std::string& text);
+    void PushServerChat(const std::string& sender, std::string text);
     std::string GrantServerBaseSiegeRewards(
         const game::BaseSiegeResult& result);
     void TickTrapTriggers();
@@ -539,7 +602,8 @@ private:
     void TickServerMissions();
     void EnsureServerRandomEventContent(int day);
     void ActivateServerMission(SessionPlayer& session,
-                               const game::MissionDef& def, int day);
+                               const game::MissionDef& def, int day,
+                               std::string_view settlementId = {});
     void UpdateServerMissionAvailability(SessionPlayer& session, int day);
     void CompleteServerMission(SessionPlayer& session,
                                ecs::MissionRunState& state,
@@ -560,6 +624,8 @@ private:
     void LogStatus();
 
     Options m_options;
+    std::string m_selectedMapDir;
+    std::string m_selectedContentFile;
     std::unique_ptr<core::Config> m_config;
     std::unique_ptr<core::EventBus> m_events;
     std::unique_ptr<core::GameTime> m_gameTime;
@@ -574,6 +640,8 @@ private:
     std::unique_ptr<game::PoiConfig> m_poiConfig;
     std::unique_ptr<game::MissionConfig> m_missionConfig;
     std::unique_ptr<game::SettlementConfig> m_settlements;
+    std::unique_ptr<game::WorldEventConfig> m_worldEvents;
+    std::unique_ptr<game::StrategicConfig> m_strategic;
     std::unique_ptr<save::ComponentRegistry> m_saveComponents;
     std::unique_ptr<save::SaveManager> m_saveManager;
     std::unique_ptr<save::SaveService> m_saveService;
@@ -585,6 +653,26 @@ private:
     std::unique_ptr<net::KcpSessionServer> m_network;
     std::unique_ptr<net::ReplicationRegistry> m_replicationRegistry;
     std::unordered_map<std::uint64_t, SessionPlayer> m_sessions;
+    std::unordered_map<std::uint64_t,
+                       std::unordered_map<std::string, int>>
+        m_strategicContributions;
+    std::unordered_map<std::string, game::StrategicOwner>
+        m_lastStrategicOwners;
+    std::string m_lastSiegeResultKey;
+    std::string m_siegeDefenseRegion;
+    std::unordered_map<std::uint64_t, float> m_siegeDefenseDamage;
+    std::unordered_map<std::uint64_t,
+                       std::unordered_map<std::uint64_t, float>>
+        m_siegeTargetDamage;
+    std::unordered_set<std::uint64_t> m_siegeGuardKills;
+    std::uint32_t m_strategicSequence = 0;
+    bool m_strategicDirty = true;
+    std::uint32_t m_worldEventSequence = 0;
+    bool m_worldEventDirty = true;
+    float m_worldEventDetailRadius = 32.0f;
+    std::unordered_map<std::string, std::unordered_set<std::uint64_t>>
+        m_worldEventParticipants;
+    std::unordered_set<std::string> m_worldEventTerminalHandled;
     bool m_networkEnabled = false;
 
     std::string m_activeSaveId;
@@ -624,6 +712,7 @@ private:
     std::uint32_t m_stateSendIntervalTicks = 6;
     std::uint32_t m_socialStateIntervalTicks = 30;
     std::uint32_t m_structureSyncIntervalTicks = 180;
+    float m_structureInterestRadius = 48.0f;
     std::uint64_t m_chatCooldownTicks = 60;
     std::uint32_t m_socialSequence = 0;
     std::uint64_t m_lastSocialTick = 0;

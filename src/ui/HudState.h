@@ -103,6 +103,30 @@ struct HudState {
     std::string missionTone = "info";
     std::string eventGuide;
     std::string eventTone = "warn";
+    // M33-F2-T4: single-player interactive world event panel and radio log.
+    bool worldEventVisible = false;
+    bool worldEventCanChoose = false;
+    bool worldEventChoiceOpen = false;
+    std::string worldEventName;
+    std::string worldEventMeta;
+    std::string worldEventStage;
+    std::string worldEventHint;
+    std::string worldEventTone = "info";
+    std::string worldEventResult;
+    std::string worldEventResultTone = "ok";
+    std::array<std::string, 8> worldEventOptions{};
+    int worldEventOptionCount = 0;
+    std::array<std::string, 6> worldEventLog{};
+    int worldEventLogCount = 0;
+    // M31-T7: current region and nearby road-sign hint.
+    std::string regionGuide;
+    std::string regionTone = "info";
+    // M33-F1-T3: current settlement identity, reputation, services and defense.
+    std::string settlementGuide;
+    std::string settlementTone = "info";
+    // M32-T3: strategic warning/active siege summary for the HUD.
+    std::string strategicGuide;
+    std::string strategicTone = "info";
     std::string siegeStatus;
     std::string siegeTone = "info";
     // M21-F1c：独立战报面板。行文本来自服务器/单机结束提示，客户端只读展示；
@@ -232,6 +256,46 @@ inline int BuildSiegeReportLines(const std::string& status, std::string* rating,
                 (*lines)[static_cast<std::size_t>(count)] = std::move(segment);
                 ++count;
             }
+        }
+        if (separator == std::string::npos) {
+            break;
+        }
+        start = separator + 3;
+    }
+    return count;
+}
+
+// 把 M32-T19 的“守城战报 · 区域 · 守住 · 玩家 贡献+N 经验+N”拆成
+// 面板行；最多 8 行，不解析评级。
+inline int BuildDefenseReportLines(const std::string& status,
+                                   std::array<std::string, 8>* lines) {
+    if (lines != nullptr) {
+        lines->fill({});
+    }
+    if (status.empty()) {
+        return 0;
+    }
+    std::string text = TrimHudText(status);
+    constexpr std::string_view kPrefix = "守城战报";
+    if (text.rfind(kPrefix, 0) == 0) {
+        text.erase(0, kPrefix.size());
+        if (text.rfind(" · ", 0) == 0) {
+            text.erase(0, 3);
+        }
+    }
+    int count = 0;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t separator = text.find(" · ", start);
+        const std::size_t length =
+            separator == std::string::npos ? std::string::npos
+                                          : separator - start;
+        std::string segment =
+            TrimHudText(std::string_view(text).substr(start, length));
+        if (!segment.empty() && lines != nullptr &&
+            count < static_cast<int>(lines->size())) {
+            (*lines)[static_cast<std::size_t>(count)] = std::move(segment);
+            ++count;
         }
         if (separator == std::string::npos) {
             break;

@@ -163,6 +163,7 @@ inline float ZombieVariantStaggerScale(
 // remaining 是剩余燃烧时间；damageAccumulator/spreadAccumulator 分别驱动
 // 持续伤害与脚下火源传播；panicRemaining 内 AI 会追向最近玩家并加速。
 struct BurningZombie {
+    std::uint64_t ownerStableId = 0;
     float remaining = 0.0f;
     float damageAccumulator = 0.0f;
     float spreadAccumulator = 0.0f;

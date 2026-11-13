@@ -10,10 +10,12 @@
 
 #include "ai/Passability.h"
 #include "ai/components/AiComponents.h"
+#include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
 #include "characters/systems/AnimationSystem.h"
 #include "core/Log.h"
 #include "ecs/components/CommonComponents.h"
+#include "game/Homestead.h"
 
 namespace zl::game {
 namespace {
@@ -217,6 +219,187 @@ SettlementNpcSystem::SettlementNpcSystem(const SettlementConfig* settlements,
                                          WalkableQuery walkable)
     : m_settlements(settlements), m_walkable(std::move(walkable)) {}
 
+SettlementNpcSystem::PopulationStats SettlementNpcSystem::EnsurePopulation(
+    ecs::EcsWorld& world, bool spawnMerchants,
+    const WalkableQuery& walkable) {
+    PopulationStats stats;
+    if (m_settlements == nullptr || !m_settlements->enabled ||
+        m_settlements->defs.empty()) {
+        return stats;
+    }
+    WalkableQuery canWalk = walkable ? walkable : m_walkable;
+    if (!canWalk) {
+        canWalk = [](int, int) { return true; };
+    }
+    entt::registry& registry = world.Registry();
+    struct Counts {
+        int merchants = 0;
+        int guards = 0;
+        int requesters = 0;
+    };
+    std::unordered_map<std::string, Counts> counts;
+    registry.view<SettlementNpc>().each(
+        [&](const ecs::Entity entity, const SettlementNpc& npc) {
+            if (!world.Alive(entity)) {
+                return;
+            }
+            Counts& count = counts[npc.settlementId];
+            if (npc.kind == SettlementNpcKind::Merchant) {
+                ++count.merchants;
+            } else if (npc.kind == SettlementNpcKind::Guard) {
+                ++count.guards;
+            } else if (npc.kind == SettlementNpcKind::Requester) {
+                ++count.requesters;
+            }
+        });
+
+    std::vector<std::pair<ecs::Entity, ecs::Position>> legacyMerchants;
+    registry.view<ecs::MerchantStock, ecs::Position>().each(
+        [&](const ecs::Entity entity, const ecs::MerchantStock&,
+            const ecs::Position& position) {
+            if (!world.Alive(entity) ||
+                registry.all_of<SettlementNpc>(entity)) {
+                return;
+            }
+            legacyMerchants.emplace_back(entity, position);
+        });
+    for (const auto& [entity, position] : legacyMerchants) {
+        const SettlementDef* nearest = nullptr;
+        float nearestDistance = std::numeric_limits<float>::max();
+        for (const SettlementDef& def : m_settlements->defs) {
+            if (IsFallen(def.id) || counts[def.id].merchants > 0) {
+                continue;
+            }
+            const float dx = position.x - def.centerX;
+            const float dy = position.y - def.centerY;
+            const float distance = dx * dx + dy * dy;
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearest = &def;
+            }
+        }
+        if (nearest == nullptr) {
+            continue;
+        }
+        const SettlementNpcPoint* point =
+            FindSettlementNpc(*nearest, SettlementNpcKind::Merchant);
+        ConfigureSettlementNpc(
+            world, entity, nearest->id, SettlementNpcKind::Merchant,
+            position.x, position.y,
+            point != nullptr ? point->wanderRadius : 1.5f);
+        ++counts[nearest->id].merchants;
+    }
+
+    const auto spawnAt = [&](const SettlementDef& def, SettlementNpcKind kind,
+                             float x, float y, float wanderRadius) {
+        int wx = static_cast<int>(std::floor(x));
+        int wy = static_cast<int>(std::floor(y));
+        if (!ai::FindNearestWalkable(wx, wy, 6, canWalk, &wx, &wy)) {
+            return ecs::EcsWorld::kNull;
+        }
+        const float spawnX = static_cast<float>(wx) + 0.5f;
+        const float spawnY = static_cast<float>(wy) + 0.5f;
+        if (!IsInsideSettlement(def, spawnX, spawnY)) {
+            return ecs::EcsWorld::kNull;
+        }
+        if (kind == SettlementNpcKind::Merchant) {
+            const ecs::Entity merchant =
+                SpawnMerchant(world, spawnX, spawnY, 0);
+            if (merchant == ecs::EcsWorld::kNull) {
+                return ecs::EcsWorld::kNull;
+            }
+            ConfigureSettlementNpc(world, merchant, def.id, kind, spawnX,
+                                   spawnY, wanderRadius);
+            if (auto* stock =
+                    registry.try_get<ecs::MerchantStock>(merchant);
+                stock != nullptr) {
+                stock->stock = def.merchantStock;
+                stock->restockDay = 0;
+            }
+            ZL_INFO("settlement", "聚落商人已就位：{}（{}，格 {},{}）",
+                    def.name, def.id, wx, wy);
+            return merchant;
+        }
+        const ecs::Entity npc = SpawnSettlementNpc(
+            world, def.id, kind, spawnX, spawnY, wanderRadius,
+            kind == SettlementNpcKind::Guard ? def.defense.guardHealth
+                                             : 0.0f);
+        if (npc == ecs::EcsWorld::kNull) {
+            return ecs::EcsWorld::kNull;
+        }
+        if (kind == SettlementNpcKind::Guard) {
+            ApplyGuardHealth(world, npc, def.id);
+        }
+        ZL_INFO("settlement", "聚落 NPC 已就位：{}（{}，格 {},{}）",
+                SettlementNpcKindName(kind), def.id, wx, wy);
+        return npc;
+    };
+
+    for (const SettlementDef& def : m_settlements->defs) {
+        if (IsFallen(def.id)) {
+            continue;
+        }
+        Counts& count = counts[def.id];
+        if (!m_populationMerchants.contains(def.id)) {
+            if (count.merchants > 0) {
+                m_populationMerchants.insert(def.id);
+            } else if (spawnMerchants) {
+                const SettlementNpcPoint* point =
+                    FindSettlementNpc(def, SettlementNpcKind::Merchant);
+                const float merchantX =
+                    point != nullptr ? point->x : def.centerX;
+                const float merchantY =
+                    point != nullptr ? point->y : def.centerY;
+                if (spawnAt(def, SettlementNpcKind::Merchant, merchantX,
+                            merchantY,
+                            point != nullptr ? point->wanderRadius : 1.5f) !=
+                    ecs::EcsWorld::kNull) {
+                    ++count.merchants;
+                    ++stats.merchants;
+                    m_populationMerchants.insert(def.id);
+                }
+            }
+        }
+
+        const auto ensureKind = [&](SettlementNpcKind kind,
+                                    std::unordered_set<std::string>& ensured,
+                                    int& populated, int& spawned) {
+            if (ensured.contains(def.id)) {
+                return;
+            }
+            int target = 0;
+            for (const SettlementNpcPoint& point : def.npcPoints) {
+                target += point.kind == kind ? 1 : 0;
+            }
+            if (populated >= target) {
+                ensured.insert(def.id);
+                return;
+            }
+            for (const SettlementNpcPoint& point : def.npcPoints) {
+                if (populated >= target) {
+                    break;
+                }
+                if (point.kind != kind) {
+                    continue;
+                }
+                if (spawnAt(def, kind, point.x, point.y,
+                            point.wanderRadius) != ecs::EcsWorld::kNull) {
+                    ++populated;
+                    ++spawned;
+                }
+            }
+            if (populated >= target) {
+                ensured.insert(def.id);
+            }
+        };
+        ensureKind(SettlementNpcKind::Guard, m_populationGuards, count.guards,
+                   stats.guards);
+        ensureKind(SettlementNpcKind::Requester, m_populationRequesters,
+                   count.requesters, stats.requesters);
+    }
+    return stats;
+}
+
 void SettlementNpcSystem::SetFocus(float x, float y) {
     if (FinitePosition(x, y)) {
         m_focusX = x;
@@ -232,6 +415,9 @@ void SettlementNpcSystem::Reset() {
     m_threatLinger.clear();
     m_defense.clear();
     m_savedGuardHealth.clear();
+    m_populationMerchants.clear();
+    m_populationGuards.clear();
+    m_populationRequesters.clear();
     m_stats = {};
 }
 
@@ -248,9 +434,6 @@ void SettlementNpcSystem::CaptureState(ecs::EcsWorld& world,
     for (const SettlementDef& def : m_settlements->defs) {
         if (out->settlements.size() >= kMaxSettlementStates) {
             break;
-        }
-        if (!def.defense.enabled) {
-            continue;
         }
         SettlementStateEntry entry;
         entry.id = def.id;
@@ -298,12 +481,13 @@ void SettlementNpcSystem::ApplyState(const SettlementState& state) {
     std::unordered_set<std::string> seen;
     for (const SettlementStateEntry& entry : state.settlements) {
         const SettlementDef* def = FindSettlement(entry.id);
-        if (def == nullptr || !def->defense.enabled ||
-            !seen.insert(entry.id).second) {
+        if (def == nullptr || !seen.insert(entry.id).second) {
             continue;
         }
         DefenseRuntime& runtime = RuntimeFor(entry.id);
         runtime.active = false;
+        runtime.external = false;
+        runtime.reclaim = false;
         runtime.fallen = entry.fallen ||
                          (entry.guardHealth >= 0.0f &&
                           entry.guardHealth <= 0.0f);
@@ -393,7 +577,7 @@ SettlementNpcSystem::DefenseRuntime& SettlementNpcSystem::RuntimeFor(
 
 bool SettlementNpcSystem::DefenseEnabled(std::string_view id) const {
     const SettlementDef* def = FindSettlement(id);
-    return def != nullptr && def->defense.enabled;
+    return def != nullptr && SettlementProvidesDefense(*def);
 }
 
 bool SettlementNpcSystem::RaidActive(std::string_view id) const {
@@ -404,6 +588,267 @@ bool SettlementNpcSystem::RaidActive(std::string_view id) const {
 bool SettlementNpcSystem::IsFallen(std::string_view id) const {
     const DefenseRuntime* runtime = FindRuntime(id);
     return runtime != nullptr && runtime->fallen;
+}
+
+bool SettlementNpcSystem::BeginExternalDefense(ecs::EcsWorld& world,
+                                               std::string_view id) {
+    const SettlementDef* def = FindSettlement(id);
+    if (def == nullptr || !SettlementProvidesDefense(*def)) {
+        return false;
+    }
+    DefenseRuntime& runtime = RuntimeFor(def->id);
+    if (runtime.fallen) {
+        return false;
+    }
+    if (runtime.active && runtime.external) {
+        return true;
+    }
+    if (runtime.active) {
+        FinishRaid(world, *def, runtime, false, "战略围攻接管防守");
+    }
+    runtime.active = true;
+    runtime.external = true;
+    runtime.reclaim = false;
+    runtime.faction = ContestedFaction::Infected;
+    runtime.nightKey = 0;
+    runtime.raidersSpawned = 0;
+    runtime.raidersKilled = 0;
+    runtime.elapsed = 0.0f;
+    entt::registry& registry = world.Registry();
+    registry.view<SettlementNpc, ecs::Health>().each(
+        [&](const ecs::Entity entity, const SettlementNpc& npc,
+            const ecs::Health& health) {
+            if (npc.settlementId != def->id ||
+                npc.kind != SettlementNpcKind::Guard ||
+                health.current <= 0.0f) {
+                return;
+            }
+            registry.remove<ecs::NoCombatTarget>(entity);
+            if (auto* component = registry.try_get<SettlementNpc>(entity);
+                component != nullptr) {
+                component->attackCooldown = 0.0f;
+                component->hasTarget = false;
+                component->settled = false;
+            }
+        });
+    PostNotice(def->name + "遭到围攻：守卫迎战，平民撤离", "fail");
+    return true;
+}
+
+int SettlementNpcSystem::SpawnExternalWave(ecs::EcsWorld& world,
+                                           std::string_view id, int count,
+                                           int waveIndex,
+                                           ContestedFaction faction) {
+    const SettlementDef* def = FindSettlement(id);
+    DefenseRuntime* runtime = nullptr;
+    if (def == nullptr || count <= 0) {
+        return 0;
+    }
+    const auto found = m_defense.find(std::string(id));
+    if (found == m_defense.end() || !found->second.active ||
+        !found->second.external) {
+        return 0;
+    }
+    runtime = &found->second;
+    runtime->faction = faction;
+    const int before = CountRaiders(world, def->id);
+    const int safeCount = std::clamp(count, 0, 32);
+    for (int i = 0; i < safeCount; ++i) {
+        SpawnRaider(world, *def, std::max(1, waveIndex + 1), i, safeCount,
+                    faction);
+    }
+    const int spawned = CountRaiders(world, def->id) - before;
+    runtime->raidersSpawned += std::max(0, spawned);
+    return std::max(0, spawned);
+}
+
+int SettlementNpcSystem::LiveGuards(ecs::EcsWorld& world,
+                                    std::string_view id) const {
+    return CountGuards(world, id, true);
+}
+
+int SettlementNpcSystem::LiveRaiders(ecs::EcsWorld& world,
+                                     std::string_view id) const {
+    return CountRaiders(world, id);
+}
+
+int SettlementNpcSystem::RaidersWithin(ecs::EcsWorld& world,
+                                       std::string_view id, float x, float y,
+                                       float radius) const {
+    int count = 0;
+    const float radiusSq = std::max(0.0f, radius) * std::max(0.0f, radius);
+    world.Registry()
+        .view<SettlementRaidZombie, ecs::Position, ecs::Health>()
+        .each([&](const ecs::Entity entity, const SettlementRaidZombie& raid,
+                  const ecs::Position& position, const ecs::Health& health) {
+            if (raid.settlementId != id || health.current <= 0.0f ||
+                !world.Alive(entity)) {
+                return;
+            }
+            const float dx = position.x - x;
+            const float dy = position.y - y;
+            if (dx * dx + dy * dy <= radiusSq) {
+                ++count;
+            }
+        });
+    return count;
+}
+
+void SettlementNpcSystem::UpdateExternalDefense(ecs::EcsWorld& world,
+                                                std::string_view id,
+                                                float dt) {
+    const SettlementDef* def = FindSettlement(id);
+    if (def == nullptr || dt <= 0.0f) {
+        return;
+    }
+    const auto it = m_defense.find(std::string(id));
+    if (it == m_defense.end() || !it->second.active ||
+        !it->second.external) {
+        return;
+    }
+    UpdateRaiders(world, *def, it->second, dt);
+}
+
+void SettlementNpcSystem::EndExternalDefense(ecs::EcsWorld& world,
+                                             std::string_view id, bool fallen,
+                                             std::string_view reason) {
+    const SettlementDef* def = FindSettlement(id);
+    if (def == nullptr) {
+        return;
+    }
+    const auto it = m_defense.find(std::string(id));
+    if (it == m_defense.end() || !it->second.active) {
+        return;
+    }
+    it->second.external = false;
+    FinishRaid(world, *def, it->second, fallen, reason);
+}
+
+void SettlementNpcSystem::MarkFallen(ecs::EcsWorld& world,
+                                     std::string_view id) {
+    const SettlementDef* def = FindSettlement(id);
+    if (def == nullptr || !def->defense.enabled) {
+        return;
+    }
+    DefenseRuntime& runtime = RuntimeFor(def->id);
+    const bool wasFallen = runtime.fallen;
+    runtime.active = false;
+    runtime.external = false;
+    runtime.reclaim = false;
+    runtime.fallen = true;
+    runtime.nightKey = 0;
+    m_savedGuardHealth[def->id] = 0.0f;
+    m_threatLinger.erase(def->id);
+
+    entt::registry& registry = world.Registry();
+    std::vector<ecs::Entity> raiders;
+    registry.view<SettlementRaidZombie>().each(
+        [&](const ecs::Entity entity, const SettlementRaidZombie& raid) {
+            if (raid.settlementId == def->id) {
+                raiders.push_back(entity);
+            }
+        });
+    for (const ecs::Entity raider : raiders) {
+        world.Destroy(raider);
+    }
+    std::vector<ecs::Entity> civilians;
+    registry.view<SettlementNpc>().each(
+        [&](const ecs::Entity entity, const SettlementNpc& npc) {
+            if (npc.settlementId == def->id &&
+                npc.kind != SettlementNpcKind::Merchant) {
+                civilians.push_back(entity);
+            }
+        });
+    for (const ecs::Entity npc : civilians) {
+        world.Destroy(npc);
+    }
+    if (!wasFallen) {
+        PostNotice(def->name + "失守：平民撤离，交易与委托暂停", "fail");
+    }
+}
+
+bool SettlementNpcSystem::BeginExternalReclaim(ecs::EcsWorld& world,
+                                               std::string_view id) {
+    const SettlementDef* def = FindSettlement(id);
+    if (def == nullptr || !def->defense.enabled) {
+        return false;
+    }
+    DefenseRuntime& runtime = RuntimeFor(def->id);
+    if (!runtime.fallen) {
+        return false;
+    }
+    if (runtime.active && runtime.external && runtime.reclaim) {
+        return true;
+    }
+    if (runtime.active) {
+        FinishRaid(world, *def, runtime, false, "反攻波次接管聚落");
+    }
+    runtime.active = true;
+    runtime.external = true;
+    runtime.reclaim = true;
+    runtime.faction = ContestedFaction::Infected;
+    runtime.nightKey = 0;
+    runtime.raidersSpawned = 0;
+    runtime.raidersKilled = 0;
+    runtime.elapsed = 0.0f;
+    PostNotice(def->name + "反攻：清理感染核心后守住波次", "warn");
+    return true;
+}
+
+void SettlementNpcSystem::EndExternalReclaim(ecs::EcsWorld& world,
+                                             std::string_view id, bool held,
+                                             std::string_view reason) {
+    const SettlementDef* def = FindSettlement(id);
+    if (def == nullptr) {
+        return;
+    }
+    const auto it = m_defense.find(std::string(id));
+    if (it == m_defense.end() || !it->second.active ||
+        !it->second.external) {
+        return;
+    }
+    it->second.external = false;
+    it->second.reclaim = false;
+    FinishRaid(world, *def, it->second, !held, reason);
+}
+
+void SettlementNpcSystem::RestoreSettlement(ecs::EcsWorld& world,
+                                            std::string_view id) {
+    const SettlementDef* def = FindSettlement(id);
+    if (def == nullptr || !def->defense.enabled) {
+        return;
+    }
+    DefenseRuntime& runtime = RuntimeFor(def->id);
+    if (!runtime.fallen) {
+        return;
+    }
+    runtime.active = false;
+    runtime.external = false;
+    runtime.reclaim = false;
+    runtime.fallen = false;
+    runtime.nightKey = 0;
+    runtime.raidersSpawned = 0;
+    runtime.raidersKilled = 0;
+    runtime.elapsed = 0.0f;
+    m_savedGuardHealth.erase(def->id);
+    m_threatLinger.erase(def->id);
+    m_populationMerchants.erase(def->id);
+    m_populationGuards.erase(def->id);
+    m_populationRequesters.erase(def->id);
+
+    entt::registry& registry = world.Registry();
+    std::vector<ecs::Entity> stale;
+    registry.view<SettlementNpc>().each(
+        [&](const ecs::Entity entity, const SettlementNpc& npc) {
+            if (npc.settlementId == def->id &&
+                npc.kind != SettlementNpcKind::Merchant) {
+                stale.push_back(entity);
+            }
+        });
+    for (const ecs::Entity npc : stale) {
+        world.Destroy(npc);
+    }
+    PostNotice(def->name + "恢复：守卫与平民正在返回", "ok");
 }
 
 void SettlementNpcSystem::PostNotice(std::string text, std::string tone) {
@@ -650,6 +1095,37 @@ ecs::Entity SettlementNpcSystem::FindNearestRaider(ecs::EcsWorld& world,
     return best;
 }
 
+ecs::Entity SettlementNpcSystem::FindNearestThreat(ecs::EcsWorld& world,
+                                                   std::string_view id,
+                                                   float x, float y,
+                                                   float radius) const {
+    const ecs::Entity raid =
+        FindNearestRaider(world, id, x, y);
+    if (raid != ecs::EcsWorld::kNull) {
+        return raid;
+    }
+    const float radiusSq = std::max(0.0f, radius) * std::max(0.0f, radius);
+    ecs::Entity best = ecs::EcsWorld::kNull;
+    float bestDistSq = std::numeric_limits<float>::max();
+    entt::registry& registry = world.Registry();
+    registry.view<ecs::AiState, ecs::Position, ecs::Health>().each(
+        [&](const ecs::Entity entity, const ecs::AiState&,
+            const ecs::Position& position, const ecs::Health& health) {
+            if (health.current <= 0.0f || !world.Alive(entity) ||
+                registry.any_of<SettlementNpc, ecs::FriendlyNpc, ecs::Animal>(
+                    entity) ||
+                registry.all_of<ecs::NoCombatTarget>(entity)) {
+                return;
+            }
+            const float distanceSq = DistSq(x, y, position.x, position.y);
+            if (distanceSq <= radiusSq && distanceSq < bestDistSq) {
+                bestDistSq = distanceSq;
+                best = entity;
+            }
+        });
+    return best;
+}
+
 void SettlementNpcSystem::Attack(ecs::EcsWorld& world, ecs::Entity source,
                                  ecs::Entity target, float damage,
                                  ecs::DamageType type) {
@@ -669,17 +1145,26 @@ void SettlementNpcSystem::Attack(ecs::EcsWorld& world, ecs::Entity source,
     }
     if (m_damage) {
         (void)m_damage(source, target, damage, type);
+    } else {
+        auto* health = registry.try_get<ecs::Health>(target);
+        if (health != nullptr) {
+            health->current -= damage;
+        }
+    }
+    const auto* health = registry.try_get<ecs::Health>(target);
+    if (health == nullptr || health->current > 0.0f) {
         return;
     }
-    auto* health = registry.try_get<ecs::Health>(target);
-    if (health != nullptr) {
-        health->current -= damage;
+    if (const auto* npc = registry.try_get<SettlementNpc>(target);
+        npc != nullptr && npc->kind == SettlementNpcKind::Guard) {
+        m_savedGuardHealth[npc->settlementId] = 0.0f;
     }
 }
 
 void SettlementNpcSystem::SpawnRaider(ecs::EcsWorld& world,
                                       const SettlementDef& def, int nightKey,
-                                      int index, int count) {
+                                      int index, int count,
+                                      ContestedFaction faction) {
     if (!m_walkable) {
         return;
     }
@@ -704,13 +1189,15 @@ void SettlementNpcSystem::SpawnRaider(ecs::EcsWorld& world,
         return;
     }
     entt::registry& registry = world.Registry();
+    const bool raiders = faction == ContestedFaction::Raiders;
     registry.emplace<ecs::Position>(
         entity, ecs::Position{static_cast<float>(wx) + 0.5f,
                               static_cast<float>(wy) + 0.5f, 0});
     registry.emplace<ecs::Velocity>(entity, ecs::Velocity{});
     registry.emplace<ecs::SpriteRef>(
-        entity, ecs::SpriteRef{ecs::HashName(kRaiderSprite), 0,
-                               0xFF8080FFu});
+        entity, ecs::SpriteRef{ecs::HashName(raiders ? kNpcSprite
+                                                     : kRaiderSprite),
+                               0, raiders ? 0xFFFF8060u : 0xFF8080FFu});
     registry.emplace<ecs::Facing>(entity, ecs::Facing{});
     registry.emplace<ecs::AnimState>(entity, ecs::AnimState{});
     registry.emplace<ecs::ActionState>(entity, ecs::ActionState{});
@@ -724,16 +1211,19 @@ void SettlementNpcSystem::SpawnRaider(ecs::EcsWorld& world,
     registry.emplace<ecs::PathFollow>(entity, follow);
     SettlementRaidZombie raid;
     raid.settlementId = def.id;
+    raid.faction = faction;
     raid.nightKey = nightKey;
     registry.emplace<SettlementRaidZombie>(entity, std::move(raid));
-    ZL_INFO("settlement", "夜袭感染者生成：{}（{}，格 {},{}）", def.id,
-            nightKey, wx, wy);
+    ZL_INFO("settlement", "聚落{}生成：{}（波次 {}，格 {},{}）",
+            ContestedFactionLabel(faction), def.id, nightKey, wx, wy);
 }
 
 void SettlementNpcSystem::StartRaid(ecs::EcsWorld& world,
                                     const SettlementDef& def,
                                     DefenseRuntime& runtime, int nightKey) {
     runtime.active = true;
+    runtime.external = false;
+    runtime.faction = ContestedFaction::Infected;
     runtime.lastNightKey = nightKey;
     runtime.nightKey = nightKey;
     runtime.raidersSpawned = 0;
@@ -765,7 +1255,8 @@ void SettlementNpcSystem::StartRaid(ecs::EcsWorld& world,
         0, def.defense.maxRaiders);
     for (int i = 0; i < count; ++i) {
         const int before = CountRaiders(world, def.id);
-        SpawnRaider(world, def, nightKey, i, count);
+        SpawnRaider(world, def, nightKey, i, count,
+                    ContestedFaction::Infected);
         if (CountRaiders(world, def.id) > before) {
             ++runtime.raidersSpawned;
         }
@@ -822,7 +1313,9 @@ void SettlementNpcSystem::UpdateRaiders(ecs::EcsWorld& world,
                         if (raid.attackCooldown <= 0.0f) {
                             Attack(world, entity, guard,
                                    def.defense.raiderDamage,
-                                   ecs::DamageType::Claw);
+                                   raid.faction == ContestedFaction::Raiders
+                                       ? ecs::DamageType::Blunt
+                                       : ecs::DamageType::Claw);
                             raid.attackCooldown =
                                 def.defense.raiderAttackSeconds;
                         }
@@ -889,6 +1382,8 @@ void SettlementNpcSystem::FinishRaid(ecs::EcsWorld& world,
     runtime.raidersKilled +=
         std::max(0, runtime.raidersSpawned - alive);
     runtime.active = false;
+    runtime.external = false;
+    runtime.reclaim = false;
     entt::registry& registry = world.Registry();
     std::vector<ecs::Entity> raiders;
     registry.view<SettlementRaidZombie>().each(
@@ -922,7 +1417,8 @@ void SettlementNpcSystem::FinishRaid(ecs::EcsWorld& world,
     }
     if (runtime.raidersKilled > 0) {
         PostNotice(std::string(reason) + "：击退 " +
-                       std::to_string(runtime.raidersKilled) + " 名感染者",
+                       std::to_string(runtime.raidersKilled) + " 名" +
+                       ContestedFactionLabel(runtime.faction),
                    "ok");
     } else {
         PostNotice(std::string(reason), "info");
@@ -935,15 +1431,21 @@ void SettlementNpcSystem::UpdateDefense(ecs::EcsWorld& world, float dt,
         return;
     }
     for (const SettlementDef& def : m_settlements->defs) {
-        if (!def.defense.enabled) {
+        if (!SettlementProvidesDefense(def)) {
             continue;
         }
         DefenseRuntime& runtime = RuntimeFor(def.id);
+        const bool night =
+            InNightWindow(hour, def.defense);
+        if (runtime.active && runtime.external) {
+            // M32-T4/T5：外部战略围攻/反攻只推进感染者和守卫近战；
+            // 波次完成、玩家离开和胜负由区域围攻控制器决定。
+            UpdateRaiders(world, def, runtime, dt);
+            continue;
+        }
         if (runtime.fallen) {
             continue;
         }
-        const bool night =
-            InNightWindow(hour, def.defense);
         if (runtime.active) {
             const int guards = CountGuards(world, def.id, true);
             if (guards <= 0) {
@@ -1095,6 +1597,10 @@ void SettlementNpcSystem::Update(ecs::EcsWorld& world, float dt, int hour,
             } else if (ThreatRemaining(def->id) > 0.0f) {
                 desired = NpcActivity::Shelter;
             }
+            if (desired == NpcActivity::Defend &&
+                npc.kind == SettlementNpcKind::Guard) {
+                registry.remove<ecs::NoCombatTarget>(entity);
+            }
             if (desired != npc.activity) {
                 ZL_DEBUG("settlement",
                          "聚落 NPC 日程：{}（稳定 ID {}）{} -> {}",
@@ -1137,13 +1643,15 @@ void SettlementNpcSystem::Update(ecs::EcsWorld& world, float dt, int hour,
             if (const auto* health = registry.try_get<ecs::Health>(entity);
                 npc.kind == SettlementNpcKind::Guard &&
                 health != nullptr && health->current <= 0.0f) {
+                m_savedGuardHealth[npc.settlementId] = 0.0f;
                 Stop(world, entity);
                 return;
             }
 
             if (npc.activity == NpcActivity::Defend) {
-                const ecs::Entity raider = FindNearestRaider(
-                    world, def->id, position.x, position.y);
+                const ecs::Entity raider = FindNearestThreat(
+                    world, def->id, position.x, position.y,
+                    def->safeRadius + std::max(0.0f, def->defense.guardEngageRadius));
                 if (raider != ecs::EcsWorld::kNull) {
                     const auto* raiderPosition =
                         registry.try_get<ecs::Position>(raider);

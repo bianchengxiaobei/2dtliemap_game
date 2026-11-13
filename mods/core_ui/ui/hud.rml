@@ -31,6 +31,9 @@
             <div id="poi-guide" class="poi-guide"></div>
             <div id="mission-guide" class="mission-guide"></div>
             <div id="event-guide" class="event-guide"></div>
+            <div id="region-guide" class="region-guide"></div>
+            <div id="settlement-guide" class="settlement-guide"></div>
+            <div id="strategic-guide" class="strategic-guide"></div>
         </div>
         <div id="mod-fields" class="mod-fields hud-box">
             <div class="mod-fields-title">模组</div>
@@ -184,6 +187,37 @@
             <div id="siege-report-line-6" class="siege-report-line"></div>
             <div id="siege-report-line-7" class="siege-report-line"></div>
             <div id="siege-report-hint" class="siege-report-hint">ESC 关闭</div>
+        </div>
+    </div>
+    <div id="world-event-panel" class="world-event-panel">
+        <div class="world-event-card">
+            <div class="world-event-header">
+                <span class="world-event-kicker">世界事件</span>
+                <span id="world-event-meta" class="world-event-meta"></span>
+            </div>
+            <div id="world-event-title" class="world-event-title"></div>
+            <div id="world-event-stage" class="world-event-stage"></div>
+            <div id="world-event-result" class="world-event-result"></div>
+            <div id="world-event-options" class="world-event-options">
+                <div id="world-event-option-0" class="world-event-option"></div>
+                <div id="world-event-option-1" class="world-event-option"></div>
+                <div id="world-event-option-2" class="world-event-option"></div>
+                <div id="world-event-option-3" class="world-event-option"></div>
+                <div id="world-event-option-4" class="world-event-option"></div>
+                <div id="world-event-option-5" class="world-event-option"></div>
+                <div id="world-event-option-6" class="world-event-option"></div>
+                <div id="world-event-option-7" class="world-event-option"></div>
+            </div>
+            <div id="world-event-hint" class="world-event-hint"></div>
+            <div id="world-event-log" class="world-event-log">
+                <div class="world-event-log-title">电台记录</div>
+                <div id="world-event-log-0" class="world-event-log-line"></div>
+                <div id="world-event-log-1" class="world-event-log-line"></div>
+                <div id="world-event-log-2" class="world-event-log-line"></div>
+                <div id="world-event-log-3" class="world-event-log-line"></div>
+                <div id="world-event-log-4" class="world-event-log-line"></div>
+                <div id="world-event-log-5" class="world-event-log-line"></div>
+            </div>
         </div>
     </div>
     <div id="notice" class="notice notice-info"></div>

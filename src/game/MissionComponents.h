@@ -18,6 +18,7 @@ struct MissionRunState {
     MissionRunStatus status = MissionRunStatus::Active;
     int day = 1;
     bool rewardClaimed = false;
+    std::string settlementId;
 };
 
 struct MissionLog {

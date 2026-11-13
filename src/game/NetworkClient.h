@@ -10,6 +10,8 @@
 #include "net/KcpSession.h"
 #include "net/PlayerState.h"
 #include "net/SocialProtocol.h"
+#include "net/StrategicProtocol.h"
+#include "net/WorldEventProtocol.h"
 #include "net/WorldSound.h"
 #include "save/ChunkDiff.h"
 
@@ -46,6 +48,10 @@ public:
         std::uint64_t playerStatesReceived = 0;
         std::uint64_t socialStatesReceived = 0;
         std::uint64_t worldSoundsReceived = 0;
+        std::uint64_t strategicSnapshotsReceived = 0;
+        std::uint64_t strategicResultsReceived = 0;
+        std::uint64_t strategicRequestsSent = 0;
+        std::uint64_t worldEventSnapshotsReceived = 0;
         std::uint64_t chatMessagesSent = 0;
         std::uint64_t commandPacketsSent = 0;
         std::uint64_t commandPacketsRejected = 0;
@@ -65,6 +71,11 @@ public:
 
     bool SendCommand(const net::Command& command, std::string* error = nullptr);
     bool SendChat(const std::string& text, std::string* error = nullptr);
+    // M32-T7：联机战略命令。服务器仍做区域/资源/阶段/限频校验。
+    bool SendStrategicRequest(net::StrategicRequestAction action,
+                              const std::string& regionId,
+                              std::int32_t amount = 0,
+                              std::string* error = nullptr);
     bool AdvanceLocalPrediction(float dt, float gridDirX, float gridDirY);
 
     bool IsConnected() const;
@@ -82,6 +93,21 @@ public:
 
     bool HasSocialState() const { return m_hasSocialState; }
     const net::SocialState& SocialState() const { return m_socialState; }
+
+    // M32-T7：服务器权威战略只读快照；断线后清空，避免把旧状态当实时。
+    bool HasStrategicState() const { return m_hasStrategicState; }
+    const net::StrategicSnapshot& StrategicState() const {
+        return m_strategicState;
+    }
+    bool HasStrategicResult() const { return m_hasStrategicResult; }
+    const net::StrategicRequestResult& LastStrategicResult() const {
+        return m_strategicResult;
+    }
+    // M33-F2-T5: server-authoritative interactive world event state.
+    bool HasWorldEventState() const { return m_hasWorldEventState; }
+    const net::WorldEventSnapshot& WorldEventState() const {
+        return m_worldEventState;
+    }
 
     EntityReplicationClient& Replication() { return m_replication; }
     const EntityReplicationClient& Replication() const { return m_replication; }
@@ -106,6 +132,13 @@ private:
     bool m_hasPlayerState = false;
     net::SocialState m_socialState;
     bool m_hasSocialState = false;
+    net::StrategicSnapshot m_strategicState;
+    bool m_hasStrategicState = false;
+    net::StrategicRequestResult m_strategicResult;
+    bool m_hasStrategicResult = false;
+    net::WorldEventSnapshot m_worldEventState;
+    bool m_hasWorldEventState = false;
+    std::uint32_t m_strategicRequestSequence = 1;
     std::uint64_t m_playerStableId = 0;
     std::uint32_t m_commandSequence = 1;
     std::uint64_t m_nextReconnectMs = 0;

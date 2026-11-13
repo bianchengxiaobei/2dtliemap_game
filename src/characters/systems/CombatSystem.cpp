@@ -331,6 +331,7 @@ bool CombatSystem::ApplyDamage(ecs::EcsWorld& world, ecs::Entity target,
         ecs::LastDamage& last = registry.get_or_emplace<ecs::LastDamage>(target);
         last.cause = ecs::DamageCauseFromType(event.type);
         last.amount = damage;
+        last.sourceId = event.sourceId;
     }
 
     // 受击/格挡/闪避都会重置战斗体力回复延迟；格挡/弹反的消耗已由

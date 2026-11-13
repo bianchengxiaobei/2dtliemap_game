@@ -91,7 +91,20 @@ std::string PoiJson(const std::string& name) {
 std::string MissionJson(const std::string& name) {
     return R"({"format":"missions-v1","defs":[{"id":"hot_mission","name":")" +
            name +
-           R"(","kind":"once","source":"radio","objectives":[{"kind":"collect","target":"hot_item","count":1,"description":"收集"}],"reward":{"label":"Hot"}}]})";
+           R"(","kind":"once","source":"radio","objectives":[{"kind":"collect","target":"hot_item","count":1,"description":"鏀堕泦"}],"reward":{"label":"Hot"}}]})";
+}
+
+std::string WorldEventJson(const std::string& name,
+                           const std::string& nextEvent = {}) {
+    std::string next;
+    if (!nextEvent.empty()) {
+        next = R"(,"nextEvent":")" + nextEvent + R"(")";
+    }
+    return std::string(
+               R"({"format":"world-events-v1","defs":[{"id":"hot_event","name":")") +
+           name +
+           R"(","stages":[{"kind":"reach","radius":6}],"choices":[{"id":"leave","label":"离开"}])" +
+           next + "}]}";
 }
 
 void WriteMod(const TempRoot& root, const std::string& itemName,
@@ -123,7 +136,7 @@ std::uint64_t BundleHash(const game::ContentBundle& content,
         content.items, content.recipes, content.modContent.buildables,
         content.lootTables, content.poiConfig, content.missionConfig,
         game::ComputeTreeHash(modsDir), &content.forage, &content.animals,
-        &content.crops, &content.settlements);
+        &content.crops, &content.settlements, &content.worldEvents);
 }
 
 }  // namespace
@@ -400,4 +413,60 @@ TEST_CASE("X3-T5：旧档中的已删除 mod 物品保留且未知重量安全�
     CHECK(items::CountOf(*loadedBag, "hot_item") == 2);
     CHECK(items::TotalWeight(*loadedBag, current.bundle->items) ==
           doctest::Approx(ragWeight));
+}
+
+TEST_CASE("M33-F2-T1 content bundle loads world events and rejects bad mod file") {
+    TempRoot root("world_events");
+    const std::filesystem::path baseEvents =
+        root.path / "base_world_events.json";
+    WriteText(baseEvents, WorldEventJson("Base Event"));
+    WriteMod(root, "Hot V1", "Hot Build V1", "Hot POI V1", "Hot Mission V1");
+
+    const std::filesystem::path content = root.path / "mods" / "hot" / "content";
+    WriteText(content / "world_events.json", R"({
+      "format": "world-events-v1",
+      "defs": [{
+        "id": "mod_event",
+        "name": "Mod Event",
+        "stages": [{ "kind": "reach", "radius": 5 }],
+        "choices": [{ "id": "leave", "label": "Leave" }]
+      }]
+    })");
+
+    core::Config config;
+    REQUIRE(config.LoadFile(std::string(ZL_SOURCE_DIR) + "/config/game.json"));
+    Configure(config, root);
+    config.Set("worldEvents", nlohmann::json{
+                                  {"enabled", true},
+                                  {"file", baseEvents.generic_string()},
+                                  {"randomSeed", 42},
+                              });
+    const std::string modsDir = (root.path / "mods").generic_string();
+
+    game::ContentBundleResult first = game::LoadContentBundle(config);
+    REQUIRE_MESSAGE(first.Ok(), first.error);
+    CHECK(first.bundle->worldEvents.enabled);
+    CHECK(first.bundle->worldEvents.defs.size() == 2u);
+    CHECK(first.bundle->worldEvents.Find("mod_event") != nullptr);
+    const std::uint64_t firstHash = BundleHash(*first.bundle, modsDir);
+
+    WriteText(content / "world_events.json", R"({
+      "format": "world-events-v1",
+      "defs": [{
+        "id": "broken_event",
+        "name": "Broken Event",
+        "choices": [{ "id": "leave", "label": "Leave" }]
+      }]
+    })");
+    game::ContentBundleResult bad = game::LoadContentBundle(config);
+    CHECK_FALSE(bad.Ok());
+    CHECK_FALSE(bad.error.empty());
+    CHECK(first.bundle->worldEvents.defs.size() == 2u);
+
+    std::filesystem::remove(content / "world_events.json");
+    game::ContentBundleResult same = game::LoadContentBundle(config);
+    REQUIRE_MESSAGE(same.Ok(), same.error);
+    CHECK(same.bundle->worldEvents.defs.size() == 1u);
+    CHECK(same.bundle->worldEvents.Find("hot_event") != nullptr);
+    CHECK(BundleHash(*same.bundle, modsDir) != firstHash);
 }

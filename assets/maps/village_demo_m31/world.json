@@ -1,0 +1,320 @@
+{
+ "format": "zomboidlike-world-v1",
+ "mapId": "village_demo_m31",
+ "seed": 20261109,
+ "generatorVersion": 1,
+ "bounds": {
+  "chunkX0": 0,
+  "chunkY0": 0,
+  "chunksX": 36,
+  "chunksY": 36
+ },
+ "regions": [
+  {
+   "id": "west_woods",
+   "rect": {
+    "chunkX": 0,
+    "chunkY": 0,
+    "chunksW": 4,
+    "chunksH": 6
+   },
+   "biome": "forest",
+   "poiIds": []
+  },
+  {
+   "id": "village_core",
+   "rect": {
+    "chunkX": 4,
+    "chunkY": 0,
+    "chunksW": 8,
+    "chunksH": 6
+   },
+   "biome": "village",
+   "poiIds": []
+  },
+  {
+   "id": "north_woods",
+   "rect": {
+    "chunkX": 12,
+    "chunkY": 0,
+    "chunksW": 8,
+    "chunksH": 6
+   },
+   "biome": "forest",
+   "poiIds": []
+  },
+  {
+   "id": "riverlands",
+   "rect": {
+    "chunkX": 20,
+    "chunkY": 0,
+    "chunksW": 6,
+    "chunksH": 18
+   },
+   "biome": "river",
+   "poiIds": []
+  },
+  {
+   "id": "east_wilds",
+   "rect": {
+    "chunkX": 26,
+    "chunkY": 0,
+    "chunksW": 10,
+    "chunksH": 36
+   },
+   "biome": "wilds",
+   "poiIds": [
+    "checkpoint"
+   ]
+  },
+  {
+   "id": "west_fields",
+   "rect": {
+    "chunkX": 0,
+    "chunkY": 6,
+    "chunksW": 8,
+    "chunksH": 6
+   },
+   "biome": "farmland",
+   "poiIds": []
+  },
+  {
+   "id": "north_fields",
+   "rect": {
+    "chunkX": 8,
+    "chunkY": 6,
+    "chunksW": 12,
+    "chunksH": 6
+   },
+   "biome": "farmland",
+   "poiIds": [
+    "clinic"
+   ]
+  },
+  {
+   "id": "south_farmland",
+   "rect": {
+    "chunkX": 0,
+    "chunkY": 12,
+    "chunksW": 20,
+    "chunksH": 12
+   },
+   "biome": "farmland",
+   "poiIds": [
+    "farmstead"
+   ]
+  },
+  {
+   "id": "east_approach",
+   "rect": {
+    "chunkX": 20,
+    "chunkY": 18,
+    "chunksW": 6,
+    "chunksH": 18
+   },
+   "biome": "forest",
+   "poiIds": []
+  },
+  {
+   "id": "deep_south",
+   "rect": {
+    "chunkX": 0,
+    "chunkY": 24,
+    "chunksW": 20,
+    "chunksH": 12
+   },
+   "biome": "forest",
+   "poiIds": []
+  }
+ ],
+ "nodes": [
+  {
+   "id": "village_haven",
+   "kind": "settlement",
+   "x": 70.5,
+   "y": 24.5,
+   "isolated": false
+  },
+  {
+   "id": "west_gate",
+   "kind": "junction",
+   "x": 6.5,
+   "y": 24.5,
+   "isolated": false
+  },
+  {
+   "id": "clinic_junction",
+   "kind": "junction",
+   "x": 150.5,
+   "y": 24.5,
+   "isolated": false
+  },
+  {
+   "id": "clinic",
+   "kind": "landmark",
+   "x": 150.0,
+   "y": 64.0,
+   "isolated": false
+  },
+  {
+   "id": "river_junction",
+   "kind": "junction",
+   "x": 194.5,
+   "y": 24.5,
+   "isolated": false
+  },
+  {
+   "id": "bridge_west",
+   "kind": "junction",
+   "x": 194.0,
+   "y": 120.0,
+   "isolated": false
+  },
+  {
+   "id": "bridge_east",
+   "kind": "junction",
+   "x": 214.0,
+   "y": 120.0,
+   "isolated": false
+  },
+  {
+   "id": "east_junction",
+   "kind": "junction",
+   "x": 300.0,
+   "y": 120.0,
+   "isolated": false
+  },
+  {
+   "id": "checkpoint",
+   "kind": "landmark",
+   "x": 300.0,
+   "y": 280.0,
+   "isolated": false
+  },
+  {
+   "id": "farm_junction",
+   "kind": "junction",
+   "x": 70.5,
+   "y": 210.0,
+   "isolated": false
+  },
+  {
+   "id": "farmstead",
+   "kind": "landmark",
+   "x": 110.0,
+   "y": 210.0,
+   "isolated": false
+  }
+ ],
+ "edges": [
+  {
+   "a": "west_gate",
+   "b": "village_haven",
+   "kind": "road",
+   "width": 3.0,
+   "vehicle": true
+  },
+  {
+   "a": "village_haven",
+   "b": "clinic_junction",
+   "kind": "road",
+   "width": 3.0,
+   "vehicle": true
+  },
+  {
+   "a": "clinic_junction",
+   "b": "clinic",
+   "kind": "road",
+   "width": 2.0,
+   "vehicle": true
+  },
+  {
+   "a": "village_haven",
+   "b": "river_junction",
+   "kind": "road",
+   "width": 3.0,
+   "vehicle": true
+  },
+  {
+   "a": "river_junction",
+   "b": "bridge_west",
+   "kind": "road",
+   "width": 3.0,
+   "vehicle": true
+  },
+  {
+   "a": "bridge_west",
+   "b": "bridge_east",
+   "kind": "bridge",
+   "width": 7.0,
+   "vehicle": true
+  },
+  {
+   "a": "bridge_east",
+   "b": "east_junction",
+   "kind": "road",
+   "width": 3.0,
+   "vehicle": true
+  },
+  {
+   "a": "east_junction",
+   "b": "checkpoint",
+   "kind": "road",
+   "width": 3.0,
+   "vehicle": true
+  },
+  {
+   "a": "village_haven",
+   "b": "farm_junction",
+   "kind": "road",
+   "width": 3.0,
+   "vehicle": true
+  },
+  {
+   "a": "farm_junction",
+   "b": "farmstead",
+   "kind": "road",
+   "width": 3.0,
+   "vehicle": true
+  }
+ ],
+ "pois": [
+  {
+   "id": "clinic",
+   "template": "clinic_v1",
+   "x": 150.0,
+   "y": 64.0,
+   "radius": 12.0,
+   "threat": 2,
+   "lootProfile": "poi_clinic"
+  },
+  {
+   "id": "farmstead",
+   "template": "farmstead_v1",
+   "x": 110.0,
+   "y": 210.0,
+   "radius": 16.0,
+   "threat": 1,
+   "lootProfile": "poi_farmstead"
+  },
+  {
+   "id": "checkpoint",
+   "template": "checkpoint_v1",
+   "x": 300.0,
+   "y": 280.0,
+   "radius": 14.0,
+   "threat": 3,
+   "lootProfile": "poi_checkpoint"
+  }
+ ],
+ "spawn": {
+  "defaultZombieDensity": 0.012,
+  "biomes": {
+   "forest": 0.008,
+   "village": 0.02,
+   "farmland": 0.01,
+   "river": 0.006,
+   "wilds": 0.014
+  }
+ }
+}

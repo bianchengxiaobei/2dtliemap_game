@@ -160,6 +160,33 @@ bool LoadMissions(const core::Config& config,
     return true;
 }
 
+bool LoadWorldEvents(const core::Config& config,
+                     const std::vector<std::string>& modFiles,
+                     const items::ItemRegistry& items, WorldEventConfig* out,
+                     std::string* error) {
+    if (!LoadWorldEventConfig(config, out, error, &items)) {
+        *error = "basic world event config: " + *error;
+        return false;
+    }
+    if (!out->enabled || modFiles.empty()) {
+        return true;
+    }
+    WorldEventMergeStats stats;
+    for (const std::string& file : modFiles) {
+        const int skippedBefore = stats.defsSkipped;
+        if (!MergeWorldEventFile(file, out, &stats, error, &items)) {
+            *error = "mod world event file " + file + ": " + *error;
+            return false;
+        }
+        if (stats.defsSkipped > skippedBefore) {
+            *error = "mod world event file " + file +
+                     " has skipped definitions";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool LoadSettlements(const core::Config& config,
                      const std::vector<std::string>& modFiles,
                      SettlementConfig* out, std::string* error) {
@@ -206,7 +233,8 @@ std::string DynamicContentBlockedReason(bool allowDynamicContent) {
     return {};
 }
 
-ContentBundleResult LoadContentBundle(const core::Config& config) {
+ContentBundleResult LoadContentBundle(const core::Config& config,
+                                       const core::Config* contentConfig) {
     auto bundle = std::make_unique<ContentBundle>();
     std::string error;
 
@@ -258,11 +286,13 @@ ContentBundleResult LoadContentBundle(const core::Config& config) {
                    &bundle->crops, &error)) {
         return Fail(std::move(error));
     }
-    if (!LoadPois(config, bundle->modContent.poiFiles, &bundle->poiConfig,
-                  &error)) {
+    const core::Config& poiMissionConfig =
+        contentConfig != nullptr ? *contentConfig : config;
+    if (!LoadPois(poiMissionConfig, bundle->modContent.poiFiles,
+                  &bundle->poiConfig, &error)) {
         return Fail(std::move(error));
     }
-    if (!LoadMissions(config, bundle->modContent.missionFiles,
+    if (!LoadMissions(poiMissionConfig, bundle->modContent.missionFiles,
                       &bundle->missionConfig, &bundle->missionSourceJson,
                       &error)) {
         return Fail(std::move(error));
@@ -271,16 +301,22 @@ ContentBundleResult LoadContentBundle(const core::Config& config) {
                          &bundle->settlements, &error)) {
         return Fail(std::move(error));
     }
+    if (!LoadWorldEvents(config, bundle->modContent.worldEventFiles,
+                         bundle->items, &bundle->worldEvents, &error)) {
+        return Fail(std::move(error));
+    }
 
     ZL_INFO(kLogModule,
-            "内容事务候选就绪：物品 {}，配方 {}，建造 +{}，战利品 {}，"
-            "觅食 {} 区域/{} 钓鱼点，动物 {}，作物 {}，POI {}，任务 {}，聚落 {}",
+            "content bundle ready: items {}, recipes {}, buildables +{}, loot {}, "
+            "forage {} zones/{} spots, animals {}, crops {}, POI {}, missions {}, "
+            "settlements {}, world events {}",
             bundle->items.Size(), bundle->recipes.Size(),
             static_cast<int>(bundle->modContent.buildables.size()),
             bundle->lootTables.Size(), bundle->forage.ZoneCount(),
             bundle->forage.SpotCount(), bundle->animals.Size(),
             bundle->crops.Size(), bundle->poiConfig.defs.size(),
-            bundle->missionConfig.defs.size(), bundle->settlements.defs.size());
+            bundle->missionConfig.defs.size(), bundle->settlements.defs.size(),
+            bundle->worldEvents.defs.size());
 
     ContentBundleResult result;
     result.bundle = std::move(bundle);

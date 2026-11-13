@@ -1,0 +1,79 @@
+{
+ "format": "zomboidlike-poi-template-v1",
+ "id": "checkpoint_v1",
+ "name": "废弃检查站",
+ "w": 16,
+ "h": 12,
+ "anchor": {
+  "x": 8,
+  "y": 6
+ },
+ "floorLegend": {
+  "g": "tile.floor.grass",
+  "d": "tile.floor.dirt",
+  "w": "tile.floor.wood"
+ },
+ "floorRows": [
+  "gggggggdddgggggg",
+  "gddddddddddddddg",
+  "gddwwwwwwwwwwddg",
+  "gddwwwwwwwwwwddg",
+  "gddwwwwwwwwwwddg",
+  "gddwwwwwwwwwwddg",
+  "gddwwwwwwwwwwddg",
+  "gddwwwwwwwwwwddg",
+  "gddwwwwwwwwwwddg",
+  "gddddddddddddddg",
+  "gddddddddddddddg",
+  "gggggggggggggggg"
+ ],
+ "objectLegend": {
+  "#": {
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  "D": {
+   "layer": "wall",
+   "sprite": "wall.door"
+  },
+  "B": {
+   "layer": "furniture",
+   "sprite": "object.bed"
+  },
+  "W": {
+   "layer": "furniture",
+   "sprite": "object.workbench"
+  },
+  "C": {
+   "layer": "furniture",
+   "sprite": "object.crate"
+  },
+  "R": {
+   "layer": "furniture",
+   "sprite": "object.barricade"
+  }
+ },
+ "objectRows": [
+  "................",
+  "................",
+  "...#####D####...",
+  "...#........#...",
+  "...#W.....C.#...",
+  "...#........#...",
+  "...#.......C#...",
+  "...#........#...",
+  "...##########...",
+  "..R..R....R..R..",
+  "................",
+  "................"
+ ],
+ "rooms": [
+  {
+   "x": 4,
+   "y": 3,
+   "w": 8,
+   "h": 5,
+   "name": "poi_checkpoint"
+  }
+ ]
+}

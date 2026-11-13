@@ -27,6 +27,7 @@ enum class DialogueConditionKind : std::uint8_t {
     MissionActive = 2,
     MissionNone = 3,
     ItemAtLeast = 4,
+    MissionLocked = 5,
 };
 
 struct DialogueCondition {
@@ -79,6 +80,7 @@ struct DialogueContext {
     const ecs::Container* inventory = nullptr;
     const items::ItemRegistry* items = nullptr;
     int day = 1;
+    int settlementReputation = kSettlementReputationMaxScore;
 };
 
 bool EvaluateDialogueCondition(const DialogueCondition& condition,
@@ -88,7 +90,8 @@ std::vector<const DialogueOption*> VisibleDialogueOptions(
 
 const MissionDef* FindAvailableSettlementMission(
     const SettlementDef& settlement, const MissionConfig& missions,
-    const ecs::MissionLog& missionLog, int day);
+    const ecs::MissionLog& missionLog, int day,
+    int settlementReputation = kSettlementReputationMaxScore);
 const MissionDef* FindActiveSettlementMission(
     const SettlementDef& settlement, const MissionConfig& missions,
     const ecs::MissionLog& missionLog);
@@ -96,5 +99,9 @@ const MissionDef* FindActiveSettlementMission(
 const char* DialogueSpeakerLabel(SettlementNpcKind kind);
 DialogueTree MakeSettlementDialogue(const SettlementDef& settlement,
                                     SettlementNpcKind kind);
+DialogueTree MakeSettlementDialogue(const SettlementDef& settlement,
+                                    SettlementNpcKind kind,
+                                    const SettlementReputationConfig& reputation,
+                                    int score);
 
 }  // namespace zl::game

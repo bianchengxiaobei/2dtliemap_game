@@ -22,6 +22,7 @@
 #include "game/Missions.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/WorldEvent.h"
 #include "items/ItemDef.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
@@ -293,9 +294,41 @@ void HashPoiDef(ContentHasher& hasher, const PoiDef& poi) {
     hasher.I32(poi.task.rewardCount);
 }
 
+void HashSettlementReputationConfig(
+    ContentHasher& hasher, const SettlementReputationConfig& reputation) {
+    hasher.Bool(reputation.enabled);
+    hasher.U32(static_cast<std::uint32_t>(reputation.tiers.size()));
+    for (const SettlementReputationTierDef& tier : reputation.tiers) {
+        hasher.U8(static_cast<std::uint8_t>(tier.tier));
+        hasher.String(tier.id);
+        hasher.String(tier.name);
+        hasher.I32(tier.minScore);
+        hasher.I32(tier.maxScore);
+    }
+    hasher.I32(reputation.sources.missionComplete);
+    hasher.I32(reputation.sources.defenseComplete);
+    hasher.I32(reputation.sources.trade);
+    hasher.I32(reputation.sources.missionAbandon);
+    hasher.I32(reputation.sources.attackNpc);
+    hasher.I32(reputation.sources.theft);
+    hasher.U32(
+        static_cast<std::uint32_t>(reputation.priceMultipliers.size()));
+    for (const SettlementPriceMultiplierDef& multiplier :
+         reputation.priceMultipliers) {
+        hasher.U8(static_cast<std::uint8_t>(multiplier.tier));
+        hasher.F32(multiplier.buy);
+        hasher.F32(multiplier.sell);
+    }
+    hasher.I32(reputation.dailyTradeGainLimit);
+}
+
 void HashSettlementDef(ContentHasher& hasher, const SettlementDef& def) {
     hasher.String(def.id);
     hasher.String(def.name);
+    hasher.String(def.regionId);
+    hasher.U8(def.services);
+    hasher.I32(def.startingReputation);
+    hasher.String(def.dialogueProfile);
     hasher.F32(def.centerX);
     hasher.F32(def.centerY);
     hasher.F32(def.safeRadius);
@@ -329,12 +362,57 @@ void HashSettlementDef(ContentHasher& hasher, const SettlementDef& def) {
     hasher.F32(def.defense.guardHealth);
     hasher.F32(def.defense.guardDamage);
     hasher.F32(def.defense.guardRange);
+    hasher.F32(def.defense.guardEngageRadius);
     hasher.F32(def.defense.guardAttackSeconds);
     hasher.F32(def.defense.raiderHealth);
     hasher.F32(def.defense.raiderDamage);
     hasher.F32(def.defense.raiderRange);
     hasher.F32(def.defense.raiderAttackSeconds);
     hasher.F32(def.defense.raiderSpeed);
+}
+
+void HashWorldEventDef(ContentHasher& hasher, const WorldEventDef& event) {
+    hasher.String(event.id);
+    hasher.String(event.name);
+    hasher.String(event.kind);
+    hasher.I32(event.minDay);
+    hasher.I32(event.maxDay);
+    hasher.F32(event.weight);
+    hasher.I32(event.cooldownDays);
+    hasher.I32(event.warningMinutes);
+    hasher.I32(event.durationMinutes);
+    hasher.String(event.region);
+    hasher.U32(static_cast<std::uint32_t>(event.stages.size()));
+    for (const WorldEventStageDef& stage : event.stages) {
+        hasher.U8(static_cast<std::uint8_t>(stage.kind));
+        hasher.String(stage.target);
+        hasher.I32(stage.count);
+        hasher.F32(stage.radius);
+        hasher.String(stage.description);
+    }
+    hasher.U32(static_cast<std::uint32_t>(event.choices.size()));
+    for (const WorldEventChoiceDef& choice : event.choices) {
+        hasher.String(choice.id);
+        hasher.String(choice.label);
+        hasher.I32(choice.reputation);
+        hasher.F32(choice.rewardXp);
+        hasher.String(choice.rewardItem);
+        hasher.I32(choice.rewardItemCount);
+        hasher.I32(choice.pressure);
+    }
+    hasher.String(event.nextEvent);
+    hasher.I32(event.failureReputation);
+    hasher.I32(event.failurePressure);
+}
+
+void HashWorldEventConfig(ContentHasher& hasher,
+                          const WorldEventConfig& config) {
+    hasher.Bool(config.enabled);
+    hasher.U32(config.randomSeed);
+    hasher.U32(static_cast<std::uint32_t>(config.defs.size()));
+    for (const WorldEventDef& event : config.defs) {
+        HashWorldEventDef(hasher, event);
+    }
 }
 
 void HashMissionDef(ContentHasher& hasher, const MissionDef& mission) {
@@ -347,6 +425,7 @@ void HashMissionDef(ContentHasher& hasher, const MissionDef& mission) {
     hasher.U8(static_cast<std::uint8_t>(mission.task));
     hasher.String(mission.prerequisite);
     hasher.I32(mission.minDay);
+    hasher.I32(mission.minSettlementReputation);
     hasher.F32(mission.chance);
     hasher.U8(mission.autoActivate ? 1u : 0u);
     hasher.I32(mission.timeLimitDays);
@@ -593,7 +672,8 @@ std::uint64_t ComputeContentHash(
     const items::LootTableRegistry& lootTables, const PoiConfig& pois,
     const MissionConfig& missions, std::uint64_t extraHash,
     const ForageRegistry* forage, const AnimalRegistry* animals,
-    const CropRegistry* crops, const SettlementConfig* settlements) {
+    const CropRegistry* crops, const SettlementConfig* settlements,
+    const WorldEventConfig* worldEvents) {
     ContentHasher hasher;
     hasher.String("ZomboidLike.Content");
     hasher.U32(kContentHashVersion);
@@ -636,6 +716,7 @@ std::uint64_t ComputeContentHash(
     hasher.Bool(settlements != nullptr);
     if (settlements != nullptr) {
         hasher.Bool(settlements->enabled);
+        HashSettlementReputationConfig(hasher, settlements->reputation);
         hasher.U32(static_cast<std::uint32_t>(settlements->defs.size()));
         for (const SettlementDef& settlement : settlements->defs) {
             HashSettlementDef(hasher, settlement);
@@ -669,6 +750,11 @@ std::uint64_t ComputeContentHash(
         for (const CropDef& crop : crops->All()) {
             HashCropDef(hasher, crop);
         }
+    }
+
+    hasher.Bool(worldEvents != nullptr);
+    if (worldEvents != nullptr) {
+        HashWorldEventConfig(hasher, *worldEvents);
     }
 
     hasher.U64(extraHash);

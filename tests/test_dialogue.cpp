@@ -1,8 +1,10 @@
 #include <doctest/doctest.h>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "core/Config.h"
 #include "game/Dialogue.h"
 #include "game/MissionComponents.h"
 #include "game/Missions.h"
@@ -108,6 +110,67 @@ TEST_CASE("M23-F4-T3 三类聚落 NPC 对话树入口完整") {
     }
 }
 
+TEST_CASE("M33-F1-T3 聚落对话与任务池按 NPC 归属隔离") {
+    game::SettlementDef first;
+    first.id = "haven_alpha";
+    first.name = "甲营地";
+    first.missionPool = {"alpha_task"};
+    game::SettlementDef second;
+    second.id = "haven_beta";
+    second.name = "乙营地";
+    second.missionPool = {"beta_task"};
+
+    const game::DialogueTree firstTree = game::MakeSettlementDialogue(
+        first, game::SettlementNpcKind::Requester);
+    const game::DialogueTree secondTree = game::MakeSettlementDialogue(
+        second, game::SettlementNpcKind::Requester);
+    CHECK(firstTree.settlementId == "haven_alpha");
+    CHECK(secondTree.settlementId == "haven_beta");
+    const game::DialogueNode* firstRoot =
+        firstTree.FindNode(firstTree.startNode);
+    const game::DialogueNode* secondRoot =
+        secondTree.FindNode(secondTree.startNode);
+    REQUIRE(firstRoot != nullptr);
+    REQUIRE(secondRoot != nullptr);
+    CHECK(firstRoot->speaker.find("甲营地") != std::string::npos);
+    CHECK(firstRoot->speaker.find("乙营地") == std::string::npos);
+    CHECK(secondRoot->speaker.find("乙营地") != std::string::npos);
+    CHECK(secondRoot->speaker.find("甲营地") == std::string::npos);
+
+    game::MissionConfig missions;
+    missions.enabled = true;
+    for (const char* id : {"alpha_task", "beta_task"}) {
+        game::MissionDef def;
+        def.id = id;
+        def.name = id;
+        def.kind = game::MissionKind::Once;
+        def.minDay = 1;
+        def.objectives.push_back(game::MissionObjectiveDef{});
+        missions.defs.push_back(std::move(def));
+    }
+    ecs::MissionLog log;
+    const game::MissionDef* firstMission =
+        game::FindAvailableSettlementMission(first, missions, log, 1);
+    const game::MissionDef* secondMission =
+        game::FindAvailableSettlementMission(second, missions, log, 1);
+    REQUIRE(firstMission != nullptr);
+    REQUIRE(secondMission != nullptr);
+    CHECK(firstMission->id == "alpha_task");
+    CHECK(secondMission->id == "beta_task");
+
+    ecs::MissionRunState run;
+    run.id = "alpha_task";
+    run.progress = {0};
+    run.status = ecs::MissionRunStatus::Active;
+    log.missions.push_back(run);
+    CHECK(game::FindAvailableSettlementMission(first, missions, log, 1) ==
+          nullptr);
+    CHECK(game::FindAvailableSettlementMission(second, missions, log, 1) !=
+          nullptr);
+    CHECK(game::FindAvailableSettlementMission(second, missions, log, 1)->id ==
+          "beta_task");
+}
+
 TEST_CASE("M23-F4-T3 对话条件按任务状态和物品数量求值") {
     const game::SettlementDef settlement = MakeSettlement();
     const game::MissionConfig missions = MakeMissions();
@@ -200,4 +263,53 @@ TEST_CASE("M23-F4-T3 求助者选项按委托状态过滤") {
     CHECK(availableMission.size() == 2u);
     CHECK(HasVisibleOption(availableMission, "接一件委托。"));
     CHECK_FALSE(HasVisibleOption(availableMission, "看看我现在的委托。"));
+}
+
+TEST_CASE("M33-F1-T6 四个聚落按 dialogueProfile 使用不同口吻") {
+    const std::string root{ZL_SOURCE_DIR};
+    core::Config config;
+    REQUIRE(config.LoadFile(root + "/config/game.json"));
+    config.Set("settlements.file", root + "/assets/settlements.json");
+    game::SettlementConfig settlements;
+    std::string error;
+    REQUIRE_MESSAGE(game::LoadSettlementConfig(config, &settlements, &error),
+                    error);
+
+    const auto rootText = [&](std::string_view id,
+                              game::SettlementNpcKind kind) {
+        const game::SettlementDef* settlement = settlements.Find(id);
+        REQUIRE(settlement != nullptr);
+        const game::DialogueTree tree =
+            game::MakeSettlementDialogue(*settlement, kind);
+        const game::DialogueNode* node = tree.FindNode("root");
+        REQUIRE(node != nullptr);
+        return node->text;
+    };
+    CHECK(rootText("village_haven", game::SettlementNpcKind::Merchant)
+              .find("广场上") != std::string::npos);
+    CHECK(rootText("north_fields", game::SettlementNpcKind::Merchant)
+              .find("消毒水") != std::string::npos);
+    CHECK(rootText("south_farmland", game::SettlementNpcKind::Merchant)
+              .find("谷仓") != std::string::npos);
+    CHECK(rootText("river_camp", game::SettlementNpcKind::Merchant)
+              .find("桥头") != std::string::npos);
+    CHECK(rootText("village_haven", game::SettlementNpcKind::Requester)
+              .find("棚屋") != std::string::npos);
+    CHECK(rootText("north_fields", game::SettlementNpcKind::Requester)
+              .find("压低声音") != std::string::npos);
+    CHECK(rootText("south_farmland", game::SettlementNpcKind::Requester)
+              .find("泥") != std::string::npos);
+    CHECK(rootText("river_camp", game::SettlementNpcKind::Requester)
+              .find("桥下") != std::string::npos);
+
+    game::SettlementDef custom;
+    custom.id = "custom_camp";
+    custom.name = "自定义营地";
+    custom.dialogueProfile = "custom_profile";
+    const game::DialogueTree customTree =
+        game::MakeSettlementDialogue(custom, game::SettlementNpcKind::Merchant);
+    const game::DialogueNode* customRoot = customTree.FindNode("root");
+    REQUIRE(customRoot != nullptr);
+    CHECK(customRoot->text.find("广场上") == std::string::npos);
+    CHECK(customRoot->text.find("消毒水") == std::string::npos);
 }

@@ -1,0 +1,22 @@
+{
+ "cx": 3,
+ "cy": 19,
+ "objects": [
+  {
+   "x": 4,
+   "y": 0,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  },
+  {
+   "x": 8,
+   "y": 3,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  }
+ ]
+}

@@ -20,6 +20,8 @@ struct FireAnchor {
 
 struct FireSource {
     std::string materialId;
+    // 玩家点火的归属；0 表示环境/自然火，不参与守城贡献。
+    std::uint64_t ownerStableId = 0;
     FirePhase phase = FirePhase::Extinguished;
     float ignitionProgress = 0.0f;
     float ignitionDuration = 0.0f;

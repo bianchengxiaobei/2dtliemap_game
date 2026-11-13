@@ -115,14 +115,25 @@ add_executable(ZomboidLike
     src/game/Sleeping.cpp
     src/game/Settlement.cpp
     src/game/SettlementNpc.cpp
+    src/game/SettlementReputation.cpp
+    src/game/StrategicState.cpp
+    src/game/StrategicPersistence.cpp
+    src/game/StrategicDirector.cpp
+    src/game/StrategicMap.cpp
+    src/game/RegionalSiege.cpp
     src/game/NetworkClient.cpp
     src/game/PlayerCombat.cpp
     src/game/PlayerInventoryService.cpp
     src/game/ProgressionRules.cpp
     src/game/RandomEvents.cpp
+    src/game/RegionEventDirector.cpp
+    src/game/WorldMap.cpp
     src/game/ServerList.cpp
     src/game/Weather.cpp
     src/game/RenderCollectSystem.cpp
+    src/game/WorldEvent.cpp
+    src/game/WorldEventDirector.cpp
+    src/game/WorldEventRuntime.cpp
     src/game/WorldSimulation.cpp
     src/game/ZombieFactory.cpp
     src/game/states/MainMenuState.cpp
@@ -150,6 +161,8 @@ add_executable(ZomboidLike
     src/net/PlayerIdentity.cpp
     src/net/PlayerState.cpp
     src/net/SocialProtocol.cpp
+    src/net/StrategicProtocol.cpp
+    src/net/WorldEventProtocol.cpp
     src/net/WorldSound.cpp
     src/net/Replication.cpp
     src/platform/KeyNames.cpp
@@ -172,7 +185,9 @@ add_executable(ZomboidLike
     src/save/ChunkDiffStore.cpp
     src/save/ComponentRegistry.cpp
     src/save/EntityStore.cpp
+    src/save/RegionEntityBuckets.cpp
     src/save/SaveManager.cpp
+    src/save/WorldManifest.cpp
     src/save/SaveService.cpp
     src/save/SqliteMeta.cpp
     src/save/Thumbnail.cpp
@@ -184,6 +199,8 @@ add_executable(ZomboidLike
     src/ui/RmlSystemInterface.cpp
     src/ui/ScriptUiHost.cpp
     src/ui/UiInput.cpp
+    src/ui/WorldEventUi.cpp
+    src/ui/WorldMapPanel.cpp
     src/ui/UiSystem.cpp
     src/script/EventBridge.cpp
     src/script/LuaRuntime.cpp
@@ -200,6 +217,10 @@ add_executable(ZomboidLike
     src/world/ChunkManager.cpp
     src/world/GridSquare.cpp
     src/world/MapLoader.cpp
+    src/world/WorldDefinition.cpp
+    src/world/WorldGraph.cpp
+    src/world/WorldSelection.cpp
+    src/world/RegionStreaming.cpp
     src/world/World.cpp
 )
 
@@ -244,6 +265,7 @@ add_executable(ZomboidLikeTests
     tests/test_main.cpp
     tests/test_isomath.cpp
     tests/test_maploader.cpp
+    tests/test_world_definition.cpp
     tests/test_chunkmanager.cpp
     tests/test_ecs.cpp
     tests/test_spatialindex.cpp
@@ -328,6 +350,9 @@ add_executable(ZomboidLikeTests
     tests/test_settlement_defense.cpp
     tests/test_settlement_network.cpp
     tests/test_settlement_integration.cpp
+    tests/test_world_events.cpp
+    tests/test_world_event_director.cpp
+    tests/test_world_event_runtime.cpp
     tests/test_dialogue.cpp
     tests/test_forage.cpp
     tests/test_fire.cpp
@@ -340,6 +365,22 @@ add_executable(ZomboidLikeTests
     tests/test_base_siege.cpp
     tests/test_base_hud.cpp
     tests/test_homestead.cpp
+    tests/test_world_generator.cpp
+    tests/test_region_streaming.cpp
+    tests/test_world_manifest.cpp
+    tests/test_world_graph.cpp
+    tests/test_world_map.cpp
+    tests/test_world_event_ui.cpp
+    tests/test_world_event_network.cpp
+    tests/test_region_events.cpp
+    tests/test_region_network.cpp
+    tests/test_strategic_state.cpp
+    tests/test_strategic_map.cpp
+    tests/test_strategic_network.cpp
+    tests/test_regional_siege.cpp
+    tests/test_regional_siege_integration.cpp
+    tests/test_m31_stress.cpp
+    tests/test_m31_vertical_slice.cpp
     src/core/Config.cpp
     src/ai/AStar.cpp
     src/ai/Passability.cpp
@@ -402,6 +443,12 @@ add_executable(ZomboidLikeTests
     src/game/Sleeping.cpp
     src/game/Settlement.cpp
     src/game/SettlementNpc.cpp
+    src/game/SettlementReputation.cpp
+    src/game/StrategicState.cpp
+    src/game/StrategicPersistence.cpp
+    src/game/StrategicDirector.cpp
+    src/game/StrategicMap.cpp
+    src/game/RegionalSiege.cpp
     src/game/Dialogue.cpp
     src/game/EmbeddedServer.cpp
     src/game/NetworkClient.cpp
@@ -409,8 +456,13 @@ add_executable(ZomboidLikeTests
     src/game/PlayerInventoryService.cpp
     src/game/ProgressionRules.cpp
     src/game/RandomEvents.cpp
+    src/game/RegionEventDirector.cpp
+    src/game/WorldMap.cpp
     src/game/ServerList.cpp
     src/game/Weather.cpp
+    src/game/WorldEvent.cpp
+    src/game/WorldEventDirector.cpp
+    src/game/WorldEventRuntime.cpp
     src/game/WorldSimulation.cpp
     src/game/ZombieFactory.cpp
     src/items/Crafting.cpp
@@ -434,6 +486,8 @@ add_executable(ZomboidLikeTests
     src/net/PlayerIdentity.cpp
     src/net/PlayerState.cpp
     src/net/SocialProtocol.cpp
+    src/net/StrategicProtocol.cpp
+    src/net/WorldEventProtocol.cpp
     src/net/WorldSound.cpp
     src/net/Replication.cpp
     src/platform/KeyNames.cpp
@@ -451,7 +505,9 @@ add_executable(ZomboidLikeTests
     src/save/ChunkDiffStore.cpp
     src/save/ComponentRegistry.cpp
     src/save/EntityStore.cpp
+    src/save/RegionEntityBuckets.cpp
     src/save/SaveManager.cpp
+    src/save/WorldManifest.cpp
     src/save/SaveService.cpp
     src/save/SqliteMeta.cpp
     src/save/Thumbnail.cpp
@@ -461,6 +517,8 @@ add_executable(ZomboidLikeTests
     src/ui/SocialPanel.cpp
     src/ui/ScriptUiHost.cpp
     src/ui/UiInput.cpp
+    src/ui/WorldEventUi.cpp
+    src/ui/WorldMapPanel.cpp
     src/script/EventBridge.cpp
     src/script/LuaRuntime.cpp
     src/script/ModLoader.cpp
@@ -476,6 +534,10 @@ add_executable(ZomboidLikeTests
     src/world/ChunkManager.cpp
     src/world/GridSquare.cpp
     src/world/MapLoader.cpp
+    src/world/WorldDefinition.cpp
+    src/world/WorldGraph.cpp
+    src/world/WorldSelection.cpp
+    src/world/RegionStreaming.cpp
     src/world/World.cpp
 )
 

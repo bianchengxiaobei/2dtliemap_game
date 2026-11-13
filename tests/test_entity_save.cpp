@@ -21,6 +21,7 @@
 #include "game/MissionComponents.h"
 #include "game/Missions.h"
 #include "game/PoiComponents.h"
+#include "game/SettlementReputation.h"
 #include "game/StructureComponents.h"
 #include "game/VehicleComponents.h"
 #include "items/ItemComponents.h"
@@ -38,7 +39,7 @@ save::ComponentRegistry MakeRegistry() {
     std::string error;
     REQUIRE(save::RegisterBuiltinComponents(registry, &error));
     CHECK(error.empty());
-    CHECK(registry.Size() == 45u);
+    CHECK(registry.Size() == 46u);
     return registry;
 }
 
@@ -85,7 +86,8 @@ void AddPlayerComponents(ecs::EcsWorld& world, ecs::Entity entity) {
     missions.missions.push_back(ecs::MissionRunState{
         "radio_signal", {1}, ecs::MissionRunStatus::Completed, 3, true});
     missions.missions.push_back(ecs::MissionRunState{
-        "daily_patrol", {2, 3}, ecs::MissionRunStatus::Active, 4, false});
+        "daily_patrol", {2, 3}, ecs::MissionRunStatus::Active, 4, false,
+        "village_haven"});
     registry.emplace<ecs::MissionLog>(entity, std::move(missions));
 
     ecs::Container bag;
@@ -284,6 +286,7 @@ TEST_CASE("M10-T3 玩家与物品栏StableId 往") {
     REQUIRE(daily->progress.size() == 2u);
     CHECK(daily->progress[0] == 2);
     CHECK(daily->progress[1] == 3);
+    CHECK(daily->settlementId == "village_haven");
     const auto* radio = game::FindMissionState(*missionLog, "radio_signal");
     REQUIRE(radio != nullptr);
     CHECK(radio->status == ecs::MissionRunStatus::Completed);
@@ -775,6 +778,99 @@ TEST_CASE("M15-T2 Wounds 存档往返；旧档无伤口组件保持兼容") {
     REQUIRE(save::ApplyEntity(legacy, legacyTarget, legacyLoaded, components,
                               &error));
     CHECK_FALSE(legacyTarget.Registry().all_of<ecs::Wounds>(legacyLoaded));
+}
+
+TEST_CASE("M33-F1-T4 SettlementReputation 存档往返与旧档缺省") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity player = source.Create();
+    AddPlayerComponents(source, player);
+    auto& reputation =
+        source.Registry().emplace<game::SettlementReputation>(player);
+    reputation.settlements.push_back(
+        game::SettlementReputationEntry{"village_haven", 25});
+    reputation.settlements.push_back(
+        game::SettlementReputationEntry{"north_fields", -10});
+    reputation.appliedKeys.push_back(
+        "mission:village_haven:settlement_help:4:complete");
+    reputation.appliedKeys.push_back("trade:village_haven:4:0");
+
+    std::string error;
+    save::SavedEntity saved;
+    REQUIRE(save::CapturePlayer(source, components, &saved, &error));
+    CHECK(FindComponent(saved, save::kSaveComponentSettlementReputation) !=
+          nullptr);
+
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(SnapshotOf(saved), &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(loaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+
+    const auto* loadedReputation =
+        target.Registry().try_get<game::SettlementReputation>(loaded);
+    REQUIRE(loadedReputation != nullptr);
+    REQUIRE(loadedReputation->settlements.size() == 2u);
+    CHECK(loadedReputation->settlements[0].settlementId == "village_haven");
+    CHECK(loadedReputation->settlements[0].score == 25);
+    CHECK(loadedReputation->settlements[1].settlementId == "north_fields");
+    CHECK(loadedReputation->settlements[1].score == -10);
+    REQUIRE(loadedReputation->appliedKeys.size() == 2u);
+    CHECK(loadedReputation->appliedKeys[0] ==
+          "mission:village_haven:settlement_help:4:complete");
+    CHECK(loadedReputation->appliedKeys[1] == "trade:village_haven:4:0");
+
+    source.Registry().remove<game::SettlementReputation>(player);
+    save::SavedEntity legacy;
+    REQUIRE(save::CapturePlayer(source, components, &legacy, &error));
+    CHECK(FindComponent(legacy, save::kSaveComponentSettlementReputation) ==
+          nullptr);
+    ecs::EcsWorld legacyTarget;
+    const ecs::Entity legacyLoaded =
+        legacyTarget.CreateWithStableId(legacy.stableId);
+    REQUIRE(legacyLoaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(legacy, legacyTarget, legacyLoaded, components,
+                              &error));
+    CHECK(legacyTarget.Registry()
+              .try_get<game::SettlementReputation>(legacyLoaded) == nullptr);
+}
+
+TEST_CASE("M33-F1-T4 旧 v1 MissionLog 无聚落来源仍可读取") {
+    const save::ComponentRegistry components = MakeRegistry();
+    const save::SavedComponent missionComponent = MakeComponent(
+        save::kSaveComponentMissionLog, 1, [](save::BinaryWriter& writer) {
+            return writer.Write(static_cast<std::int32_t>(3)) &&
+                   writer.Write(static_cast<std::int32_t>(0)) &&
+                   writer.Write(static_cast<std::uint32_t>(1)) &&
+                   writer.WriteString("settlement_help", 64) &&
+                   writer.Write(static_cast<std::uint8_t>(0)) &&
+                   writer.Write(static_cast<std::int32_t>(3)) &&
+                   writer.Write(static_cast<std::uint8_t>(0)) &&
+                   writer.Write(static_cast<std::uint32_t>(1)) &&
+                   writer.Write(static_cast<std::int32_t>(1));
+        });
+    save::SavedEntity saved;
+    saved.stableId = 41;
+    saved.components.push_back(missionComponent);
+
+    ecs::EcsWorld target;
+    const ecs::Entity loaded = target.CreateWithStableId(saved.stableId);
+    REQUIRE(loaded != ecs::EcsWorld::kNull);
+    std::string error;
+    REQUIRE(save::ApplyEntity(saved, target, loaded, components, &error));
+    const auto* log = target.Registry().try_get<ecs::MissionLog>(loaded);
+    REQUIRE(log != nullptr);
+    REQUIRE(log->missions.size() == 1u);
+    CHECK(log->missions[0].id == "settlement_help");
+    CHECK(log->missions[0].progress.size() == 1u);
+    CHECK(log->missions[0].progress[0] == 1);
+    CHECK(log->missions[0].settlementId.empty());
 }
 
 TEST_CASE("M15-T4 Pain 存档往返：保存基础疼痛与剩余止痛时间") {

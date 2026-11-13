@@ -14,7 +14,7 @@ namespace zl::net {
 // 只发给拥有该玩家的会话，不进入全体可见的 ZLR1 实体快照；客户端用它在网络模式
 // 构造只读 UI 镜像，所有修改仍必须通过 ZLC1 命令回服务器执行。
 inline constexpr std::uint32_t kPlayerStateMagic = 0x31504C5Au;  // "ZLP1"
-inline constexpr std::uint16_t kPlayerStateVersion = 20;
+inline constexpr std::uint16_t kPlayerStateVersion = 21;
 inline constexpr std::size_t kPlayerStateHeaderSize = 24;
 inline constexpr std::size_t kMaxPlayerStateBytes = 32 * 1024;
 inline constexpr std::size_t kMaxPlayerStateBagItems = 64;
@@ -31,6 +31,7 @@ inline constexpr std::size_t kMaxPlayerStateSleepStatusBytes = 512;
 inline constexpr std::size_t kMaxPlayerStateForageNodes = 32;
 inline constexpr std::size_t kMaxPlayerStateFishingSpots = 12;
 inline constexpr std::size_t kMaxPlayerStateSettlements = 32;
+inline constexpr std::size_t kMaxPlayerStateSettlementReputation = 32;
 inline constexpr std::size_t kMaxPlayerStateSettlementNoticeBytes = 512;
 inline constexpr std::uint8_t kPlayerSurvivalModeNone = 0;
 inline constexpr std::uint8_t kPlayerSurvivalModeForage = 1;
@@ -180,6 +181,11 @@ struct PlayerSettlementProgress {
     bool raidActive = false;
     float guardHealth = 0.0f;
     float guardHealthMax = 0.0f;
+};
+
+struct PlayerSettlementReputation {
+    std::string id;
+    int score = 0;
 };
 
 // M19-F2：服务器权威 POI 进度；客户端只读用于指引/完成态。
@@ -335,6 +341,7 @@ struct PlayerState {
     PlayerCombatState combat;
     // M23-F4-T6：聚落权威状态与服务器提示（owner-only）。
     std::vector<PlayerSettlementProgress> settlements;
+    std::vector<PlayerSettlementReputation> settlementReputation;
     std::uint32_t settlementNoticeSerial = 0;
     std::uint8_t settlementNoticeTone = 0;
     std::string settlementNotice;

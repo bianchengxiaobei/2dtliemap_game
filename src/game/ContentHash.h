@@ -19,8 +19,9 @@ class ForageRegistry;
 struct MissionConfig;
 struct PoiConfig;
 struct SettlementConfig;
+struct WorldEventConfig;
 
-inline constexpr std::uint32_t kContentHashVersion = 13;
+inline constexpr std::uint32_t kContentHashVersion = 17;
 
 std::uint64_t ComputeContentHash(
     const items::ItemRegistry& items, const items::RecipeRegistry& recipes,
@@ -30,7 +31,8 @@ std::uint64_t ComputeContentHash(
     const ForageRegistry* forage = nullptr,
     const AnimalRegistry* animals = nullptr,
     const CropRegistry* crops = nullptr,
-    const SettlementConfig* settlements = nullptr);
+    const SettlementConfig* settlements = nullptr,
+    const WorldEventConfig* worldEvents = nullptr);
 
 std::uint64_t ComputeTreeHash(std::string_view root);
 

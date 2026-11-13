@@ -1,0 +1,90 @@
+{
+ "format": "zomboidlike-poi-template-v1",
+ "id": "farmstead_v1",
+ "name": "废弃农场",
+ "w": 18,
+ "h": 14,
+ "anchor": {
+  "x": 9,
+  "y": 7
+ },
+ "floorLegend": {
+  "g": "tile.floor.grass",
+  "d": "tile.floor.dirt",
+  "w": "tile.floor.wood"
+ },
+ "floorRows": [
+  "gggggggggggggggggg",
+  "gddddddddddddddddg",
+  "gddddddddddddddddg",
+  "gggggggggggggggggg",
+  "gwwwwwwwwwggwwwwwg",
+  "gwwwwwwwwwggwwwwwg",
+  "gwwwwwwwwwggwwwwwg",
+  "dwwwwwwwwwddwwwwwg",
+  "gwwwwwwwwwggwwwwwg",
+  "gwwwwwwwwwggwwwwwg",
+  "ggggggggggggwwwwwg",
+  "gddddddddddddddddg",
+  "gddddddddddddddddg",
+  "gggggggggggggggggg"
+ ],
+ "objectLegend": {
+  "#": {
+   "layer": "wall",
+   "sprite": "wall.brick"
+  },
+  "D": {
+   "layer": "wall",
+   "sprite": "wall.door"
+  },
+  "B": {
+   "layer": "furniture",
+   "sprite": "object.bed"
+  },
+  "W": {
+   "layer": "furniture",
+   "sprite": "object.workbench"
+  },
+  "C": {
+   "layer": "furniture",
+   "sprite": "object.crate"
+  },
+  "R": {
+   "layer": "furniture",
+   "sprite": "object.barricade"
+  }
+ },
+ "objectRows": [
+  "..................",
+  "..................",
+  "..................",
+  "..................",
+  ".#########..#####.",
+  ".#B...C..#..#C.C#.",
+  ".#.W.....#..#...#.",
+  ".D.......#..D...#.",
+  ".#.......#..#.C.#.",
+  ".#########..#...#.",
+  "............#####.",
+  "..................",
+  "..................",
+  ".................."
+ ],
+ "rooms": [
+  {
+   "x": 2,
+   "y": 5,
+   "w": 7,
+   "h": 4,
+   "name": "poi_farmstead_house"
+  },
+  {
+   "x": 13,
+   "y": 5,
+   "w": 3,
+   "h": 5,
+   "name": "poi_farm_barn"
+  }
+ ]
+}

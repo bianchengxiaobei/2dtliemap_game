@@ -37,6 +37,7 @@ struct ModContentResult {
     std::vector<std::string> missionFiles;
     std::vector<std::string> cropFiles;
     std::vector<std::string> settlementFiles;
+    std::vector<std::string> worldEventFiles;
     std::vector<std::string> skippedIds;
     std::vector<ModContentSource> sources;
 };

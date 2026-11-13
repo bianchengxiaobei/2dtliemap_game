@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "game/MissionComponents.h"
+#include "game/Settlement.h"
 
 namespace zl::core {
 class Config;
@@ -74,6 +75,7 @@ struct MissionDef {
     MissionTaskKind task = MissionTaskKind::Generic;
     std::string prerequisite;
     int minDay = 1;
+    int minSettlementReputation = -100;
     float chance = 0.5f;
     bool autoActivate = true;
     int timeLimitDays = 0;
@@ -157,6 +159,7 @@ bool MissionRandomRoll(std::uint32_t seed, int day, std::string_view id,
 bool MissionHasNextStep(const MissionConfig& config, const MissionDef& def);
 bool MissionCanActivate(const MissionDef& def, const ecs::MissionLog& log,
                         int day);
+bool MissionMeetsSettlementReputation(const MissionDef& def, int score);
 int MissionDeadlineDay(const MissionDef& def,
                        const ecs::MissionRunState& state);
 bool MissionIsExpired(const MissionDef& def,

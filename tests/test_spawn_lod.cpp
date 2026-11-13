@@ -208,6 +208,27 @@ TEST_CASE("SpawnLodSystem：基地守夜事件僵尸不计入人口且不被虚�
     CHECK(rig.hordes.GetStats(0.0f, 0.0f).zombies == 1);
 }
 
+TEST_CASE("M31-T5 SpawnLod density scale follows region density") {
+    ai::SpawnLodSystem::Params p;
+    p.populationTarget = 20;
+    p.refillPerSecond = 240.0f;
+    p.refillRadius = 60.0f;
+    p.refillBandWidth = 5.0f;
+    p.materializeRadius = 10.0f;
+    p.virtualizeRadius = 48.0f;
+    SpawnRig rig(p);
+
+    rig.system->SetDensityScale(0.5f);
+    rig.Run(30);
+    CHECK(rig.system->GetStats().spawned == 10u);
+    CHECK(rig.system->GetStats().virtualZombies == 10);
+
+    rig.system->SetDensityScale(2.0f);
+    rig.Run(30);
+    CHECK(rig.system->GetStats().spawned == 40u);
+    CHECK(rig.system->GetStats().virtualZombies == 40);
+}
+
 TEST_CASE("SpawnLodSystem：人口低于目标 → 补给进虚拟层（环形放置/到达目标即停）") {
     ai::SpawnLodSystem::Params p;
     p.populationTarget = 20;

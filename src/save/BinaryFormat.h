@@ -36,6 +36,7 @@ inline constexpr std::uint32_t kMagicWorld = MakeMagic('Z', 'L', 'W', 'D');
 inline constexpr std::uint32_t kMagicEntities = MakeMagic('Z', 'L', 'E', 'N');
 inline constexpr std::uint32_t kMagicPlayer = MakeMagic('Z', 'L', 'P', 'L');
 inline constexpr std::uint32_t kMagicChunkDiff = MakeMagic('Z', 'L', 'C', 'D');
+inline constexpr std::uint32_t kMagicWorldManifest = MakeMagic('Z', 'L', 'W', 'M');
 
 inline std::string MagicToString(std::uint32_t magic) {
     std::string result(4, '?');

@@ -93,4 +93,15 @@ struct RandomEventActor {
     int index = 0;
 };
 
+struct WorldEventActor {
+    std::string eventId;
+    std::string target;
+    int index = 0;
+};
+
+struct WorldEventContainer {
+    std::string eventId;
+    int index = 0;
+};
+
 }  // namespace zl::ecs

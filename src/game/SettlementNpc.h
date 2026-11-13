@@ -6,11 +6,13 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "characters/components/CombatComponents.h"
 #include "ecs/EcsWorld.h"
 #include "game/Settlement.h"
+#include "game/StrategicState.h"
 
 namespace zl::game {
 
@@ -57,6 +59,7 @@ struct SettlementNpc {
 // 但没有 AiState，由 SettlementNpcSystem 统一驱动，避免普通游荡 AI 破坏守城节奏。
 struct SettlementRaidZombie {
     std::string settlementId;
+    ContestedFaction faction = ContestedFaction::Infected;
     int nightKey = 0;
     float targetX = 0.0f;
     float targetY = 0.0f;
@@ -116,8 +119,18 @@ public:
         float guardHealthMax = 0.0f;
     };
 
+    struct PopulationStats {
+        int merchants = 0;
+        int guards = 0;
+        int requesters = 0;
+    };
+
     SettlementNpcSystem(const SettlementConfig* settlements,
                         WalkableQuery walkable = {});
+
+    PopulationStats EnsurePopulation(ecs::EcsWorld& world,
+                                     bool spawnMerchants = true,
+                                     const WalkableQuery& walkable = {});
 
     void SetFocus(float x, float y);
     void SetDamageCallback(DamageCallback callback);
@@ -135,6 +148,29 @@ public:
                           std::string_view id) const;
     // day 仅用于夜袭“每晚一次”判定；默认 1 保持旧测试/调用兼容。
     void Update(ecs::EcsWorld& world, float dt, int hour, int day = 1);
+
+    // M32-T4：战略详细围攻的外部波次。守卫/平民仍走同一套 M23 日程：
+    // external 期间守卫 Defend、非战斗 NPC Shelter，不触发 M23 夜间判定。
+    bool BeginExternalDefense(ecs::EcsWorld& world, std::string_view id);
+    int SpawnExternalWave(ecs::EcsWorld& world, std::string_view id, int count,
+                          int waveIndex,
+                          ContestedFaction faction =
+                              ContestedFaction::Infected);
+    int LiveGuards(ecs::EcsWorld& world, std::string_view id) const;
+    int LiveRaiders(ecs::EcsWorld& world, std::string_view id) const;
+    int RaidersWithin(ecs::EcsWorld& world, std::string_view id, float x,
+                      float y, float radius) const;
+    void UpdateExternalDefense(ecs::EcsWorld& world, std::string_view id,
+                               float dt);
+    void EndExternalDefense(ecs::EcsWorld& world, std::string_view id,
+                            bool fallen, std::string_view reason);
+    // M32-T5：失守后撤离平民/清空守卫，反攻波次期间允许已沦陷聚落刷新
+    // 感染者；恢复 Human 后由 RestoreSettlement 解除禁区并重建守卫。
+    void MarkFallen(ecs::EcsWorld& world, std::string_view id);
+    bool BeginExternalReclaim(ecs::EcsWorld& world, std::string_view id);
+    void EndExternalReclaim(ecs::EcsWorld& world, std::string_view id,
+                            bool held, std::string_view reason);
+    void RestoreSettlement(ecs::EcsWorld& world, std::string_view id);
     const Stats& GetStats() const { return m_stats; }
 
     bool DefenseEnabled(std::string_view id) const;
@@ -147,7 +183,10 @@ public:
 private:
     struct DefenseRuntime {
         bool active = false;
+        bool external = false;
+        bool reclaim = false;
         bool fallen = false;
+        ContestedFaction faction = ContestedFaction::Infected;
         int lastNightKey = std::numeric_limits<int>::min();
         int nightKey = 0;
         int raidersSpawned = 0;
@@ -177,7 +216,8 @@ private:
     void UpdateRaiders(ecs::EcsWorld& world, const SettlementDef& def,
                        DefenseRuntime& runtime, float dt);
     void SpawnRaider(ecs::EcsWorld& world, const SettlementDef& def,
-                     int nightKey, int index, int count);
+                     int nightKey, int index, int count,
+                     ContestedFaction faction);
     void FinishRaid(ecs::EcsWorld& world, const SettlementDef& def,
                     DefenseRuntime& runtime, bool fallen,
                     std::string_view reason);
@@ -187,6 +227,8 @@ private:
                                  float x, float y) const;
     ecs::Entity FindNearestRaider(ecs::EcsWorld& world, std::string_view id,
                                   float x, float y) const;
+    ecs::Entity FindNearestThreat(ecs::EcsWorld& world, std::string_view id,
+                                  float x, float y, float radius) const;
     int CountGuards(ecs::EcsWorld& world, std::string_view id,
                     bool aliveOnly) const;
     int CountRaiders(ecs::EcsWorld& world, std::string_view id) const;
@@ -200,6 +242,9 @@ private:
     std::unordered_map<std::string, float> m_threatLinger;
     std::unordered_map<std::string, DefenseRuntime> m_defense;
     std::unordered_map<std::string, float> m_savedGuardHealth;
+    std::unordered_set<std::string> m_populationMerchants;
+    std::unordered_set<std::string> m_populationGuards;
+    std::unordered_set<std::string> m_populationRequesters;
     std::string m_noticeText;
     std::string m_noticeTone = "info";
     std::uint32_t m_noticeSerial = 0;

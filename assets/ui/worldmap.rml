@@ -1,0 +1,81 @@
+<rml>
+<head>
+    <title>ZomboidLike World Map</title>
+    <link type="text/rcss" href="theme.rcss"/>
+    <link type="text/rcss" href="worldmap.rcss"/>
+</head>
+<body>
+    <div id="world-map" class="world-map">
+        <div id="world-map-panel" class="world-map-panel">
+            <div class="world-map-header">
+                <span class="world-map-title">世界地图</span>
+                <span id="world-map-subtitle" class="world-map-subtitle">M31 · 36×36</span>
+                <div id="world-map-close" class="world-map-close">X</div>
+            </div>
+            <div class="world-map-body">
+                <div id="world-map-canvas" class="world-map-canvas">
+                    <div id="map-region-layer" class="map-layer"></div>
+                    <div id="map-fog-layer" class="map-layer"></div>
+                    <div id="map-strategic-layer" class="map-layer"></div>
+                    <div id="map-water-layer" class="map-layer"></div>
+                    <div id="map-road-layer" class="map-layer"></div>
+                    <div id="map-route-layer" class="map-layer"></div>
+                    <div id="map-settlement-layer" class="map-layer"></div>
+                    <div id="map-landmark-layer" class="map-layer"></div>
+                    <div id="map-poi-layer" class="map-layer"></div>
+                    <div id="map-event-layer" class="map-layer"></div>
+                    <div id="map-label-layer" class="map-layer"></div>
+                    <div class="map-compass">N</div>
+                </div>
+                <div class="world-map-sidebar">
+                    <div id="map-region" class="map-region-title">当前区域：-</div>
+                    <div id="map-position" class="map-line">位置 -</div>
+                    <div id="map-progress" class="map-line">已发现 POI -</div>
+                    <div id="map-settlement-list" class="map-line map-settlement-list"></div>
+                    <div id="map-poi-list" class="map-line map-poi-list"></div>
+                    <div class="map-divider"></div>
+                    <div class="map-section-title">战略态势</div>
+                    <div id="map-strategic-resources" class="map-strategic-resources"></div>
+                    <div id="map-strategic-alert" class="map-strategic-alert"></div>
+                    <div id="map-strategic-list" class="map-strategic-list"></div>
+                    <div id="map-strategic-actions" class="map-strategic-actions">
+                        <div id="map-strategic-selected" class="map-strategic-selected">选择一个战略区域</div>
+                        <div class="map-action-row">
+                            <button id="map-action-travel" class="map-action">前往</button>
+                            <button id="map-action-support" class="map-action">支援+20</button>
+                            <button id="map-action-donate" class="map-action">捐献+40</button>
+                        </div>
+                        <div class="map-action-row">
+                            <button id="map-action-clear" class="map-action">清理核心</button>
+                            <button id="map-action-repair" class="map-action">修复设施</button>
+                            <button id="map-action-reclaim" class="map-action">反攻</button>
+                        </div>
+                        <div class="map-action-hint">战略行动需抵达区域锚点；拒绝原因会显示在 HUD。</div>
+                    </div>
+                    <div class="map-divider"></div>
+                    <div class="map-section-title">地标与目标</div>
+                    <div id="map-objective" class="map-objective-text"></div>
+                    <div id="map-route" class="map-route-text"></div>
+                    <div id="map-route-cost" class="map-route-cost"></div>
+                    <div class="map-divider"></div>
+                    <div class="map-section-title">图例</div>
+                    <div class="map-legend">
+                        <span class="legend-human">人类</span>
+                        <span class="legend-contested">争夺</span>
+                        <span class="legend-infested">沦陷</span>
+                        <span class="legend-warning">预警</span>
+                        <span class="legend-settlement">聚落</span>
+                        <span class="legend-poi">地点</span>
+                        <span class="legend-player">你</span>
+                    </div>
+                    <div class="map-divider"></div>
+                    <div class="map-section-title">电台 / 战略事件</div>
+                    <div id="map-strategic-log" class="map-strategic-log"></div>
+                    <div class="map-divider"></div>
+                    <div id="map-hint" class="map-hint">M/ESC 关闭</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

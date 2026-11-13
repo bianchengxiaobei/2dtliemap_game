@@ -279,7 +279,18 @@
   },
   "world": {
     "mapDir": "assets/maps/village_demo",
+    "m31": {
+      "enabled": true,
+      "serverEnabled": false,
+      "mapDir": "assets/maps/village_demo_m31",
+      "legacyMapDir": "assets/maps/village_demo",
+      "contentFile": "assets/maps/village_demo_m31_content.json"
+    },
     "loadRadius": 3,
+    "residentRadius": 6,
+    "predictionMaxChunks": 2,
+    "predictionSeconds": 0.6,
+    "enforceMapBounds": true,
     "chunkRequestBudget": 4,
     "chunkAttachBudget": 8,
     "chunkAttachBudgetMs": 2.0,
@@ -288,7 +299,15 @@
     "cruiseRadius": 40,
     "cruiseCenterX": 500,
     "cruiseCenterY": 500,
-    "cruiseMinutes": 5
+    "cruiseMinutes": 5,
+    "regionEvents": {
+      "enabled": true,
+      "durationSeconds": 240.0,
+      "contentRadius": 24.0
+    },
+    "map": {
+      "discoverRadius": 36.0
+    }
   },
   "renderDemo": {
     "mapSize": 32,
@@ -892,6 +911,7 @@
         "task": "help",
         "prerequisite": "",
         "minDay": 1,
+        "minSettlementReputation": -39,
         "autoActivate": false,
         "timeLimitDays": 2,
         "retryDays": 1,
@@ -910,6 +930,7 @@
         "task": "escort",
         "prerequisite": "settlement_help",
         "minDay": 1,
+        "minSettlementReputation": 0,
         "autoActivate": false,
         "timeLimitDays": 3,
         "retryDays": 1,
@@ -929,6 +950,7 @@
         "task": "clear",
         "prerequisite": "settlement_escort",
         "minDay": 1,
+        "minSettlementReputation": 20,
         "autoActivate": false,
         "timeLimitDays": 2,
         "retryDays": 1,
@@ -947,6 +969,7 @@
         "task": "supply",
         "prerequisite": "settlement_clear",
         "minDay": 1,
+        "minSettlementReputation": 30,
         "autoActivate": false,
         "timeLimitDays": 3,
         "retryDays": 1,
@@ -955,6 +978,25 @@
           { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "把急救药品送回村庄营地" }
         ],
         "reward": { "xp": 100.0, "skill": "survival", "item": "antibiotics", "itemCount": 2, "label": "100 生存经验 + 抗生素×2" }
+      },
+      {
+        "id": "refugee_relief",
+        "name": "难民救济",
+        "chain": "settlement",
+        "order": 5,
+        "kind": "once",
+        "source": "npc",
+        "task": "help",
+        "prerequisite": "",
+        "minDay": 1,
+        "autoActivate": false,
+        "timeLimitDays": 2,
+        "retryDays": 1,
+        "objectives": [
+          { "kind": "collect", "target": "canned_beans", "count": 2, "description": "为撤到村庄的难民收集罐头" },
+          { "kind": "reach", "x": 70.0, "y": 24.0, "radius": 3.0, "count": 1, "description": "把食物送到村庄避难所" }
+        ],
+        "reward": { "xp": 90.0, "skill": "survival", "item": "bandage", "itemCount": 2, "label": "90 生存经验 + 绷带×2" }
       },
       {
         "id": "event_hospital_outbreak",
@@ -1195,6 +1237,63 @@
           { "kind": "reach", "x": 66.5, "y": 28.5, "radius": 1.5, "count": 1, "description": "带中继零件前往撤离点，准备出发" }
         ],
         "reward": { "xp": 150.0, "skill": "survival", "item": "ammo_shells", "itemCount": 8, "label": "150 生存经验 + 霰弹×8" }
+      },
+      {
+        "id": "north_blood_drive",
+        "name": "诊所血库告急",
+        "chain": "north_clinic",
+        "order": 1,
+        "kind": "once",
+        "source": "npc",
+        "task": "help",
+        "prerequisite": "",
+        "minDay": 1,
+        "minSettlementReputation": -39,
+        "autoActivate": false,
+        "timeLimitDays": 2,
+        "retryDays": 1,
+        "objectives": [
+          { "kind": "collect", "target": "bandage", "count": 3, "description": "为北部诊所补上绷带库存" }
+        ],
+        "reward": { "xp": 75.0, "skill": "survival", "item": "antibiotics", "itemCount": 1, "label": "75 生存经验 + 抗生素×1" }
+      },
+      {
+        "id": "south_harvest_help",
+        "name": "农场的野果",
+        "chain": "south_farm",
+        "order": 1,
+        "kind": "once",
+        "source": "npc",
+        "task": "supply",
+        "prerequisite": "",
+        "minDay": 1,
+        "minSettlementReputation": 0,
+        "autoActivate": false,
+        "timeLimitDays": 3,
+        "retryDays": 1,
+        "objectives": [
+          { "kind": "collect", "target": "wild_berries", "count": 4, "description": "为南部农场补采野果" }
+        ],
+        "reward": { "xp": 65.0, "skill": "survival", "item": "potato_seeds", "itemCount": 4, "label": "65 生存经验 + 土豆种子×4" }
+      },
+      {
+        "id": "river_fish_supply",
+        "name": "桥头的鱼获",
+        "chain": "river_camp",
+        "order": 1,
+        "kind": "once",
+        "source": "npc",
+        "task": "supply",
+        "prerequisite": "",
+        "minDay": 1,
+        "minSettlementReputation": -39,
+        "autoActivate": false,
+        "timeLimitDays": 2,
+        "retryDays": 1,
+        "objectives": [
+          { "kind": "collect", "target": "small_fish", "count": 3, "description": "为河畔营地带回小鱼" }
+        ],
+        "reward": { "xp": 60.0, "skill": "survival", "item": "fish_bait", "itemCount": 5, "label": "60 生存经验 + 鱼饵×5" }
       }
     ]
   },
@@ -1269,7 +1368,61 @@
   },
   "settlements": {
     "enabled": true,
-    "file": "assets/settlements.json"
+    "file": "assets/settlements.json",
+    "reputation": {
+      "enabled": true,
+      "tiers": [
+        { "id": "hostile", "name": "敌对", "minScore": -100, "maxScore": -40 },
+        { "id": "wary", "name": "警惕", "minScore": -39, "maxScore": -1 },
+        { "id": "neutral", "name": "中立", "minScore": 0, "maxScore": 19 },
+        { "id": "friendly", "name": "友善", "minScore": 20, "maxScore": 59 },
+        { "id": "trusted", "name": "信任", "minScore": 60, "maxScore": 100 }
+      ],
+      "sources": {
+        "missionComplete": 10,
+        "defenseComplete": 15,
+        "trade": 1,
+        "missionAbandon": -10,
+        "attackNpc": -25,
+        "theft": -25
+      },
+      "priceMultipliers": {
+        "hostile": { "buy": 1.5, "sell": 0.5 },
+        "wary": { "buy": 1.25, "sell": 0.75 },
+        "neutral": { "buy": 1.0, "sell": 1.0 },
+        "friendly": { "buy": 0.9, "sell": 1.1 },
+        "trusted": { "buy": 0.8, "sell": 1.25 }
+      },
+      "dailyTradeGainLimit": 1
+    }
+  },
+  "worldEvents": {
+    "enabled": false,
+    "file": "assets/world_events.json",
+    "randomSeed": 20261113
+  },
+  "strategic": {
+    "file": "assets/strategic.json",
+    "siege": {
+      "enabled": true,
+      "warmupSeconds": 10.0,
+      "waveIntervalSeconds": 25.0,
+      "waves": [4, 6, 8],
+      "maxAlive": 12,
+      "maxWaveSize": 12,
+      "breachRadius": 6.0,
+      "lossDelaySeconds": 8.0
+    },
+    "reclaim": {
+      "enabled": true,
+      "warmupSeconds": 5.0,
+      "waveIntervalSeconds": 12.0,
+      "waves": [4, 6],
+      "maxAlive": 8,
+      "maxWaveSize": 8,
+      "breachRadius": 4.0,
+      "lossDelaySeconds": 6.0
+    }
   },
   "trading": {
     "enabled": true,
@@ -1349,6 +1502,7 @@
     "maxSessions": 8,
     "aoiRadius": 48.0,
     "maxEntities": 256,
+    "structureInterestRadius": 48.0,
     "maxCommandsPerTick": 8,
     "maxMoveToDistance": 64.0,
     "maxAttackDistance": 3.0,
@@ -1409,6 +1563,7 @@
       "RepairAllStructures": "J",
       "DemolishStructure": "X",
       "CharacterPanel": "C",
+      "WorldMap": "M",
       "MissionFocus": "L",
       "MissionAbandon": "K",
       "Vehicle": "ENTER",

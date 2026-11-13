@@ -1,4 +1,4 @@
-#include <cstdint>
+﻿#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -46,7 +46,7 @@ TEST_CASE("M14-T6 Objective save roundtrip") {
     std::string error;
     REQUIRE(zl::save::RegisterBuiltinComponents(components, &error));
     CHECK(error.empty());
-    CHECK(components.Size() == 45u);
+    CHECK(components.Size() == 46u);
 
     zl::ecs::EcsWorld source;
     const zl::ecs::Entity player = source.Create();

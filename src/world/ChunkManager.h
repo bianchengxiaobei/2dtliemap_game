@@ -8,9 +8,11 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "core/TaskScheduler.h"
 #include "world/MapLoader.h"
+#include "world/StreamingPolicy.h"
 #include "world/World.h"
 
 namespace zl::world {
@@ -29,25 +31,48 @@ class Chunk;
 // 作业对象，manager 先于任务析构时也不会写悬空指针（任务结果静默丢弃）。
 class ChunkManager {
 public:
+    struct FocusPoint {
+        float gridX = 0.0f;
+        float gridY = 0.0f;
+    };
+
     struct Stats {
-        int loadedChunks = 0;   // 当前驻留（Loaded）
-        int loadingChunks = 0;  // 后台解析中（Loading）
+        int loadedChunks = 0;   // 褰撳墠椹荤暀锛圠oaded锛?
+        int loadingChunks = 0;  // 鍚庡彴瑙ｆ瀽涓紙Loading锛?
         std::uint64_t totalLoaded = 0;
         std::uint64_t totalUnloaded = 0;
-        std::uint64_t totalCancelled = 0;  // 解析完成时相机已离开 → 直接丢弃
+        std::uint64_t totalCancelled = 0;  // 瑙ｆ瀽瀹屾垚鏃剁浉鏈哄凡绂诲紑 鈫?鐩存帴涓㈠純
         std::uint64_t totalFailed = 0;
+        int focusCount = 0;
         // M12-T3：主线程挂接预算（物理静态体/寻路缓存回调可能很重）
         double lastAttachMs = 0.0;
         int maxAttachBatch = 0;
         std::uint64_t attachBudgetHits = 0;
+        // M31-T3: lightweight resident window around the real camera. These
+        // entries are coordinates only; they do not create Chunk/World data.
+        int residentChunks = 0;
+        int lookaheadChunks = 0;
+        int predictedChunkX = 0;
+        int predictedChunkY = 0;
     };
 
     ChunkManager(World& world, MapLoader::Meta meta, core::TaskScheduler& tasks,
                  int loadRadius = core::kChunkLoadRadius, int requestBudget = 4,
-                 int attachBudget = 8, double attachBudgetMs = 2.0);
+                 int attachBudget = 8, double attachBudgetMs = 2.0,
+                 int residentRadius = -1, bool enforceMapBounds = false);
 
     // 相机中心（世界格坐标，允许小数）变化时调用；相机未跨 chunk 时为空操作。
     void Update(float cameraGridX, float cameraGridY);
+
+    // M31-T8: union of per-player interest windows. Chunks stay resident while
+    // at least one focus can still see them; candidates are dispatched nearest
+    // first so a crowded second player cannot starve the first.
+    void UpdateFocuses(const std::vector<FocusPoint>& focuses);
+
+    // M31-T3: player velocity in grid units/second. The next Update() shifts
+    // the full-load window forward by up to maxLookaheadChunks.
+    void SetPrediction(float velocityX, float velocityY);
+    void SetPredictionConfig(int maxLookaheadChunks, float lookaheadSeconds);
 
     // 主线程每帧调用：消费后台解析结果（挂接/取消/重试/放弃）
     void ProcessResults();
@@ -69,6 +94,9 @@ public:
     bool HasPendingWork() const { return m_stats.loadingChunks > 0; }
 
     int LoadRadius() const { return m_loadRadius; }
+    int ResidentRadius() const { return m_residentRadius; }
+    bool EnforceMapBounds() const { return m_enforceMapBounds; }
+    bool IsResident(int chunkX, int chunkY) const;
 
     // 地图元信息（bounds/legend 等；M4-T5 相机边界夹取用）
     const MapLoader::Meta& Map() const { return m_meta; }
@@ -94,9 +122,17 @@ private:
     void RequestLoad(int chunkX, int chunkY);
     void DrainRequests(int budget);  // 每帧限量创建/派发，避免相机快移时主线程尖峰
     void HandleFinished(const std::shared_ptr<LoadJob>& job);
+    struct LoadWindow {
+        int chunkX = 0;
+        int chunkY = 0;
+    };
+
+    void RebuildWindows(const std::vector<FocusPoint>& focuses);
+    void UpdateResident(const std::vector<LoadWindow>& windows);
     Chunk* FindActiveChunk(int chunkX, int chunkY);
     bool RemoveActiveChunk(int chunkX, int chunkY);  // 返回是否移除成功
     bool InRange(int chunkX, int chunkY) const;
+    bool InMapBounds(int chunkX, int chunkY) const;
 
     static constexpr int kMaxLoadAttempts = 3;
     static constexpr std::size_t kRecentLoadCap = 4096;
@@ -105,17 +141,28 @@ private:
     MapLoader::Meta m_meta;  // 值持有：后台任务捕获副本使用
     core::TaskScheduler& m_tasks;
     int m_loadRadius;
+    int m_residentRadius = core::kChunkLoadRadius + 2;
     int m_requestBudget = 4;       // 每次 Update 最多派发的 chunk 数
     int m_attachBudget = 8;        // 每次 ProcessResults 最多挂接的结果数
     double m_attachBudgetMs = 2.0; // 主线程挂接时间预算（首块总是执行）
+    bool m_enforceMapBounds = false;
+    StreamingConfig m_streamingConfig;
+    float m_predictionVelocityX = 0.0f;
+    float m_predictionVelocityY = 0.0f;
 
     std::shared_ptr<JobQueue> m_queue = std::make_shared<JobQueue>();
 
     bool m_hasCam = false;
     int m_camChunkX = 0;
     int m_camChunkY = 0;
+    bool m_hasLoadFocus = false;
+    int m_loadChunkX = 0;
+    int m_loadChunkY = 0;
+    std::vector<LoadWindow> m_loadWindows;
+    std::vector<LoadWindow> m_cameraWindows;
 
     std::unordered_set<std::uint64_t> m_active;              // 本 manager 拥有（驻留或加载中）
+    std::unordered_set<std::uint64_t> m_resident;            // M31-T3 轻量坐标窗口
     std::deque<std::uint64_t> m_pendingRequests;             // 待创建/派发（按帧预算消费）
     std::unordered_set<std::uint64_t> m_pendingSet;          // m_pendingRequests 去重
     std::unordered_map<std::uint64_t, int> m_failAttempts;   // 失败重试计数

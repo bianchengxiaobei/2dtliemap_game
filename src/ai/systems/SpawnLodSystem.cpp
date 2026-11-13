@@ -24,6 +24,10 @@ float Accumulate(float& accum, float perSecond, float dt, int maxOps) {
 
 }  // namespace
 
+void SpawnLodSystem::SetDensityScale(float scale) {
+    m_densityScale = std::isfinite(scale) ? std::clamp(scale, 0.0f, 4.0f) : 1.0f;
+}
+
 void SpawnLodSystem::Update(ecs::EcsWorld& world, float dt) {
     m_stats.live = 0;
 
@@ -119,7 +123,10 @@ void SpawnLodSystem::Update(ecs::EcsWorld& world, float dt) {
 
     // 4) 密度目标：追踪总数（实体 + 虚拟）低于 target → 按速率把缺口补成虚拟僵尸
     //    （环带落在 refillRadius..+band，由 VirtualHordeSystem 的漂移逐步带近）
-    const int deficit = m_params.populationTarget - (m_stats.live + virtualNow);
+    const int effectiveTarget = static_cast<int>(std::lround(
+        static_cast<double>(std::max(0, m_params.populationTarget)) *
+        static_cast<double>(m_densityScale)));
+    const int deficit = effectiveTarget - (m_stats.live + virtualNow);
     if (deficit > 0) {
         const int rOps = std::min(
             static_cast<int>(Accumulate(m_refillAccum, m_params.refillPerSecond, dt,

@@ -158,7 +158,7 @@ TEST_CASE("M14-T7 ZombieVariant save roundtrip") {
     zl::save::ComponentRegistry components;
     std::string error;
     REQUIRE(zl::save::RegisterBuiltinComponents(components, &error));
-    CHECK(components.Size() == 45u);
+    CHECK(components.Size() == 46u);
 
     zl::ecs::EcsWorld source;
     const zl::ecs::Entity zombie = source.Create();

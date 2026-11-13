@@ -74,9 +74,14 @@
 #include "game/PlayerCombat.h"
 #include "game/ProgressionRules.h"
 #include "game/RandomEvents.h"
+#include "game/RegionEventDirector.h"
+#include "game/WorldEventDirector.h"
+#include "game/WorldEventRuntime.h"
+#include "game/WorldMap.h"
 #include "game/RangedSound.h"
 #include "game/RunStats.h"
 #include "game/SettlementNpc.h"
+#include "game/SettlementReputation.h"
 #include "game/WeatherStatus.h"
 #include "game/WorldQueries.h"
 #include "game/WorldSimulation.h"
@@ -104,12 +109,17 @@
 #include "render/Renderer.h"
 #include "render/SpriteBatch.h"
 #include "save/ChunkDiff.h"
+#include "save/RegionEntityBuckets.h"
 #include "save/SaveManager.h"
+#include "save/WorldManifest.h"
 #include "ui/UiSystem.h"
+#include "ui/WorldEventUi.h"
 #include "world/Chunk.h"
 #include "world/ChunkManager.h"
+#include "world/RegionStreaming.h"
 #include "world/World.h"
 #include "world/WorldCoords.h"
+#include "world/WorldGraph.h"
 
 namespace zl::game {
 namespace {
@@ -149,6 +159,96 @@ constexpr float kBaseHudRadius = 16.0f;
 constexpr float kBaseHudRefreshSeconds = 0.25f;
 constexpr const char* kHotbarActions[] = {"Hotbar1", "Hotbar2", "Hotbar3", "Hotbar4",
                                           "Hotbar5"};
+constexpr const char* kWorldEventChoiceActions[] = {
+    "Hotbar1", "Hotbar2", "Hotbar3", "Hotbar4",
+    "Hotbar5", "Hotbar6", "Hotbar7", "Hotbar8"};
+constexpr float kWorldEventChoiceRadius = 6.0f;
+
+const game::WorldEventInstance* FindCurrentWorldEvent(
+    const game::WorldEventDirector& director) {
+    for (const game::WorldEventInstance& event : director.Events()) {
+        if (event.status == game::WorldEventStatus::Active) {
+            return &event;
+        }
+    }
+    for (const game::WorldEventInstance& event : director.Events()) {
+        if (event.status == game::WorldEventStatus::Warning) {
+            return &event;
+        }
+    }
+    return nullptr;
+}
+
+bool IsWorldEventNear(const game::WorldEventInstance& event, float x,
+                      float y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+        return false;
+    }
+    const float radius =
+        std::max(kWorldEventChoiceRadius, event.stageRadius);
+    const float dx = x - event.x;
+    const float dy = y - event.y;
+    return dx * dx + dy * dy <= radius * radius;
+}
+
+const net::WorldEventSnapshotEntry* FindCurrentNetworkWorldEvent(
+    const net::WorldEventSnapshot& snapshot) {
+    for (const net::WorldEventSnapshotEntry& event : snapshot.events) {
+        if (event.status ==
+            static_cast<std::uint8_t>(WorldEventStatus::Active)) {
+            return &event;
+        }
+    }
+    for (const net::WorldEventSnapshotEntry& event : snapshot.events) {
+        if (event.status ==
+            static_cast<std::uint8_t>(WorldEventStatus::Warning)) {
+            return &event;
+        }
+    }
+    for (const net::WorldEventSnapshotEntry& event : snapshot.events) {
+        if (event.status ==
+                static_cast<std::uint8_t>(WorldEventStatus::Resolved) ||
+            event.status ==
+                static_cast<std::uint8_t>(WorldEventStatus::Failed) ||
+            event.status ==
+                static_cast<std::uint8_t>(WorldEventStatus::Expired)) {
+            return &event;
+        }
+    }
+    return nullptr;
+}
+
+WorldEventInstance WorldEventFromSnapshot(
+    const net::WorldEventSnapshotEntry& saved) {
+    WorldEventInstance event;
+    event.id = saved.id;
+    event.defId = saved.defId;
+    event.name = saved.name;
+    event.kind = saved.kind;
+    event.regionId = saved.regionId;
+    event.x = saved.x;
+    event.y = saved.y;
+    event.status = static_cast<WorldEventStatus>(saved.status);
+    event.stageKind = static_cast<WorldEventStageKind>(saved.stageKind);
+    event.day = saved.day;
+    event.stageIndex = saved.stageIndex;
+    event.stageProgress = saved.stageProgress;
+    event.stageTarget = saved.stageTarget;
+    event.stageRadius = saved.stageRadius;
+    event.stageTargetId = saved.stageTargetId;
+    event.scheduledMinute = saved.scheduledMinute;
+    event.warningMinute = saved.warningMinute;
+    event.activeMinute = saved.activeMinute;
+    event.deadlineMinute = saved.deadlineMinute;
+    event.resolvedMinute = saved.resolvedMinute;
+    event.chainDepth = saved.chainDepth;
+    event.detail = saved.detail;
+    event.downgraded = saved.downgraded;
+    event.stagesComplete = saved.stagesComplete;
+    event.choiceId = saved.choiceId;
+    event.nextEventId = saved.nextEventId;
+    return event;
+}
 
 VehicleVisualDirection VehicleVisualDirectionFromSpriteHash(
     std::uint32_t spriteHash, VehicleVisualDirection fallback) {
@@ -272,6 +372,24 @@ ecs::SkillKind MissionSkillKind(std::string_view id) {
     return ecs::SkillKind::Survival;
 }
 
+const StrategicMapRegion* PreferredContestedRegion(
+    const StrategicMapState& strategic) {
+    const StrategicMapRegion* best = nullptr;
+    for (const StrategicMapRegion& region : strategic.regions) {
+        if (region.owner != StrategicOwner::Contested ||
+            region.recoveryStage != StrategicRecoveryStage::None) {
+            continue;
+        }
+        if (best == nullptr ||
+            region.strategicValue > best->strategicValue ||
+            (region.strategicValue == best->strategicValue &&
+             region.id < best->id)) {
+            best = &region;
+        }
+    }
+    return best;
+}
+
 }  // namespace
 
 void WorldDemoState::OnEnter() {
@@ -356,6 +474,16 @@ void WorldDemoState::OnEnter() {
     m_cruiseCenterX = static_cast<float>(config.Get<double>("world.cruiseCenterX", 500.0));
     m_cruiseCenterY = static_cast<float>(config.Get<double>("world.cruiseCenterY", 500.0));
     m_cruiseMinutes = config.Get<double>("world.cruiseMinutes", 5.0);
+    m_worldMapDiscoveryRadius = std::clamp(
+        static_cast<float>(config.Get<double>("world.map.discoverRadius", 36.0)),
+        8.0f, 256.0f);
+    m_worldMapOpen = false;
+    m_worldMapPausedByMap = false;
+    m_discoveredRegions.clear();
+    m_discoveredPois.clear();
+    m_worldMapRoute = {};
+    m_worldMapSelectedPoi.clear();
+    m_worldMapState = {};
     // M5-T4：演示枪声基础可闻半径（隔墙衰减由感知系统的传播模型按听者计算）
     m_gunshotRadius = static_cast<float>(config.Get<double>("sounds.gunshotRadius", 30.0));
     // M5-T6：玩家挥击参数（伤害管线入口，CombatSystem 消费 AttackIntent；M15-T1 由武器覆盖）
@@ -388,11 +516,13 @@ void WorldDemoState::OnEnter() {
     m_characterOpen = false;
     m_siegeReportOpen = false;
     m_lastSettlementNoticeSerial = 0;
+    m_networkSettlementReputation.clear();
     m_siegeReportTitle.clear();
     m_siegeReportRating.clear();
     m_siegeReportTone = "info";
     m_siegeReportHint.clear();
     m_siegeReportLines.fill({});
+    m_lastRegionalSiegeResultKey.clear();
     m_poiConfig = {};
     if (m_ctx.poiConfig != nullptr) {
         m_poiConfig = *m_ctx.poiConfig;
@@ -417,13 +547,12 @@ void WorldDemoState::OnEnter() {
             ZL_WARN("settlement", "聚落配置加载失败：{}", settlementError);
         }
     }
-    if (const SettlementDef* settlement =
-            PrimarySettlement(m_settlementConfig);
-        settlement != nullptr) {
-        ZL_INFO("settlement", "聚落就位：{}（{}）安全半径 {:.1f} 格，NPC {} 个",
-                settlement->name, settlement->id,
-                static_cast<double>(settlement->safeRadius),
-                settlement->npcPoints.size());
+    for (const SettlementDef& settlement : m_settlementConfig.defs) {
+        ZL_INFO("settlement",
+                "聚落就位：{}（{}）安全半径 {:.1f} 格，NPC {} 个",
+                settlement.name, settlement.id,
+                static_cast<double>(settlement.safeRadius),
+                settlement.npcPoints.size());
     }
     m_missionConfig = {};
     m_missionFocusId.clear();
@@ -949,6 +1078,15 @@ void WorldDemoState::OnEnter() {
             [this](const ui::InventoryAction& action) { SubmitInventoryAction(action); });
         m_ctx.ui->SetMenuActionHandler(
             [this](ui::MenuActionType action) { HandleMenuAction(action); });
+        m_ctx.ui->SetWorldMapCloseHandler([this] { CloseWorldMap(); });
+        m_ctx.ui->SetWorldMapSelectHandler(
+            [this](const std::string& poiId) { HandleWorldMapSelect(poiId); });
+        m_ctx.ui->SetWorldMapStrategicActionHandler(
+            [this](const std::string& regionId,
+                   game::WorldMapStrategicAction action) {
+                HandleWorldMapStrategicAction(regionId, action);
+            });
+        m_ctx.ui->SetWorldMapState(m_worldMapState, false);
         if (m_networkMode) {
             m_ctx.ui->SetSocialChatHandler(
                 [this](const std::string& text, std::string& error) {
@@ -977,6 +1115,41 @@ bool WorldDemoState::LoadFromSave() {
     m_craftBatchTotal = 0;
     m_craftBatchCompleted = 0;
     m_craftQueue.clear();
+
+    save::WorldManifest worldManifest;
+    if (m_ctx.simulation != nullptr) {
+        world::RegionStreaming* regions = m_ctx.simulation->Regions();
+        if (regions != nullptr) {
+            std::string manifestError;
+            const save::SaveManager::LoadResult manifestResult =
+                m_ctx.saveManager->ReadWorldManifest(m_loadSaveId,
+                                                     &worldManifest,
+                                                     &manifestError);
+            if (manifestResult == save::SaveManager::LoadResult::Ok) {
+                std::string mismatch;
+                if (world::CheckWorldSaveCompatibility(
+                        regions->Definition(), &worldManifest.identity,
+                        &mismatch) == world::WorldSaveCompatibility::Mismatch) {
+                    m_ctx.saveWarning =
+                        mismatch + "；存档保持只读，未写入当前世界。";
+                    ZL_ERROR("save", "{}", m_ctx.saveWarning);
+                    m_ctx.activeSaveId.clear();
+                    m_ctx.activeSaveUseBackup = false;
+                    m_loadSaveId.clear();
+                    return false;
+                }
+            } else if (manifestResult !=
+                       save::SaveManager::LoadResult::NotFound) {
+                m_ctx.saveWarning =
+                    "读取 world manifest 失败：" + manifestError +
+                    "；存档保持只读。";
+                ZL_ERROR("save", "{}", m_ctx.saveWarning);
+                m_ctx.activeSaveId.clear();
+                m_loadSaveId.clear();
+                return false;
+            }
+        }
+    }
 
     save::SaveMetadata metadata;
     save::EntitySnapshot snapshot;
@@ -1056,6 +1229,19 @@ bool WorldDemoState::LoadFromSave() {
     }
     ApplySettlementState();
     RestoreRuntimeComponents(loaded);
+    if (m_ctx.simulation != nullptr) {
+        std::string strategicError;
+        if (!m_ctx.simulation->RestoreStrategicFromManifest(
+                worldManifest, &strategicError)) {
+            m_ctx.saveWarning =
+                "恢复战略状态失败：" + strategicError + "；存档保持只读。";
+            ZL_ERROR("save", "{}", m_ctx.saveWarning);
+            m_ctx.activeSaveId.clear();
+            m_ctx.activeSaveUseBackup = false;
+            m_loadSaveId.clear();
+            return false;
+        }
+    }
     {
         int corpseCount = 0;
         int harvestedCount = 0;
@@ -1295,7 +1481,7 @@ bool WorldDemoState::CaptureSaveChunks(std::vector<save::ChunkDiff>* out,
     bool ok = true;
     m_ctx.chunkManager->ForEachLoadedChunk(
         [&](const world::Chunk& chunk) {
-            if (!ok) {
+            if (!ok || !chunk.IsDirty()) {
                 return;
             }
             save::ChunkDiff diff;
@@ -1335,6 +1521,7 @@ void WorldDemoState::RequestQuickSave(bool withThumbnail) {
     StoreSettlementState();
     SyncVehicleStateToEcs();
     save::EntitySnapshot entities;
+    save::EntityBucketSet entityBuckets;
     std::string error;
     const auto withoutEphemeral = [this](ecs::Entity entity) {
         const entt::registry& registry = m_ctx.ecs->Registry();
@@ -1347,6 +1534,10 @@ void WorldDemoState::RequestQuickSave(bool withThumbnail) {
             registry.all_of<SettlementRaidZombie>(entity);
         return !transient && !temporaryNpc && !raidZombie;
     };
+    world::RegionStreaming* regions =
+        m_ctx.simulation != nullptr ? m_ctx.simulation->Regions() : nullptr;
+    const world::WorldDefinition* definition =
+        regions != nullptr ? &regions->Definition() : nullptr;
     bool restoreDrivingSprite = false;
     if (m_driving && m_ctx.ecs->Alive(m_player) &&
         m_playerSpriteBackup.has_value()) {
@@ -1356,8 +1547,13 @@ void WorldDemoState::RequestQuickSave(bool withThumbnail) {
             restoreDrivingSprite = true;
         }
     }
-    const bool captured = save::CaptureEntities(
-        *m_ctx.ecs, *m_ctx.saveComponents, &entities, withoutEphemeral, &error);
+    const bool captured =
+        definition != nullptr
+            ? save::CaptureRegionEntityBuckets(
+                  *m_ctx.ecs, *m_ctx.saveComponents, *definition,
+                  &entityBuckets, withoutEphemeral, &error)
+            : save::CaptureEntities(*m_ctx.ecs, *m_ctx.saveComponents,
+                                    &entities, withoutEphemeral, &error);
     if (restoreDrivingSprite && m_ctx.ecs->Alive(m_player) && m_driving) {
         m_ctx.ecs->Registry().remove<ecs::SpriteRef>(m_player);
     }
@@ -1365,6 +1561,9 @@ void WorldDemoState::RequestQuickSave(bool withThumbnail) {
         SetNotice("保存快照失败：" + error, kNoticeFailColor, 3.5f);
         ZL_ERROR("save", "保存快照失败：{}", error);
         return;
+    }
+    if (definition != nullptr) {
+        entities = std::move(entityBuckets.global);
     }
     std::vector<save::ChunkDiff> chunks;
     if (!CaptureSaveChunks(&chunks, &error)) {
@@ -1377,13 +1576,66 @@ void WorldDemoState::RequestQuickSave(bool withThumbnail) {
     m_pendingSave.id = m_saveId;
     m_pendingSave.name = "快速存档";
     m_pendingSave.mapId =
-        m_ctx.chunkManager != nullptr ? m_ctx.chunkManager->Map().name : std::string();
+        definition != nullptr
+            ? definition->mapId
+            : (m_ctx.chunkManager != nullptr ? m_ctx.chunkManager->Map().name
+                                             : std::string());
     m_pendingSave.gameVersion =
         m_ctx.config->Get<std::string>("save.gameVersion", save::kDefaultGameVersion);
     m_pendingSave.gameMinutes =
         m_ctx.gameTime != nullptr ? m_ctx.gameTime->TotalGameMinutes() : 0.0;
     m_pendingSave.entities = std::move(entities);
     m_pendingSave.chunks = std::move(chunks);
+    if (definition != nullptr && regions != nullptr) {
+        m_pendingSave.manifest.version = save::kWorldManifestVersion;
+        m_pendingSave.manifest.identity = world::MakeWorldIdentity(*definition);
+        m_pendingSave.manifest.worldSaveVersion = save::kWorldSaveVersion;
+        for (const world::RegionRuntime& region : regions->Regions()) {
+            m_pendingSave.manifest.regions.push_back(
+                save::ManifestRegion{region.id,
+                                     static_cast<std::uint8_t>(region.phase)});
+        }
+        if (m_ctx.simulation != nullptr) {
+            if (const game::RegionEventDirector* events =
+                    m_ctx.simulation->RegionEvents();
+                events != nullptr) {
+                for (const game::RegionEvent& event : events->Events()) {
+                    m_pendingSave.manifest.events.push_back(
+                        save::ManifestRegionEvent{
+                            event.id,
+                            event.regionId,
+                            static_cast<std::uint8_t>(event.kind),
+                            static_cast<std::uint8_t>(event.status),
+                            event.day,
+                            event.x,
+                            event.y,
+                            event.remainingSeconds,
+                            event.targetCount,
+                            event.spawnedCount,
+                            event.contentSpawned});
+                }
+            }
+            std::string strategicError;
+            if (!m_ctx.simulation->CaptureStrategicToManifest(
+                    &m_pendingSave.manifest, &strategicError)) {
+                SetNotice("保存战略状态失败：" + strategicError,
+                          kNoticeFailColor, 3.5f);
+                ZL_ERROR("save", "保存战略状态失败：{}", strategicError);
+                return;
+            }
+            std::string worldEventError;
+            if (!m_ctx.simulation->CaptureWorldEventsToManifest(
+                    &m_pendingSave.manifest, &worldEventError)) {
+                SetNotice("保存世界事件失败：" + worldEventError,
+                          kNoticeFailColor, 3.5f);
+                ZL_ERROR("save", "保存世界事件失败：{}", worldEventError);
+                return;
+            }
+        }
+        m_pendingSave.hasManifest = true;
+        m_pendingSave.buckets = std::move(entityBuckets.buckets);
+        m_pendingSave.hasBuckets = true;
+    }
 
     if (m_player != entt::null && m_ctx.ecs->Alive(m_player)) {
         const std::uint64_t playerId = m_ctx.ecs->IdOf(m_player).id;
@@ -1541,6 +1793,24 @@ void WorldDemoState::UpdateCameraFollow(double frameDt) {
     }
     camera.SetCenter(CameraFollowStep(camera.Center(), target, m_followRate,
                                       static_cast<float>(frameDt)));
+}
+
+glm::vec2 WorldDemoState::StreamingVelocity() const {
+    if (m_ctx.ecs == nullptr) {
+        return glm::vec2(0.0f, 0.0f);
+    }
+    entt::entity entity = m_player;
+    if (m_driving && m_vehicle != entt::null &&
+        m_ctx.ecs->Alive(m_vehicle)) {
+        entity = m_vehicle;
+    }
+    if (entity == entt::null || !m_ctx.ecs->Alive(entity)) {
+        return glm::vec2(0.0f, 0.0f);
+    }
+    const auto* velocity =
+        m_ctx.ecs->Registry().try_get<ecs::Velocity>(entity);
+    return velocity != nullptr ? glm::vec2(velocity->x, velocity->y)
+                               : glm::vec2(0.0f, 0.0f);
 }
 
 bool WorldDemoState::IsSolidSquare(int wx, int wy) const {
@@ -1960,8 +2230,7 @@ void WorldDemoState::UpdateNetworkVehiclePrediction(float frameDt) {
         }
     }
     const auto blocked = [this](int x, int y, int z) {
-        return m_ctx.world == nullptr ||
-               IsSquareBlocked(*m_ctx.world, x, y, z);
+        return VehicleBlockedAt(x, y, z);
     };
     const float dt = std::clamp(frameDt, 0.0f, 0.05f);
     m_vehicleSurface =
@@ -2318,6 +2587,11 @@ void WorldDemoState::ApplyNetworkPlayerState() {
         status.guardHealthMax = settlement.guardHealthMax;
         m_networkSettlements[settlement.id] = status;
     }
+    m_networkSettlementReputation.clear();
+    for (const net::PlayerSettlementReputation& entry :
+         state.settlementReputation) {
+        m_networkSettlementReputation[entry.id] = entry.score;
+    }
     m_networkSettlementNoticeSerial = state.settlementNoticeSerial;
     m_networkSettlementNotice = state.settlementNotice;
     m_networkSettlementNoticeTone =
@@ -2333,7 +2607,8 @@ void WorldDemoState::ApplyNetworkPlayerState() {
                 : state.statusTone == 2 ? kNoticeFailColor
                                         : kNoticeInfoColor;
             SetNotice(state.status, color, 2.2f);
-            if (state.status.rfind("守夜结束", 0) == 0) {
+            if (state.status.rfind("守夜结束", 0) == 0 ||
+                state.status.rfind("守城战报", 0) == 0) {
                 const std::string tone = state.statusTone == 1 ? "ok"
                                          : state.statusTone == 2 ? "fail"
                                                                  : "info";
@@ -3183,8 +3458,7 @@ void WorldDemoState::UpdateLocalParkedVehicleMotions(float tickDt) {
             continue;
         }
         const auto blocked = [this](int x, int y, int z) {
-            return m_ctx.world == nullptr ||
-                   IsSquareBlocked(*m_ctx.world, x, y, z);
+            return VehicleBlockedAt(x, y, z);
         };
         const auto bodyBlocked = [this, entity](float x, float y, int z,
                                                 float radius) {
@@ -3270,8 +3544,7 @@ float WorldDemoState::PushLocalVehicleOnCollision(ecs::Entity target,
         }
     }
     const auto blocked = [this](int x, int y, int z) {
-        return m_ctx.world == nullptr ||
-               IsSquareBlocked(*m_ctx.world, x, y, z);
+        return VehicleBlockedAt(x, y, z);
     };
     const auto bodyBlocked = [this, target](float x, float y, int z,
                                             float radius) {
@@ -4090,18 +4363,61 @@ void WorldDemoState::ToggleVehicleHeadlights() {
     ZL_INFO("vehicle", "车灯：{}", m_vehicleMotion.headlights ? "开" : "关");
 }
 
+bool WorldDemoState::VehicleBlockedAt(int x, int y, int z) const {
+    if (m_ctx.world == nullptr) {
+        return true;
+    }
+    const bool blocked = IsSquareBlocked(*m_ctx.world, x, y, z);
+    if (m_ctx.worldGraph == nullptr) {
+        return blocked;
+    }
+    const world::GridSquare* square = m_ctx.world->GetSquare(x, y, z);
+    std::string_view floorSprite;
+    if (square != nullptr) {
+        const world::SquareObject* floor = square->Floor();
+        if (floor != nullptr) {
+            floorSprite = floor->sprite;
+        }
+    }
+    return !m_ctx.worldGraph
+                ->ClassifyTerrain(static_cast<float>(x) + 0.5f,
+                                  static_cast<float>(y) + 0.5f, blocked,
+                                  floorSprite)
+                .vehiclePassable;
+}
+
 VehicleSurface WorldDemoState::VehicleSurfaceAt(float x, float y, int z) const {
     if (m_ctx.world == nullptr) {
         return VehicleSurface::Grass;
     }
-    const world::GridSquare* square = m_ctx.world->GetSquare(
-        static_cast<int>(std::floor(x)), static_cast<int>(std::floor(y)), z);
+    const int cellX = static_cast<int>(std::floor(x));
+    const int cellY = static_cast<int>(std::floor(y));
+    const world::GridSquare* square = m_ctx.world->GetSquare(cellX, cellY, z);
     if (square == nullptr) {
         return VehicleSurface::Grass;
     }
     const world::SquareObject* floor = square->Floor();
     if (floor == nullptr || floor->sprite.empty()) {
         return VehicleSurface::Grass;
+    }
+    if (m_ctx.worldGraph != nullptr) {
+        const world::TerrainInfo terrain = m_ctx.worldGraph->ClassifyTerrain(
+            static_cast<float>(cellX) + 0.5f, static_cast<float>(cellY) + 0.5f,
+            IsSquareBlocked(*m_ctx.world, cellX, cellY, z), floor->sprite);
+        switch (terrain.kind) {
+            case world::TerrainKind::Road:
+            case world::TerrainKind::Bridge:
+            case world::TerrainKind::Paved:
+                return VehicleSurface::Paved;
+            case world::TerrainKind::Dirt:
+                return VehicleSurface::Dirt;
+            case world::TerrainKind::Forest:
+            case world::TerrainKind::Grass:
+            case world::TerrainKind::Water:
+            case world::TerrainKind::Blocked:
+            default:
+                return VehicleSurface::Grass;
+        }
     }
     return VehicleSurfaceForFloor(floor->sprite);
 }
@@ -4162,7 +4478,7 @@ void WorldDemoState::UpdateVehicle(float tickDt) {
         }
     }
     const auto blocked = [this](int x, int y, int z) {
-        return m_ctx.world == nullptr || IsSquareBlocked(*m_ctx.world, x, y, z);
+        return VehicleBlockedAt(x, y, z);
     };
     const VehicleTuning activeTuning =
         VehicleTuningForType(m_vehicleMotion.type, m_vehicleTuning);
@@ -5542,6 +5858,9 @@ void WorldDemoState::RefreshHud() {
             RefreshPoiGuide(hud);
             RefreshMissionGuide(hud);
             RefreshEventGuide(hud);
+            RefreshRegionGuide(hud);
+            SyncSettlementHud(hud);
+            RefreshStrategicGuide(hud);
 
             game::ActionHintState hint;
             hint.bleeding = hasBleeding;
@@ -5803,8 +6122,9 @@ void WorldDemoState::RefreshHud() {
             }
             hud.actionHint = game::ActionHintText(hint, &hud.actionTone);
             if (!m_buildMode && !hint.bleeding && !hint.inPain &&
-                hint.nearbyForage.empty() &&
-                hint.nearbyAnimalCorpse.empty()) {
+                (m_tradeOpen ||
+                 (hint.nearbyForage.empty() &&
+                  hint.nearbyAnimalCorpse.empty()))) {
                 const std::string homestead = HomesteadHint();
                 if (!homestead.empty()) {
                     hud.actionHint = homestead;
@@ -6125,6 +6445,9 @@ void WorldDemoState::RefreshHud() {
         RefreshPoiGuide(hud);
         RefreshMissionGuide(hud);
         RefreshEventGuide(hud);
+        RefreshRegionGuide(hud);
+        SyncSettlementHud(hud);
+        RefreshStrategicGuide(hud);
     }
 
     if (networkState && m_networkCombat.valid) {
@@ -6242,6 +6565,9 @@ void WorldDemoState::RefreshHud() {
                 ? "warn"
                 : "info";
     }
+    if (!m_networkMode) {
+        RefreshWorldEventHud(hud);
+    }
     SyncDialogueHud(hud);
     if (networkState && !m_networkPlayerAlive && m_noticeTimer <= 0.0f) {
         hud.notice = "等待复活";
@@ -6268,6 +6594,9 @@ void WorldDemoState::RefreshHud() {
         hud.modFields[i] = m_ctx.modHudFields[i];
     }
     hud.modFieldCount = static_cast<int>(modFieldCount);
+    if (m_worldMapOpen) {
+        RefreshWorldMapState();
+    }
     m_ctx.hudState = hud;
     m_ctx.ui->SetHudState(hud);
 }
@@ -9679,8 +10008,42 @@ void WorldDemoState::UpdatePoiTasks() {
     }
 }
 
+bool WorldDemoState::IsM31World() const {
+    return m_ctx.worldGraph != nullptr &&
+           m_ctx.worldGraph->Definition().mapId == "village_demo_m31";
+}
+
 void WorldDemoState::RefreshObjectiveHud(ui::HudState& hud) {
     if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return;
+    }
+    if (IsM31World()) {
+        // The M31 vertical slice uses the mission chain as its main quest.
+        // Keep the legacy radio/extraction objective out of the HUD and use
+        // the same panel for a compact "main line" summary.
+        hud.objective = "主线 · 已完成";
+        hud.objectiveHint.clear();
+        hud.objectiveTone = "ok";
+        const std::vector<const MissionDef*> active = SortedActiveMissions();
+        if (!active.empty()) {
+            const MissionDef* def = active.front();
+            const ecs::MissionLog* log = PlayerMissions();
+            const ecs::MissionRunState* state =
+                log != nullptr ? game::FindMissionState(*log, def->id)
+                               : nullptr;
+            hud.objective = "主线 · " + def->name;
+            hud.objectiveTone = game::MissionGuideTone(*def);
+            if (state != nullptr) {
+                for (std::size_t i = 0; i < def->objectives.size(); ++i) {
+                    if (!game::IsMissionObjectiveComplete(def->objectives[i],
+                                                          state, i)) {
+                        hud.objectiveHint = game::MissionObjectiveLine(
+                            def->objectives[i], state, i);
+                        break;
+                    }
+                }
+            }
+        }
         return;
     }
     entt::registry& registry = m_ctx.ecs->Registry();
@@ -9817,7 +10180,8 @@ const ecs::MissionLog* WorldDemoState::PlayerMissions() const {
 }
 
 void WorldDemoState::ActivateMission(ecs::MissionLog& log,
-                                     const MissionDef& def, int day) {
+                                     const MissionDef& def, int day,
+                                     std::string_view settlementId) {
     ecs::MissionRunState* state = game::FindMissionState(&log, def.id);
     if (state == nullptr) {
         log.missions.push_back(ecs::MissionRunState{});
@@ -9828,6 +10192,7 @@ void WorldDemoState::ActivateMission(ecs::MissionLog& log,
     state->status = ecs::MissionRunStatus::Active;
     state->day = day;
     state->rewardClaimed = false;
+    state->settlementId.assign(settlementId);
     ZL_INFO("missions", "接取任务：{}（{}）", def.name, def.id);
 }
 
@@ -9840,6 +10205,46 @@ void WorldDemoState::UpdateMissionAvailability(ecs::MissionLog& log, int day) {
             ActivateMission(log, def, day);
         }
     }
+}
+
+void WorldDemoState::TryActivateRefugeeMission(ecs::MissionLog& log,
+                                                int day) {
+    if (m_refugeeMissionTriggered || m_ctx.simulation == nullptr ||
+        m_missionConfig.defs.empty()) {
+        return;
+    }
+    const game::StrategicState* state = m_ctx.simulation->Strategic();
+    const game::StrategicConfig* config =
+        m_ctx.simulation->StrategicSettings();
+    if (state == nullptr || config == nullptr) {
+        return;
+    }
+    bool refugees = false;
+    for (const game::StrategicRegionState& region : state->regions) {
+        if (region.refugees > 0) {
+            refugees = true;
+            break;
+        }
+    }
+    if (!refugees) {
+        return;
+    }
+    const MissionDef* def =
+        m_missionConfig.Find(config->recovery.refugeeMission);
+    if (def == nullptr) {
+        return;
+    }
+    if (game::FindMissionState(&log, def->id) != nullptr) {
+        m_refugeeMissionTriggered = true;
+        return;
+    }
+    if (!game::MissionCanActivate(*def, log, day)) {
+        return;
+    }
+    ActivateMission(log, *def, day);
+    m_refugeeMissionTriggered = true;
+    SetNotice("难民抵达：接取任务「" + def->name + "」",
+              kNoticeInfoColor, 4.0f);
 }
 
 bool WorldDemoState::GrantMissionReward(const MissionDef& def) {
@@ -9891,12 +10296,42 @@ void WorldDemoState::CompleteMission(ecs::MissionRunState& state,
     if (m_missionFocusId == def.id) {
         m_missionFocusId.clear();
     }
+    if (!m_networkMode && m_ctx.simulation != nullptr &&
+        m_ctx.simulation->StrategicSettings() != nullptr) {
+        std::string strategicError;
+        if (!m_ctx.simulation->GrantStrategicMissionReward(
+                def.id, &strategicError) &&
+            !strategicError.empty()) {
+            ZL_WARN("strategic", "任务战略奖励结算失败：{}（{}）", def.id,
+                    strategicError);
+        }
+    }
     const bool rewardDropped = GrantMissionReward(def);
     const bool randomEvent = def.kind == MissionKind::Random;
     std::string notice = randomEvent ? "事件完成：" : "任务完成：";
     notice += def.name;
     if (!def.reward.label.empty()) {
         notice += " · " + def.reward.label;
+    }
+    if (!state.settlementId.empty() && m_ctx.ecs != nullptr &&
+        m_player != entt::null) {
+        if (const SettlementDef* settlement =
+                m_settlementConfig.Find(state.settlementId);
+            settlement != nullptr) {
+            const std::string key = "mission:" + state.settlementId + ":" +
+                                    def.id + ":" + std::to_string(state.day) +
+                                    ":complete";
+            const SettlementReputationChange change = AwardSettlementReputation(
+                *m_ctx.ecs, m_player, m_settlementConfig.reputation,
+                state.settlementId, SettlementReputationEvent::MissionComplete,
+                key, settlement->startingReputation, CurrentMissionDay());
+            if (change.applied && change.delta != 0) {
+                notice += " · 声望 " + std::to_string(change.delta);
+                ZL_INFO("settlement", "任务声望：{} {} {} → {}",
+                        settlement->name, def.id, change.delta,
+                        change.current);
+            }
+        }
     }
     if (rewardDropped) {
         notice += "（背包已满，奖励掉落脚下）";
@@ -9931,8 +10366,29 @@ void WorldDemoState::FailMission(ecs::MissionRunState& state,
     if (m_missionFocusId == def.id) {
         m_missionFocusId.clear();
     }
-    SetNotice("任务失败：" + def.name + "（" + std::string(reason) + "）",
-              kNoticeFailColor, 4.0f);
+    std::string notice =
+        "任务失败：" + def.name + "（" + std::string(reason) + "）";
+    if (!state.settlementId.empty() && m_ctx.ecs != nullptr &&
+        m_player != entt::null) {
+        if (const SettlementDef* settlement =
+                m_settlementConfig.Find(state.settlementId);
+            settlement != nullptr) {
+            const std::string key = "mission:" + state.settlementId + ":" +
+                                    def.id + ":" + std::to_string(day) +
+                                    ":fail";
+            const SettlementReputationChange change = AwardSettlementReputation(
+                *m_ctx.ecs, m_player, m_settlementConfig.reputation,
+                state.settlementId, SettlementReputationEvent::MissionTimeout,
+                key, settlement->startingReputation, day);
+            if (change.applied && change.delta != 0) {
+                notice += " · 声望 " + std::to_string(change.delta);
+                ZL_INFO("settlement", "任务失败声望：{} {} {} → {}",
+                        settlement->name, def.id, change.delta,
+                        change.current);
+            }
+        }
+    }
+    SetNotice(notice, kNoticeFailColor, 4.0f);
     ZL_INFO("missions", "任务失败：{}（{}），原因：{}", def.name, def.id,
             reason);
 }
@@ -10381,15 +10837,42 @@ void WorldDemoState::AbandonFocusedMission() {
         }
         return;
     }
-    game::AbandonMission(PlayerMissions(), state->id, CurrentMissionDay());
+    const std::string settlementId = state->settlementId;
+    const std::string missionId = state->id;
+    if (!game::AbandonMission(PlayerMissions(), missionId,
+                              CurrentMissionDay())) {
+        SetNotice("当前没有可放弃的任务", kNoticeInfoColor, 2.0f);
+        return;
+    }
     m_missionFocusId.clear();
-    const std::string name = def != nullptr ? def->name : state->id;
+    const std::string name = def != nullptr ? def->name : missionId;
     std::string notice = "任务已放弃：" + name;
     if (def != nullptr && def->kind == MissionKind::Once) {
         notice += "（次日可重新接取）";
     }
+    if (!settlementId.empty() && m_ctx.ecs != nullptr &&
+        m_player != entt::null) {
+        if (const SettlementDef* settlement =
+                m_settlementConfig.Find(settlementId);
+            settlement != nullptr) {
+            const std::string key = "mission:" + settlementId + ":" +
+                                    missionId + ":" +
+                                    std::to_string(CurrentMissionDay()) +
+                                    ":abandon";
+            const SettlementReputationChange change = AwardSettlementReputation(
+                *m_ctx.ecs, m_player, m_settlementConfig.reputation,
+                settlementId, SettlementReputationEvent::MissionAbandon, key,
+                settlement->startingReputation, CurrentMissionDay());
+            if (change.applied && change.delta != 0) {
+                notice += " · 声望 " + std::to_string(change.delta);
+                ZL_INFO("settlement", "任务放弃声望：{} {} {} → {}",
+                        settlement->name, missionId, change.delta,
+                        change.current);
+            }
+        }
+    }
     SetNotice(notice, kNoticeFailColor, 4.0f);
-    ZL_INFO("missions", "任务放弃：{}（{}）", name, state->id);
+    ZL_INFO("missions", "任务放弃：{}（{}）", name, missionId);
 }
 
 bool WorldDemoState::MissionTargetPoint(const MissionDef& def,
@@ -10563,10 +11046,12 @@ void WorldDemoState::RefreshEventGuide(ui::HudState& hud) {
     hud.eventTone = "warn";
     if (!m_missionConfig.enabled || m_ctx.ecs == nullptr ||
         m_player == entt::null) {
+        RefreshRegionEventGuide(hud);
         return;
     }
     const ecs::MissionLog* log = PlayerMissions();
     if (log == nullptr) {
+        RefreshRegionEventGuide(hud);
         return;
     }
     const auto* position =
@@ -10605,6 +11090,7 @@ void WorldDemoState::RefreshEventGuide(ui::HudState& hud) {
         }
     }
     if (best == nullptr || bestState == nullptr) {
+        RefreshRegionEventGuide(hud);
         return;
     }
     std::string directionHint;
@@ -10623,6 +11109,1478 @@ void WorldDemoState::RefreshEventGuide(ui::HudState& hud) {
     hud.eventGuide =
         game::MissionEventGuideText(*best, *bestState, directionHint);
     hud.eventTone = "warn";
+}
+
+void WorldDemoState::RefreshRegionEventGuide(ui::HudState& hud) {
+    if (m_ctx.simulation == nullptr || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    const game::RegionEventDirector* events =
+        m_ctx.simulation->RegionEvents();
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (events == nullptr || position == nullptr) {
+        return;
+    }
+    const game::RegionEvent* event =
+        events->NearestVisible(position->x, position->y);
+    if (event == nullptr) {
+        return;
+    }
+
+    std::ostringstream text;
+    text << "区域事件 · " << game::RegionEventKindName(event->kind) << " · "
+         << game::RegionEventStatusName(event->status);
+    const float dx = event->x - position->x;
+    const float dy = event->y - position->y;
+    const float distance = std::sqrt(dx * dx + dy * dy);
+    if (distance <= 1.0f) {
+        text << " · 目标就在附近";
+    } else {
+        text << " · 目标" << game::PoiDirectionLabel(dx, dy) << ' '
+             << std::fixed << std::setprecision(0) << distance << " 格";
+    }
+    if (event->targetCount > 0 && event->spawnedCount > 0) {
+        text << " · 内容 " << event->spawnedCount << '/' << event->targetCount;
+    }
+    hud.eventGuide = text.str();
+    hud.eventTone =
+        event->status == game::RegionEventStatus::Scheduled ? "info" : "warn";
+}
+
+void WorldDemoState::RefreshRegionGuide(ui::HudState& hud) {
+    hud.regionGuide.clear();
+    if (m_ctx.worldGraph == nullptr || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    UpdateWorldMapDiscovery();
+    const world::WorldRegion* region =
+        m_ctx.worldGraph->RegionAt(position->x, position->y);
+    if (region == nullptr) {
+        hud.regionGuide = "区域 · 荒野 · M 世界地图";
+        hud.regionTone = "info";
+        return;
+    }
+    std::ostringstream text;
+    text << "区域 · " << game::WorldMapRegionName(region->id);
+    if (const world::GraphNode* node =
+            m_ctx.worldGraph->NearestNode(position->x, position->y);
+        node != nullptr) {
+        text << " · 最近路标 " << game::WorldMapNodeName(node->id);
+    }
+    if (m_worldMapRoute.valid) {
+        text << " | 导航 " << m_worldMapRoute.label << ' '
+             << std::fixed << std::setprecision(0) << m_worldMapRoute.distance
+             << " 格";
+        hud.regionTone = "ok";
+    } else {
+        text << " · M 打开地图";
+        hud.regionTone = "info";
+    }
+    hud.regionGuide = text.str();
+}
+
+const SettlementDef* WorldDemoState::CurrentSettlementForHud() const {
+    if (m_tradeOpen && !m_tradeSettlementId.empty()) {
+        return m_settlementConfig.Find(m_tradeSettlementId);
+    }
+    if (m_dialogueOpen && !m_dialogueSettlementId.empty()) {
+        return m_settlementConfig.Find(m_dialogueSettlementId);
+    }
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return nullptr;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return nullptr;
+    }
+    return FindSettlementContaining(m_settlementConfig, position->x,
+                                    position->y);
+}
+
+int WorldDemoState::SettlementReputationForHud(std::string_view settlementId,
+                                               int fallback) const {
+    if (m_networkMode) {
+        const auto it =
+            m_networkSettlementReputation.find(std::string(settlementId));
+        if (it != m_networkSettlementReputation.end()) {
+            return std::clamp(it->second, kSettlementReputationMinScore,
+                              kSettlementReputationMaxScore);
+        }
+    } else if (m_ctx.ecs != nullptr && m_player != entt::null) {
+        return SettlementReputationScoreFor(*m_ctx.ecs, m_player, settlementId,
+                                            fallback);
+    }
+    return std::clamp(fallback, kSettlementReputationMinScore,
+                      kSettlementReputationMaxScore);
+}
+
+void WorldDemoState::SyncSettlementHud(ui::HudState& hud) const {
+    hud.settlementGuide.clear();
+    hud.settlementTone = "info";
+    const SettlementDef* settlement = CurrentSettlementForHud();
+    if (settlement == nullptr) {
+        return;
+    }
+    bool fallen = false;
+    bool raidActive = false;
+    (void)SettlementDefenseBlocked(settlement->id, &fallen, &raidActive);
+    const int score = SettlementReputationForHud(
+        settlement->id, settlement->startingReputation);
+    const SettlementReputationTierDef* tier =
+        SettlementReputationTierForScore(m_settlementConfig.reputation, score);
+    std::ostringstream text;
+    text << "聚落 · " << settlement->name << " · 声望 "
+         << (tier != nullptr ? tier->name : "中立") << "（" << score
+         << "） · 服务 " << SettlementServicesText(settlement->services);
+    if (tier != nullptr &&
+        tier->tier == SettlementReputationTier::Hostile) {
+        text << " · 敌视：交易/委托/招募暂停";
+        hud.settlementTone = "fail";
+    } else {
+        text << " · 防御 ";
+        if (!SettlementProvidesDefense(*settlement)) {
+            text << "不设防";
+        } else if (fallen) {
+            text << "已失守";
+            hud.settlementTone = "fail";
+        } else if (raidActive) {
+            text << "夜袭中";
+            hud.settlementTone = "warn";
+        } else {
+            text << "正常";
+        }
+    }
+    hud.settlementGuide = text.str();
+}
+
+void WorldDemoState::RefreshStrategicGuide(ui::HudState& hud) {
+    PollStrategicActionResult();
+    hud.strategicGuide.clear();
+    hud.strategicTone = "info";
+    if (m_networkMode) {
+        if (m_ctx.networkClient == nullptr ||
+            !m_ctx.networkClient->HasStrategicState()) {
+            return;
+        }
+        const game::StrategicMapState strategic =
+            game::BuildStrategicMapStateFromSnapshot(
+                m_ctx.networkClient->StrategicState());
+        if (!strategic.enabled) {
+            return;
+        }
+        const game::StrategicMapRegion* warning = nullptr;
+        const game::StrategicMapRegion* active = nullptr;
+        const game::StrategicMapRegion* recovery = nullptr;
+        for (const game::StrategicMapRegion& region : strategic.regions) {
+            if (region.warning.valid &&
+                (warning == nullptr ||
+                 region.warning.remainingMinutes <
+                     warning->warning.remainingMinutes)) {
+                warning = &region;
+            }
+            if (region.siegePhase == game::StrategicSiegePhase::Active &&
+                active == nullptr) {
+                active = &region;
+            }
+            if (region.recoveryStage != game::StrategicRecoveryStage::None &&
+                recovery == nullptr) {
+                recovery = &region;
+            }
+        }
+        if (warning != nullptr) {
+            const int hours =
+                (warning->warning.remainingMinutes + 59) / 60;
+            hud.strategicGuide =
+                "服务器战略预警 · " +
+                std::string(game::WorldMapRegionName(warning->id)) +
+                " · 剩余 " + std::to_string(hours) +
+                " 小时 · 防御 " +
+                std::to_string(warning->warning.defenseScore) + " vs 约 " +
+                std::to_string(warning->warning.reportedEnemyStrength) +
+                " 敌 · M 地图前往/支援";
+            hud.strategicTone = "warn";
+            return;
+        }
+        if (active != nullptr) {
+            hud.strategicGuide =
+                "服务器战略围攻 · " +
+                std::string(game::WorldMapRegionName(active->id)) +
+                " · 正在发生 · M 地图支援/反攻";
+            hud.strategicTone = "fail";
+            return;
+        }
+        if (recovery != nullptr) {
+            hud.strategicGuide =
+                "服务器战略恢复 · " +
+                std::string(game::WorldMapRegionName(recovery->id)) +
+                " · " +
+                game::StrategicRecoveryStageLabel(recovery->recoveryStage) +
+                " · M 地图行动";
+            hud.strategicTone = "warn";
+            return;
+        }
+        if (const game::StrategicMapRegion* contested =
+                PreferredContestedRegion(strategic);
+            contested != nullptr) {
+            hud.strategicGuide =
+                "服务器战略争夺 · " +
+                std::string(game::WorldMapRegionName(contested->id)) + " · " +
+                game::ContestedFactionLabel(contested->contestedFaction) +
+                " · 守住归人类/失守沦陷 · M 地图支援";
+            hud.strategicTone = "warn";
+        }
+        return;
+    }
+    if (m_ctx.simulation == nullptr || m_ctx.gameTime == nullptr) {
+        return;
+    }
+    const game::StrategicState* state = m_ctx.simulation->Strategic();
+    const game::StrategicConfig* config =
+        m_ctx.simulation->StrategicSettings();
+    if (state == nullptr || config == nullptr) {
+        return;
+    }
+    const std::int64_t gameMinute =
+        static_cast<std::int64_t>(std::llround(
+            m_ctx.gameTime->TotalGameMinutes()));
+    const game::StrategicMapState strategic =
+        game::BuildStrategicMapState(*config, *state, gameMinute);
+
+    const game::RegionalSiegeSnapshot& siege =
+        m_ctx.simulation->RegionalSiegeStatus();
+    const game::StrategicMapRegion* current = nullptr;
+    if (m_ctx.worldGraph != nullptr && m_ctx.ecs != nullptr &&
+        m_player != entt::null) {
+        const auto* position =
+            m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+        if (position != nullptr) {
+            const world::WorldRegion* worldRegion =
+                m_ctx.worldGraph->RegionAt(position->x, position->y);
+            if (worldRegion != nullptr) {
+                current = strategic.FindRegion(worldRegion->id);
+            }
+        }
+    }
+    if (current != nullptr &&
+        current->recoveryStage != game::StrategicRecoveryStage::None) {
+        if (siege.active && siege.regionId == current->id &&
+            !siege.statusText.empty()) {
+            hud.strategicGuide = siege.statusText + " · M 地图查看";
+            hud.strategicTone = siege.breached ? "fail" : "warn";
+            return;
+        }
+        std::string text = "反攻 · ";
+        text += game::WorldMapRegionName(current->id);
+        text += " · ";
+        text += game::StrategicRecoveryStageLabel(current->recoveryStage);
+        if (current->recoveryStage ==
+            game::StrategicRecoveryStage::ClearCore) {
+            text += " · 到锚点按 E 或 M 地图清核";
+        } else if (current->recoveryStage ==
+                   game::StrategicRecoveryStage::Repair) {
+            text += " · 到锚点按 E 或 M 地图修复";
+        } else if (current->recoveryStage ==
+                   game::StrategicRecoveryStage::Counterattack) {
+            text += " · 到锚点按 E 或 M 地图反攻";
+        } else {
+            text += " · 等待战略重建";
+        }
+        if (current->facilityDamage > 0) {
+            text += " · 设施损伤 " +
+                    std::to_string(current->facilityDamage) + "%";
+        }
+        hud.strategicGuide = text + " · M 地图行动";
+        hud.strategicTone = "warn";
+        return;
+    }
+
+    const game::StrategicMapRegion* warning = nullptr;
+    const game::StrategicMapRegion* active = nullptr;
+    for (const game::StrategicMapRegion& region : strategic.regions) {
+        if (region.warning.valid &&
+            (warning == nullptr ||
+             region.warning.remainingMinutes <
+                 warning->warning.remainingMinutes)) {
+            warning = &region;
+        }
+        if (region.siegePhase == game::StrategicSiegePhase::Active &&
+            active == nullptr) {
+            active = &region;
+        }
+    }
+    if (warning != nullptr) {
+        const int hours =
+            (warning->warning.remainingMinutes + 59) / 60;
+        const double gameHoursPerSecond =
+            std::clamp(24.0 / std::max(
+                                  1.0, m_ctx.config != nullptr
+                                           ? m_ctx.config->Get<double>(
+                                                 "game.dayLengthMinutes", 60.0)
+                                           : 60.0),
+                       0.05, 10.0);
+        const int realSeconds = static_cast<int>(std::lround(
+            static_cast<double>(warning->warning.remainingMinutes) / 60.0 /
+            gameHoursPerSecond));
+        char text[320];
+        std::snprintf(
+            text, sizeof(text),
+            "战略预警 · %s · 剩余 %d 小时（约 %d 秒） · 情报%s · 防御 %d vs "
+            "约 %d 敌 · M 地图前往/支援",
+            game::WorldMapRegionName(warning->id), hours,
+            std::max(0, realSeconds), game::StrategicIntelName(
+                                            warning->warning.intelLevel),
+            warning->warning.defenseScore,
+            warning->warning.reportedEnemyStrength);
+        hud.strategicGuide = text;
+        hud.strategicTone = "warn";
+        return;
+    }
+    if (active != nullptr) {
+        const game::RegionalSiegeSnapshot& activeSiege =
+            m_ctx.simulation->RegionalSiegeStatus();
+        if (activeSiege.active && activeSiege.regionId == active->id &&
+            !activeSiege.statusText.empty()) {
+            hud.strategicGuide = activeSiege.statusText + " · M 地图查看";
+            hud.strategicTone = activeSiege.breached ? "fail" : "warn";
+            return;
+        }
+        hud.strategicGuide =
+            std::string("战略围攻 · ") +
+            game::WorldMapRegionName(active->id) +
+            " · 正在发生 · M 地图支援/反攻";
+        hud.strategicTone = "fail";
+        return;
+    }
+    if (const game::StrategicMapRegion* contested =
+            PreferredContestedRegion(strategic);
+        contested != nullptr) {
+        hud.strategicGuide =
+            "战略争夺 · " +
+            std::string(game::WorldMapRegionName(contested->id)) + " · " +
+            game::ContestedFactionLabel(contested->contestedFaction) +
+            " · 守住归人类/失守沦陷 · M 地图支援";
+        hud.strategicTone = "warn";
+    }
+}
+
+void WorldDemoState::UpdateWorldEventUi(float frameDt) {
+    if (m_worldEventResultTimer > 0.0f) {
+        m_worldEventResultTimer =
+            std::max(0.0f, m_worldEventResultTimer - frameDt);
+    }
+}
+
+void WorldDemoState::PushWorldEventLog(std::string line) {
+    if (line.empty() || m_ctx.gameTime == nullptr) {
+        return;
+    }
+    const auto& now = m_ctx.gameTime->Now();
+    const int day = 1 + static_cast<int>(
+                            m_ctx.gameTime->TotalGameMinutes() /
+                            (24.0 * 60.0));
+    char prefix[32];
+    std::snprintf(prefix, sizeof(prefix), "[D%d %02d:%02d] ", day,
+                  now.hour, now.minute);
+    line = prefix + line;
+    if (m_worldEventLogCount >=
+        static_cast<int>(m_worldEventLog.size())) {
+        for (std::size_t i = 1; i < m_worldEventLog.size(); ++i) {
+            m_worldEventLog[i - 1] = std::move(m_worldEventLog[i]);
+        }
+        m_worldEventLog.back() = std::move(line);
+        return;
+    }
+    m_worldEventLog[static_cast<std::size_t>(m_worldEventLogCount)] =
+        std::move(line);
+    ++m_worldEventLogCount;
+}
+
+void WorldDemoState::RefreshNetworkWorldEventHud(ui::HudState& hud) {
+    hud.worldEventVisible = false;
+    hud.worldEventCanChoose = false;
+    hud.worldEventChoiceOpen = false;
+    hud.worldEventOptionCount = 0;
+    hud.worldEventLogCount = 0;
+    if (!m_networkMode || m_ctx.networkClient == nullptr ||
+        !m_ctx.networkClient->HasWorldEventState() ||
+        m_ctx.worldEvents == nullptr || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    const net::WorldEventSnapshot& snapshot =
+        m_ctx.networkClient->WorldEventState();
+    if (!snapshot.enabled) {
+        return;
+    }
+    const net::WorldEventSnapshotEntry* saved =
+        FindCurrentNetworkWorldEvent(snapshot);
+    if (saved == nullptr) {
+        return;
+    }
+    const WorldEventDef* def = m_ctx.worldEvents->Find(saved->defId);
+    if (def == nullptr) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    const WorldEventInstance event = WorldEventFromSnapshot(*saved);
+    const std::int64_t now = std::max<std::int64_t>(0, snapshot.gameMinute);
+    const bool terminal = event.status == WorldEventStatus::Resolved ||
+                          event.status == WorldEventStatus::Failed ||
+                          event.status == WorldEventStatus::Expired;
+    if (m_worldEventUiId != event.id) {
+        m_worldEventUiId = event.id;
+        m_worldEventUiStatus = -1;
+        m_worldEventUiStage = -1;
+        m_worldEventUiNear = false;
+        m_worldEventChoiceOpen = false;
+        m_worldEventResult.clear();
+        m_worldEventResultTimer = 0.0f;
+        m_worldEventSettledId.clear();
+        m_worldEventSettleError.clear();
+    }
+    const int statusValue = static_cast<int>(event.status);
+    if (terminal) {
+        if (statusValue != m_worldEventUiStatus) {
+            m_worldEventUiStatus = statusValue;
+            WorldEventOutcome outcome;
+            std::string outcomeError;
+            if (BuildWorldEventOutcome(*def, event, &outcome, &outcomeError)) {
+                std::string choiceLabel;
+                for (const WorldEventChoiceDef& choice : def->choices) {
+                    if (choice.id == event.choiceId) {
+                        choiceLabel = choice.label;
+                        break;
+                    }
+                }
+                m_worldEventResult = ui::WorldEventResultLine(
+                    *def, event, choiceLabel, outcome.reputation, outcome.xp,
+                    outcome.pressure, false, outcome.item,
+                    outcome.itemCount);
+                m_worldEventResultTone =
+                    event.status == WorldEventStatus::Resolved ? "ok"
+                                                               : "fail";
+                m_worldEventResultTimer = 12.0f;
+                PushWorldEventLog(m_worldEventResult);
+            }
+        }
+        if (m_worldEventResultTimer <= 0.0f) {
+            return;
+        }
+    } else {
+        if (statusValue != m_worldEventUiStatus) {
+            m_worldEventUiStatus = statusValue;
+            const std::string regionName =
+                WorldMapRegionName(event.regionId);
+            if (event.status == WorldEventStatus::Warning) {
+                PushWorldEventLog(
+                    "电台预警：" + event.name + " · " + regionName + " · " +
+                    ui::WorldEventCountdownText(event.activeMinute - now) +
+                    "后开始");
+            } else if (event.status == WorldEventStatus::Active) {
+                PushWorldEventLog(
+                    "电台：事件开始 · " + event.name + " · " + regionName +
+                    " · 剩余 " +
+                    ui::WorldEventCountdownText(event.deadlineMinute - now));
+            }
+        }
+        if (event.status == WorldEventStatus::Active &&
+            event.stageIndex != m_worldEventUiStage) {
+            m_worldEventUiStage = event.stageIndex;
+            if (event.stagesComplete) {
+                PushWorldEventLog("阶段完成 · " + event.name + " · 等待抉择");
+            } else {
+                PushWorldEventLog(
+                    "阶段 " + std::to_string(event.stageIndex + 1) + "/" +
+                    std::to_string(def->stages.size()) + " · " +
+                    ui::WorldEventStageLabel(event.stageKind) + " · " +
+                    event.name);
+            }
+        }
+        const bool playerNear =
+            IsWorldEventNear(event, position->x, position->y);
+        if (event.status == WorldEventStatus::Active &&
+            playerNear != m_worldEventUiNear) {
+            m_worldEventUiNear = playerNear;
+            PushWorldEventLog(playerNear
+                                  ? "已抵达事件现场 · " + event.name
+                                  : "离开事件范围 · 倒计时继续 · " +
+                                        event.name);
+        }
+    }
+
+    const bool playerNear =
+        IsWorldEventNear(event, position->x, position->y);
+    const bool canChoose =
+        ui::WorldEventCanChoose(*def, event, position->x, position->y);
+    if (!canChoose) {
+        m_worldEventChoiceOpen = false;
+    }
+    const std::string regionName = WorldMapRegionName(event.regionId);
+    hud.worldEventVisible = true;
+    hud.worldEventName = event.name;
+    hud.worldEventMeta =
+        regionName + " · " + WorldEventStatusName(event.status);
+    if (event.status == WorldEventStatus::Warning) {
+        hud.worldEventMeta +=
+            " · " + ui::WorldEventCountdownText(event.activeMinute - now) +
+            "后开始";
+    } else if (event.status == WorldEventStatus::Active) {
+        hud.worldEventMeta +=
+            " · 剩余 " + ui::WorldEventCountdownText(event.deadlineMinute - now);
+    }
+    if (terminal) {
+        hud.worldEventStage = "事件已结束";
+        hud.worldEventHint = "结果由服务器结算 · 按 M 查看世界地图";
+        hud.worldEventTone =
+            event.status == WorldEventStatus::Resolved ? "ok" : "fail";
+    } else if (event.status == WorldEventStatus::Warning) {
+        hud.worldEventStage = "尚未开始 · 前往事件地点";
+        hud.worldEventHint = "电台预警 · 事件开始后返回现场处理";
+        hud.worldEventTone = "warn";
+    } else if (event.stagesComplete) {
+        hud.worldEventStage = "阶段完成 · 等待抉择";
+        hud.worldEventHint =
+            playerNear && !def->choices.empty()
+                ? (m_worldEventChoiceOpen
+                       ? "1-8 选择 · ESC 收起 · 倒计时继续"
+                       : "按 E 打开选项 · 离开范围会关闭")
+                : (playerNear ? "事件阶段已完成"
+                              : "已错过现场 · 返回事件地点后可继续");
+        hud.worldEventTone = playerNear ? "warn" : "fail";
+    } else if (canChoose) {
+        hud.worldEventStage =
+            "阶段 " + std::to_string(event.stageIndex + 1) + "/" +
+            std::to_string(def->stages.size()) + " · 抉择";
+        hud.worldEventHint =
+            playerNear ? (m_worldEventChoiceOpen
+                              ? "1-8 提交选择 · ESC 收起 · 等待服务器"
+                              : "按 E 打开选项 · 离开范围会关闭")
+                       : "已错过现场 · 返回事件地点后可继续";
+        hud.worldEventTone = playerNear ? "warn" : "fail";
+    } else {
+        hud.worldEventStage =
+            "阶段 " + std::to_string(event.stageIndex + 1) + "/" +
+            std::to_string(def->stages.size()) + " · " +
+            ui::WorldEventStageLabel(event.stageKind);
+        if (event.stageTarget > 1) {
+            hud.worldEventStage +=
+                " " + std::to_string(event.stageProgress) + "/" +
+                std::to_string(event.stageTarget);
+        }
+        if (!event.stageTargetId.empty()) {
+            hud.worldEventStage += " · " + event.stageTargetId;
+        }
+        hud.worldEventHint = playerNear ? "返回现场继续阶段 · 倒计时继续"
+                                        : "已错过现场 · 返回事件地点后可继续";
+        hud.worldEventTone = playerNear ? "warn" : "fail";
+    }
+    if (event.status == WorldEventStatus::Active && !playerNear &&
+        !m_worldEventChoiceOpen) {
+        hud.worldEventHint = "已错过现场 · 返回事件地点后可继续";
+        hud.worldEventTone = "fail";
+    }
+    hud.worldEventCanChoose = canChoose;
+    hud.worldEventChoiceOpen = m_worldEventChoiceOpen && canChoose;
+    if (canChoose) {
+        hud.worldEventOptionCount = static_cast<int>(
+            std::min<std::size_t>(def->choices.size(),
+                                  ui::kWorldEventOptionRows));
+        for (int i = 0; i < hud.worldEventOptionCount; ++i) {
+            hud.worldEventOptions[static_cast<std::size_t>(i)] =
+                ui::WorldEventChoiceLine(
+                    i, def->choices[static_cast<std::size_t>(i)]);
+        }
+    }
+    hud.worldEventResult = m_worldEventResult;
+    hud.worldEventResultTone = m_worldEventResultTone;
+    hud.worldEventLogCount = m_worldEventLogCount;
+    hud.worldEventLog = m_worldEventLog;
+}
+
+void WorldDemoState::RefreshWorldEventHud(ui::HudState& hud) {
+    if (m_networkMode) {
+        RefreshNetworkWorldEventHud(hud);
+        return;
+    }
+    hud.worldEventVisible = false;
+    hud.worldEventCanChoose = false;
+    hud.worldEventChoiceOpen = false;
+    hud.worldEventOptionCount = 0;
+    hud.worldEventLogCount = 0;
+    if (m_networkMode || m_ctx.simulation == nullptr ||
+        m_ctx.worldEvents == nullptr || !m_ctx.worldEvents->enabled ||
+        m_ctx.gameTime == nullptr || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    const game::WorldEventDirector* director =
+        m_ctx.simulation->WorldEvents();
+    if (director == nullptr || !director->Enabled()) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    const std::int64_t now = std::max<std::int64_t>(
+        0, static_cast<std::int64_t>(
+               std::floor(m_ctx.gameTime->TotalGameMinutes())));
+    const game::WorldEventInstance* event = FindCurrentWorldEvent(*director);
+    const auto isTerminal = [](game::WorldEventStatus status) {
+        return status == game::WorldEventStatus::Resolved ||
+               status == game::WorldEventStatus::Failed ||
+               status == game::WorldEventStatus::Expired;
+    };
+    if (event == nullptr && !m_worldEventUiId.empty()) {
+        const game::WorldEventInstance* previous =
+            director->Find(m_worldEventUiId);
+        if (previous != nullptr && isTerminal(previous->status)) {
+            event = previous;
+        }
+    }
+
+    const auto settleTerminal = [&](const game::WorldEventInstance& terminal) {
+        if (m_worldEventSettledId == terminal.id ||
+            m_ctx.simulation == nullptr) {
+            return;
+        }
+        const game::WorldEventDef* def =
+            m_ctx.worldEvents->Find(terminal.defId);
+        if (def == nullptr) {
+            return;
+        }
+        game::WorldEventSettlement settlement;
+        std::string error;
+        if (!m_ctx.simulation->SettleWorldEvent(
+                terminal.id, m_player, &settlement, &error)) {
+            if (m_worldEventSettleError != error) {
+                m_worldEventSettleError = error;
+                ZL_WARN("events", "世界事件自动结算失败：{}", error);
+            }
+            return;
+        }
+        m_worldEventSettledId = terminal.id;
+        if (settlement.alreadyApplied) {
+            return;
+        }
+        std::string choiceLabel;
+        if (!terminal.choiceId.empty()) {
+            for (const game::WorldEventChoiceDef& choice : def->choices) {
+                if (choice.id == terminal.choiceId) {
+                    choiceLabel = choice.label;
+                    break;
+                }
+            }
+        }
+        m_worldEventResult = ui::WorldEventResultLine(
+            *def, terminal, choiceLabel, settlement.reputationDelta,
+            settlement.xp, settlement.pressureDelta, settlement.itemDropped,
+            settlement.item, settlement.itemCount);
+        m_worldEventResultTone =
+            terminal.status == game::WorldEventStatus::Resolved ? "ok"
+                                                                 : "fail";
+        m_worldEventResultTimer = 12.0f;
+        PushWorldEventLog(m_worldEventResult);
+    };
+
+    if (event == nullptr) {
+        return;
+    }
+    const game::WorldEventDef* def = m_ctx.worldEvents->Find(event->defId);
+    if (def == nullptr) {
+        return;
+    }
+    if (isTerminal(event->status)) {
+        settleTerminal(*event);
+        if (m_worldEventResultTimer <= 0.0f) {
+            return;
+        }
+    }
+
+    if (m_worldEventUiId != event->id) {
+        m_worldEventUiId = event->id;
+        m_worldEventUiStatus = -1;
+        m_worldEventUiStage = -1;
+        m_worldEventUiNear = false;
+        m_worldEventChoiceOpen = false;
+        m_worldEventResult.clear();
+        m_worldEventResultTimer = 0.0f;
+        m_worldEventSettledId.clear();
+        m_worldEventSettleError.clear();
+    }
+    const bool playerNear =
+        IsWorldEventNear(*event, position->x, position->y);
+    const bool canChoose = ui::WorldEventCanChoose(
+        *def, *event, position->x, position->y);
+    if (!canChoose) {
+        m_worldEventChoiceOpen = false;
+    }
+    const std::string regionName =
+        game::WorldMapRegionName(event->regionId);
+    const int statusValue = static_cast<int>(event->status);
+    if (statusValue != m_worldEventUiStatus) {
+        m_worldEventUiStatus = statusValue;
+        if (event->status == game::WorldEventStatus::Warning) {
+            PushWorldEventLog(
+                "电台预警：" + event->name + " · " + regionName +
+                " · " +
+                ui::WorldEventCountdownText(event->activeMinute - now) +
+                "后开始");
+        } else if (event->status == game::WorldEventStatus::Active) {
+            PushWorldEventLog(
+                "电台：事件开始 · " + event->name + " · " + regionName +
+                " · 剩余 " +
+                ui::WorldEventCountdownText(event->deadlineMinute - now));
+        }
+    }
+    if (event->status == game::WorldEventStatus::Active &&
+        event->stageIndex != m_worldEventUiStage) {
+        m_worldEventUiStage = event->stageIndex;
+        if (event->stagesComplete) {
+            PushWorldEventLog("阶段完成 · " + event->name + " · 等待抉择");
+        } else {
+            PushWorldEventLog(
+                "阶段 " + std::to_string(event->stageIndex + 1) + "/" +
+                std::to_string(def->stages.size()) + " · " +
+                ui::WorldEventStageLabel(event->stageKind) + " · " +
+                event->name);
+        }
+    }
+    if (event->status == game::WorldEventStatus::Active &&
+        playerNear != m_worldEventUiNear) {
+        m_worldEventUiNear = playerNear;
+        if (playerNear) {
+            PushWorldEventLog("已抵达事件现场 · " + event->name);
+        } else {
+            PushWorldEventLog("离开事件范围 · 倒计时继续 · " +
+                              event->name);
+        }
+    }
+
+    hud.worldEventVisible = true;
+    hud.worldEventName = event->name;
+    hud.worldEventMeta =
+        regionName + " · " +
+        std::string(game::WorldEventStatusName(event->status));
+    if (event->status == game::WorldEventStatus::Warning) {
+        hud.worldEventMeta += " · " +
+                             ui::WorldEventCountdownText(
+                                 event->activeMinute - now) +
+                             "后开始";
+    } else if (event->status == game::WorldEventStatus::Active) {
+        hud.worldEventMeta += " · 剩余 " +
+                             ui::WorldEventCountdownText(
+                                 event->deadlineMinute - now);
+    }
+    if (isTerminal(event->status)) {
+        hud.worldEventStage = "事件已结束";
+        hud.worldEventHint = "结果已记入电台 · 按 M 查看世界地图";
+        hud.worldEventTone =
+            event->status == game::WorldEventStatus::Resolved ? "ok"
+                                                               : "fail";
+    } else if (event->status == game::WorldEventStatus::Warning) {
+        hud.worldEventStage = "尚未开始 · 前往事件地点";
+        hud.worldEventHint =
+            "电台预警 · 事件开始后返回现场处理";
+        hud.worldEventTone = "warn";
+    } else if (event->stagesComplete) {
+        hud.worldEventStage = "阶段完成 · 等待抉择";
+        hud.worldEventHint =
+            playerNear && !def->choices.empty()
+                ? (m_worldEventChoiceOpen
+                       ? "1-8 选择 · ESC 收起 · 倒计时继续"
+                       : "按 E 打开选项 · 离开范围会关闭")
+                : (playerNear
+                       ? "事件阶段已完成"
+                       : "已错过现场 · 返回事件地点后可继续");
+        hud.worldEventTone = playerNear ? "warn" : "fail";
+    } else if (canChoose) {
+        hud.worldEventStage =
+            "阶段 " + std::to_string(event->stageIndex + 1) + "/" +
+            std::to_string(def->stages.size()) + " · 抉择";
+        hud.worldEventHint =
+            playerNear ? (m_worldEventChoiceOpen
+                              ? "1-8 选择 · ESC 收起 · 倒计时继续"
+                              : "按 E 打开选项 · 离开范围会关闭")
+                       : "已错过现场 · 返回事件地点后可继续";
+        hud.worldEventTone = playerNear ? "warn" : "fail";
+    } else {
+        hud.worldEventStage =
+            "阶段 " + std::to_string(event->stageIndex + 1) + "/" +
+            std::to_string(def->stages.size()) + " · " +
+            ui::WorldEventStageLabel(event->stageKind);
+        if (event->stageTarget > 1) {
+            hud.worldEventStage +=
+                " " + std::to_string(event->stageProgress) + "/" +
+                std::to_string(event->stageTarget);
+        }
+        if (!event->stageTargetId.empty()) {
+            hud.worldEventStage += " · " + event->stageTargetId;
+        }
+        hud.worldEventHint =
+            playerNear ? "返回现场继续阶段 · 倒计时继续"
+                       : "已错过现场 · 返回事件地点后可继续";
+        hud.worldEventTone = playerNear ? "warn" : "fail";
+    }
+    if (event->status == game::WorldEventStatus::Active &&
+        !playerNear && !m_worldEventChoiceOpen) {
+        hud.worldEventHint = "已错过现场 · 返回事件地点后可继续";
+        hud.worldEventTone = "fail";
+    }
+    hud.worldEventCanChoose = canChoose;
+    hud.worldEventChoiceOpen = m_worldEventChoiceOpen && canChoose;
+    if (canChoose) {
+        hud.worldEventOptionCount = static_cast<int>(
+            std::min<std::size_t>(def->choices.size(),
+                                  ui::kWorldEventOptionRows));
+        for (int i = 0; i < hud.worldEventOptionCount; ++i) {
+            hud.worldEventOptions[static_cast<std::size_t>(i)] =
+                ui::WorldEventChoiceLine(
+                    i, def->choices[static_cast<std::size_t>(i)]);
+        }
+        if (!m_worldEventChoiceOpen) {
+            hud.worldEventHint =
+                playerNear ? "按 E 打开选项 · 离开范围会关闭"
+                           : hud.worldEventHint;
+        }
+    }
+    hud.worldEventResult = m_worldEventResult;
+    hud.worldEventResultTone = m_worldEventResultTone;
+    hud.worldEventLogCount = m_worldEventLogCount;
+    hud.worldEventLog = m_worldEventLog;
+}
+
+bool WorldDemoState::TryInteractWorldEvent() {
+    if (m_networkMode) {
+        if (m_ctx.networkClient == nullptr ||
+            !m_ctx.networkClient->HasWorldEventState() ||
+            m_ctx.worldEvents == nullptr || m_ctx.ecs == nullptr ||
+            m_player == entt::null) {
+            return false;
+        }
+        const net::WorldEventSnapshot& snapshot =
+            m_ctx.networkClient->WorldEventState();
+        const net::WorldEventSnapshotEntry* saved =
+            FindCurrentNetworkWorldEvent(snapshot);
+        if (saved == nullptr) {
+            return false;
+        }
+        const game::WorldEventDef* def =
+            m_ctx.worldEvents->Find(saved->defId);
+        const auto* position =
+            m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+        if (def == nullptr || position == nullptr) {
+            return false;
+        }
+        const game::WorldEventInstance event = WorldEventFromSnapshot(*saved);
+        if (!ui::WorldEventCanChoose(*def, event, position->x,
+                                     position->y)) {
+            return false;
+        }
+        m_worldEventChoiceOpen = true;
+        ZL_INFO("events", "打开联机世界事件选项：{}", event.name);
+        return true;
+    }
+    if (m_ctx.simulation == nullptr ||
+        m_ctx.worldEvents == nullptr || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return false;
+    }
+    const game::WorldEventDirector* director =
+        m_ctx.simulation->WorldEvents();
+    if (director == nullptr || !director->Enabled()) {
+        return false;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return false;
+    }
+    const game::WorldEventInstance* event = FindCurrentWorldEvent(*director);
+    if (event == nullptr ||
+        event->status != game::WorldEventStatus::Active ||
+        !IsWorldEventNear(*event, position->x, position->y)) {
+        return false;
+    }
+    const game::WorldEventDef* def = m_ctx.worldEvents->Find(event->defId);
+    if (def == nullptr ||
+        !ui::WorldEventCanChoose(*def, *event, position->x,
+                                 position->y)) {
+        return false;
+    }
+    m_worldEventChoiceOpen = true;
+    ZL_INFO("events", "打开世界事件选项：{}", event->name);
+    return true;
+}
+
+bool WorldDemoState::TryChooseWorldEvent(int index) {
+    if (m_networkMode) {
+        if (!m_worldEventChoiceOpen || m_ctx.networkClient == nullptr ||
+            !m_ctx.networkClient->HasWorldEventState() ||
+            m_ctx.worldEvents == nullptr || m_ctx.ecs == nullptr ||
+            m_player == entt::null) {
+            return false;
+        }
+        const net::WorldEventSnapshot& snapshot =
+            m_ctx.networkClient->WorldEventState();
+        const net::WorldEventSnapshotEntry* saved =
+            FindCurrentNetworkWorldEvent(snapshot);
+        const auto* position =
+            m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+        if (saved == nullptr || position == nullptr) {
+            return false;
+        }
+        const game::WorldEventDef* def =
+            m_ctx.worldEvents->Find(saved->defId);
+        if (def == nullptr) {
+            return false;
+        }
+        const game::WorldEventInstance event = WorldEventFromSnapshot(*saved);
+        if (!ui::WorldEventCanChoose(*def, event, position->x,
+                                     position->y) ||
+            index < 0 || index >= static_cast<int>(def->choices.size())) {
+            return false;
+        }
+        net::Command command;
+        command.type = net::CommandType::ChooseWorldEvent;
+        command.playerStableId = m_ctx.networkClient->PlayerStableId();
+        command.payload.index = index;
+        command.tick = m_ctx.networkClient->ServerTick();
+        std::string error;
+        if (!m_ctx.networkClient->SendCommand(command, &error)) {
+            SetNotice(error.empty() ? "世界事件选择发送失败" : error,
+                      kNoticeFailColor, 2.5f);
+            return true;
+        }
+        m_worldEventChoiceOpen = false;
+        SetNotice("选择已提交，等待服务器结算", kNoticeInfoColor, 2.5f);
+        ZL_INFO("events", "联机世界事件选择已发送：{}（{}）", def->choices[
+                  static_cast<std::size_t>(index)].label, event.id);
+        return true;
+    }
+    if (!m_worldEventChoiceOpen || m_ctx.simulation == nullptr ||
+        m_ctx.worldEvents == nullptr || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return false;
+    }
+    const game::WorldEventDirector* director =
+        m_ctx.simulation->WorldEvents();
+    if (director == nullptr) {
+        return false;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    const game::WorldEventInstance* event = FindCurrentWorldEvent(*director);
+    if (position == nullptr || event == nullptr ||
+        event->status != game::WorldEventStatus::Active) {
+        return false;
+    }
+    const game::WorldEventDef* def = m_ctx.worldEvents->Find(event->defId);
+    if (def == nullptr ||
+        !ui::WorldEventCanChoose(*def, *event, position->x, position->y)) {
+        return false;
+    }
+    if (index < 0 || index >= static_cast<int>(def->choices.size())) {
+        return false;
+    }
+    const game::WorldEventChoiceDef& choice =
+        def->choices[static_cast<std::size_t>(index)];
+    game::WorldEventInstance eventCopy = *event;
+    game::WorldEventSettlement settlement;
+    std::string error;
+    if (!m_ctx.simulation->ChooseWorldEvent(event->id, choice.id, m_player,
+                                            &settlement, &error)) {
+        SetNotice(error.empty() ? "世界事件选择失败" : error,
+                  kNoticeFailColor, 2.5f);
+        return true;
+    }
+    eventCopy.status = game::WorldEventStatus::Resolved;
+    m_worldEventSettledId = eventCopy.id;
+    m_worldEventChoiceOpen = false;
+    m_worldEventResult = ui::WorldEventResultLine(
+        *def, eventCopy, choice.label, settlement.reputationDelta,
+        settlement.xp, settlement.pressureDelta, settlement.itemDropped,
+        settlement.item, settlement.itemCount);
+    m_worldEventResultTone = "ok";
+    m_worldEventResultTimer = 12.0f;
+    PushWorldEventLog(m_worldEventResult);
+    SetNotice(m_worldEventResult, kNoticeOkColor, 4.0f);
+    ZL_INFO("events", "世界事件选择：{}（{}）", choice.label,
+            eventCopy.id);
+    return true;
+}
+
+void WorldDemoState::UpdateWorldMapDiscovery() {
+    if (m_ctx.worldGraph == nullptr || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    game::UpdateWorldMapDiscovery(
+        *m_ctx.worldGraph, m_poiConfig, position->x, position->y,
+        m_worldMapDiscoveryRadius, &m_discoveredRegions, &m_discoveredPois);
+}
+
+void WorldDemoState::RefreshWorldMapState() {
+    if (!m_worldMapOpen || m_ctx.worldGraph == nullptr) {
+        return;
+    }
+    UpdateWorldMapDiscovery();
+    float playerX = 0.0f;
+    float playerY = 0.0f;
+    bool playerValid = false;
+    if (m_ctx.ecs != nullptr && m_player != entt::null) {
+        if (const auto* position =
+                m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+            position != nullptr) {
+            playerX = position->x;
+            playerY = position->y;
+            playerValid = true;
+        }
+    }
+    std::unordered_set<std::string> completedPois;
+    if (const ecs::PoiTasks* tasks = PlayerPoiTasks(); tasks != nullptr) {
+        for (const std::string& id : tasks->completed) {
+            completedPois.insert(id);
+        }
+    }
+    game::WorldMapObjectiveInput objective;
+    if (playerValid && !m_networkMode) {
+        const ecs::MissionRunState* runState = FocusedMissionState();
+        const game::MissionDef* def =
+            runState != nullptr ? m_missionConfig.Find(FocusedMissionId())
+                                : nullptr;
+        if (def != nullptr && runState != nullptr &&
+            MissionTargetPoint(*def, *runState, &objective.x, &objective.y)) {
+            objective.valid = true;
+            objective.title = def->name;
+        }
+    }
+    game::WorldMapTravelConfig travel;
+    const double dayLengthMinutes =
+        m_ctx.config != nullptr
+            ? m_ctx.config->Get<double>("game.dayLengthMinutes", 60.0)
+            : 60.0;
+    travel.gameHoursPerRealSecond = static_cast<float>(std::clamp(
+        dayLengthMinutes > 0.0 ? 24.0 / dayLengthMinutes : 0.4, 0.05,
+        10.0));
+    travel.walkSpeed = static_cast<float>(std::max(
+        0.1, m_ctx.config != nullptr
+                 ? m_ctx.config->Get<double>("player.walkSpeed", 4.0)
+                 : 4.0));
+    travel.vehicleSpeed = m_vehicleTuning.maxSpeed;
+    travel.fuelPerSecond = m_vehicleTuning.fuelPerSecond;
+    travel.vehicleAvailable = m_vehicle != entt::null;
+    if (travel.vehicleAvailable && m_ctx.ecs != nullptr &&
+        m_ctx.ecs->Alive(m_vehicle)) {
+        if (const auto* vehicle =
+                m_ctx.ecs->Registry().try_get<ecs::Vehicle>(m_vehicle);
+            vehicle != nullptr) {
+            travel.currentFuel = std::clamp(vehicle->fuel, 0.0f, 1.0f);
+        } else {
+            travel.currentFuel =
+                std::clamp(m_vehicleMotion.fuel, 0.0f, 1.0f);
+        }
+    }
+
+    game::StrategicMapState strategic;
+    if (m_networkMode && m_ctx.networkClient != nullptr &&
+        m_ctx.networkClient->HasStrategicState()) {
+        strategic = game::BuildStrategicMapStateFromSnapshot(
+            m_ctx.networkClient->StrategicState());
+    } else if (!m_networkMode && m_ctx.simulation != nullptr &&
+               m_ctx.gameTime != nullptr) {
+        const game::StrategicState* strategicState =
+            m_ctx.simulation->Strategic();
+        const game::StrategicConfig* strategicConfig =
+            m_ctx.simulation->StrategicSettings();
+        if (strategicState != nullptr && strategicConfig != nullptr) {
+            strategic = game::BuildStrategicMapState(
+                *strategicConfig, *strategicState,
+                static_cast<std::int64_t>(std::llround(
+                    m_ctx.gameTime->TotalGameMinutes())));
+        }
+    }
+    m_worldMapState = game::BuildWorldMapState(
+        *m_ctx.worldGraph, m_poiConfig, playerX, playerY, playerValid,
+        m_discoveredRegions, m_discoveredPois, completedPois,
+        m_ctx.simulation != nullptr ? m_ctx.simulation->RegionEvents()
+                                    : nullptr,
+        objective, m_worldMapRoute,
+        strategic.enabled ? &strategic : nullptr, travel,
+        !m_networkMode && m_ctx.simulation != nullptr
+            ? m_ctx.simulation->WorldEvents()
+            : nullptr);
+    if (m_networkMode && m_ctx.networkClient != nullptr &&
+        m_ctx.networkClient->HasWorldEventState()) {
+        const net::WorldEventSnapshot& snapshot =
+            m_ctx.networkClient->WorldEventState();
+        for (const net::WorldEventSnapshotEntry& event : snapshot.events) {
+            const bool active =
+                event.status ==
+                static_cast<std::uint8_t>(WorldEventStatus::Active);
+            const bool warning =
+                event.status ==
+                static_cast<std::uint8_t>(WorldEventStatus::Warning);
+            if (!active && !warning) {
+                continue;
+            }
+            WorldMapWorldEventMarker marker;
+            marker.id = event.id;
+            marker.name = event.name;
+            marker.kind = event.kind;
+            marker.status = WorldEventStatusName(
+                static_cast<WorldEventStatus>(event.status));
+            marker.regionId = event.regionId;
+            marker.regionName = WorldMapRegionName(event.regionId);
+            for (const WorldMapRegion& region : m_worldMapState.regions) {
+                if (region.id == event.regionId && !region.name.empty()) {
+                    marker.regionName = region.name;
+                    break;
+                }
+            }
+            marker.x = event.x;
+            marker.y = event.y;
+            marker.active = active;
+            marker.warning = warning;
+            m_worldMapState.worldEvents.push_back(std::move(marker));
+        }
+    }
+    m_worldMapState.settlements.clear();
+    for (const SettlementDef& def : m_settlementConfig.defs) {
+        game::WorldMapSettlement entry;
+        entry.id = def.id;
+        entry.name = def.name;
+        entry.regionId = def.regionId;
+        entry.x = def.centerX;
+        entry.y = def.centerY;
+        entry.discovered =
+            def.regionId.empty() ||
+            m_discoveredRegions.contains(def.regionId);
+        if (playerValid && IsInsideSettlement(def, playerX, playerY)) {
+            entry.discovered = true;
+        }
+        entry.defenseEnabled = SettlementProvidesDefense(def);
+        (void)SettlementDefenseBlocked(def.id, &entry.fallen,
+                                       &entry.raidActive);
+        entry.reputation =
+            SettlementReputationForHud(def.id, def.startingReputation);
+        if (const SettlementReputationTierDef* tier =
+                SettlementReputationTierForScore(m_settlementConfig.reputation,
+                                                 entry.reputation);
+            tier != nullptr) {
+            entry.reputationTier = tier->id;
+            entry.reputationName = tier->name;
+        }
+        entry.services = SettlementServicesText(def.services);
+        m_worldMapState.settlements.push_back(std::move(entry));
+    }
+    if (m_ctx.ui != nullptr) {
+        m_ctx.ui->SetWorldMapState(m_worldMapState, m_worldMapOpen);
+    }
+}
+
+void WorldDemoState::ToggleWorldMap() {
+    if (m_worldMapOpen) {
+        CloseWorldMap();
+    } else {
+        OpenWorldMap();
+    }
+}
+
+void WorldDemoState::OpenWorldMap() {
+    if (m_worldMapOpen || m_runOutcome != RunOutcome::None) {
+        return;
+    }
+    if (m_ctx.ui == nullptr || m_ctx.worldGraph == nullptr ||
+        !m_ctx.worldGraph->Valid()) {
+        SetNotice("世界地图不可用：当前地图没有有效的 world.json",
+                  kNoticeFailColor, 2.5f);
+        ZL_WARN("map", "世界地图打开失败：worldGraph={}",
+                m_ctx.worldGraph != nullptr ? "invalid" : "null");
+        return;
+    }
+    if (m_ctx.ui->IsInventoryOpen()) {
+        m_ctx.ui->CloseInventory();
+    }
+    m_worldMapOpen = true;
+    m_worldMapState = {};
+    if (!m_networkMode && m_ctx.gameTime != nullptr) {
+        m_worldMapSpeedBefore = m_ctx.gameTime->GetSpeed();
+        m_worldMapPausedByMap =
+            m_worldMapSpeedBefore != core::GameTime::Speed::Paused;
+        if (m_worldMapPausedByMap) {
+            m_ctx.gameTime->SetSpeed(core::GameTime::Speed::Paused);
+        }
+    }
+    RefreshWorldMapState();
+    ZL_INFO("map", "世界地图打开：区域={} · 已探索 POI={}/{} · 路线={}",
+            m_worldMapState.currentRegionName,
+            m_worldMapState.discoveredPoiCount, m_worldMapState.poiCount,
+            m_worldMapRoute.valid ? m_worldMapRoute.label : "无");
+}
+
+void WorldDemoState::CloseWorldMap() {
+    if (!m_worldMapOpen) {
+        return;
+    }
+    m_worldMapOpen = false;
+    if (m_ctx.ui != nullptr) {
+        m_ctx.ui->SetWorldMapState(m_worldMapState, false);
+    }
+    if (m_worldMapPausedByMap && m_ctx.gameTime != nullptr) {
+        m_ctx.gameTime->SetSpeed(m_worldMapSpeedBefore);
+    }
+    m_worldMapPausedByMap = false;
+    ZL_INFO("map", "世界地图关闭");
+}
+
+void WorldDemoState::HandleWorldMapSelect(const std::string& targetId) {
+    if (!m_worldMapOpen || m_ctx.worldGraph == nullptr || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+
+    glm::vec2 goal{0.0f, 0.0f};
+    std::string label;
+    const auto worldEvent = std::find_if(
+        m_worldMapState.worldEvents.begin(),
+        m_worldMapState.worldEvents.end(),
+        [&](const game::WorldMapWorldEventMarker& item) {
+            return item.id == targetId;
+        });
+    if (worldEvent != m_worldMapState.worldEvents.end()) {
+        goal = {worldEvent->x, worldEvent->y};
+        label = worldEvent->name;
+    } else if (const game::PoiDef* poi = m_poiConfig.Find(targetId);
+               poi != nullptr) {
+        goal = {poi->markerX, poi->markerY};
+        label = poi->name;
+    } else {
+        const world::WorldDefinition& definition =
+            m_ctx.worldGraph->Definition();
+        const auto region = std::find_if(
+            definition.regions.begin(), definition.regions.end(),
+            [&](const world::WorldRegion& item) {
+                return item.id == targetId;
+            });
+        if (region == definition.regions.end()) {
+            return;
+        }
+        goal = {
+            static_cast<float>(region->rect.chunkX * core::kChunkSize) +
+                static_cast<float>(region->rect.chunksW * core::kChunkSize) /
+                    2.0f,
+            static_cast<float>(region->rect.chunkY * core::kChunkSize) +
+                static_cast<float>(region->rect.chunksH * core::kChunkSize) /
+                    2.0f};
+        label = game::WorldMapRegionName(region->id);
+        if (m_ctx.simulation != nullptr) {
+            if (const game::StrategicConfig* config =
+                    m_ctx.simulation->StrategicSettings();
+                config != nullptr) {
+                if (const game::StrategicRegionConfig* strategic =
+                        config->Find(region->id);
+                    strategic != nullptr && strategic->hasAnchor) {
+                    goal = {strategic->anchorX, strategic->anchorY};
+                }
+            }
+        }
+    }
+
+    m_worldMapSelectedPoi = targetId;
+    m_worldMapRoute = game::BuildWorldMapRoute(
+        *m_ctx.worldGraph, {position->x, position->y}, goal, label, true);
+    if (m_worldMapRoute.valid) {
+        SetNotice("导航：" + label + " · 道路 " +
+                      std::to_string(static_cast<int>(
+                          std::lround(m_worldMapRoute.distance))) +
+                      " 格",
+                  kNoticeInfoColor, 2.5f);
+        ZL_INFO("map", "设置世界地图导航：{}（{} 格）", label,
+                static_cast<int>(std::lround(m_worldMapRoute.distance)));
+    } else {
+        SetNotice("无法规划到 " + label + " 的道路路线",
+                  kNoticeFailColor, 2.5f);
+        ZL_WARN("map", "世界地图导航失败：{}", label);
+    }
+    RefreshWorldMapState();
+    CloseWorldMap();
+}
+
+void WorldDemoState::HandleWorldMapStrategicAction(
+    const std::string& regionId, game::WorldMapStrategicAction action) {
+    if (!m_worldMapOpen || m_ctx.worldGraph == nullptr) {
+        return;
+    }
+    if (action == game::WorldMapStrategicAction::Travel) {
+        HandleWorldMapSelect(regionId);
+        return;
+    }
+    const game::StrategicConfig* config =
+        m_ctx.simulation != nullptr ? m_ctx.simulation->StrategicSettings()
+                                    : nullptr;
+    const game::StrategicRegionConfig* regionConfig =
+        config != nullptr ? config->Find(regionId) : nullptr;
+    if (regionConfig == nullptr) {
+        SetNotice("战略区域配置不可用", kNoticeFailColor, 2.5f);
+        return;
+    }
+    const char* actionLabel = game::WorldMapStrategicActionLabel(action);
+    if (m_networkMode) {
+        int amount = 0;
+        net::StrategicRequestAction requestAction =
+            net::StrategicRequestAction::Reclaim;
+        switch (action) {
+            case game::WorldMapStrategicAction::Support:
+                amount = 20;
+                requestAction = net::StrategicRequestAction::DonateSupply;
+                break;
+            case game::WorldMapStrategicAction::Donate:
+                amount = 40;
+                requestAction = net::StrategicRequestAction::DonateSupply;
+                break;
+            case game::WorldMapStrategicAction::ClearCore:
+                requestAction = net::StrategicRequestAction::ClearCore;
+                break;
+            case game::WorldMapStrategicAction::Repair:
+                requestAction = net::StrategicRequestAction::RepairFacility;
+                break;
+            case game::WorldMapStrategicAction::Reclaim:
+                requestAction = net::StrategicRequestAction::Reclaim;
+                break;
+            case game::WorldMapStrategicAction::Travel:
+                break;
+        }
+        std::string error;
+        if (m_ctx.networkClient == nullptr ||
+            !m_ctx.networkClient->SendStrategicRequest(
+                requestAction, regionId, amount, &error)) {
+            SetNotice(std::string(actionLabel) +
+                          "失败：" + (error.empty() ? "未连接" : error),
+                      kNoticeFailColor, 3.0f);
+            return;
+        }
+        SetNotice(std::string(actionLabel) + "请求已发送 · 等待服务器反馈",
+                  kNoticeInfoColor, 2.5f);
+        return;
+    }
+    if (m_ctx.simulation == nullptr || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    const world::WorldRegion* current = m_ctx.worldGraph->RegionAt(
+        position->x, position->y);
+    if (current == nullptr || current->id != regionId) {
+        SetNotice("需先抵达 " + std::string(game::WorldMapRegionName(regionId)) +
+                      " 才能执行战略行动",
+                  kNoticeFailColor, 3.0f);
+        return;
+    }
+    const float dx = position->x - regionConfig->anchorX;
+    const float dy = position->y - regionConfig->anchorY;
+    if (dx * dx + dy * dy > 4.0f * 4.0f) {
+        SetNotice("需抵达区域锚点 4 格内才能执行战略行动",
+                  kNoticeFailColor, 3.0f);
+        return;
+    }
+
+    std::string error;
+    bool handled = false;
+    switch (action) {
+        case game::WorldMapStrategicAction::Support:
+            handled = m_ctx.simulation->DonateStrategicSupply(
+                regionId, 20, 0, &error);
+            break;
+        case game::WorldMapStrategicAction::Donate:
+            handled = m_ctx.simulation->DonateStrategicSupply(
+                regionId, 40, 0, &error);
+            break;
+        case game::WorldMapStrategicAction::ClearCore:
+            handled = m_ctx.simulation->ClearRegionalRecoveryCore(
+                regionId, &error);
+            break;
+        case game::WorldMapStrategicAction::Repair:
+            handled = m_ctx.simulation->RepairRegionalRecoveryFacility(
+                regionId, &error);
+            break;
+        case game::WorldMapStrategicAction::Reclaim:
+            handled = m_ctx.simulation->StartRegionalReclaim(regionId);
+            break;
+        case game::WorldMapStrategicAction::Travel:
+            break;
+    }
+    if (!handled) {
+        SetNotice(std::string(actionLabel) + "失败：" +
+                      (error.empty() ? "条件不满足" : error),
+                  kNoticeFailColor, 3.0f);
+    } else {
+        SetNotice(std::string(actionLabel) + "成功 · " +
+                      std::string(game::WorldMapRegionName(regionId)),
+                  kNoticeOkColor, 2.5f);
+        if (action == game::WorldMapStrategicAction::Reclaim) {
+            CloseWorldMap();
+        }
+    }
+    RefreshWorldMapState();
+}
+
+void WorldDemoState::PollStrategicActionResult() {
+    if (!m_networkMode || m_ctx.networkClient == nullptr ||
+        !m_ctx.networkClient->HasStrategicResult()) {
+        return;
+    }
+    const net::StrategicRequestResult& result =
+        m_ctx.networkClient->LastStrategicResult();
+    if (result.sequence <= m_lastStrategicResultSequence) {
+        return;
+    }
+    m_lastStrategicResultSequence = result.sequence;
+    const std::string regionName = game::WorldMapRegionName(result.regionId);
+    const std::string actionName = net::StrategicRequestActionName(result.action);
+    if (result.accepted) {
+        SetNotice("战略行动成功：" + regionName + " · " + actionName,
+                  kNoticeOkColor, 3.0f);
+        ZL_INFO("strategic", "联机战略行动成功：{} {}（{}）", regionName,
+                actionName, result.reason);
+    } else {
+        SetNotice("战略行动失败：" + regionName + " · " +
+                      (result.reason.empty() ? "服务器拒绝" : result.reason),
+                  kNoticeFailColor, 3.5f);
+        ZL_WARN("strategic", "联机战略行动失败：{} {}（{}）", regionName,
+                actionName, result.reason);
+    }
+    if (m_worldMapOpen) {
+        RefreshWorldMapState();
+    }
 }
 
 void WorldDemoState::SearchNearbyLootContainer() {
@@ -14459,12 +16417,7 @@ void WorldDemoState::InitializeHomestead() {
         return;
     }
     m_homesteadConfig = LoadHomesteadConfig(*m_ctx.config);
-    if (const SettlementDef* settlement =
-            PrimarySettlement(m_settlementConfig);
-        settlement != nullptr) {
-        m_homesteadConfig.trade.restockDays = settlement->restockDays;
-    }
-    m_tradeOpen = false;
+    CloseTrade();
     m_tradeIndex = 0;
     CloseSettlementDialogue();
     m_lastHomesteadMinute = -1.0;
@@ -14481,9 +16434,13 @@ void WorldDemoState::InitializeHomestead() {
 }
 
 void WorldDemoState::EnsureHomesteadRuntime() {
-    if (m_networkMode || m_homesteadRuntimeReady || m_runOutcome != RunOutcome::None ||
-        m_ctx.ecs == nullptr || m_ctx.world == nullptr || m_player == entt::null ||
+    if (m_networkMode || m_homesteadRuntimeReady ||
+        m_runOutcome != RunOutcome::None || m_ctx.ecs == nullptr ||
+        m_ctx.world == nullptr || m_player == entt::null ||
         !m_homesteadConfig.trade.enabled) {
+        return;
+    }
+    if (m_settlementConfig.enabled && !m_settlementConfig.defs.empty()) {
         return;
     }
     entt::registry& registry = m_ctx.ecs->Registry();
@@ -14494,31 +16451,12 @@ void WorldDemoState::EnsureHomesteadRuntime() {
         m_homesteadRuntimeReady = true;
         return;
     }
-    const SettlementDef* settlement =
-        PrimarySettlement(m_settlementConfig);
-    const SettlementNpcPoint* merchantPoint =
-        settlement != nullptr
-            ? FindSettlementNpc(*settlement, SettlementNpcKind::Merchant)
-            : nullptr;
-    float targetX = m_homesteadConfig.trade.merchantX;
-    float targetY = m_homesteadConfig.trade.merchantY;
-    if (merchantPoint != nullptr) {
-        targetX = merchantPoint->x;
-        targetY = merchantPoint->y;
-    } else if (m_player != entt::null) {
-        if (const auto* playerPosition =
-                registry.try_get<ecs::Position>(m_player);
-            playerPosition != nullptr) {
-            targetX = playerPosition->x + 2.0f;
-            targetY = playerPosition->y + 1.0f;
-        }
-    }
     int wx = 0;
     int wy = 0;
     if (!ai::FindNearestWalkable(
-            static_cast<int>(std::floor(targetX)),
-            static_cast<int>(std::floor(targetY)), 6,
-            [this](int x, int y) { return !IsSolidSquare(x, y); }, &wx,
+            static_cast<int>(std::floor(m_homesteadConfig.trade.merchantX)),
+            static_cast<int>(std::floor(m_homesteadConfig.trade.merchantY)),
+            6, [this](int x, int y) { return !IsSolidSquare(x, y); }, &wx,
             &wy)) {
         return;
     }
@@ -14528,109 +16466,25 @@ void WorldDemoState::EnsureHomesteadRuntime() {
     if (merchant == entt::null) {
         return;
     }
-    if (auto* stock = registry.try_get<ecs::MerchantStock>(merchant);
-        stock != nullptr && settlement != nullptr) {
-        stock->stock = settlement->merchantStock;
-        stock->restockDay = 0;
-    }
     m_homesteadRuntimeReady = true;
-    if (settlement != nullptr) {
-        ZL_INFO("homestead", "商人已就位：({}, {})（聚落 {}）", wx, wy,
-                settlement->id);
-    } else {
-        ZL_INFO("homestead", "商人已就位：({}, {})", wx, wy);
-    }
+    ZL_INFO("homestead", "商人已就位：({}, {})", wx, wy);
 }
 
 void WorldDemoState::EnsureSettlementNpcs() {
     if (m_networkMode || m_runOutcome != RunOutcome::None ||
         m_ctx.ecs == nullptr || m_ctx.world == nullptr ||
-        !m_settlementConfig.enabled) {
+        !m_settlementConfig.enabled || m_player == entt::null) {
         return;
     }
-    const SettlementDef* settlement = PrimarySettlement(m_settlementConfig);
-    if (settlement == nullptr) {
+    SettlementNpcSystem* system =
+        m_ctx.simulation != nullptr ? m_ctx.simulation->SettlementNpcs()
+                                    : nullptr;
+    if (system == nullptr) {
         return;
     }
-    entt::registry& registry = m_ctx.ecs->Registry();
-    bool merchantConfigured = false;
-    bool hasGuard = false;
-    bool hasRequester = false;
-    registry.view<SettlementNpc>().each(
-        [&](const ecs::Entity, const SettlementNpc& npc) {
-            if (npc.settlementId != settlement->id) {
-                return;
-            }
-            merchantConfigured =
-                merchantConfigured ||
-                npc.kind == SettlementNpcKind::Merchant;
-            hasGuard = hasGuard || npc.kind == SettlementNpcKind::Guard;
-            hasRequester =
-                hasRequester || npc.kind == SettlementNpcKind::Requester;
-        });
-    if (!merchantConfigured) {
-        registry.view<ecs::MerchantStock, ecs::Position>().each(
-            [&](const ecs::Entity entity, const ecs::MerchantStock&,
-                const ecs::Position& position) {
-                if (merchantConfigured) {
-                    return;
-                }
-                const SettlementNpcPoint* merchantPoint =
-                    FindSettlementNpc(*settlement,
-                                      SettlementNpcKind::Merchant);
-                ConfigureSettlementNpc(
-                    *m_ctx.ecs, entity, settlement->id,
-                    SettlementNpcKind::Merchant, position.x, position.y,
-                    merchantPoint != nullptr ? merchantPoint->wanderRadius
-                                             : 1.5f);
-                merchantConfigured = true;
-            });
-    }
-
-    auto spawnNpc = [&](SettlementNpcKind kind) {
-        const SettlementNpcPoint* point =
-            FindSettlementNpc(*settlement, kind);
-        if (point == nullptr) {
-            return false;
-        }
-        const int wx = static_cast<int>(std::floor(point->x));
-        const int wy = static_cast<int>(std::floor(point->y));
-        if (IsSolidSquare(wx, wy)) {
-            return false;
-        }
-        const ecs::Entity npc = SpawnSettlementNpc(
-            *m_ctx.ecs, settlement->id, kind,
-            static_cast<float>(wx) + 0.5f, static_cast<float>(wy) + 0.5f,
-            point->wanderRadius,
-            kind == SettlementNpcKind::Guard
-                ? settlement->defense.guardHealth
-                : 0.0f);
-        if (npc == entt::null) {
-            return false;
-        }
-        if (kind == SettlementNpcKind::Guard && m_ctx.simulation != nullptr) {
-            if (const SettlementNpcSystem* system =
-                    m_ctx.simulation->SettlementNpcs();
-                system != nullptr) {
-                system->ApplyGuardHealth(*m_ctx.ecs, npc, settlement->id);
-            }
-        }
-        ZL_INFO("settlement", "聚落 NPC 已就位：{}（{}，格 {},{}）",
-                SettlementNpcKindName(kind), settlement->id, wx, wy);
-        return true;
-    };
-    if (!hasGuard) {
-        const SettlementNpcSystem* system =
-            m_ctx.simulation != nullptr
-                ? m_ctx.simulation->SettlementNpcs()
-                : nullptr;
-        if (system == nullptr || !system->IsFallen(settlement->id)) {
-            (void)spawnNpc(SettlementNpcKind::Guard);
-        }
-    }
-    if (!hasRequester) {
-        (void)spawnNpc(SettlementNpcKind::Requester);
-    }
+    system->EnsurePopulation(
+        *m_ctx.ecs, m_homesteadConfig.trade.enabled,
+        [this](int x, int y) { return !IsSolidSquare(x, y); });
 }
 
 void WorldDemoState::StoreSettlementState() {
@@ -14687,13 +16541,11 @@ void WorldDemoState::PollSettlementDefenseNotices() {
                 CloseSettlementDialogue();
             }
         }
-        if (m_tradeOpen) {
-            for (const auto& [id, status] : m_networkSettlements) {
-                static_cast<void>(id);
-                if (status.fallen || status.raidActive) {
-                    m_tradeOpen = false;
-                    break;
-                }
+        if (m_tradeOpen && !m_tradeSettlementId.empty()) {
+            const auto it = m_networkSettlements.find(m_tradeSettlementId);
+            if (it != m_networkSettlements.end() &&
+                (it->second.fallen || it->second.raidActive)) {
+                CloseTrade();
             }
         }
         if (m_networkSettlementNoticeSerial !=
@@ -14725,14 +16577,10 @@ void WorldDemoState::PollSettlementDefenseNotices() {
          system->IsFallen(m_dialogueSettlementId))) {
         CloseSettlementDialogue();
     }
-    if (m_tradeOpen) {
-        for (const SettlementDef& settlement : m_settlementConfig.defs) {
-            if (system->RaidActive(settlement.id) ||
-                system->IsFallen(settlement.id)) {
-                m_tradeOpen = false;
-                break;
-            }
-        }
+    if (m_tradeOpen && !m_tradeSettlementId.empty() &&
+        (system->RaidActive(m_tradeSettlementId) ||
+         system->IsFallen(m_tradeSettlementId))) {
+        CloseTrade();
     }
     if (system->NoticeSerial() == m_lastSettlementNoticeSerial) {
         return;
@@ -14784,13 +16632,23 @@ void WorldDemoState::UpdateHomestead(float tickDt) {
         const int day =
             1 + static_cast<int>(now / (24.0 * 60.0));
         registry.view<ecs::MerchantStock>().each(
-            [&](const ecs::Entity, ecs::MerchantStock& stock) {
+            [&](const ecs::Entity entity, ecs::MerchantStock& stock) {
+                int restockDays = m_homesteadConfig.trade.restockDays;
+                if (const auto* npc =
+                        registry.try_get<SettlementNpc>(entity);
+                    npc != nullptr) {
+                    if (const SettlementDef* settlement =
+                            m_settlementConfig.Find(npc->settlementId);
+                        settlement != nullptr) {
+                        restockDays = settlement->restockDays;
+                    }
+                }
                 ClampMerchantStock(stock);
                 if (stock.restockDay <= 0 ||
-                    day >= stock.restockDay + m_homesteadConfig.trade.restockDays) {
+                    day >= stock.restockDay + restockDays) {
                     const auto& offers = MerchantOffers();
-                    for (std::size_t i = 0; i < offers.size() && i < stock.stock.size();
-                         ++i) {
+                    for (std::size_t i = 0;
+                         i < offers.size() && i < stock.stock.size(); ++i) {
                         stock.stock[i] = offers[i].maxStock;
                     }
                     stock.restockDay = day;
@@ -15063,6 +16921,77 @@ void WorldDemoState::UpdatePowerDevices(float gameMinutes, float tickDt) {
     }
 }
 
+bool WorldDemoState::TryInteractStrategicRecovery() {
+    if (m_networkMode || m_ctx.ecs == nullptr || m_ctx.worldGraph == nullptr ||
+        m_ctx.simulation == nullptr || m_player == entt::null) {
+        return false;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return false;
+    }
+    const world::WorldRegion* worldRegion =
+        m_ctx.worldGraph->RegionAt(position->x, position->y);
+    if (worldRegion == nullptr) {
+        return false;
+    }
+    const game::StrategicConfig* config =
+        m_ctx.simulation->StrategicSettings();
+    game::StrategicState* state = m_ctx.simulation->Strategic();
+    if (config == nullptr || state == nullptr) {
+        return false;
+    }
+    const game::StrategicRegionConfig* regionConfig =
+        config->Find(worldRegion->id);
+    game::StrategicRegionState* region =
+        state->FindRegion(worldRegion->id);
+    if (regionConfig == nullptr || region == nullptr ||
+        !regionConfig->hasAnchor || region->recoveryStage ==
+                                        game::StrategicRecoveryStage::None) {
+        return false;
+    }
+    const float dx = position->x - regionConfig->anchorX;
+    const float dy = position->y - regionConfig->anchorY;
+    if (dx * dx + dy * dy > 4.0f * 4.0f) {
+        return false;
+    }
+
+    std::string error;
+    bool handled = false;
+    switch (region->recoveryStage) {
+        case game::StrategicRecoveryStage::ClearCore:
+            handled = m_ctx.simulation->ClearRegionalRecoveryCore(
+                worldRegion->id, &error);
+            SetNotice(handled ? "感染核心已清理 · 下一步修复设施"
+                              : "清理核心失败：" + error,
+                      handled ? kNoticeOkColor : kNoticeFailColor, 3.0f);
+            break;
+        case game::StrategicRecoveryStage::Repair:
+            handled = m_ctx.simulation->RepairRegionalRecoveryFacility(
+                worldRegion->id, &error);
+            SetNotice(handled ? "设施已修复 · 准备迎接反攻波次"
+                              : "修复设施失败：" + error,
+                      handled ? kNoticeOkColor : kNoticeFailColor, 3.0f);
+            break;
+        case game::StrategicRecoveryStage::Counterattack:
+            handled = m_ctx.simulation->StartRegionalReclaim(
+                worldRegion->id);
+            SetNotice(handled ? "反攻波次开始 · 守住锚点"
+                              : "反攻尚未准备好",
+                      handled ? kNoticeInfoColor : kNoticeFailColor, 3.0f);
+            break;
+        case game::StrategicRecoveryStage::Restoring:
+            SetNotice("区域恢复中 · 等待战略 tick 完成重建",
+                      kNoticeInfoColor, 2.0f);
+            handled = true;
+            break;
+        case game::StrategicRecoveryStage::None:
+            break;
+    }
+    return handled;
+}
+
 bool WorldDemoState::TryInteractHomestead() {
     if (m_runOutcome != RunOutcome::None || m_ctx.ecs == nullptr ||
         m_ctx.items == nullptr || m_player == entt::null) {
@@ -15083,15 +17012,7 @@ bool WorldDemoState::TryInteractHomestead() {
     const HomesteadTarget target = FindNearestHomesteadTarget();
 
     if (target.kind == HomesteadTargetKind::Merchant) {
-        m_tradeOpen = true;
-        m_tradeIndex = std::clamp(m_tradeIndex, 0,
-                                  static_cast<int>(kMerchantOfferCount) - 1);
-        SubmitMoveCommand(0.0f, 0.0f);
-        if (m_ctx.ui != nullptr) {
-            m_ctx.ui->CloseInventory();
-        }
-            SetNotice("开始交易：幸存者商人", kNoticeInfoColor, 1.5f);
-        return true;
+        return OpenTrade(target.entity);
     }
 
     if (target.kind != HomesteadTargetKind::None &&
@@ -15524,19 +17445,109 @@ bool WorldDemoState::TryFarmCare() {
     return true;
 }
 
+bool WorldDemoState::OpenTrade(ecs::Entity merchant) {
+    CloseTrade();
+    if (!m_homesteadConfig.trade.enabled || m_ctx.ecs == nullptr ||
+        m_ctx.items == nullptr || m_player == entt::null ||
+        merchant == entt::null || !m_ctx.ecs->Alive(merchant)) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    if (registry.try_get<ecs::MerchantStock>(merchant) == nullptr) {
+        return false;
+    }
+    std::string settlementId;
+    std::string merchantName = "幸存者商人";
+    if (const auto* npc = registry.try_get<SettlementNpc>(merchant);
+        npc != nullptr) {
+        if (npc->kind != SettlementNpcKind::Merchant) {
+            SetNotice("该 NPC 不提供交易", kNoticeInfoColor, 1.8f);
+            return false;
+        }
+        settlementId = npc->settlementId;
+        const SettlementDef* settlement = m_settlementConfig.Find(settlementId);
+        if (settlement == nullptr) {
+            SetNotice("商人所属聚落数据不存在", kNoticeFailColor, 2.0f);
+            return false;
+        }
+        bool fallen = false;
+        bool raidActive = false;
+        (void)SettlementDefenseBlocked(settlementId, &fallen, &raidActive);
+        if (fallen || raidActive) {
+            SetNotice(fallen ? "聚落已失守，交易暂停"
+                             : "夜袭中，无法交易",
+                      kNoticeFailColor, 2.0f);
+            return false;
+        }
+        const int score = SettlementReputationForHud(
+            settlementId, settlement->startingReputation);
+        if (!SettlementCanUseService(*settlement,
+                                     m_settlementConfig.reputation,
+                                     SettlementService::Trade, score)) {
+            SetNotice(HasSettlementService(*settlement,
+                                           SettlementService::Trade)
+                          ? "声望敌视：商人拒绝交易"
+                          : "该聚落不提供交易",
+                      kNoticeFailColor, 2.0f);
+            return false;
+        }
+        merchantName = settlement->name + "商人";
+    }
+    m_tradeOpen = true;
+    m_tradeNpc = merchant;
+    m_tradeSettlementId = std::move(settlementId);
+    m_tradeIndex = std::clamp(m_tradeIndex, 0,
+                              static_cast<int>(kMerchantOfferCount) - 1);
+    SubmitMoveCommand(0.0f, 0.0f);
+    if (m_ctx.ui != nullptr) {
+        m_ctx.ui->CloseInventory();
+    }
+    SetNotice("开始交易：" + merchantName, kNoticeInfoColor, 1.5f);
+    ZL_INFO("homestead", "打开交易：{}", merchantName);
+    return true;
+}
+
+void WorldDemoState::CloseTrade() {
+    m_tradeOpen = false;
+    m_tradeNpc = entt::null;
+    m_tradeSettlementId.clear();
+}
+
+bool WorldDemoState::TradeNpcInRange() const {
+    if (!m_tradeOpen || m_tradeNpc == entt::null || m_ctx.ecs == nullptr ||
+        m_player == entt::null || !m_ctx.ecs->Alive(m_tradeNpc)) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    if (registry.try_get<ecs::MerchantStock>(m_tradeNpc) == nullptr) {
+        return false;
+    }
+    const auto* merchantPosition =
+        registry.try_get<ecs::Position>(m_tradeNpc);
+    const auto* playerPosition = registry.try_get<ecs::Position>(m_player);
+    if (merchantPosition == nullptr || playerPosition == nullptr ||
+        merchantPosition->z != playerPosition->z) {
+        return false;
+    }
+    const float dx = merchantPosition->x - playerPosition->x;
+    const float dy = merchantPosition->y - playerPosition->y;
+    const float range = std::max(0.0f, m_homesteadConfig.trade.range);
+    return dx * dx + dy * dy <= range * range;
+}
+
 bool WorldDemoState::TryBuyTradeOffer(int index) {
     if (!m_tradeOpen || !m_homesteadConfig.trade.enabled || m_ctx.ecs == nullptr ||
         m_ctx.items == nullptr || m_player == entt::null || index < 0 ||
         index >= static_cast<int>(kMerchantOfferCount)) {
         return false;
     }
-    const auto& offers = MerchantOffers();
-    const TradeOffer& offer = offers[static_cast<std::size_t>(index)];
-    const ecs::Entity merchant = FindNearbyMerchant();
-    if (merchant == entt::null) {
-        m_tradeOpen = false;
+    if (!TradeNpcInRange()) {
+        CloseTrade();
         return false;
     }
+    const auto& offers = MerchantOffers();
+    const TradeOffer& offer = offers[static_cast<std::size_t>(index)];
+    const ecs::Entity merchant = m_tradeNpc;
     if (m_networkMode) {
         net::Command command = MakePlayerCommand(net::CommandType::TradeOffer);
         command.payload.entityId = m_ctx.ecs->IdOf(merchant).id;
@@ -15544,20 +17555,43 @@ bool WorldDemoState::TryBuyTradeOffer(int index) {
         SubmitMoveCommand(0.0f, 0.0f);
         return SubmitPlayerCommand(command);
     }
+    int cost = offer.costCount;
     if (const auto* npc =
             m_ctx.ecs->Registry().try_get<SettlementNpc>(merchant);
         npc != nullptr) {
+        const SettlementDef* settlement =
+            m_settlementConfig.Find(npc->settlementId);
+        if (settlement == nullptr) {
+            CloseTrade();
+            SetNotice("商人所属聚落数据不存在", kNoticeFailColor, 2.0f);
+            return false;
+        }
         bool fallen = false;
         bool raidActive = false;
         (void)SettlementDefenseBlocked(npc->settlementId, &fallen,
                                        &raidActive);
         if (fallen || raidActive) {
-            m_tradeOpen = false;
+            CloseTrade();
             SetNotice(fallen ? "聚落已失守，交易暂停"
                              : "夜袭中，无法交易",
                       kNoticeFailColor, 2.0f);
             return false;
         }
+        const int score = SettlementReputationForHud(
+            settlement->id, settlement->startingReputation);
+        if (!SettlementCanUseService(*settlement,
+                                     m_settlementConfig.reputation,
+                                     SettlementService::Trade, score)) {
+            CloseTrade();
+            SetNotice(HasSettlementService(*settlement,
+                                           SettlementService::Trade)
+                          ? "声望敌视：商人拒绝交易"
+                          : "该聚落不提供交易",
+                      kNoticeFailColor, 2.0f);
+            return false;
+        }
+        cost = SettlementBuyPrice(offer.costCount,
+                                  m_settlementConfig.reputation, score);
     }
     entt::registry& registry = m_ctx.ecs->Registry();
     auto* stock = registry.try_get<ecs::MerchantStock>(merchant);
@@ -15570,10 +17604,9 @@ bool WorldDemoState::TryBuyTradeOffer(int index) {
         SetNotice("商人库存不足", kNoticeInfoColor, 1.5f);
         return false;
     }
-    if (items::CountOf(*container, std::string(offer.costDefId)) <
-        offer.costCount) {
+    if (items::CountOf(*container, std::string(offer.costDefId)) < cost) {
         SetNotice("物资不足：需要 " + std::string(offer.costDefId) + " ×" +
-                      std::to_string(offer.costCount),
+                      std::to_string(cost),
                   kNoticeFailColor, 1.8f);
         return false;
     }
@@ -15590,8 +17623,8 @@ bool WorldDemoState::TryBuyTradeOffer(int index) {
             return false;
         }
     }
-    if (items::RemoveItem(*container, std::string(offer.costDefId),
-                          offer.costCount) != offer.costCount) {
+    if (items::RemoveItem(*container, std::string(offer.costDefId), cost) !=
+        cost) {
         return false;
     }
     if (!offer.rewardDefId.empty()) {
@@ -15599,9 +17632,8 @@ bool WorldDemoState::TryBuyTradeOffer(int index) {
                                  offer.rewardCount, 1.0f};
         const int added = items::AddItem(*container, *m_ctx.items, reward);
         if (added < offer.rewardCount) {
-            ecs::ItemInstance cost{std::string(offer.costDefId),
-                                   offer.costCount, 1.0f};
-            ReturnOrDropItem(cost);
+            ecs::ItemInstance refund{std::string(offer.costDefId), cost, 1.0f};
+            ReturnOrDropItem(refund);
             return false;
         }
     }
@@ -15618,6 +17650,19 @@ bool WorldDemoState::TryBuyTradeOffer(int index) {
     if (!offer.blueprint.empty()) {
         notice += "（已学习图纸）";
     }
+    if (!m_tradeSettlementId.empty()) {
+        if (const SettlementDef* settlement =
+                m_settlementConfig.Find(m_tradeSettlementId);
+            settlement != nullptr) {
+            const SettlementReputationChange change = AwardSettlementReputation(
+                *m_ctx.ecs, m_player, m_settlementConfig.reputation,
+                settlement->id, SettlementReputationEvent::Trade, {},
+                settlement->startingReputation, CurrentMissionDay());
+            if (change.applied && change.delta != 0) {
+                notice += " · 声望 " + std::to_string(change.delta);
+            }
+        }
+    }
     SetNotice(std::move(notice), kNoticeOkColor, 2.0f);
     ZL_INFO("homestead", "商人交易：{}，库存 {}", offer.id,
             stock->stock[static_cast<std::size_t>(index)]);
@@ -15629,12 +17674,12 @@ void WorldDemoState::HandleTradeInput(core::Input& input) {
     if (!m_tradeOpen) {
         return;
     }
-    if (FindNearbyMerchant() == entt::null) {
-        m_tradeOpen = false;
+    if (!TradeNpcInRange()) {
+        CloseTrade();
         return;
     }
     if (input.IsActionPressed("Quit") || input.IsActionPressed("Use")) {
-        m_tradeOpen = false;
+        CloseTrade();
         SetNotice("结束交易", kNoticeInfoColor, 1.2f);
         return;
     }
@@ -15731,7 +17776,11 @@ void WorldDemoState::OpenSettlementDialogue(ecs::Entity npc) {
     if (settlement == nullptr) {
         return;
     }
-    m_dialogueTree = MakeSettlementDialogue(*settlement, component->kind);
+    const int score = SettlementReputationForHud(
+        settlement->id, settlement->startingReputation);
+    m_dialogueTree =
+        MakeSettlementDialogue(*settlement, component->kind,
+                               m_settlementConfig.reputation, score);
     const DialogueNode* root =
         m_dialogueTree.FindNode(m_dialogueTree.startNode);
     if (root == nullptr) {
@@ -15744,7 +17793,7 @@ void WorldDemoState::OpenSettlementDialogue(ecs::Entity npc) {
     m_dialogueNodeId = root->id;
     m_dialogueIndex = 0;
     m_scrollAccum = 0.0f;
-    m_tradeOpen = false;
+    CloseTrade();
     SubmitMoveCommand(0.0f, 0.0f);
     if (m_ctx.ui != nullptr) {
         m_ctx.ui->CloseInventory();
@@ -15775,6 +17824,10 @@ DialogueContext WorldDemoState::MakeDialogueContext() const {
     context.settlement = m_settlementConfig.Find(m_dialogueSettlementId);
     context.missions = &m_missionConfig;
     context.missionLog = PlayerMissions();
+    if (context.settlement != nullptr) {
+        context.settlementReputation = SettlementReputationForHud(
+            context.settlement->id, context.settlement->startingReputation);
+    }
     if (m_ctx.ecs != nullptr && m_player != entt::null) {
         context.inventory =
             m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
@@ -15817,6 +17870,17 @@ bool WorldDemoState::AcceptSettlementMissionFromDialogue() {
         SetNotice("已发送接取委托请求", kNoticeInfoColor, 1.8f);
         return true;
     }
+    const int score = SettlementReputationForHud(
+        settlement->id, settlement->startingReputation);
+    if (!SettlementCanUseService(*settlement, m_settlementConfig.reputation,
+                                 SettlementService::Missions, score)) {
+        SetNotice(HasSettlementService(*settlement,
+                                       SettlementService::Missions)
+                      ? "声望敌视：拒绝委托"
+                      : "该聚落不提供委托",
+                  kNoticeFailColor, 2.0f);
+        return false;
+    }
     if (m_ctx.ecs == nullptr || m_player == entt::null) {
         return false;
     }
@@ -15825,12 +17889,12 @@ bool WorldDemoState::AcceptSettlementMissionFromDialogue() {
         log = &m_ctx.ecs->Registry().emplace<ecs::MissionLog>(m_player);
     }
     const MissionDef* def = FindAvailableSettlementMission(
-        *settlement, m_missionConfig, *log, CurrentMissionDay());
+        *settlement, m_missionConfig, *log, CurrentMissionDay(), score);
     if (def == nullptr) {
         SetNotice("当前没有可接取的委托", kNoticeInfoColor, 1.8f);
         return false;
     }
-    ActivateMission(*log, *def, CurrentMissionDay());
+    ActivateMission(*log, *def, CurrentMissionDay(), settlement->id);
     m_missionFocusId = def->id;
     SetNotice("已接取委托：" + def->name, kNoticeOkColor, 2.5f);
     return true;
@@ -15865,16 +17929,17 @@ void WorldDemoState::ExecuteDialogueOption(const DialogueOption& option) {
         case DialogueResultKind::Close:
             CloseSettlementDialogue();
             return;
-        case DialogueResultKind::OpenTrade:
+        case DialogueResultKind::OpenTrade: {
             if (!m_homesteadConfig.trade.enabled) {
                 SetNotice("交易未启用", kNoticeInfoColor, 1.8f);
                 return;
             }
+            const ecs::Entity merchant = m_dialogueNpc;
             CloseSettlementDialogue();
-            m_tradeOpen = true;
             m_tradeIndex = 0;
-            SetNotice("开始交易：幸存者商人", kNoticeInfoColor, 1.5f);
+            (void)OpenTrade(merchant);
             return;
+        }
         case DialogueResultKind::AcceptSettlementMission:
             (void)AcceptSettlementMissionFromDialogue();
             CloseSettlementDialogue();
@@ -16475,14 +18540,11 @@ std::string WorldDemoState::HomesteadHint() const {
 
 std::string WorldDemoState::TradePanelText() const {
     if (!m_tradeOpen || m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
-        m_player == entt::null) {
+        m_player == entt::null || !TradeNpcInRange()) {
         return {};
     }
-    const ecs::Entity merchant = FindNearbyMerchant();
-    if (merchant == entt::null) {
-        return {};
-    }
-    const auto* stock = m_ctx.ecs->Registry().try_get<ecs::MerchantStock>(merchant);
+    const auto* stock =
+        m_ctx.ecs->Registry().try_get<ecs::MerchantStock>(m_tradeNpc);
     const auto* container = m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
     if (stock == nullptr || container == nullptr) {
         return {};
@@ -16491,17 +18553,42 @@ std::string WorldDemoState::TradePanelText() const {
     const int index =
         std::clamp(m_tradeIndex, 0, static_cast<int>(kMerchantOfferCount) - 1);
     const TradeOffer& offer = offers[static_cast<std::size_t>(index)];
+    std::string merchantLabel = "商人";
+    int cost = offer.costCount;
+    std::string priceTier;
+    if (const SettlementDef* settlement =
+            m_settlementConfig.Find(m_tradeSettlementId);
+        settlement != nullptr) {
+        merchantLabel = settlement->name + "商人";
+        const int score = SettlementReputationForHud(
+            settlement->id, settlement->startingReputation);
+        if (!SettlementCanUseService(*settlement,
+                                     m_settlementConfig.reputation,
+                                     SettlementService::Trade, score)) {
+            return {};
+        }
+        cost = SettlementBuyPrice(offer.costCount,
+                                  m_settlementConfig.reputation, score);
+        if (const SettlementReputationTierDef* tier =
+                SettlementReputationTierForScore(
+                    m_settlementConfig.reputation, score);
+            tier != nullptr) {
+            priceTier = tier->name;
+        }
+    }
     const auto itemName = [this](std::string_view defId) {
         const items::ItemDef* def = m_ctx.items->Find(std::string(defId));
         return def != nullptr ? def->name : std::string(defId);
     };
     std::ostringstream text;
-    text << "商人 · " << itemName(offer.costDefId) << " "
+    text << merchantLabel << " · " << itemName(offer.costDefId) << " "
          << items::CountOf(*container, std::string(offer.costDefId)) << " | ["
          << (index + 1) << "/" << kMerchantOfferCount << "] " << offer.name
-         << " · 成本 " << offer.costCount << " "
-         << itemName(offer.costDefId) << " · 库存 "
-         << stock->stock[static_cast<std::size_t>(index)]
+         << " · 成本 " << cost << " " << itemName(offer.costDefId);
+    if (cost != offer.costCount && !priceTier.empty()) {
+        text << "（" << priceTier << "价）";
+    }
+    text << " · 库存 " << stock->stock[static_cast<std::size_t>(index)]
          << " | 滚轮选择 · 1-5 购买 · E 关闭";
     return text.str();
 }
@@ -17552,22 +19639,85 @@ void WorldDemoState::ShowBaseSiegeNotice(const std::string& text,
     }
 }
 
+void WorldDemoState::PollLocalRegionalSiegeReport() {
+    if (m_networkMode || m_ctx.simulation == nullptr) {
+        return;
+    }
+    const game::RegionalSiegeResult& result =
+        m_ctx.simulation->RegionalSiegeLastResult();
+    if (result.regionId.empty()) {
+        return;
+    }
+    const std::string key =
+        result.regionId + ":" + std::to_string(result.attackMinute) + ":" +
+        std::to_string(result.resolvedMinute) + ":" +
+        (result.reclaim ? "r" : "d") + (result.held ? "h" : "l");
+    if (key == m_lastRegionalSiegeResultKey) {
+        return;
+    }
+    m_lastRegionalSiegeResultKey = key;
+    if (result.held && !result.settlementId.empty() && m_ctx.ecs != nullptr &&
+        m_player != entt::null) {
+        const SettlementDef* settlement =
+            m_settlementConfig.Find(result.settlementId);
+        const auto* position =
+            m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+        if (settlement != nullptr && position != nullptr) {
+            const float radius =
+                settlement->safeRadius +
+                (SettlementProvidesDefense(*settlement)
+                     ? settlement->defense.activationRadius
+                     : 0.0f);
+            const float dx = position->x - settlement->centerX;
+            const float dy = position->y - settlement->centerY;
+            if (dx * dx + dy * dy <= radius * radius) {
+                const std::string reputationKey =
+                    "defense:" + result.settlementId + ":" + result.regionId +
+                    ":" + std::to_string(result.attackMinute) + ":" +
+                    std::to_string(result.resolvedMinute) + ":" +
+                    (result.reclaim ? "reclaim" : "defend");
+                const SettlementReputationChange change =
+                    AwardSettlementReputation(
+                        *m_ctx.ecs, m_player, m_settlementConfig.reputation,
+                        result.settlementId,
+                        SettlementReputationEvent::DefenseComplete,
+                        reputationKey, settlement->startingReputation,
+                        CurrentMissionDay());
+                if (change.applied && change.delta != 0) {
+                    SetNotice("守城声望：+" +
+                                  std::to_string(change.delta) + " · " +
+                                  settlement->name,
+                              kNoticeOkColor, 4.0f);
+                }
+            }
+        }
+    }
+    OpenSiegeReport(game::RegionalSiegeReportText(result),
+                    result.held ? "ok" : "fail");
+}
+
 void WorldDemoState::OpenSiegeReport(const std::string& text,
                                      const std::string& tone) {
     if (m_ctx.ui != nullptr && m_ctx.ui->IsInventoryOpen()) {
         m_ctx.ui->CloseInventory();
     }
     m_characterOpen = false;
-    m_siegeReportTitle = "守夜战报";
+    const bool defenseReport = text.rfind("守城战报", 0) == 0;
+    m_siegeReportTitle = defenseReport ? "守城战报" : "守夜战报";
     m_siegeReportHint = "ESC 关闭";
     m_siegeReportRating.clear();
     m_siegeReportLines.fill({});
-    (void)ui::BuildSiegeReportLines(text, &m_siegeReportRating,
-                                    &m_siegeReportLines);
-    m_siegeReportTone = m_siegeReportRating.empty()
-                            ? tone
-                            : ui::SiegeReportToneForRating(
-                                  m_siegeReportRating);
+    if (defenseReport) {
+        (void)ui::BuildDefenseReportLines(text, &m_siegeReportLines);
+        m_siegeReportTone = tone;
+    } else {
+        (void)ui::BuildSiegeReportLines(text, &m_siegeReportRating,
+                                        &m_siegeReportLines);
+        m_siegeReportTone = m_siegeReportRating.empty()
+                                ? tone
+                                : ui::SiegeReportToneForRating(
+                                      m_siegeReportRating);
+    }
     m_siegeReportOpen = true;
     ZL_INFO("siege", "打开战报面板：评级 {}", m_siegeReportRating.empty()
                                                   ? "?"
@@ -17608,7 +19758,7 @@ void WorldDemoState::FinishRun(bool victory) {
     m_baseSiege.Abort({}, false);
     m_runOutcome = victory ? RunOutcome::Escaped : RunOutcome::Dead;
     m_buildMode = false;
-    m_tradeOpen = false;
+    CloseTrade();
     CloseSettlementDialogue();
     // 结算后不再自动存档，避免把已结束/已死亡的一局写成可继续的快速档。
     m_autoSaveOnExit = false;
@@ -17641,8 +19791,9 @@ void WorldDemoState::FinishRun(bool victory) {
 }
 
 void WorldDemoState::UpdateObjective() {
-    if (m_networkMode || m_runOutcome != RunOutcome::None || m_ctx.ecs == nullptr ||
-        m_ctx.items == nullptr || m_player == entt::null) {
+    if (m_networkMode || IsM31World() || m_runOutcome != RunOutcome::None ||
+        m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
+        m_player == entt::null) {
         return;
     }
     entt::registry& registry = m_ctx.ecs->Registry();
@@ -17685,7 +19836,7 @@ void WorldDemoState::UpdateObjective() {
 }
 
 bool WorldDemoState::TryInteractRadio() {
-    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
+    if (IsM31World() || m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
         m_player == entt::null) {
         return false;
     }
@@ -18266,6 +20417,9 @@ void WorldDemoState::HandleMenuAction(ui::MenuActionType action) {
 }
 
 void WorldDemoState::OnExit() {
+    if (m_worldMapOpen) {
+        CloseWorldMap();
+    }
     // 退出前自动存档：先采集快照/提交后台，再销毁实体；GameApp 会在关闭时等待 zl-save
     m_baseSiege.Abort({}, false);
     m_ctx.executePlayerCommand = {};
@@ -18294,6 +20448,10 @@ void WorldDemoState::OnExit() {
         m_ctx.ui->SetSocialState({});
         m_ctx.ui->HideMenu();
         m_ctx.ui->SetMenuActionHandler({});
+        m_ctx.ui->SetWorldMapCloseHandler({});
+        m_ctx.ui->SetWorldMapSelectHandler({});
+        m_ctx.ui->SetWorldMapStrategicActionHandler({});
+        m_ctx.ui->SetWorldMapState(m_worldMapState, false);
     }
     if (m_menuPaused && m_ctx.gameTime != nullptr) {
         m_ctx.gameTime->SetSpeed(core::GameTime::Speed::X1);
@@ -18765,6 +20923,7 @@ void WorldDemoState::OnTick(double tickDt) {
         UpdateHomestead(static_cast<float>(tickDt));
         UpdateSleep(static_cast<float>(tickDt));
         UpdateBaseSiege(static_cast<float>(tickDt));
+        PollLocalRegionalSiegeReport();
         UpdateBaseHud(static_cast<float>(tickDt));
         UpdateProgression(static_cast<float>(tickDt));
         UpdateForage(static_cast<float>(tickDt));
@@ -18783,7 +20942,11 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     using Clock = std::chrono::steady_clock;
     const auto frameStart = Clock::now();
     m_fireVisualTime += std::max(0.0f, static_cast<float>(frameDt));
+    UpdateWorldEventUi(static_cast<float>(frameDt));
     PollSaveScreenshot(frameDt);
+    if (m_networkMode) {
+        PollStrategicActionResult();
+    }
     ConsumeSaveWarning();
     if (m_networkMode) {
         SyncNetworkReplicas(static_cast<float>(alpha));
@@ -18826,10 +20989,17 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
         UpdateCameraFollow(frameDt);  // M4-T5：跟随在巡航之后（巡航接管时不生效）
     }
 
-    // 流式加载：相机中心（世界像素 → 世界格坐标）
+    // 流式加载：相机中心（世界像素 → 世界格坐标），玩家速度驱动前向预测。
     const glm::vec2 camGrid = render::FromScreen(m_ctx.camera->Center(), 0);
-    m_ctx.chunkManager->Update(camGrid.x, camGrid.y);
-    m_ctx.chunkManager->ProcessResults();
+    const glm::vec2 streamVelocity = StreamingVelocity();
+    if (m_ctx.simulation != nullptr) {
+        m_ctx.simulation->StreamAt(camGrid.x, camGrid.y, streamVelocity.x,
+                                   streamVelocity.y);
+    } else {
+        m_ctx.chunkManager->SetPrediction(streamVelocity.x, streamVelocity.y);
+        m_ctx.chunkManager->Update(camGrid.x, camGrid.y);
+        m_ctx.chunkManager->ProcessResults();
+    }
     if (m_networkMode) {
         ApplyNetworkChunkDiffs();
         ApplyNetworkWorldSounds();
@@ -18879,8 +21049,8 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     const auto afterSort = Clock::now();
     DrawWorld();
     const auto afterWorldDraw = Clock::now();
-    if (m_ctx.ui != nullptr && m_ctx.ui->IsMenuOpen()) {
-        // 菜单是全屏模态：Debug 视图在 UI 之后合成，必须跳过世界调试叠层（含路径目标标记）。
+    if ((m_ctx.ui != nullptr && m_ctx.ui->IsMenuOpen()) || m_worldMapOpen) {
+        // 菜单/世界地图是全屏模态：Debug 视图在 UI 之后合成，必须跳过世界调试叠层。
         bgfx::touch(static_cast<bgfx::ViewId>(render::ViewId::Debug));
     } else {
         DrawDebugOverlay();
@@ -19116,6 +21286,33 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
         m_characterOpen = false;
         SubmitMoveCommand(0.0f, 0.0f);
         return;
+    }
+    if (m_worldMapOpen) {
+        if (input.IsActionPressed("WorldMap") || input.IsActionPressed("Quit")) {
+            CloseWorldMap();
+        }
+        SubmitMoveCommand(0.0f, 0.0f);
+        m_scrollAccum = 0.0f;
+        return;
+    }
+    if (input.IsActionPressed("WorldMap")) {
+        OpenWorldMap();
+        return;
+    }
+    if (m_worldEventChoiceOpen) {
+        if (input.IsActionPressed("Quit")) {
+            m_worldEventChoiceOpen = false;
+            SetNotice("已收起世界事件选项", kNoticeInfoColor, 1.5f);
+            return;
+        }
+        for (int i = 0; i < ui::kWorldEventOptionRows; ++i) {
+            if (input.IsActionPressed(
+                    kWorldEventChoiceActions[static_cast<std::size_t>(i)])) {
+                if (TryChooseWorldEvent(i)) {
+                    return;
+                }
+            }
+        }
     }
     if (m_siegeReportOpen) {
         if (input.IsActionPressed("Quit")) {
@@ -19486,12 +21683,17 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
             }
         } else if (m_animalHarvestAction.active) {
             CancelAnimalHarvest("主动取消", true);
+        } else if (!m_buildMode && TryInteractWorldEvent()) {
+            // M33-F2-T4：在事件地点按 E 打开单机事件选择面板。
         } else if (!TryServiceVehicle()) {
             PlayerBuildTarget bedTarget;
             PlayerBuildTarget doorTarget;
             const bool hasBed = FindNearbyBed(&bedTarget);
             const bool hasDoor = FindNearbyDoor(&doorTarget);
             bool handled = !m_buildMode && TryInteractSettlementNpc();
+            if (!handled) {
+                handled = TryInteractStrategicRecovery();
+            }
             if (!handled && hasDoor &&
                 (!hasBed ||
                  BuildTargetDistanceSq(doorTarget) <

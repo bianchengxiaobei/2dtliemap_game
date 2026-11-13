@@ -46,29 +46,29 @@ class MissionDataTest(unittest.TestCase):
 
     def test_mission_chains_and_event_types(self):
         self.assertTrue(self.missions["enabled"])
-        self.assertEqual(len(self.defs), 31)
+        self.assertEqual(len(self.defs), 35)
         chains = {}
         for mission in self.defs:
             chains.setdefault(mission["chain"], []).append(mission)
         once_chains = [chain for chain, defs in chains.items()
                        if all(mission["kind"] == "once" for mission in defs)]
-        self.assertEqual(len(once_chains), 10)
-        self.assertEqual(len(chains), 19)
+        self.assertEqual(len(once_chains), 13)
+        self.assertEqual(len(chains), 22)
         for chain in ("radio", "clinic", "farm", "hospital", "military",
                       "supermarket", "police", "motel", "relay"):
             self.assertEqual(len(chains[chain]), 2)
             orders = sorted(mission["order"] for mission in chains[chain])
             self.assertEqual(orders, [1, 2])
-        self.assertEqual(len(chains["settlement"]), 4)
+        self.assertEqual(len(chains["settlement"]), 5)
         self.assertEqual(sorted(mission["order"]
                                 for mission in chains["settlement"]),
-                         [1, 2, 3, 4])
+                         [1, 2, 3, 4, 5])
         self.assertEqual(sum(mission["kind"] == "daily"
                              for mission in self.defs), 1)
         self.assertEqual(sum(mission["kind"] == "random"
                              for mission in self.defs), 8)
         self.assertEqual(sum(mission["kind"] == "once"
-                             for mission in self.defs), 22)
+                             for mission in self.defs), 26)
         self.assertEqual(self.by_id["hospital_quarantine"]["prerequisite"],
                          "hospital_supply")
         self.assertEqual(self.by_id["military_extract"]["prerequisite"],
@@ -154,6 +154,7 @@ class MissionDataTest(unittest.TestCase):
         self.assertEqual(settlement["settlement_escort"]["task"], "escort")
         self.assertEqual(settlement["settlement_clear"]["task"], "clear")
         self.assertEqual(settlement["settlement_supply"]["task"], "supply")
+        self.assertEqual(settlement["refugee_relief"]["task"], "help")
         self.assertEqual(settlement["settlement_escort"]["prerequisite"],
                          "settlement_help")
         self.assertEqual(settlement["settlement_clear"]["prerequisite"],
@@ -165,6 +166,32 @@ class MissionDataTest(unittest.TestCase):
             self.assertGreater(mission["timeLimitDays"], 0)
             self.assertGreaterEqual(mission["retryDays"], 1)
             self.assertEqual(mission["source"], "npc")
+        for mission_id, minimum in (
+                ("settlement_help", -39),
+                ("settlement_escort", 0),
+                ("settlement_clear", 20),
+                ("settlement_supply", 30),
+                ("refugee_relief", -100)):
+            self.assertEqual(
+                settlement[mission_id].get("minSettlementReputation", -100),
+                minimum)
+        for mission in self.defs:
+            minimum = mission.get("minSettlementReputation", -100)
+            self.assertGreaterEqual(minimum, -100)
+            self.assertLessEqual(minimum, 100)
+        for mission_id, chain, task, minimum in (
+                ("north_blood_drive", "north_clinic", "help", -39),
+                ("south_harvest_help", "south_farm", "supply", 0),
+                ("river_fish_supply", "river_camp", "supply", -39)):
+            mission = self.by_id[mission_id]
+            self.assertEqual(mission["chain"], chain)
+            self.assertEqual(mission["task"], task)
+            self.assertEqual(mission["source"], "npc")
+            self.assertFalse(mission["autoActivate"])
+            self.assertGreater(mission["timeLimitDays"], 0)
+            self.assertGreaterEqual(mission["retryDays"], 1)
+            self.assertEqual(mission.get("minSettlementReputation", -100),
+                             minimum)
 
     def test_sources_and_prerequisites(self):
         sources = {mission["source"] for mission in self.defs}

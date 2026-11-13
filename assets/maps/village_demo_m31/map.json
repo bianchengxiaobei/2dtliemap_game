@@ -1,0 +1,36 @@
+{
+ "format": "zomboidlike-map-v1",
+ "name": "village_demo_m31",
+ "generator": {
+  "tool": "tools/gen_world.py",
+  "version": 1,
+  "seed": 20261109,
+  "params": {
+   "chunks": "36x36",
+   "forests": 48,
+   "treeChance": 0.42,
+   "fields": 8,
+   "ruins": 7,
+   "tufts": 800,
+   "poiSpacing": 80.0,
+   "worldVersion": 1,
+   "pois": 3,
+   "templates": 3
+  }
+ },
+ "bounds": {
+  "chunkX0": 0,
+  "chunkY0": 0,
+  "chunksX": 36,
+  "chunksY": 36
+ },
+ "terrain": {
+  "defaultFloor": "tile.floor.grass"
+ },
+ "legend": {
+  "g": "tile.floor.grass",
+  "d": "tile.floor.dirt",
+  "w": "tile.floor.wood",
+  "a": "tile.floor.water"
+ }
+}

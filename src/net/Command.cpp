@@ -102,6 +102,8 @@ const char* CommandTypeName(CommandType type) {
             return "Block";
         case CommandType::Dodge:
             return "Dodge";
+        case CommandType::ChooseWorldEvent:
+            return "ChooseWorldEvent";
     }
     return "Unknown";
 }

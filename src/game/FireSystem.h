@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "game/Fire.h"
@@ -70,13 +71,20 @@ float FireIgnitionSeconds(const Flammability& flammability,
 float FireSpreadInterval(float burnSeconds, const FireParams& params);
 float FireSpreadChance(const Flammability& flammability, float wetness,
                        const FireParams& params);
-std::size_t ApplyFireDamage(ecs::EcsWorld& ecs,
-                            characters::CombatSystem& combat,
-                            const FireParams& params, float elapsedSeconds);
-std::size_t ApplyBurningZombieDamage(ecs::EcsWorld& ecs,
-                                     characters::CombatSystem& combat,
-                                     const FireParams& params,
-                                     float elapsedSeconds);
+struct FireDamageCredit {
+    std::uint64_t ownerStableId = 0;
+    std::uint64_t targetStableId = 0;
+    float amount = 0.0f;
+};
+
+std::size_t ApplyFireDamage(
+    ecs::EcsWorld& ecs, characters::CombatSystem& combat,
+    const FireParams& params, float elapsedSeconds,
+    std::vector<FireDamageCredit>* credits = nullptr);
+std::size_t ApplyBurningZombieDamage(
+    ecs::EcsWorld& ecs, characters::CombatSystem& combat,
+    const FireParams& params, float elapsedSeconds,
+    std::vector<FireDamageCredit>* credits = nullptr);
 FireIgnitionResult TryIgniteFire(ecs::FireSource& source,
                                  const FireMaterialDef& material, float wetness,
                                  float roll, const FireParams& params);
@@ -149,7 +157,8 @@ public:
 
     FireIgnitionResult IgniteAt(ecs::EcsWorld& ecs, world::World& world, int wx,
                                 int wy, int z, float wetness,
-                                std::string* error = nullptr);
+                                std::string* error = nullptr,
+                                std::uint64_t ownerStableId = 0);
     bool ExtinguishAt(ecs::EcsWorld& ecs, int wx, int wy, int z);
     std::size_t UnloadChunk(ecs::EcsWorld& ecs, int chunkX, int chunkY);
 
@@ -169,11 +178,18 @@ public:
     std::size_t ActiveSourceCount(const ecs::EcsWorld& ecs) const;
 
     const FireParams& Params() const { return m_params; }
+    std::vector<FireDamageCredit>* MutableDamageCredits() {
+        return &m_damageCredits;
+    }
+    std::vector<FireDamageCredit> TakeDamageCredits() {
+        return std::exchange(m_damageCredits, {});
+    }
 
 private:
     const FireRegistry* m_registry = nullptr;
     FireParams m_params;
     std::mt19937 m_rng;
+    std::vector<FireDamageCredit> m_damageCredits;
 };
 
 }  // namespace zl::game

@@ -23,6 +23,7 @@
 #include "ui/SocialPanel.h"
 #include "ui/SocialUi.h"
 #include "ui/UiInput.h"
+#include "ui/WorldMapUi.h"
 
 namespace {
 
@@ -417,6 +418,10 @@ TEST_CASE("M9-T4 HUD 文档与游戏输入阻断") {
     CHECK(scriptDocument->GetElementById("poi-guide") != nullptr);
     CHECK(document->GetElementById("mission-guide") != nullptr);
     CHECK(scriptDocument->GetElementById("mission-guide") != nullptr);
+    CHECK(document->GetElementById("region-guide") != nullptr);
+    CHECK(scriptDocument->GetElementById("region-guide") != nullptr);
+    CHECK(document->GetElementById("strategic-guide") != nullptr);
+    CHECK(scriptDocument->GetElementById("strategic-guide") != nullptr);
     CHECK(document->GetElementById("siege-status") != nullptr);
     CHECK(scriptDocument->GetElementById("siege-status") != nullptr);
     CHECK(document->GetElementById("base-status") != nullptr);
@@ -440,7 +445,29 @@ TEST_CASE("M9-T4 HUD 文档与游戏输入阻断") {
             CHECK(hud->GetElementById("siege-report-line-" +
                                       std::to_string(i)) != nullptr);
         }
+        CHECK(hud->GetElementById("world-event-panel") != nullptr);
+        CHECK(hud->GetElementById("world-event-title") != nullptr);
+        CHECK(hud->GetElementById("world-event-meta") != nullptr);
+        CHECK(hud->GetElementById("world-event-stage") != nullptr);
+        CHECK(hud->GetElementById("world-event-hint") != nullptr);
+        CHECK(hud->GetElementById("world-event-result") != nullptr);
+        for (int i = 0; i < 8; ++i) {
+            CHECK(hud->GetElementById("world-event-option-" +
+                                      std::to_string(i)) != nullptr);
+        }
+        for (int i = 0; i < 6; ++i) {
+            CHECK(hud->GetElementById("world-event-log-" +
+                                      std::to_string(i)) != nullptr);
+        }
     }
+    Rml::Element* worldEventPanel =
+        document->GetElementById("world-event-panel");
+    REQUIRE(worldEventPanel != nullptr);
+    worldEventPanel->SetProperty("display", "block");
+    context->Update();
+    CHECK(worldEventPanel->GetClientWidth() >= 380.0f);
+    CHECK(worldEventPanel->GetClientHeight() > 0.0f);
+    worldEventPanel->SetProperty("display", "none");
     Rml::Element* reportPanel = document->GetElementById("siege-report");
     REQUIRE(reportPanel != nullptr);
     reportPanel->SetProperty("display", "block");
@@ -1843,4 +1870,399 @@ TEST_CASE("M23-F2a-T5 觅食/钓鱼 HUD 状态文案") {
     CHECK(zl::ui::FishingStatusText(state, &tone) ==
           "咬钩！静水（1.2 秒） · E 收杆");
     CHECK(tone == "warn");
+}
+
+TEST_CASE("M32-T3 战略地图 1280x720 与 1920x1080 布局") {
+    NullRenderInterface renderInterface;
+    NullSystemInterface systemInterface;
+    Rml::SetRenderInterface(&renderInterface);
+    Rml::SetSystemInterface(&systemInterface);
+    REQUIRE(Rml::Initialise());
+
+    const std::string fontDir = std::string(ZL_SOURCE_DIR) + "/assets/fonts/";
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Regular.otf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Normal));
+
+    const Rml::Vector2i sizes[] = {Rml::Vector2i(1280, 720),
+                                    Rml::Vector2i(1920, 1080)};
+    for (int index = 0; index < 2; ++index) {
+        const std::string name = "world-map-layout-" + std::to_string(index);
+        Rml::Context* context = Rml::CreateContext(name, sizes[index]);
+        REQUIRE(context != nullptr);
+
+        zl::ui::WorldMapPanel panel;
+        REQUIRE(panel.Init(*context, std::string(ZL_SOURCE_DIR) +
+                                         "/assets/ui/worldmap.rml"));
+
+        zl::game::WorldMapState state;
+        state.valid = true;
+        state.mapId = "village_demo_m31";
+        state.width = 360.0f;
+        state.height = 360.0f;
+        state.playerValid = true;
+        state.playerX = 70.0f;
+        state.playerY = 24.0f;
+        state.currentRegionName = "村庄核心";
+        state.nearestLandmarkName = "村庄避风港";
+        state.regions.push_back({"village_core", "村庄核心", "village", 40.0f,
+                                 0.0f, 80.0f, 60.0f, true});
+        state.regions.push_back({"south_farmland", "南部农田", "farmland",
+                                 0.0f, 120.0f, 120.0f, 100.0f, false});
+        state.regions.push_back({"north_fields", "北部农田", "farmland",
+                                 120.0f, 60.0f, 100.0f, 60.0f, true});
+        state.regions.push_back({"east_wilds", "东部荒野", "wilds",
+                                 240.0f, 0.0f, 100.0f, 200.0f, false});
+        state.regionCount = 4;
+        state.discoveredRegionCount = 2;
+        state.roads.push_back({70.0f, 24.0f, 150.0f, 24.0f, false, true});
+        state.waters.push_back({198.0f, 0.0f, 15.0f, 360.0f});
+        state.pois.push_back(
+            {"clinic", "诊所", 150.0f, 64.0f, 0.0f, 2, true, false});
+        state.poiCount = 1;
+        state.discoveredPoiCount = 1;
+        state.settlements.push_back(
+            {"village_haven", "村庄营地", "village_core", "neutral", "中立",
+             "交易/委托/防御/招募", 0, 75.0f, 26.5f, true, false, false,
+             true});
+        state.settlements.push_back(
+            {"north_fields", "北部诊所", "north_fields", "friendly", "友善",
+             "交易/委托/防御", 25, 150.0f, 64.0f, true, false, true, true});
+        state.events.push_back(
+            {"event", "尸潮", "进行中", 70.0f, 40.0f, true});
+        state.objective.valid = true;
+        state.objective.title = "找到诊所";
+        state.objective.x = 150.0f;
+        state.objective.y = 64.0f;
+        state.route.valid = true;
+        state.route.label = "南部农田";
+        state.route.targetRegion = "south_farmland";
+        state.route.distance = 90.0f;
+        state.route.points = {{70.0f, 24.0f}, {150.0f, 24.0f},
+                              {150.0f, 64.0f}};
+        state.gameMinute = 400;
+        state.travel.walkSpeed = 4.0f;
+        state.travel.vehicleSpeed = 10.0f;
+        state.travel.fuelPerSecond = 0.012f;
+        state.travel.currentFuel = 0.8f;
+        state.travel.vehicleAvailable = true;
+        state.travel.gameHoursPerRealSecond = 0.4f;
+        state.routeCost.valid = true;
+        state.routeCost.roadDistance = 90.0f;
+        state.routeCost.travelDistance = 108.0f;
+        state.routeCost.walkSeconds = 27.0f;
+        state.routeCost.vehicleSeconds = 10.8f;
+        state.routeCost.walkGameHours = 10.8f;
+        state.routeCost.vehicleGameHours = 4.32f;
+        state.routeCost.vehicleFuel = 0.1296f;
+        state.routeCost.fuelEnough = true;
+        state.strategic.enabled = true;
+        state.strategic.gameMinute = 400;
+        state.strategic.resources = {12, 180, 96, 3};
+        zl::game::StrategicMapRegion village;
+        village.id = "village_core";
+        village.owner = zl::game::StrategicOwner::Human;
+        village.pressure = 10.0f;
+        village.defense = 70.0f;
+        village.supply = 70.0f;
+        village.population = 3;
+        village.intelLevel = 3;
+        village.strategicValue = 5;
+        village.coreSafe = true;
+        state.strategic.regions.push_back(village);
+        zl::game::StrategicMapRegion farm;
+        farm.id = "south_farmland";
+        farm.owner = zl::game::StrategicOwner::Human;
+        farm.siegePhase = zl::game::StrategicSiegePhase::Warning;
+        farm.pressure = 80.0f;
+        farm.defense = 35.0f;
+        farm.supply = 45.0f;
+        farm.population = 4;
+        farm.intelLevel = 1;
+        farm.strategicValue = 3;
+        farm.warning.valid = true;
+        farm.warning.attackMinute = 1000;
+        farm.warning.warningMinutes = 48 * 60;
+        farm.warning.remainingMinutes = 600;
+        farm.warning.intelLevel = 1;
+        farm.warning.enemyStrength = 58;
+        farm.warning.reportedEnemyStrength = 56;
+        state.strategic.regions.push_back(farm);
+        zl::game::StrategicMapRegion north;
+        north.id = "north_fields";
+        north.owner = zl::game::StrategicOwner::Human;
+        north.pressure = 15.0f;
+        north.defense = 25.0f;
+        north.supply = 60.0f;
+        north.intelLevel = 2;
+        north.strategicValue = 2;
+        state.strategic.regions.push_back(north);
+        zl::game::StrategicMapRegion east;
+        east.id = "east_wilds";
+        east.owner = zl::game::StrategicOwner::Infested;
+        east.pressure = 85.0f;
+        east.intelLevel = 1;
+        east.strategicValue = 4;
+        east.remote = true;
+        state.strategic.regions.push_back(east);
+        state.strategic.events.push_back(
+            {"warning.south_farmland.1000", "south_farmland",
+             zl::game::StrategicEventKind::Warning, 300,
+             zl::game::StrategicOwner::Human, {}});
+        state.strategic.events.push_back(
+            {"siege.south_farmland.900", "south_farmland",
+             zl::game::StrategicEventKind::Siege, 350,
+             zl::game::StrategicOwner::Human, {0, -8, -10, 0}});
+        state.strategic.events.push_back(
+            {"resource.south_farmland.800", "south_farmland",
+             zl::game::StrategicEventKind::Resource, 360,
+             zl::game::StrategicOwner::Human, {0, -4, 0, 0}});
+        panel.SetState(state, true);
+        context->Update();
+
+        Rml::Element* panelElement =
+            panel.Document()->GetElementById("world-map-panel");
+        Rml::Element* canvas =
+            panel.Document()->GetElementById("world-map-canvas");
+        Rml::Element* sidebar =
+            panel.Document()->GetElementById("map-region");
+        Rml::Element* marker =
+            panel.Document()->GetElementById("map-poi-layer");
+        Rml::Element* settlementLayer =
+            panel.Document()->GetElementById("map-settlement-layer");
+        Rml::Element* settlementList =
+            panel.Document()->GetElementById("map-settlement-list");
+        Rml::Element* strategicLayer =
+            panel.Document()->GetElementById("map-strategic-layer");
+        Rml::Element* strategicList =
+            panel.Document()->GetElementById("map-strategic-list");
+        Rml::Element* strategicAlert =
+            panel.Document()->GetElementById("map-strategic-alert");
+        Rml::Element* routeCost =
+            panel.Document()->GetElementById("map-route-cost");
+        Rml::Element* hint =
+            panel.Document()->GetElementById("map-hint");
+        REQUIRE(panelElement != nullptr);
+        REQUIRE(canvas != nullptr);
+        REQUIRE(sidebar != nullptr);
+        REQUIRE(marker != nullptr);
+        REQUIRE(settlementLayer != nullptr);
+        REQUIRE(settlementList != nullptr);
+        REQUIRE(strategicLayer != nullptr);
+        REQUIRE(strategicList != nullptr);
+        REQUIRE(strategicAlert != nullptr);
+        REQUIRE(routeCost != nullptr);
+        REQUIRE(hint != nullptr);
+        const Rml::Vector2f offset =
+            panelElement->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const Rml::Vector2f box =
+            panelElement->GetBox().GetSize(Rml::BoxArea::Border);
+        CHECK(offset.x >= 0.0f);
+        CHECK(offset.y >= 0.0f);
+        CHECK(offset.x + box.x <= static_cast<float>(sizes[index].x));
+        CHECK(offset.y + box.y <= static_cast<float>(sizes[index].y));
+        CHECK(canvas->GetBox().GetSize(Rml::BoxArea::Border).x > 400.0f);
+        CHECK(canvas->GetBox().GetSize(Rml::BoxArea::Border).y > 400.0f);
+        const Rml::Vector2f canvasOffset =
+            canvas->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const Rml::Vector2f sidebarOffset =
+            sidebar->GetAbsoluteOffset(Rml::BoxArea::Border);
+        CHECK(canvasOffset.x + canvas->GetBox().GetSize(Rml::BoxArea::Border).x <=
+              sidebarOffset.x + 1.0f);
+        CHECK(marker->GetNumChildren() > 0);
+        CHECK(settlementLayer->GetNumChildren() == 2);
+        CHECK(settlementList->GetInnerRML().find("村庄营地") !=
+              std::string::npos);
+        CHECK(settlementList->GetInnerRML().find("中立") !=
+              std::string::npos);
+        CHECK(settlementList->GetInnerRML().find("（0）") !=
+              std::string::npos);
+        CHECK(settlementList->GetInnerRML().find("友善") !=
+              std::string::npos);
+        CHECK(settlementList->GetInnerRML().find("（25）") !=
+              std::string::npos);
+        CHECK(settlementList->GetInnerRML().find("夜袭") !=
+              std::string::npos);
+        Rml::Element* northSettlement = nullptr;
+        for (int i = 0; i < settlementLayer->GetNumChildren(); ++i) {
+            Rml::Element* child = settlementLayer->GetChild(i);
+            if (child->GetAttribute<Rml::String>("data-settlement", "") ==
+                "north_fields") {
+                northSettlement = child;
+                break;
+            }
+        }
+        REQUIRE(northSettlement != nullptr);
+        CHECK(northSettlement->IsClassSet("rep-friendly"));
+        CHECK(northSettlement->IsClassSet("raid"));
+        CHECK(panel.Document()
+                  ->GetElementById("map-label-layer")
+                  ->GetInnerRML()
+                  .find("北部诊所 · 友善") != std::string::npos);
+        CHECK(strategicLayer->GetNumChildren() == 4);
+        CHECK(strategicList->GetNumChildren() == 4);
+        Rml::Element* southOverlay = nullptr;
+        Rml::Element* eastOverlay = nullptr;
+        for (int i = 0; i < strategicLayer->GetNumChildren(); ++i) {
+            Rml::Element* child = strategicLayer->GetChild(i);
+            const Rml::String id =
+                child->GetAttribute<Rml::String>("data-strategic-region", "");
+            if (id == "south_farmland") {
+                southOverlay = child;
+            } else if (id == "east_wilds") {
+                eastOverlay = child;
+            }
+        }
+        REQUIRE(southOverlay != nullptr);
+        REQUIRE(eastOverlay != nullptr);
+        CHECK(southOverlay->GetClientHeight() > 0.0f);
+        CHECK(eastOverlay->GetClientHeight() == 0.0f);
+        CHECK(strategicList->GetInnerRML().find("南部农田") !=
+              std::string::npos);
+        CHECK(strategicAlert->GetInnerRML().find("预警") !=
+              std::string::npos);
+        CHECK(routeCost->GetInnerRML().find("需油") != std::string::npos);
+        CHECK(routeCost->GetInnerRML().find("可提前") != std::string::npos);
+        CHECK(routeCost->IsClassSet("ok"));
+        REQUIRE(strategicList->GetNumChildren() > 0);
+        Rml::Element* lastRow =
+            strategicList->GetChild(strategicList->GetNumChildren() - 1);
+        REQUIRE(lastRow != nullptr);
+        const Rml::Vector2f rowOffset =
+            lastRow->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const float rowBottom =
+            rowOffset.y + lastRow->GetBox().GetSize(Rml::BoxArea::Border).y;
+        CHECK(rowBottom <= offset.y + box.y + 1.0f);
+        panel.Shutdown();
+        Rml::RemoveContext(name);
+    }
+    Rml::Shutdown();
+}
+
+TEST_CASE("M32-T8 战略地图行动面板：选择/支援/反攻回调与禁用态") {
+    NullRenderInterface renderInterface;
+    NullSystemInterface systemInterface;
+    Rml::SetRenderInterface(&renderInterface);
+    Rml::SetSystemInterface(&systemInterface);
+    REQUIRE(Rml::Initialise());
+
+    const std::string fontDir = std::string(ZL_SOURCE_DIR) + "/assets/fonts/";
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Regular.otf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Normal));
+    Rml::Context* context =
+        Rml::CreateContext("strategic-actions", Rml::Vector2i(1280, 720));
+    REQUIRE(context != nullptr);
+
+    zl::ui::WorldMapPanel panel;
+    REQUIRE(panel.Init(*context, std::string(ZL_SOURCE_DIR) +
+                                     "/assets/ui/worldmap.rml"));
+
+    zl::game::WorldMapState state;
+    state.valid = true;
+    state.mapId = "village_demo_m31";
+    state.width = 360.0f;
+    state.height = 360.0f;
+    state.currentRegion = "village_core";
+    state.strategic.enabled = true;
+    state.strategic.gameMinute = 400;
+    state.strategic.resources = {12, 180, 96, 3};
+    zl::game::StrategicMapRegion farm;
+    farm.id = "south_farmland";
+    farm.owner = zl::game::StrategicOwner::Human;
+    farm.recoveryStage = zl::game::StrategicRecoveryStage::None;
+    farm.infectionCores = 0;
+    farm.pressure = 20.0f;
+    farm.supply = 45.0f;
+    farm.population = 2;
+    farm.strategicValue = 3;
+    farm.warning.valid = true;
+    farm.warning.remainingMinutes = 600;
+    farm.warning.reportedEnemyStrength = 30;
+    state.strategic.regions.push_back(farm);
+    zl::game::StrategicMapRegion bridge;
+    bridge.id = "riverlands";
+    bridge.owner = zl::game::StrategicOwner::Contested;
+    bridge.contestedFaction = zl::game::ContestedFaction::Raiders;
+    bridge.pressure = 55.0f;
+    bridge.supply = 40.0f;
+    bridge.population = 2;
+    bridge.garrison = 1;
+    bridge.strategicValue = 3;
+    state.strategic.regions.push_back(bridge);
+
+    std::string selectedRegion;
+    zl::game::WorldMapStrategicAction selectedAction =
+        zl::game::WorldMapStrategicAction::Travel;
+    int actionCalls = 0;
+    panel.SetStrategicActionHandler(
+        [&](const std::string& regionId,
+            zl::game::WorldMapStrategicAction action) {
+            selectedRegion = regionId;
+            selectedAction = action;
+            ++actionCalls;
+        });
+    panel.SetState(state, true);
+    context->Update();
+
+    Rml::Element* actions =
+        panel.Document()->GetElementById("map-strategic-actions");
+    Rml::Element* selected =
+        panel.Document()->GetElementById("map-strategic-selected");
+    Rml::Element* support =
+        panel.Document()->GetElementById("map-action-support");
+    Rml::Element* reclaim =
+        panel.Document()->GetElementById("map-action-reclaim");
+    REQUIRE(actions != nullptr);
+    REQUIRE(selected != nullptr);
+    REQUIRE(support != nullptr);
+    REQUIRE(reclaim != nullptr);
+    CHECK(actions->GetClientHeight() > 0.0f);
+    Rml::Element* panelElement =
+        panel.Document()->GetElementById("world-map-panel");
+    REQUIRE(panelElement != nullptr);
+    const Rml::Vector2f actionOffset =
+        actions->GetAbsoluteOffset(Rml::BoxArea::Border);
+    const Rml::Vector2f panelOffset =
+        panelElement->GetAbsoluteOffset(Rml::BoxArea::Border);
+    CHECK(actionOffset.y + actions->GetBox().GetSize(Rml::BoxArea::Border).y <=
+          panelOffset.y + panelElement->GetBox().GetSize(
+                              Rml::BoxArea::Border).y + 1.0f);
+    CHECK(selected->GetInnerRML().find("南部农田") != std::string::npos);
+    CHECK_FALSE(support->IsClassSet("disabled"));
+    CHECK(reclaim->IsClassSet("disabled"));
+
+    Rml::Dictionary parameters;
+    support->DispatchEvent("click", parameters);
+    CHECK(actionCalls == 1);
+    CHECK(selectedRegion == "south_farmland");
+    CHECK(selectedAction == zl::game::WorldMapStrategicAction::Support);
+
+    farm.owner = zl::game::StrategicOwner::Infested;
+    farm.recoveryStage = zl::game::StrategicRecoveryStage::Counterattack;
+    farm.warning.valid = false;
+    farm.warning.remainingMinutes = 0;
+    state.currentRegion = "south_farmland";
+    state.strategic.regions[0] = farm;
+    panel.SetState(state, true);
+    context->Update();
+    reclaim = panel.Document()->GetElementById("map-action-reclaim");
+    REQUIRE(reclaim != nullptr);
+    CHECK_FALSE(reclaim->IsClassSet("disabled"));
+    Rml::Element* strategicList =
+        panel.Document()->GetElementById("map-strategic-list");
+    REQUIRE(strategicList != nullptr);
+    CHECK(strategicList->GetInnerRML().find("反攻") != std::string::npos);
+    CHECK(strategicList->GetInnerRML().find("河谷") != std::string::npos);
+    CHECK(strategicList->GetInnerRML().find("争夺中") !=
+          std::string::npos);
+    CHECK(strategicList->GetInnerRML().find("掠夺者") !=
+          std::string::npos);
+    reclaim->DispatchEvent("click", parameters);
+    CHECK(actionCalls == 2);
+    CHECK(selectedAction == zl::game::WorldMapStrategicAction::Reclaim);
+
+    panel.Shutdown();
+    Rml::RemoveContext("strategic-actions");
+    Rml::Shutdown();
 }

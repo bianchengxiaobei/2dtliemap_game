@@ -1,8 +1,508 @@
-# 开发日志（devlog）
+﻿# 开发日志（devlog）
 
 > 每个里程碑结束写一段小结：学了什么 / 踩了什么坑 / 下阶段风险（见 docs/01 附录）。
 
 ---
+
+## 2026-11-13 M33-F2-T5 服务器权威、复制与持久化
+
+**范围**：把 F2 世界事件从单机 HUD 接到服务器权威快照、选择命令、参与者结算、manifest 存档与重连恢复；不做 T6 事件内容包和 T7 全流程验收。
+
+**实现**：新增 `net/WorldEventProtocol`（`ZLW2` 独立 magic，不能复用 `ZLW1`，后者是 WorldSound；旧客户端忽略未知消息）与 `CommandType::ChooseWorldEvent=50`（只传选项索引，不传奖励/阶段）。服务器 `WorldEventDirector` 仍唯一持有排期/阶段/结果；`ChooseServerWorldEvent` 在服务器重新校验 Active、阶段完成、玩家距离和索引后才执行选择，并通过 T3 事件+玩家账本结算。服务器按事件记录附近参与者，选择或进入 Resolved/Failed/Expired 时为每个参与者单独结算一次，重复选择/终态/远端命令拒绝；超时失败压力只应用一次。新增客户端 `NetworkClient::WorldEventState`/`HasWorldEventState`；`WorldDemoState` 网络模式从快照生成 HUD、电台和地图标记，`E` 打开、`1–8` 发命令，结果等待服务器快照，不做本地发奖。manifest 升 **v6**，新增 `worldEvents` 快照和 `worldEventOutcomes` 账本键；单机保存/读档与服务器保存/重启共用 `CaptureWorldEventsToManifest`/`RestoreWorldEventsFromManifest`，恢复后事件内容用稳定 id 幂等重放，不重复生成。
+
+**验证**：新增 `tests/test_world_event_network.cpp` 5 用例（`ZLW2` 编解码/旧负载、manifest v5/v6、双客户端共享事件/个人 XP/重复拒绝、超时自动结算、服务器重启与两次客户端重连），并补账本恢复断言；`M33-F2-T5*` **5/5（123 assertions）**。Debug **976/976（139988 assertions）**、Release **976/976（140002 assertions）**、Python **104/104**。单机 T4 1280 烟测重跑通过，stderr 为空；本地事件选择/结果截图仍由 `build/m33_f2_t4_smoke/` 生成。Release 全量首轮曾命中既有 M31 存档写入性能阈值抖动，隔离 M31-T5 通过后全量复跑通过。
+
+**限制/下一步**：离线参与者在事件结束时不会补发奖励；终态事件内容/标记不清理，客户端选项仍为键盘操作，独立聊天频道未做；多事件同时详细状态仍受“同一时间最多 1 个详细事件”约束。T6 补至少 5 类事件内容包，T7 做双客户端 15 分钟流程与 F2 全量回归。
+
+## 2026-11-13 M33-F2-T4 单机事件 UI、电台和地图标记
+
+**范围**：把 F2-T2/T3 的事件状态、阶段、选择结果接到单机 HUD、电台记录和世界地图；补自动超时结算入口。不做 T5 服务器选择命令、复制、manifest 存档和终态内容清理。
+
+**实现**：新增 `src/ui/WorldEventUi.{h,cpp}` 纯文本构建，统一阶段中文名、倒计时（分钟/小时）、选项效果（声望/经验/物资/压力）和成功/失败/错过结果；`HudState` 增加事件名/区域/状态/阶段/倒计时/选项/结果/6 条电台记录字段。`WorldDemoState` 每帧查找当前 Warning/Active（或刚结束）事件，显示非模态面板；`E` 仅在 Active 且玩家在事件点 6 格内、阶段可抉择时打开，`1–8` 选择（补 `Hotbar6–8` 绑定），`ESC` 收起；离开范围自动关闭选择并提示“已错过现场 · 返回事件地点后可继续”。导演进入 Resolved/Failed/Expired 后，单机 HUD 路径自动调用 `WorldSimulation::SettleWorldEvent`，沿用事件+玩家幂等账本，超时失败声望/压力只结算一次并写结果/电台。`WorldMapState` 增加 Warning/Active 事件标记（名称/状态/区域），`WorldMapPanel` 绘制可点击橙色标记并支持导航到事件点。原生 HUD 与 `mods/core_ui` 的 RML/RCSS/Lua/Python HUD 同步；Lua/Python `Hud.GetState` 暴露新字段。面板 `pointer-events: none`，不捕获移动/攻击输入。
+
+**验证**：新增 `tests/test_world_event_ui.cpp` 3 用例（倒计时/阶段/选项、成功/错过结果、地图标记）；`M33-F2-T4*` **3/3（36 assertions）**；`M33-F2-T1/T2/T3*` 回归通过；HUD 文档用例覆盖原生与 `core_ui` 面板元素。Debug **971/971（139857 assertions）**、Release **971/971（139871 assertions）**、Python **104/104**。1280 烟测（Debug，正常选择/地图/结果）`build/m33_f2_t4_smoke/world_event_panel_1280.png`、`world_event_choice_1280.png`、`world_event_map_1280.png`、`world_event_result_1280.png`；超时自动结算 `build/m33_f2_t4_timeout_smoke/world_event_timeout_4_1280.png`，日志显示 `声望 -5，压力 +5` 且 stderr 为空。Release 默认启动 5 秒 stderr 为空，`core_ui` 无脚本错误。
+
+**限制/下一步**：UI 与自动超时结算仅单机；事件终态内容/标记不清理，结果面板保留 12 秒，鼠标选项与独立聊天频道未做；T5 仍需服务器权威快照/选择命令/复制/manifest 存档、重连恢复和双客户端一致。下一步 M33-F2-T5。
+
+## 2026-11-13 M33-F2-T3 生成回调、结果与声望/战略接线
+
+**范围**：在 F2-T2 状态机上补事件生成计划/稳定 id、单机与服务器共用 ECS 生成回调、选择/失败/超时结果、经验/物品/聚落声望/区域压力结算与按事件+玩家的幂等账本；不做 T4 UI/电台/地图、T5 服务器命令/复制/存档。
+
+**实现**：新增 `src/game/WorldEventRuntime.{h,cpp}`。`BuildWorldEventSpawnPlan` 只从 def/stage 生成 `Kill/Defend` 僵尸和 `Loot` 容器请求，位置按事件站点确定性分布，最多 32 个，StableId 由事件 id+序号生成；`EnsureWorldEventContent` 只通过回调落地，导演不持有 ECS。`WorldSimulation` 在事件 Active 且进入详细半径时调用 `SpawnZombieAt`/`SpawnLootContainer`，写 `WorldEventActor/Container`；生成的 Kill/Defend 目标死亡后自动推进阶段，失败按稳定 id 重试而不重复生成。`BuildWorldEventOutcome` 统一生成 Resolved/Failed/Expired 结果；`WorldEventOutcomeLedger` 用事件 id+玩家 StableId 领取一次。`WorldSimulation::ChooseWorldEvent/SettleWorldEvent` 结算经验（有 Kill/Defend 阶段走 Melee，否则 Survival）、物品/背包满掉落、聚落声望与 M32 区域 pressure；F1 新增 `ApplySettlementReputationDelta/AwardSettlementReputationDelta`，M32 新增 `ApplyStrategicWorldEventEffect`，均复用既有 clamp/事件幂等。选项/事件新增 `pressure`、`failureReputation`、`failurePressure`（默认 -5/5），内容指纹升 **v17**。
+
+**验证**：新增 `tests/test_world_event_runtime.cpp` 4 用例（生成计划/稳定 id/回调、选择与失败超时结果/账本、声望增量、压力幂等），并扩展 T1 数据契约/内容指纹断言；`M33-F2-T3*` **5/5（96 assertions）**、`M33-F2-T1*` **6/6（102 assertions）**；Debug **968/968（139778 assertions）**、Release **968/968（139792 assertions）**、Python **104/104**。Release 6 秒 world 烟测 stderr 为空；启用空配置日志 `世界事件导演已启用：0 个定义，10 个区域`。
+
+**限制/下一步**：事件内容目前只在 Active 且进入详细半径时生成，未接 T4 UI/电台/地图或自动超时结算入口；事件容器/敌人终态清理、服务器选择命令、复制和存档留 T4/T5。基础事件文件仍为空且默认关闭，热重载后导演配置副本仍不会自动重建。下一步 M33-F2-T4。
+
+## 2026-11-13 M33-F2-T2 事件状态机与确定性调度
+
+**范围**：在 F2-T1 数据契约上建立可交互世界事件的纯状态机与确定性排期；不生成敌人/容器、不发奖励、不做 UI/地图标记、不写存档/网络。
+
+**实现**：新增 `src/game/WorldEventDirector.{h,cpp}`，`WorldEventDirector` 持有事件实例（定义/区域/站点/阶段/绝对分钟）。每日至多排 1 个事件，使用 `worldEvents.randomSeed`、游戏日、定义权重和区域面积权重选择定义/区域；站点优先区域 POI，随后按区域/世界边界夹取；`activeMinute` 不早于 08:00 且给预警留出窗口。状态实现 `Scheduled→Warning→Active→Resolved` 与 `Failed/Expired`：预警从 `activeMinute-warningMinutes` 开始，Active 使用绝对 `deadlineMinute`，离开只清 `detail` 并记 `downgraded`，回来可继续；迟到加载若已过 Active 直接 `Expired`，避免无预警激活。阶段用 `ReportStageProgress` 推进，Reach 在焦点进入阶段半径时自动推进；`Choose` 要求阶段完成并校验选项；`Fail` 可显式失败；`nextEvent` 默认排到次日，保留链深度 8 和循环防护，且不会与当天详细事件重叠。`WorldSimulation` 新增 `worldEvents` 选项、`WorldEventSystem`、`WorldEvents()` 访问器；`GameApp`/`ServerHost` 传入已加载配置，默认 `enabled=false` 时不创建导演。
+
+**验证**：新增 `tests/test_world_event_director.cpp` 4 用例 100 assertions：确定性/同日去重/跨日推进、阶段/离开降级/超时/事件链、迟到加载与非法恢复原子性、显式区域/冷却日。`M33-F2-T2*` **4/4（100 assertions）**；Debug **964/964（139675 assertions）**、Release **964/964（139689 assertions）**、Python **104/104**。Debug/Release 首轮各命中既有联机时序 flake（`M23-F2a-T6`、`M32-T4`、睡眠/闪避等待），隔离复跑通过后全量复跑全绿。Release 8 秒 world 烟测 stderr 为空；启用空配置时日志 `世界事件导演已启用：0 个定义，10 个区域`。
+
+**限制/下一步**：事件内容生成、结果/声望/战略接线、T4 UI/电台/地图、T5 服务器权威/复制/存档均未开始；基础文件仍为空且默认关闭，`nextEvent` 当前固定次日、离开不暂停计时；内容热重载后导演仍持有旧配置副本，需在 T3/T5 或热重载收口时重建。下一步 M33-F2-T3。
+
+## 2026-11-13 M33-F2-T1 世界事件数据契约与加载
+
+**范围**：建立 F2 动态世界事件的唯一数据契约、加载/校验/mod 合并/内容指纹；不接状态机、生成、UI、奖励或网络，默认关闭，避免在 F1 收口后提前生成无 UI 事件。
+
+**实现**：新增 `src/game/WorldEvent.{h,cpp}` 与 `assets/world_events.json`（`world-events-v1` 空占位）；`config/game.json` 新增 `worldEvents.enabled/file/randomSeed`，当前 `enabled=false`。`WorldEventDef` 覆盖 id/name/kind/minDay/maxDay/weight/cooldownDays/warningMinutes/durationMinutes/region/stages/choices/nextEvent；阶段支持 `reach/interact/kill/loot/defend/choice`（1–8 项），选项支持声望、经验、物品与数量（1–8 项），并校验目标、半径、奖励物品存在性、重复 id、坏 `nextEvent` 和深度 8 的循环链。基础文件单条非法跳过，全部非法时失败；`mods/<id>/content/world_events.json` 进入 `ModContentResult` 并按顺序追加，重复 id/坏定义跳过，整份无有效定义时保留旧内容。`ContentBundle`、`GameApp`、`ServerHost` 均已加载事件配置；`kContentHashVersion` 升 **v16**，指纹纳入启用状态、随机种子和全部字段。
+
+**验证**：新增 6 个 C++ 用例（契约/默认值、非法字段/坏引用、奖励物品/mod 追加、mod 文件扫描、内容事务加载、指纹）与 Python `test_world_event_data.py` 5 用例（合法/缺省/越界/坏引用/mod 追加）；Debug **960/960（139575 assertions）**、Release **960/960（139589 assertions）**、Python **104/104**。Release 单机 8 秒 world 烟测显示内容指纹刷新为 v16、世界事件 0、stderr 为空；内容指纹不一致仍由 KCP 握手拒绝；旧配置无 `worldEvents` 时为禁用空配置，旧聚落/任务/网络内容不受影响。
+
+**限制/下一步**：仅数据契约与加载，尚未实现 `WorldEventDirector`、排期、阶段推进、生成回调、选择/奖励结算、UI/地图标记、服务器复制与事件存档；基础事件文件为空且关闭，F2-T6 再填内容。下一步进入 F2-T2 事件状态机与确定性调度。
+
+## 2026-11-13 M33-F1-T7 F1 回归与交付
+
+**范围**：收尾 M33-F1 多聚落/声望包，固定双客户端跨聚落交易、任务、声望独立与服务器重启恢复证据；只补测试与交付文档，不改生产协议/存档格式。
+
+**实现**：新增 `M33-F1-T7 双客户端跨聚落交易任务声望与重启恢复` 网络用例。两个客户端分别落在 `village_haven` 与 `north_fields`，各自购买本地商人库存（不同商品位）、接取并完成 `settlement_help`/`north_blood_drive`；验证交易 +1、任务 +10、最终声望各 11，且对方聚落保持 0，商人库存按聚落独立；服务器重启后从玩家档案恢复声望与任务完成状态、从聚落状态恢复库存。双客户端跨聚落用例 1/1（51 assertions），`M33-F1*` 定向 26/26（657 assertions）、`M23-F4-*` 27/27（559 assertions），Debug **954/954（139483 assertions）**、Release **954/954（139496 assertions）**、Python **99/99**；Debug/Release 应用构建通过。F1 完成检查表 6/6 勾选，旧档/旧客户端由 T4 的 `SettlementReputation` 缺省、`MissionLog v1`、`PlayerState v20` 用例覆盖，缺省安全且不重复发奖；1280 烟测沿用 T6 `build/m33_f1_t6_smoke/`。未提交 Git。
+
+**限制/下一步**：交易 UI 仍只有买入，报价固定 5 档；`dialogueProfile` 仅内置口吻，自定义对话/按聚落商品表仍属后续扩展；`recruit` 服务位留给 F3；无防御聚落不自动夜袭。下一步进入 F2 动态世界事件（从 `M33-F2-T1` 开始）。
+
+## 2026-11-13 M33-F1-T6 第 4 个聚落与聚落内容
+
+**范围**：在 M31 东桥头新增第 4 个聚落 `river_camp`，补齐四聚落独立任务池/口吻/库存/服务差异与 3 条聚落任务；不新增地图生成器、建筑或新协议。
+
+**实现**：`river_camp` 复用桥头可走格，中心 `(216,120)`、安全半径 4.5、区域 `riverlands`，服务只有交易/委托，关闭 `defense` 且不生成守卫；HUD 显示“防御 不设防”。四聚落任务池独立：村庄保留四段委托，北部 `north_blood_drive`、南部 `south_harvest_help`、河畔 `river_fish_supply`；3 条新任务均为 `missions-v1`/`source=npc`/`autoActivate=false`，2–3 天时限、1 天重试，最低声望 -39/0/-39，完成 +10、放弃 -10。商人库存/补货差异化；`dialogueProfile` 为四聚落根节点选择独立开场口吻，未知值回退通用。`npcPoints` 契约放宽为“至少一个商人 + 至少一个守卫或求助者”，生成点若被可走格查询推到安全区外则跳过并在后续帧重试，避免快速传送时 NPC 落到桥外。M31 内容文件同步 4 段聚落任务最低声望与 3 条新任务。
+
+**结果**：新增 6 个 T6 用例（四聚落数据/服务差异、NPC 点位可走与道路可达、独立任务池/门槛/时限/重试、完成正声望/放弃负声望、口吻与内容指纹），T6 定向 **6/6（206 assertions）**；Debug **953/953（139431 assertions）**、Release **953/953（139446 assertions）**、Python **99/99**；Debug/Release 应用构建通过；1280 截图 `build/m33_f1_t6_smoke/river_camp_hud_1280.png`、`river_requester_dialogue_1280.png`、`river_mission_active_1280.png`、`village_trade_1280.png`、`world_map_settlements_1280.png`。未提交 Git。
+
+**限制/下一步**：河畔营地是桥头露营点，无新增建筑/房间；世界地图烟测只显示已访问的村庄与河畔标记，四聚落数据均已进入运行时/指纹；无防御聚落仍可被战略层记录失守/恢复，但不触发自动夜袭。下一步 M33-F1-T7 F1 回归与交付。
+
+## 2026-11-12 M33-F1-T5 声望后果与服务限制
+
+**范围**：把已有聚落声望接到交易价格、任务门槛、五档对话态度和 `services` 入口；不做自动赠送、派系战争或按聚落商品表，当前交易 UI 仍只有买入。
+
+**实现**：`SettlementBuyPrice`/`SettlementSellPrice` 按等级买卖倍率取整（四舍五入、最少 1），单机购买、面板报价与服务器 `TradeOffer` 共用；单机面板显示“警惕价/友善价”等实际成本。`MissionDef` 新增可选 `minSettlementReputation`（-100~100，默认 -100），聚落任务门槛 `help/escort/clear/supply = -39/0/20/30`，战略触发的 `refugee_relief` 保持默认 -100；`FindAvailableSettlementMission`、对话 `MissionAvailable/MissionNone/MissionLocked` 与服务端接取统一过滤，锁定任务显示“声望不足？”分支。对话按 Hostile/Wary/Neutral/Friendly/Trusted 生成不同态度文本；Hostile 隐藏交易/委托入口并提示“声望敌视”，防御仍可参与，守卫不主动追杀。`services` 控制交易/委托入口、实际夜袭与守卫防御，未启用的入口隐藏或显示不可用。`ContentHash` 升 v15 并纳入任务最低声望字段。
+
+**结果**：新增 T5 五档价格/任务/对话/服务矩阵、防御服务门控、Hostile 不仇恨用例，并扩展服务器交易调价与敌对拒绝；Debug **947/947（139102 assertions）**、Release **947/947（139117 assertions）**、Python **99/99**（Release 首轮 M30-T6 闪避用例 flake，隔离复跑通过后全量复跑全绿）；Debug/Release 应用构建通过；1280 截图 `build/m33_f1_t5_smoke/trade/merchant_dialogue_wary_1280.png`（警惕对话）、`trade_price_wary_1280.png`（成本 3 木材，警惕价）、`hostile/hostile_dialogue_1280.png`（敌视拒绝委托）。未提交 Git。
+
+**限制/下一步**：卖出倍率已有纯函数但尚无卖出报价 UI；`recruit` 服务位留给 F3 同伴入口；无防御服务的聚落仍可记录战略失守/恢复，但不自动夜袭或守卫迎战。下一步 M33-F1-T6 第 4 个聚落与聚落内容。
+
+## 2026-11-12 M33-F1-T4 声望数据与事件接线
+
+**范围**：把聚落声望从 HUD 数据初始值变成玩家持久状态，接通任务、交易、守城与事件入口；不做价格/任务/对话/服务后果。
+
+**实现**：新增玩家级 `SettlementReputation`（`settlementId -> score` + 有界幂等键）与 `AwardSettlementReputation`；所有来源 clamp -100~100，任务完成/放弃/超时、守城/事件使用幂等键，交易按 `dailyTradeGainLimit` 每日每聚落限次。`MissionRunState` 增加来源 `settlementId` 并写入 `MissionLog v2`，单机/服务器接取聚落委托时记录；任务完成/失败/放弃、单机与服务器交易、围攻守城结果都在结算处接声望。单机 `SRPT v1` 组件随实体快照存档；服务器玩家档案保存 `PlayerState v21` owner-only 摘要并在重连/复活时合并回 ECS；v20/无组件旧负载默认空。HUD/世界地图改读真实分数，地图侧栏追加分数。
+
+**结果**：新增 4 个 T4 定向用例（纯函数/ECS 边界与每日交易、组件存档往返、旧 v1 MissionLog、PlayerState v21/v20），扩展 T6 服务器重启与 T7 双客户端验证任务声望独立/恢复；Debug **944/944（139004 assertions）**、Release **944/944（139018 assertions）**、Python **99/99**；Debug/Release 应用构建通过；1280 截图 `build/m33_f1_t4_smoke/settlement_reputation_1280.png`（自然对话接取并完成 `settlement_help` 后 HUD 显示声望 10）、`settlement_map_reputation_1280.png`。日志 `build/m33_t4_*.log`。未提交 Git。
+
+**限制/下一步**：随机世界事件通过 `EventComplete` 入口接线，未绑定聚落时默认不发声望；`attackNpc/theft` 入口保留给后续聚落攻击/偷窃行为。声望尚未影响价格、任务过滤、对话态度或 `services` 入口，这些属于 F1-T5。下一步 M33-F1-T5。
+
+## 2026-11-12 M33-F1-T3 聚落交互路由与 HUD
+
+**范围**：把对话/交易/任务/HUD 从“最近商人/NPC”提升为按 NPC 的 `settlementId` 解析，不新增协议，不做声望价格/服务后果。
+
+**实现**：交易面板记录打开对话的商人 StableId，购买、提交 `TradeOffer`、范围校验、面板文本与失守/夜袭自动关闭都只使用该目标；旧无 `SettlementNpc` 商人仍兼容。服务器 `TradeOffer` 由 StableId 反查 `SettlementNpc`，要求 `Merchant`、聚落定义存在、距离/失守/夜袭合法，拒绝错误类型且不扣库存。对话与任务继续读取 NPC 聚落；HUD 新增 `settlementGuide`（聚落名、初始声望等级/分数、服务、防御状态），世界地图新增聚落标记/侧栏声望摘要；Lua/Python HUD API 与 `core_ui` 的 RML/RCSS/脚本同步。声望数值暂用 `startingReputation`，价格倍率、动态声望与 `services` 硬限制留给 T4/T5。
+
+**结果**：新增 3 个 T3 用例（声望等级/服务摘要与聚落定位、双聚落对话/任务隔离、服务器双商人库存路由与错误 NPC 类型拒绝）；Debug **940/940（138889 assertions）**、Release **940/940（138903 assertions）**、Python **99/99**；Debug/Release 应用构建通过；1280 截图 `build/m33_f1_t3_smoke/settlement_hud_1280.png`、`settlement_map_1280.png`。日志 `build/m33_t3_*.log`。未提交 Git。
+
+**限制/下一步**：当前声望只显示数据初始值，交易价格仍未按等级倍率变化，`services` 仍未隐藏/拒绝入口；动态声望留给 F1-T4，价格/服务后果留给 F1-T5。T3 测试覆盖两个商人库存隔离；价格矩阵在 T5 补。下一步 M33-F1-T4 声望数据与事件接线。
+
+## 2026-11-12 M33-F1-T2 单机与服务器多聚落运行时
+
+**范围**：消除单机初始化/日志和服务器商人中的 `PrimarySettlement` 假设，让 3 个内置聚落按 `settlementId` 各自生成商人/守卫/求助者并隔离库存、补货周期、守卫生命与夜袭进度。
+
+**实现**：`SettlementNpcSystem::EnsurePopulation` 统一单机/服务器人口生成，按聚落只生成一次；每个聚落独立 `SpawnMerchant + SettlementNpc + MerchantStock`，旧存档未绑定商人按最近聚落接管并保留库存。单机改用该入口，删除主聚落距离门控和主聚落商人特判；服务器 `EnsureServerMerchant` 仅保留无聚落配置时的旧交易后备，`EnsureServerSettlementNpcs` 走同一人口入口。`SettlementState` 捕获/恢复覆盖全部定义；守卫死亡记录 0 生命，死亡/失守不补生，`RestoreSettlement` 清除人口标记后重建。补货按商人所属聚落 `restockDays` 计算。
+
+**结果**：新增 5 个 T2 用例（4 聚落并存/库存隔离、旧商人迁移、状态捕获恢复、死亡/失守/恢复、服务器南部聚落真实生成）；Debug **937/937（138807 assertions）**、Release **937/937（138821 assertions）**、Python **99/99**；Debug/Release 应用构建通过。日志 `build/m33_t2_*.log`。未提交 Git。
+
+**限制/下一步**：T2 只完成生成/状态/库存所有权；交易、任务、对话和 HUD 仍按最近 NPC 路由，尚未按聚落服务与声望限制；内容仍为 3 个聚落。下一步 M33-F1-T3 统一交互路由与 HUD。
+
+## 2026-11-12 M33-F1-T1 聚落数据契约与声望配置
+
+**范围**：为多聚落/声望建立数据契约和全局配置，不接线交易、任务、对话或 HUD 行为。
+
+**实现**：`SettlementDef` 新增可选 `regionId/services/startingReputation/dialogueProfile`，旧数据缺省为 `regionId=""/trade+missions+defense/0/""`；新增 `SettlementService`/声望等级与价格倍率数据结构。`config/game.json` 新增 `settlements.reputation`（5 档阈值、6 类来源增量、5 档买卖倍率、每日交易上限），全部严格校验。3 个内置聚落补齐 regionId/services/初始声望/对话口吻；`ComputeContentHash` 升 v14，聚落新字段与声望配置进入指纹。解析器仍支持 mod 原子追加，单条非法/重复 id 跳过。
+
+**结果**：新增 M33-F1-T1 定向 4 用例；`M23-F4-T1` 回归 5/5（87 assertions）；Debug **932/932（138716 assertions）**、Release **932/932（138730 assertions）**、Python **99/99**。Release 首轮命中既有 chunk 卸载/动物剥取时序 flake，隔离通过后全量复跑全绿。日志 `build/m33_t1_*.log`。未提交 Git。
+
+**限制/下一步**：本任务只解析和校验；声望尚未写入玩家、未影响价格/任务/对话/服务，单机/服务器仍以主聚落为完整入口。下一步 M33-F1-T2 消除 `PrimarySettlement` 运行时假设并按聚落隔离商人/库存/NPC。
+
+## 2026-11-12 M33 世界内容扩展规划文档
+
+**范围**：规划 M33 五段内容包：F1 多聚落/声望、F2 动态世界事件、F3 幸存者同伴、F4 载具改装、F5 多阶段 POI 探索；共 35 个可勾选任务。
+
+**实现**：新增 `docs/18-M33世界内容扩展.md`，明确目标/非目标、复用边界、DoD、版本兼容、35 个任务、每包验收、跨包联调与 M33 总验收；同步 README 文档索引和 docs/01 入口。本阶段只写规划，不改生产代码、协议或存档。
+
+**状态/下一步**：规划时 0/35；下一步从 `M33-F1-T1 聚落数据契约与声望配置` 开始，每个 T 完成后停止汇报。
+
+## 2026-11-12 M32-T25 战略贡献账本持久化
+
+**范围**：把 T12–T24 的服务器运行时区域贡献账本写入世界存档，服务器重启后仍可用于后续 Human 转归个人经验。
+
+**实现**：`StrategicState` 新增 `contributions`；`world_manifest_v1.bin` 升 v5，在战略区域/事件后追加 StableId/区域/点数，最多 1024 条；`ServerHost::SaveWorld` 同步运行时账本，读档时重建。v4 及更旧 manifest 仍可读取；`ZLS3/4/5` 和客户端快照不变。目标级守城伤害/火焰归属/守卫去重仍仅在运行时。
+
+**结果**：`M32-T25` **2/2（44 assertions）**（manifest v5 往返、v4 旧档兼容、真实服务器“捐献 20 → 保存 → 重启 → 区域转 Human”仍发 120 经验）；T15–T24 保持通过，回归 **26/26（525）**、`M32-*` **67/67（1608）**；Debug **929/929（138642）**、Release **929/929（138656）**、Python **98/98**；Debug 首轮命中既有 X-F1 网络时序 flake，串行复跑通过。日志 `build/m32_t25_targeted5.log`、`build/m32_t25_regression_v2.log`、`build/m32_t25_m32_v2_1.log`、`build/m32_t25_release_full2.log`、`build/m32_t25_debug_full3.log`、`build/m32_t25_python1.log`；构建 `build/m32_t25_build5.log`、`build/m32_t25_release_build2.log`。未提交 Git。
+
+**限制/下一步**：v5 需要当前版本读取新贡献段；目标级伤害明细和完整历史榜单仍留后续。
+## 2026-11-12 M32-T24 守卫击杀助攻
+
+**范围**：守卫收掉被玩家打伤的围攻目标时，给实际伤害者按比例分配击杀助攻点；与 T15–T23 共用账本。
+
+**实现**：`LastDamage` 增加攻击来源 StableId；`ServerHost` 记录目标级玩家伤害明细与守卫击杀去重集合，`CheckSiegeGuardKills` 在模拟 tick 后识别“目标死亡 + 最后一击是同聚落守卫”，用 `AllocateSiegeKillAssist` 分配 `defenseKillAssistPoints`（默认 5）。玩家最后一击/无玩家伤害/非守卫不分配；不新增协议或存档版本。
+
+**结果**：`M32-T24` **2/2（36 assertions）**（配置/分配 + 真实守城中“陷阱伤害 + 守卫 AI 自然最后一击”集成，战报贡献 51）；T15–T23 保持通过，回归 **24/24（481）**、`M32-*` **65/65（1564）**；Python **98/98**；全量 Release **927/927（138612 assertions）** 通过；Debug 本轮多次命中既有网络/M31 时序性能 flake，未取得单轮全绿，历史同构基线 927/927（138598）。日志 `build/m32_t24_targeted12.log`、`build/m32_t24_regression_v2.log`、`build/m32_t24_m32_v2_1.log`、`build/m32_t24_debug_full9.log`、`build/m32_t24_release_full7.log`、`build/m32_t24_python3.log`；构建 `build/m32_t24_build13.log`、`build/m32_t24_release_build4.log`。无新增 RML 控件或截图。未提交 Git。
+
+**限制/下一步**：T24 集成测试由守卫 AI 自然攻击完成最后一击，但目标被直接移到守卫身边并压低生命，未覆盖远距离寻路接敌/自然波次全流程；目标级伤害明细仅运行时、不持久化；完整历史榜单、环境/自然火归属仍留后续。
+
+## 2026-11-12 M32-T23 火焰守城伤害
+
+**范围**：把玩家点燃/传播的火焰对围攻僵尸的实际扣血纳入 T15–T18 守城贡献账本；环境火/自然火不计。
+
+**实现**：`FireSource`/`BurningZombie` 增加运行时 `ownerStableId`；服务器点燃篝火时写入点火玩家，火焰传播保留 owner。`FireSystem` 在即时/持续火焰伤害成功后产出 `FireDamageCredit`，`ServerHost::DrainFireDamageCredits` 在模拟 tick 后取出并调用 `RecordSiegeDefenseDamage`。owner 不写存档，环境火 owner=0 过滤；不新增协议/存档版本。
+
+**结果**：`M32-T23` **1/1（23 assertions）**；T15–T22 保持通过，回归 **22/22（445）**、`M32-*` **63/63（1528）**；全量 Debug **925/925（138562 assertions）**、Release **925/925（138577 assertions）**、Python **98/98**。日志 `build/m32_t23_targeted1.log`、`build/m32_t23_regression.log`、`build/m32_t23_m32_1.log`、`build/m32_t23_debug_full2.log`、`build/m32_t23_release_full2.log`、`build/m32_t23_python.log`；构建 `build/m32_t23_build2.log`、`build/m32_t23_release_build.log`。Debug 首轮命中既有 X-F3/M31 性能 flake，Release 首轮命中 M23 动物网络 flake，均串行复跑通过。复用既有状态行/面板/聊天/单机战报，未新增 RML 控件或截图。未提交 Git。
+
+**限制/下一步**：只统计玩家点火/火焰传播；环境火不计数；测试直接挂 BurningZombie owner，不覆盖自然点燃到蔓延的完整链路；owner 不持久化；守卫击杀归属、完整历史榜单仍留后续。
+
+## 2026-11-12 M32-T22 单机侧守城战报
+
+**范围**：补单机详细围攻的结果面板，使单机打完 M32 围攻也能看到守住/失守、波次、击杀、守卫和评级；不改奖励/战略回写。
+
+**实现**：新增 `game::RegionalSiegeReportText` 格式化结果；`WorldDemoState::PollLocalRegionalSiegeReport` 在单机 tick 检测 `RegionalSiegeLastResult` 变化（按区域/攻击/结算时间/反攻/结果去重），调用现有 `OpenSiegeReport`，复用 T20 的 `BuildDefenseReportLines` 与 `siege-report` 面板。联机不执行，不新增协议/存档/聊天/RML 控件。
+
+**结果**：`M32-T22` **1/1（13 assertions）**；T15–T21 保持通过，回归 **21/21（422）**、`M32-*` **62/62（1505）**；全量 Debug **924/924（138539 assertions）**、Release **924/924（138553 assertions）**、Python **98/98**。日志 `build/m32_t22_targeted1.log`、`build/m32_t22_regression.log`、`build/m32_t22_m32_1.log`、`build/m32_t22_debug_full2.log`、`build/m32_t22_release_full2.log`、`build/m32_t22_python.log`；构建 `build/m32_t22_build1.log`、`build/m32_t22_release_build.log`。Debug 首轮命中既有 X-F3/M31 性能 flake，Release 首轮命中 M23 动物网络 flake，均串行复跑通过。复用既有面板，未新增 RML 控件或截图。未提交 Git。
+
+**限制/下一步**：单机只显示战果，不含贡献明细/经验/聊天历史；无持久化榜单；服务器无伤害 T14 回退仍可能让 AFK 均分；火焰/环境伤害、守卫击杀归属仍留后续。
+
+## 2026-11-12 M32-T21 守城战报进入聊天记录
+
+**范围**：把 T19 战报同时写入服务器聊天历史，状态行被覆盖后仍能在聊天记录回看；不新增协议/存档/UI 控件。
+
+**实现**：新增 `ServerHost::PushServerChat`（“系统”发送者，200 字节/最近 16 条限制，置 `m_socialDirty`）；`PublishSiegeReport` 统一先更新状态行，再写聊天记录。T15–T18 伤害结算与 T14 无伤害回退都走同一入口。
+
+**结果**：`M32-T21` **1/1（20 assertions）**；T15–T20 保持通过，回归 **20/20（409）**、`M32-*` **61/61（1492）**；全量 Debug **923/923（138526 assertions）**、Release **923/923（138540 assertions）**、Python **98/98**。日志 `build/m32_t21_targeted1.log`、`build/m32_t21_regression.log`、`build/m32_t21_m32_1.log`、`build/m32_t21_debug_full2.log`、`build/m32_t21_release_full.log`、`build/m32_t21_python.log`；构建 `build/m32_t21_build1.log`、`build/m32_t21_release_build.log`。Debug 首轮命中既有 X-F3 chunk 卸载性能 flake，串行复跑通过。复用既有聊天/战报面板，未新增 RML 控件或截图。未提交 Git。
+
+**限制/下一步**：聊天消息最多 200 字节，完整 480 字节战报仍可能截断，最多保留 16 条；系统战报不写存档，重启/重连不恢复；单机无服务器会话时不生成；无伤害时 T14 回退仍可能让 AFK 均分；火焰/环境伤害、守卫击杀归属和完整历史榜单仍留后续。
+
+## 2026-11-12 M32-T20 守城贡献战报面板
+
+**范围**：把 T19 的 `守城战报` 状态行接入现有战报面板，玩家不再只看到短暂提示；不新增协议/服务器字段。
+
+**实现**：`ui::BuildDefenseReportLines` 按 ` · ` 拆分 T19 文本（最多 8 行）；`WorldDemoState::OpenSiegeReport` 识别 `守城战报` 前缀，标题显示“守城战报”，复用 `siege-report` RML 面板；网络状态序列变化时自动打开。基础围攻 `守夜结束` 和评级显示保持兼容。
+
+**结果**：`M32-T20` **1/1（8 assertions）**；T15–T19 保持通过，回归 **19/19（389）**、`M32-*` **60/60（1472）**；全量 Debug **922/922（138506 assertions）**、Release **922/922（138521 assertions）**、Python **98/98**。日志 `build/m32_t20_targeted1.log`、`build/m32_t20_regression.log`、`build/m32_t20_m32_1.log`、`build/m32_t20_debug_full2.log`、`build/m32_t20_release_full.log`、`build/m32_t20_python.log`；构建 `build/m32_t20_build1.log`、`build/m32_t20_release_build.log`。Debug 首轮命中既有 X-F3 chunk 卸载性能 flake，串行复跑通过。复用既有面板，未新增 RML 控件或截图。未提交 Git。
+
+**限制/下一步**：面板只显示状态行拆出的最多 8 行，不显示实际伤害/来源/完整榜单；状态被覆盖后不自动刷新，单机无服务器会话时不出现；无伤害时 T14 回退仍可能让 AFK 均分；火焰/环境伤害与守卫击杀归属仍留后续。
+
+## 2026-11-12 M32-T19 守城贡献战报广播
+
+**范围**：守住 Human 区域后，把 T15–T18 的贡献结算以状态行广播给所有在线会话；不新增协议/存档/配置。
+
+**实现**：`RewardSiegeContributors` 发奖后构造 `守城战报 · <region> · 守住`，按排序追加最多 3 名玩家的 `贡献+N 经验+N`，调用 `BroadcastServerNotice`；T14 无伤害回退路径广播 `N 人在场均分 X 经验`。名称截断 16 字节、整条 480 字节，避免超过 `PlayerState.status` 上限。播报是现有状态行，不是聊天/历史面板，后续状态会覆盖。
+
+**结果**：`M32-T19` **1/1（18 assertions）**（覆盖 T14 回退播报）；T15–T18 保持通过，回归 **18/18（381）**、`M32-*` **59/59（1464）**；全量 Debug **921/921（138498 assertions）**、Release **921/921（138512 assertions）**、Python **98/98**。日志 `build/m32_t19_targeted1.log`、`build/m32_t19_regression.log`、`build/m32_t19_m32_1.log`、`build/m32_t19_debug_full2.log`、`build/m32_t19_release_full.log`、`build/m32_t19_python.log`；构建 `build/m32_t19_build1.log`、`build/m32_t19_release_build.log`。Debug 首轮命中既有 M31-T9 读档耗时 flake，串行复跑通过。无新增地图/面板控件，未新增截图。未提交 Git。
+
+**限制/下一步**：战报只显示贡献点/经验，最多 3 人，不显示实际伤害或来源；不是持久化事件日志/聊天记录，单机无服务器会话时不弹 HUD；无伤害时 T14 仍让 AFK 均分；火焰/环境伤害、完整结算面板/榜单仍留后续。
+
+## 2026-11-12 M32-T18 陷阱守城伤害
+
+**范围**：把守城伤害账本扩到玩家所有的尖刺陷阱；复用 T15–T17 的配置、加权奖励与 T12 折算，不新增协议/存档。
+
+**实现**：`TickTrapTriggers` 目标从仅 `BaseSiegeZombie` 扩到也命中 `SettlementRaidZombie`；陷阱 `ApplyDamage` 成功后按扣血差值和 `StructureOwner.ownerStableId` 交给 `RecordSiegeDefenseDamage`，无主/非围攻/无会话/零伤害由统一 helper 过滤。T15 近战、T16 远程、T17 载具已覆盖；火焰/环境伤害未接入。`ZLS3/4/5`、`PlayerState`、存档 schema 不变。
+
+**结果**：`M32-T18` **1/1（23 assertions）**；`M32-T15/T16/T17` 保持通过、`M32-*` **58/58（1446）**。回归 **17/17（363）**；全量 Debug **920/920（138480 assertions）**、Release **920/920（138494 assertions）**、Python **98/98**。日志 `build/m32_t18_targeted3.log`、`build/m32_t18_regression.log`、`build/m32_t18_m32_1.log`、`build/m32_t18_debug_full3.log`、`build/m32_t18_release_full.log`、`build/m32_t18_python.log`；构建 `build/m32_t18_build3.log`、`build/m32_t18_release_build.log`。无新增地图/面板控件，未新增截图。未提交 Git。
+
+**限制/下一步**：只统计玩家所有的尖刺陷阱；测试直建陷阱，不覆盖自然建造/放置/燃料流程；陷阱现在会伤害外部围攻僵尸，只对 `SettlementRaidZombie` 计贡献；火焰/环境伤害、守卫击杀仍未接入；无伤害时 T14 在场回退仍可能让 AFK 均分；5 区域快照、4 玩家 1 条详细围攻、跨机 NAT 与 15–30 分钟自然流程未变化。
+
+## 2026-11-12 M32-T17 载具撞击守城伤害
+
+**范围**：把 T15/T16 的守城伤害账本扩到服务器驾驶位载具撞击；复用同一配置、加权奖励与 T12 折算，不新增协议/存档。
+
+**实现**：`ServerHost::ApplyServerVehicleRam` 在 `ApplyDamage` 成功后读取目标扣血前后差值，交给 `RecordSiegeDefenseDamage`；贡献者取 `driverStableId`，统一过滤围攻活动、settlement、目标 `SettlementRaidZombie`、在线会话和正伤害。T15/T16 已覆盖近战与远程；乘客/动物/玩家不计。`ZLS3/4/5`、`PlayerState`、存档 schema 不变。
+
+**结果**：`M32-T17` **1/1（28 assertions）**；`M32-T15/T16` 保持通过、`M32-*` **57/57（1423）**。回归 **16/16（340）**；全量 Debug **919/919（138457 assertions）**、Release **919/919（138471 assertions）**、Python **98/98**。日志 `build/m32_t17_targeted4.log`、`build/m32_t17_regression_final.log`、`build/m32_t17_m32_final1.log`、`build/m32_t17_debug_full.log`、`build/m32_t17_release_full.log`、`build/m32_t17_python.log`；构建 `build/m32_t17_build7.log`、`build/m32_t17_release_build.log`。无新增地图/面板控件，未新增截图。未提交 Git。
+
+**限制/下一步**：只统计驾驶位驾驶员的载具撞击；乘客/无人车不获得贡献，载具撞动物/玩家不计；测试直接创建围攻目标并驾车撞击，不覆盖自然围攻路线/燃料/车况长流程；陷阱、火焰/环境伤害仍未接入；无伤害时 T14 在场回退仍可能让 AFK 均分；5 区域快照、4 玩家 1 条详细围攻、跨机 NAT 与 15–30 分钟自然流程未变化。
+
+## 2026-11-12 M32-T16 远程守城伤害
+
+**范围**：把 T15 的守城伤害账本从近战 `HitInfo` 扩到服务器远程投射物；复用同一配置、加权奖励与 T12 折算，不新增协议/存档。
+
+**实现**：`ServerHost::UpdateProjectiles` 在 `ApplyDamage` 成功后读取目标扣血前后差值，交给 `RecordSiegeDefenseDamage`；统一校验围攻活动、settlement 匹配、目标 `SettlementRaidZombie`、owner 在线会话和正伤害，区域切换清空。T15 近战也改走该入口。距离衰减/护甲后的实际伤害才计入；载具/陷阱/火焰仍未接入。`ZLS3/4/5`、`PlayerState`、存档 schema 不变。
+
+**结果**：`M32-T16` **1/1（29 assertions）**；`M32-T15` **2/2（51）**、`M32-*` **56/56（1395）**。全量 Debug **918/918（138429 assertions）**、Release **918/918（138443 assertions）**、Python **98/98**。日志 `build/m32_t16_targeted1.log`、`build/m32_t16_regression_final.log`、`build/m32_t16_m32_2.log`、`build/m32_t16_debug_final.log`、`build/m32_t16_release_final.log`、`build/m32_t16_python.log`；构建 `build/m32_t16_build_final.log`、`build/m32_t16_release_build_final.log`。无新增地图/面板控件，未新增截图。未提交 Git。
+
+**限制/下一步**：只覆盖服务器投射物；T17/T18 已补驾驶位载具撞击与玩家陷阱，火焰/环境伤害、守卫击杀仍不计；测试直建投射物，不覆盖真实枪械开火链路；无伤害时 T14 在场回退仍可能让 AFK 均分；5 区域快照、4 玩家 1 条详细围攻、跨机 NAT 与 15–30 分钟自然流程未变化。
+
+## 2026-11-12 M32-T15 守城伤害贡献与加权奖励
+
+**范围**：把守城奖励从“在场均分”升级为按实际伤害贡献加权；覆盖近战 HitInfo 伤害累计、Human 守城加权、转 Human/失守折算 T12，不升战略协议。
+
+**实现**：`StrategicContributionConfig` 新增 `defenseDamagePerPoint=10`。`ServerHost::TickServerMissions` 在详细围攻活动期间读取本 tick `HitInfo`，对 `SettlementRaidZombie` 且 settlement 匹配的玩家实际伤害累计到运行时账本；Human 区域守住且有伤害时按点数权重分配 `defenseRewardXp`，未伤害者不发；无伤害时回退 T14 在场均分。失守/反攻/非 Human 转 Human/中止时把伤害折算点转入 T12 区域贡献，后续由 T12 结算。`ZLS3/4/5`、`PlayerState`、存档 schema 不变。
+
+**结果**：`M32-T15` **2/2（51 assertions）**；`M32-T7/T11/T12/T13/T14/T15` 回归 **14/14（283）**、`M32-*` **55/55（1366）**。全量 Debug **917/917（138400 assertions）**、Release **917/917（138414 assertions）**、Python **98/98**。日志 `build/m32_t15_targeted_final.log`、`build/m32_t15_regression_final.log`、`build/m32_t15_m32_final.log`、`build/m32_t15_debug_final.log`、`build/m32_t15_release_final.log`、`build/m32_t15_python.log`；构建 `build/m32_t15_game_build_final.log`、`build/m32_t15_release_build_final.log`。无新增地图/面板控件，未新增截图。未提交 Git。
+
+**限制/下一步**：T15 初版只统计近战 HitInfo；T16/T17/T18 已补远程投射物、驾驶位载具与玩家陷阱，火焰/环境伤害仍不计；敌人被守卫击杀不计玩家贡献；伤害账本运行时、不写存档；无伤害时 T14 在场回退可能让 AFK 均分；不拆分物品/弹药/战略库存，无贡献榜单/结算面板；5 区域全量快照、4 玩家 1 条详细围攻、跨机 NAT 与 15–30 分钟自然流程未变化。
+
+## 2026-11-12 M32-T14 守城胜利在场奖励
+
+**范围**：为 Human 区域成功守住详细围攻补一次在场玩家经验奖励；覆盖单机/联机在场、重复 tick 防重、反攻/失守不误发，不升战略协议。
+
+**实现**：`StrategicContributionConfig` 新增 `defenseRewardXp=80`。`ServerHost::ProcessRegionalSiegeResult` 按区域/攻击分钟/结束分钟/反攻/结果去重；仅守住、非反攻、至少生成过一波且当前区域仍为 Human 时处理。结束瞬间仍在 `WorldGraph` 目标区域的本地玩家/在线会话按 StableId 排序均分经验池，经 `AwardProgressionXp(..., Survival, ...)` 发放，在线会话显示“守城奖励：+N 生存经验”。战前非 Human 转 Human 仍由 T12 结算，T14 跳过；失守/中止/无人留场不发。`ZLS3/4/5`、`PlayerState`、存档 schema 不变；T14 奖励不写 T12 贡献账本。
+
+**结果**：`M32-T14` **2/2（17 assertions）**；`M32-T7/T11/T12/T13/T14` 回归 **12/12（232）**、`M32-*` **53/53（1315）**。全量 Debug **915/915（138349 assertions）**、Release **915/915（138363 assertions）**、Python **98/98**；全量首轮 `M23-F2b-T6`/`M30-T6` 时序抖动，串行复跑通过。日志 `build/m32_t14_targeted.log`、`build/m32_t14_regression.log`、`build/m32_t14_m32.log`、`build/m32_t14_debug_final.log`、`build/m32_t14_release_final2.log`、`build/m32_t14_python.log`；构建 `build/m32_t14_game_build.log`、`build/m32_t14_release_build.log`。无新增地图/面板控件，未新增截图。未提交 Git。
+
+**限制/下一步**：无伤害时只按结束瞬间在场判定，T15 已补伤害加权；固定经验池均分，不拆分物品/弹药/战略库存，无结算面板/贡献榜单；守城击杀计贡献仍留后续；5 区域全量快照、4 玩家 1 条详细围攻、跨机 NAT 与 15–30 分钟自然流程未变化。
+
+## 2026-11-12 M32-T13 战略任务贡献归属
+
+**范围**：把指定战略区域的服务器任务完成计入该玩家贡献，与捐献/清核/修复/反攻统一按 T12 规则拆分；不升协议、不改存档、不影响单机。
+
+**实现**：`StrategicContributionConfig` 新增 `mission=25`，`assets/strategic.json` 显式配置。`ServerHost::CompleteServerMission` 在战略奖励结算成功后读取 `economy.FindMission(def.id)`；仅当 `regionId` 非空且区域存在时，按 `contribution.mission` 记入该玩家对该区域的贡献。任务完成状态追加“战略贡献 +N”，并写 `strategic` 日志；全局奖励任务不计。贡献仍在区域转 Human 时按比例拆分个人生存经验，结算后清空；`ZLS3/4/5`、`PlayerState`、存档 schema 不变，单机不启用账本。
+
+**结果**：`M32-T13` **2/2（31 assertions）**；`M32-T7/T11/T12/T13` 回归 **10/10（215）**、`M32-*` **51/51（1298）**。全量 Debug **913/913（138332 assertions）**、Release **913/913（138347 assertions）**、Python **98/98**。日志 `build/m32_t13_targeted.log`、`build/m32_t13_regression.log`、`build/m32_t13_m32.log`、`build/m32_t13_debug_full.log`、`build/m32_t13_release_full.log`、`build/m32_t13_python.log`；构建 `build/m32_t13_game_build.log`、`build/m32_t13_release_build.log`。无新增地图/面板控件，未新增截图。未提交 Git。
+
+**限制/下一步**：只有 `missionRewards` 指定区域的服务器任务计贡献，全局奖励任务不计；只进入运行时账本，不写存档；不拆分物品/弹药/战略库存，无贡献榜单；T14/T15/T16/T17/T18 已补守城在场、近战、远程、载具与陷阱伤害贡献，火焰/环境伤害仍留后续；5 区域全量快照、4 玩家 1 条详细围攻、跨机 NAT 与 15–30 分钟自然流程未变化。
+
+## 2026-11-11 M32-T12 玩家战略贡献与经验拆分
+
+**范围**：在联机战略层增加按玩家贡献拆分的个人经验奖励；覆盖捐献/清核/修复/反攻计点、区域转 Human 一次性结算、重复 tick 防重，不升战略协议。
+
+**实现**：`StrategicConfig` 新增 `contribution`（`rewardXp=120`、`donatePerSupply=1`、`clearCore=20`、`repairFacility=15`、`reclaim=30`、`minContribution=1`），`assets/strategic.json` 显式配置。`ServerHost` 按 `playerStableId` 维护区域贡献账本；`DonateStrategicSupply` 输出实际送达量，服务器按 1 点/补给计，清核/修复/反攻按权重计；行动结果显示“贡献 +N”。战略 tick 后对比区域 owner，非 Human 转 Human 时用整数最大余数法拆分经验池，经 `AwardProgressionXp(..., Survival, ...)` 发给在线贡献者并显示“战略贡献奖励：+N 生存经验”，随后清空该区域贡献。账本只在服务器运行时内存；单机、`ZLS3/4/5`、存档 schema 均不变。
+
+**结果**：`M32-T12` **2/2（39 assertions）**；`M32-T7` **4/4（115）**、`M32-T11` **2/2（30）**、`M32-*` **49/49（1267）**。全量 Debug **911/911（138301 assertions）**、Release **911/911（138315 assertions）**、Python **98/98**；Debug 首轮与 Release 构建并行时 X-F3 性能基线超时，串行复跑通过。日志 `build/m32_t12_targeted.log`、`build/m32_t12_regression.log`、`build/m32_t12_m32_final.log`、`build/m32_t12_debug_final2.log`、`build/m32_t12_release_final.log`、`build/m32_t12_python.log`；构建 `build/m32_t12_build3.log`、`build/m32_t12_release_build2.log`。无新增地图/面板控件，未新增截图。未提交 Git。
+
+**限制/下一步**：贡献账本不持久化，服务器重启/离线贡献者不补发，结算后清空；只奖励个人生存经验，不拆分物品/弹药/战略库存；T14/T15/T16/T17/T18 已补守城在场、近战、远程、载具与陷阱伤害奖励；火焰/环境伤害、单机贡献与贡献榜单留后续；任务归属已由 T13 补上；5 区域全量快照、4 玩家 1 条详细围攻、跨机 NAT 未变化。
+
+## 2026-11-11 M32-T11 争夺派系 v1 与掠夺者波次
+
+**范围**：为两个争夺区域补敌方派系元数据与掠夺者波次，区分河谷感染者与北部诊所掠夺者；验证地图/HUD/协议/外部波次并保持双争夺线回归。
+
+**实现**：新增 `ContestedFaction::None/Infected/Raiders`，`strategic.json` 的 `contestFaction` 支持 `Infected`/`Raiders`（缺省 Infected）；`north_fields` 为 `Raiders`，`riverlands` 为 `Infected`。`StrategicMapRegion`、`ZLS3` 区域块与服务端快照增加派系字段，快照升 v2（`ZLS4/5` 不变）；侧栏/HUD 显示“争夺 · 掠夺者/感染者”。`RegionalSiegeStart` 透传派系，`SettlementNpcSystem::SpawnExternalWave` 按派系生成不同外观（感染者 `character.zombie`/红色 tint、掠夺者 `character.placeholder`/橙红 tint），掠夺者对守卫用钝击、感染者用爪击；日志/通知同步派系文案。
+
+**结果**：`M32-T11` **2/2（30 assertions）**（配置/地图/标签 11 + 掠夺者/感染者波次外观 19）；`M32-T7` **4/4（115）**、`M32-T8` **2/2（100）**、`M32-T9` **2/2（47）**、`M32-T10` **1/1（51）**、`M32-T4` **8/8（123）**；`M32-*` **47/47（1228）**。全量 Debug **909/909（138262 assertions）**、Release **909/909（138276 assertions）**、Python **98/98**；Debug 首轮命中既有 `M31-T9` soak/路径调试计时 flake，Release 首轮命中既有 `M23-F2b-T6` 动物剥取网络时序 flake；隔离与全量复跑均通过。日志 `build/m32_t11_targeted.log`、`build/m32_t11_t7.log`、`build/m32_t11_t8.log`、`build/m32_t11_t9.log`、`build/m32_t11_t10.log`、`build/m32_t11_t4.log`、`build/m32_t11_settlement.log`、`build/m32_t11_m32.log`、`build/m32_t11_debug_final.log`、`build/m32_t11_release_final2.log`、`build/m32_t11_python.log`；截图 `build/m32_t11_strategic_map_1280.png`、`build/m32_t11_strategic_map_1920.png`、`build/m32_t11_strategic_hud_1280.png`。未提交 Git。
+
+**限制/下一步**：派系 v1 是静态元数据与波次外观/伤害类型，不新增独立 owner、外交、持久派系实体或全图掠夺者巡逻；掠夺者仍复用 `SettlementRaidZombie` 且主要攻击守军；`ZLS3` v2 与旧 v1 快照不兼容；5 区域快照、4 玩家 1 条详细围攻、跨机 NAT 与 15–30 分钟自然流程未变化。
+
+## 2026-11-11 M32-T10 第二争夺区域与北线
+
+**范围**：把北部诊所指为第二个初始争夺区域；验证双争夺线、诊所守住/失守/夺回、聚落绑定与 HUD 目标选择；更新 T8/T9 真实配置组合、截图与全量回归。
+
+**实现**：`assets/strategic.json` 将 `north_fields` 从 Human 改为 Contested（锚点仍为诊所 150,64，人口 2、压力 60、补给 50、守军/工事 1，`coreSafe=false`）。当前为 2 Human（村庄核心/南部农田）+ 2 Contested（北部诊所/河谷）+ 1 Infested（东部荒野），仍为 5 区域、`ZLS3/4/5` 不升版本。`WorldSimulation::StartRegionalSiege` 现在把锚点所在聚落写入 `RegionalSiegeStart.settlementId`，使详细围攻复用 M23 守卫，守住/失守后 `MarkFallen` 与后续 `BeginExternalReclaim` 有明确聚落目标；河谷桥无聚落时保持空值。HUD 争夺目标从首个 Contested 改为最高战略值 Contested，河谷仍优先于北部诊所。
+
+**结果**：`M32-T10` **1/1（50 assertions）**；`M32-T9` **2/2（46）**、`M32-T8` **2/2（99）**；`M32-*` **45/45（1192）**。全量 Debug **907/907（138227 assertions）**、Release **907/907（138240 assertions）**、Python **98/98**。日志 `build/m32_t10_targeted.log`、`build/m32_t10_m32.log`、`build/m32_t10_debug_full.log`、`build/m32_t10_release_full.log`、`build/m32_t10_python.log`；截图 `build/m32_t10_strategic_map_1280.png`、`build/m32_t10_strategic_map_1920.png`、`build/m32_t10_strategic_hud_1280.png`。未提交 Git。
+
+**限制/下一步**：第二争夺区仍复用 `Contested`，没有独立派系/外交/多方争夺；河谷桥锚点无聚落时详细反攻仍回退战略自动恢复；5 区域快照全量、4 玩家最多 1 条详细围攻；跨机与 15–30 分钟自然流程待实机确认。
+
+
+## 2026-11-11 M32-T9 第五区域与争夺层
+
+**范围**：新增 `riverlands` 第五区域与初始 Contested 争夺层；守住/失守/疏散、河谷桥通行/封锁、侧栏/HUD 争夺提示、1280/1920 截图与全量回归。
+
+**实现**：`assets/strategic.json` 新增 `riverlands`（锚点 `bridge_east` 214,120，Contested，人口 2、压力 55、补给 40、守军/工事 1，`coreSafe=false`）。既有 T6 结算直接支持：守住转 Human；失守转 Infested 并进入清核/修复/反攻恢复，人口撤离到 `village_core`。`WorldMapPanel` 增加“争夺中 · 守住后归人类，失守将沦陷”行提示；单机/联机 HUD 显示“战略争夺/服务器战略争夺”，继续提示地图支援。core_ui Lua/Python HUD 补齐 `strategicGuide/strategicTone`，避免脚本 HUD 覆盖 native fallback 后提示不可见。世界地图道路规则验证争夺时河谷桥可通行、沦陷后封锁；`ZLS3/4/5` 不升版本。
+
+**结果**：`M32-T9` **2/2（46 assertions）**；`M32-T8` **2/2（99 assertions）**；`M32-*` **44/44（1141）**。全量 Debug **906/906（138175 assertions）**、Release **906/906（138190 assertions）**、Python **98/98**。日志 `build/m32_t9_t9_only.log`、`build/m32_t9_t8_only.log`、`build/m32_t9_m32_debug4.log`、`build/m32_t9_debug_full2.log`、`build/m32_t9_release_full2.log`、`build/m32_t9_python_final2.log`；Release 构建 `build/m32_t9_release_build3.log`。1280/1920 地图截图 `build/m32_t9_strategic_map_1280.png`、`build/m32_t9_strategic_map_1920.png`；HUD 截图 `build/m32_t9_strategic_hud_1280.png`。未提交 Git。
+
+**限制/下一步**：只有 1 个初始争夺区域，未做派系/外交/多方争夺；5 区域快照仍全量，4 玩家最多 1 条详细围攻；跨机 NAT/高延迟与第五区域 15–30 分钟自然流程待实机确认。M32 全量首轮遇到一次既有 T5 真实围攻时序 flaky，复跑通过。
+
+## 2026-11-11 M32-T8 垂直切片与平衡
+
+**范围**：3 Human + 1 Infested 区域；世界地图选择/战略行动面板；单机与 2 客户端预警→支援→守城/失守→反攻恢复；真实配置两次复跑；1280 截图与全量回归。
+
+**实现**：`WorldMap.h` 新增 `WorldMapStrategicAction`；`WorldMapPanel` 增加战略行动面板（前往/支援+20/捐献+40/清核/修复/反攻）、自动选择预警/Active/当前区域、禁用态和回调。`UiSystem` 透传 `SetWorldMapStrategicActionHandler`；`WorldDemoState` 单机直接调用 `DonateStrategicSupply`/恢复 API，联机走 `SendStrategicRequest`，非前往行动要求锚点 4 格内。新增 `PollStrategicActionResult`，把 `ZLS5` 接受/拒绝原因写入 HUD notice，并在地图打开时刷新；HUD 预警/围攻/恢复文案提示可用地图行动。战略地图侧栏加 `overflow: auto`，1280 下行动面板不溢出。
+
+**结果**：`M32-T8` **2/2（99 assertions）**：真实配置两次复跑守住与“失守→清核→修复→反攻→Human”闭环，覆盖 1280 面板选择/支援回调/反攻禁用；`M32-T7` 扩为 **4/4（113 assertions）**，新增双客户端清核/修复/反攻请求链。`M32-*` **42/42（1095）**；全量 Debug **904/904（138127 assertions）**、Release **904/904（138141 assertions）**、Python **98/98**。日志 `build/m32_t8_t7_net1.log`、`build/m32_t8_test6.log`、`build/m32_t8_m32_debug4.log`、`build/m32_t8_debug_full3.log`、`build/m32_t8_release_full4.log`、`build/m32_t8_python_final.log`；Release 构建 `build/m32_t8_release_build3.log`。1280 实机截图 `build/m32_t8_strategic_map_1280.png`。未提交 Git。
+
+**限制/下一步**：支援/捐献固定 20/40，无数量滑条；捐献仍为抽象转移；4 人只 1 条详细围攻；快照全量 30 tick；1920 行动面板已由 T9 补截图，跨机 NAT/高延迟未验收。T9 已扩第五区域与争夺层；后续派系/正式美术/独立战略服；当前待玩家确认 T8/T9 手感。
+
+## 2026-11-11 M32-T7 联机共享战略
+
+**范围**：服务器权威战略快照/请求/结果；2 玩家共享区域状态与详细战线；4 玩家分散/同区域压力；断线重连与服务器重启；客户端只读地图/HUD；任务战略奖励与请求防刷。
+
+**实现**：新增 `net/StrategicProtocol`（`ZLS3` 快照/`ZLS4` 请求/`ZLS5` 结果，独立 magic/version，不升 `SessionProtocol v2`）。`ServerHost` 每 30 tick/首次/变更时广播全量快照，`HandleStrategicRequest` 按玩家所在区域、战略阶段、全局补给、区域上限、请求 sequence 与每 tick 4 条限频校验；支援补给为全球库存→区域补给的抽象转移，`mission.<id>` 仍幂等。详细围攻最多 1 条，但改选当前 Active 且至少一名玩家在场的战线，其他区域自动结算。`NetworkClient` 保存只读快照/结果并在断线时清空；`WorldDemoState` 联机世界地图/HUD 使用快照。服务器任务完成接入 `GrantStrategicMissionReward`。顺带补上单机恢复 E 交互的实际输入调用。
+
+**结果**：`M32-T7` **4/4（103 assertions）**；`M32-*` **40/40（986）**；全量 Debug **902/902（138020 assertions）**、Release **902/902（138034 assertions）**、Python **98/98**。日志 `build/m32_t7_tests6.log`、`build/m32_t7_m32_debug3.log`、`build/m32_t7_debug_full4.log`、`build/m32_t7_release_full6.log`、`build/m32_t7_python_final.log`；Release 构建 `build/m32_t7_release_build3.log`。未提交 Git。
+
+**限制/下一步**：快照全量下发、无增量/区域裁剪；T8 已把支援/捐献/清核/修复/反攻绑定到世界地图战略侧栏；捐献不消耗背包物品/不生成商队；4 人仅 1 条详细围攻；跨机高延迟人工验收未做。下一步 M32-T8 垂直切片与平衡。
+
+## 2026-11-11 M32-T6 NPC 守军、资源与自动结算平衡
+
+**范围**：守军/工事/补给进入防御评分；自动结算伤亡、工事/设施/区域补给损失；每日资源产消、交易、区域补给恢复和驻军修复工事；护送/补给/难民任务转战略奖励；完善守卫对普通感染者的自主集火。
+
+**实现**：`StrategicAutoResolveConfig` 新增 `defensePerFortification`、`heldGarrisonLossMax/heldFortificationLoss/heldFacilityDamageMax/coreFacilityDamage/coreGarrisonLossPercent/heldRegionSupplyLoss/lostRegionSupplyLoss/coreRegionSupplyLoss`；`StrategicResolutionInfo` 增加防御分项和结算前后守军/人口/工事/设施/区域补给，自动与详细回写共用严重度伤亡逻辑。新增 `economy`：Human 区域按战略值产出补给，人口/守军/难民消耗；缺补给加压力/降士气；每日恢复区域补给、交易弹药/燃料、驻军修复工事。新增 `missionRewards` 与 `ApplyStrategicMissionReward`（`mission.<id>` 幂等），单机任务完成接入 `GrantStrategicMissionReward`。M23 守卫新增 `guardEngageRadius` 与 `FindNearestThreat`，战略围攻/夜袭时先打夜袭者、再打半径内普通感染者；平民继续 Shelter。地图/HUD/预警显示守军、工事、防御分项和防御 vs 敌情。
+
+**结果**：`M32-T6` **5/5（167 assertions）**；`M32-*` **36/36（883）**；全量 Debug **898/898（137917 assertions）**、Release **898/898（137932 assertions）**、Python **98/98**。日志 `build/m32_t6_t6_final2.log`、`build/m32_t6_m32_final4.log`、`build/m32_t6_debug_full_final5.log`、`build/m32_t6_release_full_final6.log`、`build/m32_t6_python_final.log`；Release 构建 `build/m32_t6_release_build_final4.log`。未提交 Git。
+
+**限制/下一步**：工事修复是驻军每日摘要，未逐块维修玩家建造工事；每日经济为自动产消/自动交易，不生成商队或护送实体；详细围攻实际守卫生命与战略摘要不做逐实体对账；服务器任务奖励/经济广播留 T7。下一步 M32-T7 联机共享战略。
+
+## 2026-11-11 M32-T5 失守、难民与夺回
+
+**范围**：失守不是读档；平民撤到相邻 Human 区域并形成资源/任务压力；玩家清理感染核心、修复设施、守住反攻波次；区域先 Contested 再恢复 Human；道路/POI 与聚落交易恢复；测试覆盖失守→恢复→再次被围攻。
+
+**实现**：`StrategicRegionState` 增加 `facilityDamage/refugees/infectionCores/recoveryStage/recoveryReadyMinute/refugeeHost`，`StrategicConfig.recovery` 与区域 `refugeeTarget` 数据化。失守时按人口撤离（至少保留 1 名死亡/失踪）到目标 Human 区域，宿主难民 +压力/+补给消耗并写 `refugee.*` 事件；沦陷区设施 100%、感染核心 1、进入 `ClearCore`。新增 `ClearStrategicRecoveryCore`/`RepairStrategicRecoveryFacility`/`ResolveStrategicReclaim`：核心、修复成本、反攻重试/恢复窗口与奖励走配置；反攻复用 `RegionalSiege` 新 `reclaim` 模式与独立 `beginReclaim/endReclaim` 回调，无守卫也可刷波。守住先转 Contested，`restoreMinutes` 后 Human、返还部分难民并恢复人口/守军。`SettlementNpcSystem` 新增 `MarkFallen/BeginExternalReclaim/EndExternalReclaim/RestoreSettlement`：失守撤离守卫/平民但保留商人，恢复后 `EnsureSettlementNpcs` 重建。地图对 Infested 区域道路标为不可通行、POI 标“沦陷”；HUD/战略侧栏显示反攻阶段、设施损伤、难民；单机在锚点按 E 完成三步。宿主有难民时自动接取 `refugee_relief` 任务。`WorldManifest` 升 v4 保存恢复字段，v1–v3 旧档默认 `None/0`。
+
+**结果**：`M32-T5` **5/5（117 assertions）**（失守/难民/核心/修复/反攻/恢复/再预警、v4 恢复字段、反攻控制器、聚落撤离恢复、地图禁用、真实 ServerHost 农场闭环）；`M32-*` **31/31（711）**；全量 Debug **893/893（137745 assertions）**、Release **893/893（137759 assertions）**、Python **98/98**。真实农场闭环日志：失守→撤离→清核心→修设施→2 波 10 敌守住→Contested→恢复 Human→守卫/平民重建。日志 `build/m32_t5_t5_final.log`、`build/m32_t5_debug_full_final2.log`、`build/m32_t5_release_full_final.log`、`build/m32_t5_python_final.log`；Release 构建 `build/m32_t5_release_build_final.log`。未提交 Git。
+
+**限制/下一步**：反攻 E 交互仅单机，服务器反攻 API 已通但网络命令/战略同步留 T7；道路/POI 目前是地图/指引层拦截，不阻断底层局部寻路；`east_wilds` 无聚落节点，暂不走详细反攻；难民为战略计数与任务触发；核心/修复为锚点交互摘要，不生成独立核心实体。T6 已补守军/工事/补给防御、自动结算伤亡/设施损失与每日经济（见上条）。
+
+## 2026-11-11 M32-T4 详细围攻接入
+
+**范围**：把战略 `Active` 区域接到真实区域围攻：玩家在场时预热、分波、破口、守卫/平民撤离与实时战斗；玩家离开按宽限回落自动结算；结果只回写一次。仍只控制主角，不做 RTS 编队/单位指令。
+
+**实现**：新增 `src/game/RegionalSiege.h/.cpp`（Warmup/Waves/Finished、`maxAlive/maxWaveSize`、破口/守卫清零/玩家离开中止、M21 八向与 `BaseSiegeRatingFor` 评级）。`StrategicRegionConfig` 增加可选 `anchorX/anchorY`，`assets/strategic.json` 补 4 个锚点（村庄 75,26.5；诊所 150,64；农庄 110,210；检查站 300,280），世界地图区域导航优先用锚点。`assets/settlements.json` 扩为村庄/诊所/农场 3 节点：诊所 1 守卫+1 平民，农场 1 守卫+2 平民（`requester` 代理），两者 `minDay=9999` 不自行夜袭；`EnsureSettlementNpcs` 单机/服务器均按需生成守卫/平民，服务器找最近空格避免玩家占位。`SettlementNpcSystem` 新增 `BeginExternalDefense/SpawnExternalWave/LiveGuards/LiveRaiders/RaidersWithin/UpdateExternalDefense/EndExternalDefense`，复用 M23 `Defend/Shelter` 与 `SettlementRaidZombie`。`WorldSimulation` 读 `strategic.siege.*`，`TickStrategic` 启动控制器，`UpdateRegionalSiege` 推进，`ResolveStrategicSiege` 用同一 `siege.<region>.<minute>` 事件回写（幂等）；GameApp/ServerHost 都按玩家实际 region 填入 `playerRegions`。HUD `strategic-guide` 显示波次/敌数/守军/破口。
+
+**结果**：`M32-T4` **8/8（121 assertions）**（控制器 4、M23 外部围攻 2、战略回写 1、真实 ServerHost+农场集成 1）；`M32-*` **26/26（593）**、`M23-F4-*` **27/27（461）**；全量 Debug **888/888（137619 assertions）**、Release **888/888（137633 assertions）**、Python **98/98**。集成用例在 `south_farmland` 锚点真实打完 3 波共 18 名感染者，守住后 owner=Human、`siege.south_farmland.0` 事件存在、围攻实体清零。日志 `build/m32_t4_targeted_final.log`、`build/m32_t4_debug_full_final.log`、`build/m32_t4_release_full_final.log`、`build/m32_t4_python_final.log`；Release 构建 `build/m32_t4_release_build_final.log`。未提交 Git。
+
+**限制/下一步**：平民复用 `requester`，无独立 civilian；`attackRoutes` 仍空，方向用 M21 确定性 fallback；同屏一个详细围攻；围攻波次进度不跨存档，读档/重启若玩家在场从预热重开，否则由 Active 宽限/自动结算。T5 已补失守/难民/夺回与设施损坏（见上条）。
+
+## 2026-11-11 M32-T3 战略地图与 HUD
+
+**范围**：把 T1/T2 的区域状态、预警和资源接到 M31 世界地图与 HUD；只读展示控制区、压力/防御/补给/人口、预警倒计时/情报、事件日志、路线 ETA 与载具油耗，不做真实围攻、单位选择/编队/框选。
+
+**实现**：新增 `src/game/StrategicMap.h/.cpp` 生成只读快照，事件按新到旧最多 8 条；`DescribeStrategicWarning` 从持久化 `nextAttackMinute`/pressure/intel 重建预警，复用 T2 固定 seed 与情报误差。`WorldMapState` 增加 `strategic`/`gameMinute`/`travel`/`routeCost`，`WorldMapRoute` 增加 `targetRegion`；`WorldMapPanel` 新增战略图层、控制区颜色、预警标签、侧栏资源/区域摘要/电台日志、路线“道路/绕路距离 + 步行/载具 ETA + 油耗/迟到”展示，点击战略区域只规划到区域中心的道路路线。`RefreshStrategicGuide` 在 HUD 显示最高预警剩余游戏小时/现实秒/情报/约敌军，围攻中显示“战略围攻”。同步 `assets/ui/worldmap.*`、`assets/ui/hud.*` 与 `mods/core_ui/ui/hud.*`；不改 manifest/协议，网络客户端战略同步留 T7。
+
+**结果**：`M32-T3` **5/5（147 assertions）**，覆盖实际配置快照、预警重建与 tick 一致、步行/载具 ETA/绕路/油耗/无效参数、世界地图目标区域、1280×720/1920×1080 战略图层/侧栏/路线文本与不溢出；`M9-T4` HUD 文档同步 `strategic-guide`（218 assertions）。全量 Debug **880/880（137482 assertions）**、Release **880/880（137495 assertions）**、Python **98/98**。日志 `build/m32_t3_targeted11.log`、`build/m32_t3_debug_full_final2.log`、`build/m32_t3_release_full_final2.log`、`build/m32_t3_python_final2.log`；Release 构建 `build/m32_t3_release_build_final2.log`。未提交 Git。
+
+**限制/下一步**：未做预警方向/详细波次、道路安全/中断、设施损坏、电台语音/正式美术；1280/1920 为 Rml 自动布局验收，未人工截图。T4 在玩家已在场时把 `detailedEnabled=true`，复用 M21 围攻导演/M23 守卫，离开后按宽限回落自动结算；地图/HUD 只消费 `Active`，不新增单位控制。
+
+## 2026-11-10 M32-T2 威胁导演、预警与自动结算
+
+**范围**：在 T1 状态层上加入战略 tick、压力增长、48/84 小时预警、`intelLevel` 强度/时间误差、固定 seed、玩家不在场时的确定性自动结算、详细围攻占位分支、核心保护与离线宽限；仍不做战略 UI 和真实围攻内容。
+
+**实现**：新增 `src/game/StrategicDirector.h/.cpp`。达到 `attackPressure` 生成 `warning.<region>.<attackMinute>` 事件和 `nextAttackMinute`；情报误差只影响报告值，真实结算由 `round(pressure×0.7)` 与 `round(defense+8×garrison+0.25×supply)` 比较，平局守住。结果写 `siege.<region>.<attackMinute>`，事件 id 幂等；失守区域归零人口/守军，`coreSafe` 只转 `Contested` 并立即生成下一次预警。`StrategicState::ApplyEvent` 统一记录 Owner/Resource/Warning/Siege，`WorldSimulation::TickStrategic` 供单机与服务器共用；`GameApp` 单机 tick、`ServerHost` 权威 tick 已接入，网络客户端跳过。`StrategicConfig` 新增 `seed`/`pressurePerHour`/`attackPressure`/`autoResolve`，区域新增 `remote`；`assets/strategic.json` 已补默认值和东部荒野远程标记。
+
+**结果**：`M32-T2` **8/8（208 assertions）**，覆盖实际配置、预警/远程预警/情报/固定 seed、暂停重复 tick、farm 失守、core 守住、防御=敌军边界、coreSafe 转争夺、双结算防护、提前到达 `Active`、离开/离线宽限、manifest 恢复后继续结算、压力增长不跳过预警，以及真实 `ServerHost` tick 预警+离线宽限自动结算。全量 Debug **876/876（137360 assertions）**、Release **876/876（137374 assertions）**、Python **98/98**。日志 `build/m32_t2_targeted5.log`、`build/m32_t2_debug_full_final4.log`、`build/m32_t2_release_full4.log`、`build/m32_t2_python.log`；服务器日志含 `战略预警：south_farmland ...` 与 `战略自动结算：south_farmland 失守，防御 54 vs 敌军 70`。未提交 Git。
+
+**限制/下一步**：单机/服务器仍传 `detailedEnabled=false`，玩家到场暂走自动结算；T4 才接真实围攻并打开详细分支。没有战略地图/HUD/事件日志 UI，没有被动资源生产/难民/道路状态，预警报告不持久化。T3 在世界地图上叠加控制区/压力/防御/补给/人口/预警/ETA，只读展示，不做单位选择/编队。
+
+## 2026-11-10 M32-T1 战略数据、状态机与 manifest v3
+
+**范围**：把 M32 从纸面推进到可保存/恢复的纯逻辑状态层：4 个区域 owner/压力/防御/补给/人口/情报、全局四资源、事件日志、`strategic.json` 校验、M31 manifest 持久化和服务器重启恢复；不做 tick/预警/结算/UI/详细围攻。
+
+**实现**：新增 `src/game/StrategicState.h/.cpp` 与 `StrategicPersistence.h/.cpp`。`StrategicOwner`/`StrategicSiegePhase`/`StrategicEventKind` + `StrategicRegionState`/`StrategicEvent`/`StrategicResources`；`ApplyOwnerChange`/`ApplyResourceDelta` 按事件 id 幂等，冲突拒绝，资源夹紧非负，`AdvanceTick` 单调，`Validate` 校验区域/事件/数值。`assets/strategic.json` 含村庄核心/北部农田/南部农田/东部荒野（3 Human + 1 Infested），初始资源 12/180/96/3；`WorldSimulation` 按 `world.json` region id 校验后初始化，并暴露 `Strategic()`；`GameApp`/`ServerHost` 加载配置；`WorldDemoState` 与 `ServerHost::SaveWorld` 写入 manifest。`WorldManifest` 升 v3，保留 v1/v2 解码；旧档无战略段按配置初始化。
+
+**结果**：`M32-T1` **5/5（110 assertions）**，覆盖实际配置/与 world 对齐、状态转换/资源/幂等/非法输入、manifest v3 编解码、v2 旧档初始化、SaveManager 跨实例重载。`M31-T8` 扩展现有服务器重启测试：保存前把 `south_farmland` 改为 Contested 并扣资源，manifest 出现 4 个战略区域和 `m31-t8-strategic` 事件；重启恢复 owner/事件/资源（`M31-T8` **5/5（243 assertions）**）。全量 Debug **868/868（137152 assertions）**、Release **868/868（137166 assertions）**、Python **98/98**。日志 `build/m32_t1_debug_full_final3.log`、`build/m32_t1_release_full_final2.log`、`build/m32_t1_region_network.log`；服务器重启日志 `战略状态已恢复：4 个区域，事件 1，资源 人11 补给175 弹药94 燃料3`。未提交 Git。
+
+**限制/下一步**：战略 tick、pressure 增长、预警、自动结算、HUD/地图和详细围攻均未做；`strategic.json` 尚未纳入内容指纹，客户端只读同步留 T7。T2 进入威胁导演/预警/确定性自动结算，复用 `nextAttackMinute`/`intelLevel`/资源字段，仍不做 UI。
+
+## 2026-11-10 M32-T0 区域战略纸面原型
+
+**范围**：依据当前 M31 `world.json`、M23 `settlements.json` 和 M21 `baseEvent` 做 3 个行动节点（村庄/农场/检查站）的预警→守城/失守→夺回纸面流程；不改生产代码、配置、协议或存档字段。
+
+**结果**：首版锁定 4 个战略区域（3 Human：村庄核心/诊所/农场；1 Infested：检查站）。主路线村庄→农场 **225.0 格**（步行 56.2 秒/22.5 游戏小时；载具 22.5 秒/9.0 游戏小时、单程 27% 油），村庄→检查站 **485.5 格**（步行 121.4 秒、载具 48.6 秒、往返 116% 油，至少 2 罐）。M21 第 12 天 3 波为 9/14/19（合计 42、峰值 24、2 特殊）；M23 守卫 120 HP/18 伤害可作守军基线。纸面自动结算 `defense + 8×garrison + 0.25×supply` 在农场无人支援时为 54.25 < 62，失守；玩家在场走详细围攻并可守住。结论：24 游戏小时预警不足，改为基础 48/远程 84 游戏小时（至少步行 ETA+60 真实秒），离线宽限 2880 游戏分钟；NPC 只自主支援，不做编队/单位指令。
+
+**限制/下一步**：农场/诊所尚无真实聚落数据；M23 守卫只搜索 `SettlementRaidZombie`，不能攻击 M21 `BaseSiegeZombie`；M21 `warningSeconds` 是真实秒、仅夜间/玩家建筑触发且联机跳过；M31 manifest 无战略字段；检查站油耗/补给点需 T6 平衡。T1 只做 `StrategicRegionState`、`strategic.json`、资源/事件日志和 manifest 持久化。未改代码、未提交 Git。
+
+## 2026-11-10 M31-T10 垂直切片与单机/双客户端验收
+
+**范围**：把 36×36 大地图从“能跑/能存档”推进到可玩的垂直切片：主村庄/道路、4 个 POI（含资源/危险区）、主线任务/引导、返回交付与存档重载、单机 + 2 客户端 1280 验收。不做无限世界、区域服、正式美术，也不改会话协议/命令包。
+
+**实现**：新增 `src/world/WorldSelection.h/.cpp`，单机默认 `village_demo_m31` + `assets/maps/village_demo_m31_content.json`；`world.m31.enabled=false` 回退旧图/旧内容。专用服务器默认保持旧图，显式 `--world.mapDir=...village_demo_m31`/`serverEnabled=true` 才启用 M31；`GameApp`、`ServerHost`、`EmbeddedServer` 共用选择结果，`WorldSimulation::Options.mapDir` 只传递选择、不写回 `config/game.json`。内容 profile 使用独立 `core::Config`，mod 的 POI/任务继续合并；`ContentReload` 支持同一 profile 热重载。新增 4 个运行时 POI（诊所/农场/河畔补给点/检查站；河畔标注资源/危险区）、5 段主线、`farm_tools` 支线和 4 条村庄支线；`MissionFocusPriority` 将 `m31_slice` 固定为主任务优先级，M31 下旧电台/撤离 Objective 的 HUD/推进被隔离，HUD 目标摘要改为当前主线。地图图例增加间距。
+
+**结果**：主路线（村庄→诊所→农场→河畔→检查站→村庄）图论距离 **1810.35 格**（步行约 7.54 分钟、载具约 3.02 分钟），加 4 POI 清剿/8 容器搜刮、区域事件、村庄支线与返回交付构成 15–30 分钟内容预算。Release 1280 单机默认 M31：42 驻留 chunk、FPS 59–62、首帧 27.1ms、地图打开 59 FPS/689 UI drawcall；截图 `build/m31_t10_slice/village-1280.png`、`map-1280.png`、`route-map-1280.png`、`route-hud-1280.png`。双客户端 1280：服务器/两客户端内容 hash 一致，2 个会话、2441 快照/失败 0、客户端 FPS 55–60；截图 `build/m31_t10_dual/client-a-1280.png`、`client-b-1280.png`。测试新增 `M31-T10 默认/回退选择`、`内容契约/路线`、`双客户端诊所/村庄`、`村庄存档/重载` 4 用例，`M31-T10*` **4/4（225 assertions）**；全量 Debug **863/863（137028 assertions）**、Release **863/863（137042 assertions）**、Python **98/98**；T8/T9 定向 **7/7（269 assertions）**。
+
+**限制/下一步**：15–30 分钟是路线/内容预算，人工计时仍待用户验收；双客户端视觉烟测关闭区域事件/演示人群并使用 1000 HP，避免无关死亡；默认 mod 示例仍贡献 1 个 POI/任务（运行时 5 POI/11 任务）；专用服务器 M31 不是默认；chunk 仍一文件一块。M31-T10 后无限世界、区域服、正式美术均为独立任务；未提交 Git。
+
+## 2026-11-10 M31-T9 性能、存档体积与长时稳定性
+
+**范围**：验证 36×36 正式地图能持续玩，而不是只能打开；覆盖 1000+ 脏 chunk 后台写/读、文件数/存档体积、36×36 全图长时巡游/建造/战斗，并复验 2/4 玩家预算。不做 T10 垂直切片。
+
+**实现**：`SaveManager` 新增 `StorageStats`/`MeasureStorage()`，统计存档文件数、总字节、chunk 文件/字节、实体桶/字节与 manifest 字节；`SaveService` 新增 `ChunkWriteStats`，记录后台 chunk 写完成/失败/重试、累计与最大耗时。新增 `tests/test_m31_stress.cpp` 2 用例：1024 个脏 chunk（共 4096 个修改格）通过 `SaveService` 后台写入并全部回读；本地玩家在 36×36 地图绕行覆盖全部 1296 chunk，期间每 600 tick 建墙、每 100 tick 生成并击杀僵尸，使用 3,888 tick × 1.0s 模拟 64.8 虚拟分钟。
+
+**结果**：Release 1024 chunk/4096 格得到 1027 文件、280,649 bytes（chunk 268,288 bytes）；主线程快照 max **0.10ms**、入队合计 **0.11ms**，后台总写 **3,805ms**、单文件 max **13.66ms**，回读 **333ms**；T0 同步 1000 脏 chunk 为 3.88s/单文件 max 248ms，尾延迟已移出主线程。Soak 覆盖 **1296/1296 chunk**、最多驻留 **49**、累计加载 7,872/卸载 7,856、失败 **0**、6 次建造/38 次战斗，Release tick P50/P95/max **0.58/1.39/3.59ms**；Debug 同用例 P50/P95/max 11.24/27.01/64.56ms。T8 Release 复跑 **5/5（233 assertions）**，2/4 玩家仍为 50/100 chunk。Release 1280 巡航烟测 `build/m31_t9_smoke/world.out.log` 4303 tick、加载 1,912/卸载 1,863/失败 0、FPS 58–60、工作集约 192MB、1 次 32.1ms 帧告警。新增 `M31-T9*` **2/2（36 assertions）**；全量 Debug **859/859（136803 assertions）**、Release **859/859（136817 assertions）**、Python **98/98**。未提交 Git。
+
+**限制/下一步**：Soak 是 headless 加速逻辑时间（64.8 虚拟分钟），不等于 1 小时真实墙钟；玩家数增加时仍无动态半径/密度降级（2/4 玩家当前在预算内）；chunk 仍一文件一块，1024 个文件低于 1296 目标，未按 cell 打包；1280 烟测不是自然 1 小时人工流程。下一步 T10 做主村庄+道路+2–3 POI 的 15–30 分钟自然垂直切片、单机+2 客户端验收与截图/日志归档。
+
+## 2026-11-10 M31-T8 联机多区域、AOI 与服务器世界存档
+
+**范围**：让 2–4 个分散在不同区域的玩家各自拥有 chunk/区域事件兴趣，服务器只加载并保存兴趣并集；按会话过滤结构快照；让服务器世界存档写入 manifest/区域桶/事件并跨重启恢复。不做 T9 长时 soak/cell 打包、T10 垂直切片，也不改 `SessionProtocol`/命令包。
+
+**实现**：`ChunkManager::UpdateFocuses()` 取多焦点窗口并集，任一焦点可见的 chunk 不卸载，候选按距离与既有 request/attach 预算派发；`RegionStreaming::SetFocuses()` 让多个区域同时 Active，`RegionEventDirector::UpdateFocuses()` 允许事件被任一近距玩家激活；`WorldSimulation::SetFocuses/StreamAtFocuses` 接服务器兴趣并集，第一焦点继续作为 SpawnLod/动物主焦点。`ServerHost` 每 tick 先轮询网络，再汇总在线玩家、待恢复档案位置和死亡复活默认点，调用并集流式；`BroadcastStructureDiffs()` 按 `net.structureInterestRadius`（默认 48 格）过滤 chunk/墓碑；`SaveWorld` 写 `world_manifest_v1.bin` v2、区域实体桶和事件，重启读档沿用 T4/T6 校验与恢复。`SpawnRegionEventContent` 不再要求本地 `Player()`，服务器可生成区域事件内容。
+
+**结果**：新增 `tests/test_region_network.cpp` 5 用例：多焦点区域相位/事件可见性、ChunkManager 并集与单焦点收缩、双区域兴趣+实体/结构 AOI、四玩家分散压力、服务器 manifest/桶/事件重启恢复；`M31-T8*` **5/5（233 assertions）**。全量 Debug **857/857（136767 assertions）**、Release **857/857（136781 assertions）**、Python **98/98**。Release 日志 `build/m31_t8_release_t8.log`：服务器世界保存 `实体 2，chunk 13–15，桶 1，事件 10`；双区域测试并集 **50 chunk**，四玩家分散测试并集 **100 chunk**；运行时无协议/命令包版本变化。未提交 Git。
+
+**限制/下一步**：T4 启动仍合并全部实体桶，未做按区域实体懒加载；SpawnLod/动物仍以第一焦点为主，第二玩家普通环境刷怪依赖 POI/区域事件；四玩家压力验证并集与既有预算，未实现按玩家数动态降低半径的降级；结构 diff 仍是固定间隔广播，未做逐 chunk 脏标记。下一步 T9 做 36×36 长时 soak、1000+ 脏 chunk 存档、文件/存档体积统计与最终降级基线。
+
+## 2026-11-10 M31-T7 世界地图、发现与长距离导航
+
+**范围**：把 T1/T5 的 `world.json` 区域/道路与现有 POI/任务/区域事件汇总成可读的世界地图；补迷雾发现、路标/区域 HUD 与 POI 驾车路线提示。不做 T8 多区域服务器、T9 soak/cell 打包、T10 垂直切片验收。
+
+**实现**：新增 `game/WorldMap.*`，从 `WorldGraph`/`PoiConfig`/`WorldDefinition` 构建 10 区域、10 段道路、桥梁端点派生河流、11 个路标、12 个 POI、区域事件、玩家和聚焦任务目标快照；`ui/WorldMapPanel.*` + `assets/ui/worldmap.rml|rcss` 用 RmlUi 动态图层绘制区域/迷雾、道路点阵、河流、路标、POI、事件、玩家/目标标记及图例。`M` 打开全屏地图并在单机暂停时间，按 `world.map.discoverRadius`（默认 36 格）记录已探索区域/POI；未探索区域上迷雾，未发现 POI 仅显示灰色未知标记。点击 POI 调用 `WorldGraph::PlanRoute` 生成驾车路线，关闭地图后 `HudState.regionGuide` 显示“区域 · 最近路标 | 导航 名称 距离”；不传送、不自动行驶。原生 HUD 与 `mods/core_ui` Python/Lua HUD 同步新增 `region-guide`。
+
+**结果**：`tests/test_world_map.cpp` 2 用例（数据/发现/迷雾/事件/路线、无效地图降级）+ `test_ui.cpp` 世界地图 1280/1920 布局，`M31-T7*` **3/3（72 assertions）**。全量 Debug **852/852（136534 assertions）**、Release **852/852（136548 assertions）**、Python **98/98**。Release 1280 地图烟测 `build/m31_t7_map_smoke/world.out.log`：打开时 `已探索 POI=5/12`；点击 `fire_station` 后 `设置世界地图导航：废弃消防站（22 格）`，world 截图显示 `导航：废弃消防站 · 道路 22 格`；截图 `map-1280.png`、`route-map-1280.png`、`route-1280.png`、`map-1920.png`，地图打开采样 46–63（开图瞬间 46，稳定 60）、无 Rml 错误。未提交 Git。
+
+**限制/下一步**：发现/导航状态只在当前会话内存，未写入 manifest；地图固定全图总览，不支持自由缩放/任意路点；河流由 bridge 边派生而非逐格水面；POI 点击只给路线，不自动行驶；无 `world.json` 的旧地图明确提示不可用；服务器地图兴趣并集与事件可见性留 T8。
+
+## 2026-11-10 M31-T6 区域事件、冻结与事件持久化
+
+**范围**：让大地图有区域事件，但只在玩家附近/当前区域推进；把事件状态写入 manifest，区域卸载/重载可解释地恢复。不做 T7 世界地图、T8 多区域服务器、T9 cell 打包。
+
+**实现**：新增 `game/RegionEventDirector.*`，按 region/day/seed 确定性生成尸潮、商队/巡逻、空投、感染爆发，站点优先 POI 否则区域中心；事件仅 `Active` 且距焦点 ≤ `contentRadius`（默认 24 格）时生成内容/推进计时，`Ambient/Frozen` 冻结且不后台刷怪。`WorldSimulation` 新增 `RegionEventSystem`：尸潮/感染复用 `SpawnZombieAt`，空投/感染复用 `SpawnLootContainer`，商队复用 `SettlementNpc`；稳定 ID 保证重载不重复。`WorldManifest` 升 v2，新增事件数组并兼容 v1；单机 `WorldDemoState` 快速存档写入、`WorldSimulation::LoadSave` 恢复；`RefreshRegionEventGuide` 用 `eventGuide` 显示类型/状态/方向/距离。
+
+**结果**：`tests/test_region_events.cpp` 3 用例（确定性/近距生成/冻结恢复、重载不重复/未知区域拒绝、manifest 往返与校验），`M31-T6*` **3/3（60 assertions）**。全量 Debug **849/849（136462 assertions）**、Release **849/849（136476 assertions）**、Python **98/98**（Release 全量首轮命中既有 `M30-T6` 双客户端闪避时序 flake，隔离与全量复跑通过）。Release 1280 m31 日志 `build/m31_t6_smoke/world.out.log`：`区域事件内容：商队/巡逻（village_core）生成 2 个，位置 (80.5,30.5)`，FPS 59–60，chunk 加载 42/卸载 0/失败 0；F12 存档 `build/m31_t6_quick_saves/20261110-032242/world/world_manifest_v1.bin` 含 10 条 `region_event_*` 事件状态。未提交 Git。
+
+**限制/下一步**：服务器 `SaveWorld` 尚未写 manifest/事件状态（T8）；商队/巡逻为现有聚落 NPC 占位，无专属交易/护送；事件结束不自动清理已生成实体；HUD 只接 `eventGuide`，地图事件标记留 T7。
+
+## 2026-11-10 M31-T5 道路图、地形通行与区域密度
+
+**范围**：把 T1 的 `world.json` 道路/区域数据变成可查询的 `WorldGraph`，补齐长距离路线、地形/载具通行和 biome 密度；不做 T6 区域事件、T7 世界地图、T8 多区域服务器、T9 cell 打包。
+
+**实现**：新增 `world/WorldGraph.*`（11 节点/10 边，Dijkstra 长距离路线、vehicle 过滤、起终点接地距离、road/bridge 距离）；`TerrainKind` 派生 road/dirt/forest/paved/water/bridge/blocked，水面不可走，桥/道路可走，`vehicle:false` 边对载具关闭；`WorldDemoState` 载具碰撞与路面分类、`ServerHost::IsServerVehicleCellWalkable` 接入载具通行；`WorldGraph` 按 region/biome 读取 `spawn` 密度，`SpawnLodSystem::SetDensityScale` 随焦点缩放虚拟尸群目标；局部 A* 继续复用 `PathfindingService`。
+
+**结果**：`tests/test_world_graph.cpp` 3 用例 + `test_spawn_lod.cpp` 密度缩放 1 用例；`M31-T5*` **4/4（82 assertions）**。全量 Debug **846/846（136402 assertions）**、Release **846/846（136416 assertions）**、Python **98/98**。Release 1280 正式 m31 启动日志 `build/m31_t5_smoke/world.out.log`：`道路图: 11 节点/10 边，出生点→checkpoint 车辆路线 可达，距离 492.0`；出生 60fps，chunk 加载 42/卸载 0/失败 0。未提交 Git。
+
+**限制/下一步**：道路图只提供长距离走廊，局部接地由现有 A* 承担；载具可草地/森林低速通行，不做道路专属 AI；地形标志运行时派生，不新增 chunk 持久化字段；区域事件（T6）尚未接入。
+
+## 2026-11-10 M31-T4 世界持久化、区域实体桶与地图身份保护
+
+**范围**：在 T3 流式加载之上补齐 `world_manifest_v1.bin`、按区域拆分的实体桶、只保存脏 chunk、卸载后台写、旧档兼容和 `mapHash` 不匹配只读保护；不做 T5 道路/密度、T6 区域事件、T8 服务器多区域兴趣、T9 cell 打包。
+
+**实现**：新增 `save/WorldManifest.*`（`ZLWM` 段，记录地图身份/`worldSaveVersion`/chunk 索引/区域相位/实体桶）与 `save/RegionEntityBuckets.*`（按区域矩形分桶，玩家和无位置状态留全局）。`SaveManager` 在 generation 临时目录写 manifest 和 `entities_<region>_<hash>.bin`，读档合并全局+桶并拒绝重复 StableId；无 manifest 旧档走原 `entities.bin`，旧布局保存会移除 stale manifest/bucket。`SaveService` 新增后台 chunk 队列，优先于整档处理，失败重试 2 次并计数；`WorldSimulation` 卸载只提交 `IsDirty()` 的 `ChunkDiff`，`WorldDemoState` 整档只采集脏 chunk，并在保存时生成 manifest/桶。`WorldDemoState`/`WorldSimulation::LoadSave` 在加载前调用 `ReadWorldManifest` + `CheckWorldSaveCompatibility`，不匹配即停止并清 active save，避免套用旧地形。
+
+**结果**：新增 `tests/test_world_manifest.cpp` 4 用例（manifest 编解码/桶文件安全、区域桶、manifest+桶+墙体跨重载/重启并回读车辆/尸体/动物/聚落/物品组件、旧档/身份不匹配），`test_save_service.cpp` 增加 1 个后台 chunk 队列用例；`M31-T4*` **5/5（117 assertions）**。全量 Debug **842/842（136320 assertions）**、Python **98/98**；Release 前次全量 **842/842（136314 assertions）**，最终回归 841/842（136328，唯一失败为既有 `M30-T6*` 时序 flake，隔离 2/2 通过）。Release 1280：F12 快速存档后 F8 自动巡航，累计加载 311/卸载 262/取消 5/失败 0；`build/m31_t4_unload_saves/20261109-181603` 含 manifest、4 个区域桶和 `.backup`，日志 `build/m31_t4_unload/world.out.log`；`build/m31_t4_saves/20261109-180237` 为首次退出存档。未提交 Git。
+
+**限制/下一步**：实体桶启动时仍全量合并，未做按区域懒加载；服务端 `SaveWorld` 仍写旧全局 `entities.bin` 并会移除 manifest（T8）；终态 chunk 写失败只重试 2 次并计数，跨重启 dirty 清单留 T9；未做自然长时间跨区域手工验收。
+
+## 2026-11-10 M31-T3 流式加载、区域焦点与预测加载
+
+**范围**：复用 `ChunkManager` 的状态机，新增 resident 轻量窗口、速度/朝向预测、有限地图边界和 `RegionStreaming` 冻结/恢复；不接世界存档/动态实体持久化/联机多区域。
+
+**实现**：`StreamingPolicy.h` 统一预测公式（速度方向，`ceil(speed×0.6/10)` 取 1–2 chunk，低速不预测）；`RegionStreaming` 维护 `Active/Ambient/Frozen`、focus/predicted chunk、freeze/restore 计数并夹到 `world.json` bounds；`ChunkManager` 增加 `residentRadius` 坐标摘要（不创建 Chunk）、预测加载中心、`enforceMapBounds`，request/attach 预算不变。`WorldSimulation::StreamAt` 接收焦点+玩家速度，`WorldDemoState` 从玩家/驾驶载具取得速度；旧地图不走预测/边界限制，保持既有相机窗口。
+
+**结果**：新增 `tests/test_region_streaming.cpp` 4 用例/152 assertions，覆盖预测/区域冻结恢复/边界、resident 窗口、连续 13 chunk、快速跳跃取消、无 POI 区域卸载重载；全量 Debug **837/837（136203 assertions）**、Release **837/837（136217 assertions）**、Python **98/98**，T3 定向 Debug/Release **4/4（152 assertions）**。Release M31 冒烟：启动 36×36、mapHash b00ef11346939918；出生点因上边界驻留 42 chunk、首帧约 26ms、稳定 60fps；自动巡航累计加载/卸载并保持 49 chunk、失败 0，日志 `build/m31_t3_smoke/m31_t3_cruise.out.log`、`m31_t3_world.out.log`。未提交 Git。
+
+**限制/下一步**：resident 只有坐标摘要，区域冻结不保存/暂停动态实体；未做自然长时间手动探索；T4 接 manifest、区域实体桶与未加载区域恢复。
+
+## 2026-11-10 M31-T2 世界生成器与内容骨架
+
+**范围**：新增 `tools/gen_world.py`，从 seed 生成 36×36 chunk 有限世界、`world.json`、chunk 与 POI 模板；不接运行时流式加载/存档/联机，不改变默认地图。
+
+**实现**：生成 `assets/maps/village_demo_m31`，默认 seed `20261109`、10 个不重叠区域、11 个道路节点/10 条边、3 个 POI 模板锚点（`clinic_v1`/`farmstead_v1`/`checkpoint_v1`）、主村庄 6 栋房、河流/桥、主路/支路、8 块田地、7 处废墟、可配置森林/树木/草丛。新增 `zomboidlike-poi-template-v1` 行式模板（floor/object 行、局部 anchor、房间），生成时校验行宽/字符/门/越界、模板与道路/村庄/POI 不重叠、POI 最小中心距 88.8 格、边界 2 格水闭合、无越界对象和区域覆盖。`mapHash=b00ef11346939918`。
+
+**结果**：36×36 共 1025/1296 个非空 chunk、827,370 bytes、6381 objects / 17 rooms；同 seed + generatorVersion 逐字节一致。新增 `tests/test_world_generator.cpp` 2 用例/1337 assertions，定向 Debug/Release 2/2；新增 Python `tools/tests/test_m31_world.py` 4 用例，Python 98/98。全量 Debug **833/833（136051 assertions）**、Release **833/833（136065 assertions）**。1280 初始视角 `build/m31_t2_smoke/m31_t2_world-08s.png`，全图预览 `build/m31_t2/world_overview.png`；启动日志确认 36×36、world.json、mapHash 加载。未提交 Git。
+
+**限制/下一步**：没有运行时流式/区域冻结/世界 manifest；默认 `config/game.json` 仍指向 `village_demo`，仅通过 `--world.mapDir=assets/maps/village_demo_m31` 冒烟；启动首帧仍有约 445ms 的加载/挂接尖峰，留 T3 双层半径/预测加载处理。
+
+## 2026-11-09 M31-T1 世界数据契约与校验
+
+**范围**：新增 `zomboidlike-world-v1` sidecar 契约、只读解析/校验、地图内容指纹与存档身份检查；不生成世界、不改变 chunk 加载/存档/协议。
+
+**实现**：`src/world/WorldDefinition.h/.cpp` 新增 `LoadWorldDefinition()`（`Loaded/Missing/Invalid`）、`ComputeMapHash()`、`FormatMapHash()`、`MakeWorldIdentity()` 与 `CheckWorldSaveCompatibility()`。校验 `bounds` 与 `map.json` 一致、区域矩形不重叠/不越界、节点唯一且连通（显式 `isolated` 豁免）、边端点/自环/宽度、POI id/模板文件/半径、区域 POI 引用和生成密度；未知字段 warn，缺字段/类型/范围/引用错误硬失败。`mapHash` 对地图目录全部普通文件按相对路径排序做 FNV-1a 64（16 位小写 hex），覆盖 map/world/chunks/templates。`WorldSimulation::Init` 在 map 元数据成功后校验 sidecar：缺失走旧路径，非法启动失败，合法仅记录身份。
+
+**测试/文档**：新增 `tests/test_world_definition.cpp` 6 用例/76 assertions，覆盖合法契约、旧地图 Missing、缺字段/未知格式/坏 JSON/bounds 不一致、区域重叠/越界、模板缺失、POI 越界/重复、断头路/缺节点/自环、mapHash 变更与身份停止文案。全量 Debug **831/831（134714 assertions）**、Release **831/831（134728 assertions）**、Python **94/94**。`docs/mapformat.md` 新增 §7 契约/指纹规则；`docs/16` T1 勾选、README/docs/00/docs/01 状态同步。未提交 Git。
+
+## 2026-11-09 M31-T0 大世界基线测量与可行性 Spike
+
+**范围**：在不改正式存档/协议、不写 M31 功能代码的前提下，用临时 36×36 地图测 chunk 解析/挂接、跨 20 chunk 流式加载、1/2 玩家内存/CPU、1000 个脏 chunk 存档。临时工具与结果在 `build/m31_t0`（被 gitignore）。
+
+**结果**：保留 **36×36 chunks**。临时地图 662/1296 个非默认 chunk、443,293 bytes、2,884 objects；冷解析 P95 **8.33ms**、热解析 P95 **0.30ms**。1 玩家初始 49 chunk **140.99ms**（CPU 62.5ms），跨 20 chunk 主线程 chunk 工作 P95 **0.033ms**、max 1.09ms，0 cancelled，最终驻留 49。2 玩家近似 98 chunks、private **15.27MB**、双路 chunk 工作 P95 0.049ms。1000 个 4 格 dirty chunk 同步写 **3.88s**，P95 6.37ms、**max 247.94ms** —— 总量可控但尾延迟必须后台保存。
+
+**测试/文档**：Debug **825/825（134638 assertions）**、Release **825/825（134652 assertions）**、Python **94/94**；首轮旧 Release 二进制出现一次 M30-T6 时序偶发，重建后全绿，定向 M30-T6* 2/2。基线、T0 预算和限制写入 `docs/perf-baseline.md` 的“M31-T0 大世界基线”；`docs/16` T0 勾选、验收指标与默认决策更新。**未改生产源码、未提交 Git**，T1 待用户确认后开始。
+
+## 2026-11-09 M30-T10 程序化近战挥击与战斗音效
+
+**范围**：在不新增正式动画帧/外部音频的前提下，为本地近战增加程序化挥击弧和 7 类战斗 cue；不改变战斗数值、服务器权威、`PlayerState` v20、`SessionProtocol` v2、存档或 `ZLR1` 组件。
+
+**实现**：`CombatPresentation.h` 新增 `MeleeSwingPresentation`/`ResolveMeleeSwingPresentation`，按 `ActionState` 进度计算 alpha、半径和厚度；轻击 range 1.7 对应 43.6px、重击对应 51.6px，半角 0.85/1.05rad，厚度 4/7px。`WorldDemoState` 用 0.44s 本地 `LocalSwingVisual` 保存方向/范围，`DrawMeleeSwingOverlay` 画全弧、扫过弧、重击外弧和弧尖。`CombatAudio.h`/`SoundIds.h` 新增 light_swing/heavy_swing/hit/block/parry/guard_break/dodge 7 个 cue（半径 6.0/7.5/7.5/7.0/8.5/9.5/4.5 格），`tools/gen_combat_audio.py` 生成 7 个占位 WAV；`PlayCombatCue` 通过 `SoundEvent` 本地发声，攻击/防御/命中事件接线。
+
+**测试/证据**：`tests/test_combat_presentation.cpp` 覆盖挥击进度、alpha、43.6/51.6 半径、重击厚度、NaN/fallback；`tests/test_audio.cpp` 覆盖 7 个 WAV 加载；T10 定向此前 **3/3（59 assertions）** 通过。`build/m30_t10_combat_presentation_smoke.ps1` 使用 Release、`--audio.device=off`、临时 `HeavyAttack=U`，真实窗口触发 parry/block/dodge/light/heavy/exhausted，断言 5 类 cue 与挥击日志，输出 `m30-t10-combat-presentation-smoke-pass`，6 张 1280 截图在 `build/m30_t10_combat_presentation_smoke/`。文本恢复后重新构建 Debug/Release，并重跑 T10 smoke 通过；未重跑 T10 单测/全量。
+
+**限制/下一步**：T10 只做本地表现，远端仍用 T9 姿态，无远端挥击/音效复制；合成 WAV 为占位素材；截图主要验证输入/UI/cue，实际挥击弧像素级可见性仍弱，后续用 active 帧或增强 alpha/厚度复核；全量测试和测试 exe 挂起问题仍待处理。
 
 ## 2026-11-09 M30 后续自然 100HP 四面围攻完整清场复验
 
@@ -118,7 +618,7 @@
 
 **实现**：`ecs::VehicleType` 为轻/标准/重皮卡；`VehicleProfile` 表含质量 1100/1600/2400 kg、半径 0.60/0.65/0.65 格、长宽、极速/加速/制动/转向/侧向抓地/车况伤害/乘员伤害倍率。`VehicleMotion` 新增 `heading/type`，`VehicleStep` 先转向再沿 heading 加速并按 `lateralGrip` 衰减侧向速度，角速度积分到 heading，`spinAngle` 移除；单机/服务器按 `VehicleTuningForType` 使用各自车型参数，质量用于冲量、半径用于碰撞/角惯量、质量比缩放推挤距离，车型倍率缩放车况/乘员伤害。`ecs::Vehicle` 持久化 type/heading，存档 Vehicle 组件 v3、ZLR1 `VHCL` 37B、复制组件 v4/40B，`PlayerState` v19；客户端预测用 `VehicleCorrectHeading` 平滑校正，HUD/日志显示车型/质量。
 
-**测试/证据**：新增 `M26-V12 VehicleProfile` **1/1（22 assertions）**、`M26-V12 VehicleIntegrateAngular` **1/1（6 assertions）**、`M26-V12 VehicleStep` **1/1（5 assertions）**、`M26-V12 VehicleCorrectHeading` **1/1（4 assertions）**；`M26*` **19/19（355 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **54/54（704 assertions）**、`M25-T4* + M26*` **52/52（937 assertions）**；全量 Debug **776/776（133848 assertions）**、Release **776/776（133862 assertions）**、Python **89/89**；日志 `build/m26_v12_targeted.log`、`build/m26_v12_m26.log`、`build/m26_v12_vehicle.log`、`build/m26_v12_combined.log`、`build/m26_v12_debug_full.log`、`build/m26_v12_release_full.log`、`build/m26_v12_build_debug.log`、`build/m26_v12_build_release.log`、`build/m26_v12_app_debug.log`、`build/m26_v12_app_release.log`、`build/m26_v12_python.log`。Release 1280 重跑 V5 单机多车烟测 `build/m26_v12_v5_regression_smoke/`：A/B 驾驶 3.57/3.92 格、走回 A 漂移 0.00 格，HUD 显示 `标准皮卡 1600kg`/`重型皮卡 2400kg`，stderr 为空。
+**测试/证据**：新增 `M26-V12 VehicleProfile` **1/1（22 assertions）**、`M26-V12 VehicleIntegrateAngular` **1/1（6 assertions）**、`M26-V12 VehicleStep` **1/1（5 assertions）**、`M26-V12 VehicleCorrectHeading` **1/1（4 assertions）**；`M26*` **19/19（360 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **54/54（704 assertions）**、`M25-T4* + M26*` **52/52（937 assertions）**；全量 Debug **776/776（133848 assertions）**、Release **776/776（133862 assertions）**、Python **89/89**；日志 `build/m26_v12_targeted.log`、`build/m26_v12_m26.log`、`build/m26_v12_vehicle.log`、`build/m26_v12_combined.log`、`build/m26_v12_debug_full.log`、`build/m26_v12_release_full.log`、`build/m26_v12_build_debug.log`、`build/m26_v12_build_release.log`、`build/m26_v12_app_debug.log`、`build/m26_v12_app_release.log`、`build/m26_v12_python.log`。Release 1280 重跑 V5 单机多车烟测 `build/m26_v12_v5_regression_smoke/`：A/B 驾驶 3.57/3.92 格、走回 A 漂移 0.00 格，HUD 显示 `标准皮卡 1600kg`/`重型皮卡 2400kg`，stderr 为空。
 
 **限制/下一步**：没有车轮/悬挂/轮胎受力、持续接触冲量或完整刚体求解；视觉仍是八向资源；重型碰撞半径不放大到标准车以上以保持狭窄道路通行；未新增 1280 碰撞烟测。下一步优先 1280 碰撞/乘客验收，再考虑车轮/悬挂与持续接触模型。未提交。
 
@@ -138,7 +638,7 @@
 
 **实现**：`VehicleSpike.h` 新增 `VehicleCollisionOccupantDamage`，以 `vehicleCollisionMinSpeed` 为门槛，按 `base + (impactSpeed - minSpeed) × perSpeed` 计算 HP，并受 `max` 上限钳制；NaN/非法配置返回 0。服务器遍历碰撞双方驾驶位、第一乘客位和第二乘客位，对存活乘员发出一次 `Blunt` 伤害事件，不施加击退/硬直，保留既有护甲钝击减伤，并通过 `stateDirty`/`PlayerState` 同步生命。单机在 `ApplyLocalVehicleVehicleCollision` 中对当前驾驶员使用同一规则并显示 `碰撞受伤：-X HP`。新增 `vehicleCollisionOccupantDamageBase/PerSpeed/Max` 配置，默认 3.0/1.2/20.0。
 
-**测试/证据**：新增 `M26-V10 VehicleCollisionOccupantDamage：速度映射与配置上限` **1/1（10 assertions）**；V2 服务器三客户端碰撞用例追加双驾驶员+乘客 HP 下降断言（V2 服务器用例 **49 assertions**）；`M26*` **13/13（284 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **49/49（655 assertions）**、`M25-T4* + M26*` **46/46（866 assertions）**；全量 Debug **770/770（133769 assertions）**、Release **770/770（133783 assertions）**、Python **89/89**；日志 `build/m26_v10_passenger_v2.log`、`build/m26_v10_m26_passenger.log`、`build/m26_v10_vehicle_passenger.log`、`build/m26_v10_combined_passenger.log`、`build/m26_v10_debug_passenger_full.log`、`build/m26_v10_release_passenger_full.log`、`build/m26_v10_python.log`。V2 日志实测两名驾驶员和乘客各扣约 4.4 HP（剩余 96 HP），车况各 -1.9%。
+**测试/证据**：新增 `M26-V10 VehicleCollisionOccupantDamage：速度映射与配置上限` **1/1（10 assertions）**；V2 服务器三客户端碰撞用例追加双驾驶员+乘客 HP 下降断言（V2 服务器用例 **49 assertions**）；`M26*` **13/13（284 assertions）**、`M25-T4*` **33/33（582 assertions）**、载具过滤 **49/49（660 assertions）**、`M25-T4* + M26*` **46/46（866 assertions）**；全量 Debug **770/770（133769 assertions）**、Release **770/770（133783 assertions）**、Python **89/89**；日志 `build/m26_v10_passenger_v2.log`、`build/m26_v10_m26_passenger.log`、`build/m26_v10_vehicle_passenger.log`、`build/m26_v10_combined_passenger.log`、`build/m26_v10_debug_passenger_full.log`、`build/m26_v10_release_passenger_full.log`、`build/m26_v10_python.log`。V2 日志实测两名驾驶员和乘客各扣约 4.4 HP（剩余 96 HP），车况各 -1.9%。
 
 **限制/下一步**：V10 未新增 1280 碰撞烟测，但 V2 三客户端集成已覆盖乘客槽位；不做角动量/旋转、分级质量、持续冲量或轮胎抓地模型；撞墙/撞僵尸/撞动物不结算乘员生命伤害。下一步优先补 1280 碰撞/乘客验收或完整刚体朝向。未提交。
 
@@ -587,19 +1087,19 @@
 
 **范围**：T6 自然试玩由用户实机确认通过（2026-11-05），用户明确不填写 `PLAYTEST.md` 逐段表；按用户意见不将构造烟测冒充自然记录，T6/C6 以用户确认签收。M24-T1–T7 全部完成，M24 收口。用户确认记录见 `build/m24_playtest/USER_CONFIRMATION.md`。
 
-**证据**：构造路线 `m24-t6-route-smoke-pass`（35 击杀/2 分 25 秒/16 张 1280 截图）、4 个主要食物容器实际掉落烟测（单次样本 1.88 日，`build/m24_t6_food_loot/`）、Debug **698/698（132241 assertions）**、Release **698/698（132255 assertions）**、Python **88/88**。逐段耗时、食物/弹药/医疗收支明细未留存，原因是用户明确不要求填写；后续新增内容仍按 DoD 要求记录可复现证据。
+**证据**：构造路线 `m24-t6-route-smoke-pass`（35 击杀/2 分 25 秒/16 张 1280 截图）、4 个主要食物容器实际掉落烟测（单次样本 1.88 日，`build/m24_t6_food_loot/`）、Debug **698/698（132241 assertions）**、Release **698/698（132260 assertions）**、Python **88/88**。逐段耗时、食物/弹药/医疗收支明细未留存，原因是用户明确不要求填写；后续新增内容仍按 DoD 要求记录可复现证据。
 
 ## 2026-11-04 M24-T6 食物总量校准
 
 **范围**：T6 首轮平衡后六个新 POI 全清食物期望 4.29 日，超出规划“6 个 POI 全清 1.5~2.5 日”上限。本轮只调 `assets/loot.json` 食品表：超市食品架 rolls 3→1、`canned_soup` 随机权重 3→2；仓库食品区/教堂救济物资 rolls 3→1；旅馆客房 rolls 3→2。单 POI 食物期望降为超市 0.63、旅馆 0.49、警局 0.15、消防站 0、教堂 0.53、仓库 0.70 日，全清合计 **2.50 日**；保底汤/水保留，警察局/仓库弹药与武器/医疗取值不变。
 
-**验证**：`tools/tests/test_m24_balance.py` 新增全清 1.5~2.5 日断言，Python **88/88**；Release 构造路线按新掉落复跑 `m24-t6-route-smoke-pass`（35 击杀/2 分 25 秒/16 张 1280 截图，`build/m24_playtest/`）。Debug 全量 **698/698（132241 assertions）**、Release **698/698（132255 assertions）**、Python **88/88**，日志 `build/m24_t6_food_debug_full.log`、`build/m24_t6_food_release_full.log`、`build/m24_t6_food_python_full.log`。主构造路线只搜任务目标容器；追加 `build/m24_t6_food_loot_smoke.ps1` 实际搜索超市食品架/旅馆客房/教堂救济物资/仓库食品区，4 个容器均非空，单次样本 **1.88 日**（2.63 饥饿单位 / 1.4，期望 2.50），证据 `build/m24_t6_food_loot/SUMMARY.md` 与 4 张 1280 截图；该烟测仍使用 100000 HP/传送/F6，不是自然试玩。默认 100 HP、无探针的 30~60 分钟自然试玩仍需人工；T6/C6 未签收。
+**验证**：`tools/tests/test_m24_balance.py` 新增全清 1.5~2.5 日断言，Python **88/88**；Release 构造路线按新掉落复跑 `m24-t6-route-smoke-pass`（35 击杀/2 分 25 秒/16 张 1280 截图，`build/m24_playtest/`）。Debug 全量 **698/698（132241 assertions）**、Release **698/698（132260 assertions）**、Python **88/88**，日志 `build/m24_t6_food_debug_full.log`、`build/m24_t6_food_release_full.log`、`build/m24_t6_food_python_full.log`。主构造路线只搜任务目标容器；追加 `build/m24_t6_food_loot_smoke.ps1` 实际搜索超市食品架/旅馆客房/教堂救济物资/仓库食品区，4 个容器均非空，单次样本 **1.88 日**（2.63 饥饿单位 / 1.4，期望 2.50），证据 `build/m24_t6_food_loot/SUMMARY.md` 与 4 张 1280 截图；该烟测仍使用 100000 HP/传送/F6，不是自然试玩。默认 100 HP、无探针的 30~60 分钟自然试玩仍需人工；T6/C6 未签收。
 
 ## 2026-11-04 M23 间歇网络测试稳定化
 
 **范围**：定位长期偶发的 `M23-F1-T10`（联机远程武器）与 `M23-F2a-T6`（服务器权威觅食）失败并修正测试本身。F1-T10 的偶发失败是目标玩家被传送到射手 0.55 格后物理推挤导致朝向/距离漂移，子弹未命中；现改为 0.8 格并在每次开火前重新对齐目标、清零速度、以当前射手/目标位置计算方向。F2a-T6 的偶发失败是测试在旧规划列表选了节点后传送到节点中心，规划边界移动可能把该节点挤出列表；现改为传送后重选稳定节点，并把“同节点重复采集”改为断言服务器拒绝（耗尽或已不在规划范围）。未改生产逻辑/协议/存档。
 
-**验证**：Release 定向循环 `M23-F1-T10` 50/50、`M23-F2a-T6` 100/100 通过；Debug 全量 **698/698（132242 assertions）**、Release 全量 **698/698（132255 assertions）**、Python **87/87**；全量日志 `build/m24_t7_debug_full_final.log`、`build/m24_t7_release_full_final.log`。T6 自然试玩仍待人工，T6/C6 未签收。
+**验证**：Release 定向循环 `M23-F1-T10` 50/50、`M23-F2a-T6` 100/100 通过；Debug 全量 **698/698（132242 assertions）**、Release 全量 **698/698（132260 assertions）**、Python **87/87**；全量日志 `build/m24_t7_debug_full_final.log`、`build/m24_t7_release_full_final.log`。T6 自然试玩仍待人工，T6/C6 未签收。
 
 ## 2026-11-04 M24-T7 联机、存档与全量回归
 
@@ -607,7 +1107,7 @@
 
 **实现/修复**：内容指纹仍为 v13，KCP 握手对不一致指纹返回 `ContentMismatch`；`SaveWorld` 过滤无效 `Health` 实体，避免守军处于倒地 0.5 秒窗口时负 HP 导致整个世界快照失败。未改协议/存档 schema。
 
-**验证**：Debug **698/698（132242 assertions）**、Release **698/698（132255 assertions）**、Python **87/87**；新增 4 个 T7 用例（双客户端、重启恢复、指纹拒绝、版本锁定）。Release 全量首轮命中既有间歇 `M23-F2a-T6`/`M23-F1-T10`，单跑/复跑通过。T7 完成后复跑 T6 Release 构造路线 `m24-t6-route-smoke-pass`，确认存档过滤与测试改动未破坏村庄→6 POI→撤离链路。T6 默认 100 HP、无探针自然试玩仍待人工，T6/C6 未签收。
+**验证**：Debug **698/698（132242 assertions）**、Release **698/698（132260 assertions）**、Python **87/87**；新增 4 个 T7 用例（双客户端、重启恢复、指纹拒绝、版本锁定）。Release 全量首轮命中既有间歇 `M23-F2a-T6`/`M23-F1-T10`，单跑/复跑通过。T7 完成后复跑 T6 Release 构造路线 `m24-t6-route-smoke-pass`，确认存档过滤与测试改动未破坏村庄→6 POI→撤离链路。T6 默认 100 HP、无探针自然试玩仍待人工，T6/C6 未签收。
 
 ## 2026-11-04 M24-T6 平衡与 30~60 分钟试玩
 
@@ -653,7 +1153,7 @@
 
 **修改**：新增 `game::TakeAllLootContainerItems`（按背包容量循环取堆，保留剩余）；`InventoryState.lootCanTakeAll` 在单机尸体/世界 `LootContainer` 有物品时为真；背包面板对尸体显示“全部取出”（仓库仍显示存入/取出/整理，尸体只显示取出）；`take_all` 动作携带 `fromEntityId`，单机走尸体/世界容器，联机隐藏该入口。Lua/Python `Inventory.GetState()` 同步暴露 `lootCanTakeAll`。
 
-**验证**：`test_loot` 新增“容器全部取出按背包容量移动并保留剩余”（满包/无空间边界）。H2 单野猪流程剥取 4 堆/8 件后点击“全部取出”，日志 `容器全部取出：8 件，剩余 0 堆`，背包 5 堆、尸体“（空）0 堆”；截图 `build/f2b_h2_takeall/h2l-takeall-1280.png`。Debug **680/680（130555 assertions）**、Release **680/680（130569 assertions）**、Python **81/81**。
+**验证**：`test_loot` 新增“容器全部取出按背包容量移动并保留剩余”（满包/无空间边界）。H2 单野猪流程剥取 4 堆/8 件后点击“全部取出”，日志 `容器全部取出：8 件，剩余 0 堆`，背包 5 堆、尸体“（空）0 堆”；截图 `build/f2b_h2_takeall/h2l-takeall-1280.png`。Debug **680/680（130560 assertions）**、Release **680/680（130569 assertions）**、Python **81/81**。
 
 ## 2026-11-04 H2 真实行走单野猪（构造起点）
 
@@ -679,7 +1179,7 @@
 
 **结果**：野猪反击 2 次，玩家 100→80 HP；斧击击杀后 `E` 剥取 4 堆/8 件（生野猪肉×3、生野猪肉×3、兽皮×1、生野猪肉×1），厨刀磨损 98%，容器标题“尸体：野猪”，提示“剥取了野猪尸体：…（战利品在尸体中，按 I 取走）”。截图 `build/f2b_h2_lowdamage_single/h2l-counter-1280.png`、`h2l-container-1280.png`，日志同目录 `app.log`。`--animals.spawn.logAnimals=true` 现在也输出危险动物（野猪）坐标，便于定位；仅调试日志，不影响生成/战斗。
 
-**验证**：Debug **679/679（130541 assertions）**、Release **679/679（130555 assertions）**、Python **81/81**。该用例仍是“构造生成/传送 + 真实战斗”，不替代自然多野猪与真实行走的人工复验。
+**验证**：Debug **679/679（130541 assertions）**、Release **679/679（130560 assertions）**、Python **81/81**。该用例仍是“构造生成/传送 + 真实战斗”，不替代自然多野猪与真实行走的人工复验。
 
 ## 2026-11-03 H2 战利品存档排查与剥取提示
 
@@ -689,7 +1189,7 @@
 
 **修改**：剥取完成提示追加“（战利品在尸体中，按 I 取走）”；读档时新增 `读档动物尸体：N 具（已剥取 N），战利品 N 件` 与 `读档玩家背包：N 件` 日志；`test_entity_save` 新增动物尸体容器、`harvested` 状态与玩家背包战利品的存档往返用例。
 
-**验证**：Debug **679/679（130541 assertions）**、Release **679/679（130555 assertions）**、Python **81/81**；未提交。
+**验证**：Debug **679/679（130541 assertions）**、Release **679/679（130560 assertions）**、Python **81/81**；未提交。
 
 ## 2026-11-03 H3 尸体战利品取入背包后的存档往返
 
@@ -3047,7 +3547,7 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 
 **坑/取舍**：仓库不能直接挂 `SquareObject`，chunk 卸载会丢失内容；改为 ECS 实体 + StableId。F1 限制 6 堆，避免 UI 只显示前 6 堆导致隐藏物品；另提供“整理”按物品类型/defId/状态排序。
 
-**验证**：Debug **388/388（122155 assertions）**、Release **388/388（122156 assertions）**、Python **18/18**、无窗口服务器 19 系统。新增 `test_storage` 6 个用例（生成/查找、容量/堆数、全部转移、拆除清空、实体存档、整理排序），`test_ui` 覆盖仓库按钮，Lua/Python `Inventory` 覆盖 `store_all/take_all/sort_storage` 解析。未提交。
+**验证**：Debug **388/388（122160 assertions）**、Release **388/388（122156 assertions）**、Python **18/18**、无窗口服务器 19 系统。新增 `test_storage` 6 个用例（生成/查找、容量/堆数、全部转移、拆除清空、实体存档、整理排序），`test_ui` 覆盖仓库按钮，Lua/Python `Inventory` 覆盖 `store_all/take_all/sort_storage` 解析。未提交。
 
 ## 2026-10-24 M18-F2 饮水、烹饪与食物保鲜
 
@@ -3817,7 +4317,7 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 - `ecs::ItemInstance` 新增 `loadedAmmo`（0=空，非远程物品忽略）；`Valid()` 拒绝负数。`InventoryOps` 的加物品、取物、装备/卸下、堆叠移动均保留该字段，合并要求弹匣状态一致。
 - Item/Container/Equipment 存档组件升 v2，物品负载追加 `int32 loadedAmmo`（0~200）；`ComponentCodec` 增加最低兼容版本，`EntityStore` 对这三个组件接受 v1，旧档按空弹匣读取，其他组件仍精确匹配。
 - `test_inventory` 覆盖背包→取出→装备→卸下→放回背包的弹匣状态保留；`test_entity_save` 覆盖玩家背包/主手/地面三种状态往返，以及旧 v1 Item/Container/Equipment 默认 0。
-- 验证：Debug **528/528（125942 assertions）**、Release **528/528（125955 assertions）**、Python **47/47**。
+- 验证：Debug **528/528（125942 assertions）**、Release **528/528（125960 assertions）**、Python **47/47**。
 - 限制：枪械仍不可射击/装填；`PlayerState`/`ZLR1` 网络复制、服务器扣弹和 HUD 后续任务处理。
 
 ## 2026-10-28 M23-F1-T3 单机射击状态机
@@ -4397,7 +4897,7 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 
 **文档**：新增 `docs/settlementformat.md`，记录 `settlements-v1` 完整字段/范围/默认值、文件合并与内容指纹、NPC 点位生成、日程/威胁、5 档交易与补货、`missionPool`/求助者对话、`defense` 触发/数量/结束公式、`STLS`/`ZLR1`/`PlayerState v16` 存档联机边界、mod 目录/示例/检查清单。
 
-**扩展边界**：`docs/modding.md` 3.6.3.4 改为最小契约并链接完整文档；明确当前只有 `defs[0]` 主聚落生成 NPC/交易入口，追加聚落只有数据/指纹/防御状态、没有独立 NPC 或对话；对话树仍为代码内置，不提供对话 JSON；交易固定 5 档；守卫策略只有 `defend/retreat`。
+**扩展边界**：`docs/modding.md` 3.6.3.4 改为最小契约并链接完整文档；当时只有 `defs[0]` 主聚落生成 NPC/交易入口，追加聚落只有数据/指纹/防御状态、没有独立 NPC 或对话；对话树仍为代码内置，不提供对话 JSON；交易固定 5 档；守卫策略只有 `defend/retreat`（M33-F1-T2 已补多聚落生成）。
 
 **回填**：README 文档索引/聚落段/M23 里程碑、docs/01、docs/05、docs/08 与本节同步；修正 T1 记录中错误的任务池引用（应为四段聚落链），并将“对话数据化留 T8”改为“T8 记录当前边界，不提供对话 JSON”。
 
@@ -4562,3 +5062,4 @@ OFF **243/243 passed，119,550 assertions**，ON **249/249，119,616**，构建�
 **策略**：新增 `game::ContentReloadBlockedReason`。仅 `net.mode=direct` 且 `dynamicContentCount==0` 返回空；联机客户端/主机返回“联机中不支持 mod 内容热重载；请重启服务器和所有客户端后重连”；存在脚本动态内容返回“脚本已动态注册内容，需重启游戏后应用 mod 内容变更”。主循环先检查并记录 `mod 内容变更未应用：…`，不构建候选、不替换注册表、不刷新指纹、不推进 `contentReloadCount`；`ReloadContentFromDisk` 保留同一守卫。
 
 **测试/烟测**：新增 1 用例 8 assertions（候选内容变化改变指纹、单机允许、联机/主机拒绝、动态内容拒绝）；X3-T2/T3 共 4 用例 94 assertions；定向 X3-T1/T2/T3/M7-T6 12 用例 156 assertions；全量 Debug **673/673（130399 assertions）**、Release **673/673（130413 assertions）**、Python **81/81**；应用 Debug/Release 构建通过。单机 Release 合法→非法→合法烟测出现 2 次指纹旧→新、失败不刷新；联机客户端改 content 只出现 `mod 内容变更未应用：联机中不支持 mod 内容热重载；请重启服务器和所有客户端后重连`，无成功/刷新。日志 `build/x3-t3-single-smoke.log`、`build/x3-t3-online-smoke.log`，临时文件不入库。限制：T3 当时仅日志告警，无 HUD toast；T4 已补 HUD notice 并确认动态内容仅单机；T5 测试、T6 文档收口待做。
+

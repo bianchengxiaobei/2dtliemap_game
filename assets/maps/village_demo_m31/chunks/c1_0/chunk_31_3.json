@@ -1,0 +1,21 @@
+{
+ "cx": 31,
+ "cy": 3,
+ "objects": [
+  {
+   "x": 7,
+   "y": 2,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "decor.grass_tuft"
+  },
+  {
+   "x": 3,
+   "y": 9,
+   "z": 0,
+   "layer": "furniture",
+   "sprite": "object.tree",
+   "solid": true
+  }
+ ]
+}

@@ -1,10 +1,12 @@
 #include "game/WorldSimulation.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <random>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -47,14 +49,26 @@
 #include "game/FireSystem.h"
 #include "game/GroundItems.h"
 #include "game/HomesteadComponents.h"
+#include "game/LootContainers.h"
 #include "game/Objectives.h"
+#include "game/RandomEvents.h"
+#include "game/RegionEventDirector.h"
+#include "game/RegionalSiege.h"
+#include "game/StrategicDirector.h"
+#include "game/StrategicPersistence.h"
+#include "game/StrategicState.h"
 #include "game/MissionComponents.h"
 #include "game/PoiComponents.h"
 #include "game/WeatherStatus.h"
+#include "game/WorldMap.h"
 #include "game/AnimalSystem.h"
 #include "game/Animals.h"
 #include "game/Poi.h"
+#include "game/ProgressionRules.h"
 #include "game/SettlementNpc.h"
+#include "game/SettlementReputation.h"
+#include "game/WorldEventDirector.h"
+#include "game/WorldEventRuntime.h"
 #include "game/WorldQueries.h"
 #include "game/ZombieFactory.h"
 #include "game/ZombieVariants.h"
@@ -67,9 +81,14 @@
 #include "save/ComponentRegistry.h"
 #include "save/EntityStore.h"
 #include "save/SaveManager.h"
+#include "save/SaveService.h"
+#include "save/WorldManifest.h"
 #include "world/Chunk.h"
 #include "world/ChunkManager.h"
+#include "world/RegionStreaming.h"
 #include "world/World.h"
+#include "world/WorldDefinition.h"
+#include "world/WorldGraph.h"
 
 namespace zl::game {
 namespace {
@@ -82,6 +101,37 @@ void SetWarning(std::string* warning, const std::string& text) {
 
 int CurrentZombieSpawnHour(const core::GameTime* gameTime) {
     return gameTime != nullptr ? gameTime->Now().hour : 12;
+}
+
+ecs::ZombieVariantKind ParseWorldEventVariant(std::string_view target) {
+    std::string value(target);
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (value.find("armored") != std::string::npos) {
+        return ecs::ZombieVariantKind::Armored;
+    }
+    if (value.find("strong") != std::string::npos ||
+        value.find("brute") != std::string::npos) {
+        return ecs::ZombieVariantKind::Strong;
+    }
+    if (value.find("fast") != std::string::npos ||
+        value.find("runner") != std::string::npos) {
+        return ecs::ZombieVariantKind::Fast;
+    }
+    return ecs::ZombieVariantKind::Normal;
+}
+
+ecs::SkillKind ParseWorldEventSkill(std::string_view skill) {
+    if (skill == "melee") {
+        return ecs::SkillKind::Melee;
+    }
+    if (skill == "building") {
+        return ecs::SkillKind::Building;
+    }
+    if (skill == "crafting") {
+        return ecs::SkillKind::Crafting;
+    }
+    return ecs::SkillKind::Survival;
 }
 
 ecs::DamageType ParseAttackType(const std::string& value, ecs::DamageType fallback) {
@@ -212,9 +262,24 @@ struct WorldSimulation::Impl {
     Options options;
     bool initialized = false;
     glm::vec2 focus{70.0f, 18.0f};
+    std::vector<glm::vec2> focuses;
 
     std::unique_ptr<world::World> world;
     std::unique_ptr<world::ChunkManager> chunks;
+    std::unique_ptr<world::WorldGraph> graph;
+    std::unique_ptr<world::RegionStreaming> regions;
+    std::unique_ptr<RegionEventDirector> regionEvents;
+    std::unique_ptr<WorldEventDirector> worldEvents;
+    WorldEventOutcomeLedger worldEventOutcomes;
+    std::unordered_set<std::string> worldEventContentReady;
+    std::unordered_set<std::string> worldEventContentWarned;
+    std::unordered_set<std::uint64_t> worldEventKilled;
+    ProgressionConfig progressionConfig = DefaultProgressionConfig();
+    std::unique_ptr<StrategicState> strategic;
+    std::unique_ptr<RegionalSiege> regionalSiege;
+    RegionalSiegeConfig regionalSiegeConfig;
+    RegionalSiegeConfig regionalReclaimConfig;
+    std::int64_t strategicGameMinute = 0;
     std::unique_ptr<physics::PhysicsWorld> physics;
     std::unique_ptr<ai::PathfindingService> pathfinding;
     std::unique_ptr<ecs::EcsWorld> ecs;
@@ -680,10 +745,15 @@ bool WorldSimulation::Init(std::string* error) {
     }
 
     const core::Config& config = *s.options.config;
+    s.progressionConfig = LoadProgressionConfig(config);
     const std::string mapDir =
-        config.Get<std::string>("world.mapDir", "assets/maps/village_demo");
+        !s.options.mapDir.empty()
+            ? s.options.mapDir
+            : config.Get<std::string>("world.mapDir", "assets/maps/village_demo");
     world::MapLoader::Meta mapMeta;
     std::string mapError;
+    world::WorldDefinition worldDefinition;
+    bool hasWorldDefinition = false;
     if (!world::MapLoader::LoadMeta(mapDir, &mapMeta, &mapError)) {
         ZL_ERROR("world", "地图元数据加载失败（降级为空世界）: {}", mapError);
         mapMeta = world::MapLoader::Meta{};
@@ -693,15 +763,107 @@ bool WorldSimulation::Init(std::string* error) {
     } else {
         ZL_INFO("world", "地图已加载: {}（{}×{} chunks，默认地面 {}）", mapMeta.name,
                 mapMeta.chunksX, mapMeta.chunksY, mapMeta.defaultFloor);
+        std::string worldError;
+        const world::WorldDefinitionStatus worldStatus =
+            world::LoadWorldDefinition(mapDir, &worldDefinition, &worldError);
+        if (worldStatus == world::WorldDefinitionStatus::Invalid) {
+            return fail("世界描述加载失败: " + worldError);
+        }
+        if (worldStatus == world::WorldDefinitionStatus::Loaded) {
+            hasWorldDefinition = true;
+            ZL_INFO("world", "世界描述已加载: {}（seed={}，generatorVersion={}，mapHash={}）",
+                    worldDefinition.mapId, worldDefinition.seed,
+                    worldDefinition.generatorVersion,
+                    world::FormatMapHash(worldDefinition.mapHash));
+        }
     }
 
     const int loadRadius = config.Get<int>("world.loadRadius", core::kChunkLoadRadius);
+    world::StreamingConfig streamingConfig;
+    streamingConfig.loadRadius = loadRadius;
+    streamingConfig.residentRadius =
+        std::max(loadRadius, config.Get<int>("world.residentRadius", loadRadius + 2));
+    streamingConfig.maxLookaheadChunks =
+        std::max(0, config.Get<int>("world.predictionMaxChunks", 2));
+    streamingConfig.lookaheadSeconds = static_cast<float>(
+        std::max(0.0, config.Get<double>("world.predictionSeconds", 0.6)));
+    // Keep legacy maps permissive; finite-region maps use the explicit bounds.
+    const bool enforceMapBounds =
+        hasWorldDefinition &&
+        config.Get<bool>("world.enforceMapBounds", true);
+
     s.world = std::make_unique<world::World>();
     s.chunks = std::make_unique<world::ChunkManager>(
         *s.world, std::move(mapMeta), *s.options.tasks, loadRadius,
         std::max(1, config.Get<int>("world.chunkRequestBudget", 4)),
         std::max(1, config.Get<int>("world.chunkAttachBudget", 8)),
-        std::max(0.0, config.Get<double>("world.chunkAttachBudgetMs", 2.0)));
+        std::max(0.0, config.Get<double>("world.chunkAttachBudgetMs", 2.0)),
+        streamingConfig.residentRadius, enforceMapBounds);
+    s.chunks->SetPredictionConfig(streamingConfig.maxLookaheadChunks,
+                                  streamingConfig.lookaheadSeconds);
+    if (hasWorldDefinition) {
+        s.graph = std::make_unique<world::WorldGraph>(worldDefinition);
+        if (!s.graph->Valid()) {
+            return fail("world.json 道路图无效");
+        }
+        const glm::vec2 routeStart = s.options.focus;
+        const world::RoadRoute route =
+            s.graph->PlanRoute(routeStart, glm::vec2(300.0f, 280.0f), true);
+        ZL_INFO("world", "道路图: {} 节点/{} 边，出生点→checkpoint 车辆路线 {}，距离 {:.1f}",
+                s.graph->Nodes().size(), s.graph->Edges().size(),
+                route.outcome == world::RoadRoute::Outcome::Found ? "可达" : "不可达",
+                route.totalDistance);
+        s.regions = std::make_unique<world::RegionStreaming>(
+            std::move(worldDefinition), streamingConfig);
+        RegionEventConfig eventConfig;
+        eventConfig.enabled =
+            config.Get<bool>("world.regionEvents.enabled", true);
+        eventConfig.durationSeconds = static_cast<float>(std::max(
+            1.0, config.Get<double>("world.regionEvents.durationSeconds", 240.0)));
+        eventConfig.contentRadius = static_cast<float>(std::max(
+            0.0, config.Get<double>("world.regionEvents.contentRadius", 24.0)));
+        s.regionEvents = std::make_unique<RegionEventDirector>(
+            s.regions->Definition(), eventConfig);
+        ZL_INFO("events", "区域事件导演已启用：{} 个区域，持续 {:.0f}s，近距 {:.0f} 格",
+                s.regions->Definition().regions.size(),
+                static_cast<double>(eventConfig.durationSeconds),
+                static_cast<double>(eventConfig.contentRadius));
+
+        if (s.options.worldEvents != nullptr &&
+            s.options.worldEvents->enabled &&
+            !s.regions->Definition().regions.empty()) {
+            WorldEventDirectorConfig worldEventConfig;
+            worldEventConfig.detailRadius = static_cast<float>(std::max(
+                0.0, config.Get<double>("worldEvents.detailRadius", 32.0)));
+            s.worldEvents = std::make_unique<WorldEventDirector>(
+                *s.options.worldEvents, s.regions->Definition(),
+                worldEventConfig);
+            ZL_INFO("events",
+                    "世界事件导演已启用：{} 个定义，{} 个区域",
+                    s.options.worldEvents->defs.size(),
+                    s.regions->Definition().regions.size());
+        }
+
+        if (s.options.strategic != nullptr && s.options.strategic->enabled) {
+            std::string strategicError;
+            if (!ValidateStrategicAgainstWorld(*s.options.strategic,
+                                               s.regions->Definition(),
+                                               &strategicError)) {
+                return fail("战略配置与 world.json 不匹配：" + strategicError);
+            }
+            s.strategic = std::make_unique<StrategicState>();
+            if (!s.strategic->Initialize(*s.options.strategic,
+                                         &strategicError)) {
+                s.strategic.reset();
+                return fail("战略状态初始化失败：" + strategicError);
+            }
+            ZL_INFO("strategic",
+                    "战略状态已初始化：{} 个区域，初始资源 人{} 补给{} 弹药{} 燃料{}",
+                    s.strategic->regions.size(), s.strategic->resources.people,
+                    s.strategic->resources.supplies,
+                    s.strategic->resources.ammo, s.strategic->resources.fuel);
+        }
+    }
 
     s.physics = std::make_unique<physics::PhysicsWorld>();
     const world::MapLoader::Meta& loadedMeta = s.chunks->Map();
@@ -749,10 +911,19 @@ bool WorldSimulation::Init(std::string* error) {
             if (s.options.activeSaveId != nullptr && !s.options.activeSaveId->empty() &&
                 (s.options.activeSaveUseBackup == nullptr ||
                  !*s.options.activeSaveUseBackup) &&
-                s.options.saveManager != nullptr) {
+                s.options.saveManager != nullptr && chunk.IsDirty()) {
                 std::string saveError;
-                if (!s.options.saveManager->SaveChunk(*s.options.activeSaveId, chunk,
-                                                       &saveError)) {
+                save::ChunkDiff diff;
+                if (!save::CaptureChunkDiff(chunk, &diff, &saveError)) {
+                    ZL_WARN("save", "chunk ({},{}) 卸载快照失败：{}", cx, cy, saveError);
+                } else if (s.options.saveService != nullptr) {
+                    if (!s.options.saveService->RequestChunk(
+                            *s.options.activeSaveId, std::move(diff), &saveError)) {
+                        ZL_WARN("save", "chunk ({},{}) 提交流式写入失败：{}", cx, cy,
+                                saveError);
+                    }
+                } else if (!s.options.saveManager->SaveChunkDiff(
+                               *s.options.activeSaveId, diff, &saveError)) {
                     ZL_WARN("save", "chunk ({},{}) 卸载存档失败：{}", cx, cy, saveError);
                 }
             }
@@ -967,6 +1138,10 @@ bool WorldSimulation::Init(std::string* error) {
             }
         },
         s.virtualHordes, spawnParams);
+    if (s.graph != nullptr) {
+        s.spawnLodSystem->SetDensityScale(
+            s.graph->DensityScaleAt(s.focus.x, s.focus.y));
+    }
 
     s.playerMaxHp = static_cast<float>(config.Get<double>("health.playerMaxHp", 100.0));
     s.playerStartHp = static_cast<float>(
@@ -1305,6 +1480,160 @@ bool WorldSimulation::Init(std::string* error) {
             event.staggerSeconds = 0.2f;
             return s.combatSystem->ApplyDamage(*s.ecs, target, event);
         });
+    if (s.options.config != nullptr && s.options.strategic != nullptr &&
+        s.options.strategic->enabled && s.options.settlements != nullptr) {
+        RegionalSiegeConfig siege;
+        siege.enabled =
+            s.options.config->Get<bool>("strategic.siege.enabled", true);
+        siege.warmupSeconds = static_cast<float>(
+            s.options.config->Get<double>("strategic.siege.warmupSeconds",
+                                          10.0));
+        siege.waveIntervalSeconds = static_cast<float>(
+            s.options.config->Get<double>("strategic.siege.waveIntervalSeconds",
+                                          25.0));
+        siege.waves =
+            s.options.config->Get<std::vector<int>>("strategic.siege.waves",
+                                                    {4, 6, 8});
+        siege.maxAlive =
+            s.options.config->Get<int>("strategic.siege.maxAlive", 12);
+        siege.maxWaveSize =
+            s.options.config->Get<int>("strategic.siege.maxWaveSize", 12);
+        siege.breachRadius = static_cast<float>(
+            s.options.config->Get<double>("strategic.siege.breachRadius",
+                                          6.0));
+        siege.lossDelaySeconds = static_cast<float>(
+            s.options.config->Get<double>("strategic.siege.lossDelaySeconds",
+                                          8.0));
+        s.regionalSiegeConfig = siege;
+
+        RegionalSiegeConfig reclaim;
+        reclaim.enabled =
+            s.options.config->Get<bool>("strategic.reclaim.enabled", true);
+        reclaim.warmupSeconds = static_cast<float>(
+            s.options.config->Get<double>("strategic.reclaim.warmupSeconds",
+                                          5.0));
+        reclaim.waveIntervalSeconds = static_cast<float>(
+            s.options.config->Get<double>(
+                "strategic.reclaim.waveIntervalSeconds", 12.0));
+        reclaim.waves =
+            s.options.config->Get<std::vector<int>>("strategic.reclaim.waves",
+                                                    {4, 6});
+        reclaim.maxAlive =
+            s.options.config->Get<int>("strategic.reclaim.maxAlive", 8);
+        reclaim.maxWaveSize =
+            s.options.config->Get<int>("strategic.reclaim.maxWaveSize", 8);
+        reclaim.breachRadius = static_cast<float>(
+            s.options.config->Get<double>("strategic.reclaim.breachRadius",
+                                          4.0));
+        reclaim.lossDelaySeconds = static_cast<float>(
+            s.options.config->Get<double>(
+                "strategic.reclaim.lossDelaySeconds", 6.0));
+        s.regionalReclaimConfig = reclaim;
+
+        RegionalSiegeCallbacks callbacks;
+        callbacks.beginDefense = [&s](std::string_view regionId) {
+            return s.settlementNpcSystem != nullptr &&
+                   s.settlementNpcSystem->BeginExternalDefense(*s.ecs,
+                                                               regionId);
+        };
+        callbacks.beginReclaim = [&s](std::string_view regionId) {
+            return s.settlementNpcSystem != nullptr &&
+                   s.settlementNpcSystem->BeginExternalReclaim(*s.ecs,
+                                                               regionId);
+        };
+        callbacks.spawnWave =
+            [&s](std::string_view regionId, int count, int waveIndex,
+                 ContestedFaction faction) {
+                if (s.settlementNpcSystem == nullptr) {
+                    return 0;
+                }
+                return s.settlementNpcSystem->SpawnExternalWave(
+                    *s.ecs, regionId, count, waveIndex, faction);
+            };
+        callbacks.aliveEnemies = [&s](std::string_view regionId) {
+            return s.settlementNpcSystem != nullptr
+                       ? s.settlementNpcSystem->LiveRaiders(*s.ecs, regionId)
+                       : 0;
+        };
+        callbacks.aliveGuards = [&s](std::string_view regionId) {
+            return s.settlementNpcSystem != nullptr
+                       ? s.settlementNpcSystem->LiveGuards(*s.ecs, regionId)
+                       : 0;
+        };
+        callbacks.raidersWithin =
+            [&s](std::string_view regionId, float x, float y, float radius) {
+                return s.settlementNpcSystem != nullptr
+                           ? s.settlementNpcSystem->RaidersWithin(
+                                 *s.ecs, regionId, x, y, radius)
+                           : 0;
+            };
+        callbacks.endDefense =
+            [&s](std::string_view regionId, bool fallen,
+                 std::string_view reason) {
+                if (s.settlementNpcSystem != nullptr) {
+                    s.settlementNpcSystem->EndExternalDefense(
+                        *s.ecs, regionId, fallen, reason);
+                }
+            };
+        callbacks.endReclaim =
+            [&s](std::string_view regionId, bool held,
+                 std::string_view reason) {
+                if (s.settlementNpcSystem != nullptr) {
+                    s.settlementNpcSystem->EndExternalReclaim(
+                        *s.ecs, regionId, held, reason);
+                }
+            };
+        callbacks.onResult = [&s](const RegionalSiegeResult& result) {
+            if (s.strategic == nullptr || s.options.strategic == nullptr) {
+                return;
+            }
+            StrategicDetailedResolution resolution;
+            resolution.regionId = result.regionId;
+            resolution.attackMinute = result.attackMinute;
+            resolution.resolvedMinute = result.resolvedMinute;
+            resolution.held = result.held;
+            resolution.breached = result.breached;
+            resolution.rating = result.rating;
+            std::string error;
+            const bool resolved =
+                result.reclaim
+                    ? ResolveStrategicReclaim(
+                          *s.strategic, *s.options.strategic,
+                          StrategicReclaimResolution{
+                              result.regionId, result.attackMinute,
+                              result.resolvedMinute, result.held,
+                              result.breached, result.rating},
+                          &error)
+                    : ResolveStrategicSiege(*s.strategic,
+                                            *s.options.strategic, resolution,
+                                            &error);
+            if (!resolved) {
+                ZL_ERROR("strategic", "详细围攻结果回写失败：{}", error);
+                return;
+            }
+            if (!result.reclaim && !result.held &&
+                s.settlementNpcSystem != nullptr &&
+                !result.settlementId.empty()) {
+                s.settlementNpcSystem->MarkFallen(*s.ecs,
+                                                  result.settlementId);
+            }
+            ZL_INFO(
+                "strategic",
+                "详细{}结束：{} {}，评级 {}，波次 {}/{}，击杀 {}，守卫 {}/{}，破口 {}，残敌 {}",
+                result.reclaim ? "反攻" : "围攻", result.regionId,
+                result.held ? "守住" : "失守", result.rating,
+                result.wavesSpawned, result.waveCount, result.kills,
+                result.guardsEnd, result.guardsStart,
+                result.breached
+                    ? BaseSiegeDirectionName(result.breachDirection)
+                    : "无",
+                result.raidersLeft);
+        };
+        s.regionalSiege = std::make_unique<RegionalSiege>();
+        s.regionalSiege->Configure(siege, std::move(callbacks));
+        s.regionalSiege->ConfigureReclaim(reclaim);
+    }
+
     s.deathSystem = std::make_unique<characters::DeathSystem>(
         s.physics.get(), deathFallSeconds, s.options.events);
 
@@ -1359,15 +1688,18 @@ bool WorldSimulation::Init(std::string* error) {
                 value, *s.world, dt, s.currentWeather.wetnessIntensity);
         }
         const game::FireParams& params = s.fireSystem->Params();
+        std::vector<game::FireDamageCredit>* credits =
+            s.fireSystem->MutableDamageCredits();
         if (s.combatSystem != nullptr) {
-            (void)game::ApplyBurningZombieDamage(value, *s.combatSystem,
-                                                 params, dt);
+            (void)game::ApplyBurningZombieDamage(
+                value, *s.combatSystem, params, dt, credits);
         }
         s.fireDamageAccumulator += dt;
         if (s.combatSystem != nullptr &&
             s.fireDamageAccumulator >= params.fireDamageIntervalSeconds) {
-            (void)game::ApplyFireDamage(value, *s.combatSystem, params,
-                                        s.fireDamageAccumulator);
+            (void)game::ApplyFireDamage(
+                value, *s.combatSystem, params, s.fireDamageAccumulator,
+                credits);
             s.fireDamageAccumulator = 0.0f;
         }
     });
@@ -1502,7 +1834,159 @@ bool WorldSimulation::Init(std::string* error) {
     });
     systems.AddSystem("SpawnLodSystem", [&s](ecs::EcsWorld& value, float dt) {
         s.spawnLodSystem->SetFocus(s.focus.x, s.focus.y);
+        s.spawnLodSystem->SetDensityScale(
+            s.graph != nullptr ? s.graph->DensityScaleAt(s.focus.x, s.focus.y)
+                               : 1.0f);
         s.spawnLodSystem->Update(value, dt);
+    });
+    systems.AddSystem("RegionEventSystem", [this, &s](ecs::EcsWorld&, float dt) {
+        if (s.regionEvents == nullptr || s.regions == nullptr) {
+            return;
+        }
+        int day = 1;
+        if (s.options.gameTime != nullptr) {
+            day = 1 + static_cast<int>(
+                          s.options.gameTime->TotalGameMinutes() / 1440.0);
+        }
+        s.regionEvents->AdvanceDay(day);
+        s.regionEvents->UpdateFocuses(
+            dt, s.focuses,
+            [&s](const std::string& regionId) {
+                return s.regions->PhaseOf(regionId);
+            },
+            [this](const RegionEvent& event) {
+                return SpawnRegionEventContent(event);
+            });
+    });
+    systems.AddSystem("WorldEventSystem", [this, &s](ecs::EcsWorld& value, float) {
+        if (s.worldEvents == nullptr || s.options.gameTime == nullptr) {
+            return;
+        }
+        s.worldEvents->Update(s.options.gameTime->TotalGameMinutes(),
+                              s.focuses);
+        const WorldEventConfig* config = s.options.worldEvents;
+        if (config != nullptr) {
+            for (const WorldEventInstance& event : s.worldEvents->Events()) {
+                if (event.status != WorldEventStatus::Active ||
+                    !event.detail ||
+                    s.worldEventContentReady.contains(event.id)) {
+                    continue;
+                }
+                const WorldEventDef* def = config->Find(event.defId);
+                if (def == nullptr) {
+                    continue;
+                }
+                const WorldEventSpawnPlan plan =
+                    BuildWorldEventSpawnPlan(*def, event);
+                WorldEventSpawnCallbacks callbacks;
+                callbacks.spawn =
+                    [this, &s, &event](const WorldEventSpawnRequest& request) {
+                        const int gridX =
+                            static_cast<int>(std::floor(request.x));
+                        const int gridY =
+                            static_cast<int>(std::floor(request.y));
+                        int wx = 0;
+                        int wy = 0;
+                        if (!ai::FindNearestWalkable(
+                                gridX, gridY, 4,
+                                [&s](int x, int y) { return !s.IsBlocked(x, y); },
+                                &wx, &wy)) {
+                            return false;
+                        }
+                        const float px = static_cast<float>(wx) + 0.5f;
+                        const float py = static_cast<float>(wy) + 0.5f;
+                        if (request.kind == WorldEventSpawnKind::Zombie) {
+                            const ecs::Entity entity = SpawnZombieAt(
+                                px, py,
+                                ParseWorldEventVariant(request.target),
+                                request.stableId);
+                            if (entity == entt::null) {
+                                return false;
+                            }
+                            s.ecs->Registry()
+                                .emplace_or_replace<ecs::WorldEventActor>(
+                                    entity,
+                                    ecs::WorldEventActor{
+                                        request.eventId, request.target,
+                                        request.index});
+                            return true;
+                        }
+                        if (s.options.lootTables == nullptr) {
+                            return false;
+                        }
+                        const std::string tableId =
+                            request.target.empty() ? "event_supply_crate"
+                                                   : request.target;
+                        ecs::Entity entity = game::SpawnLootContainer(
+                            *s.ecs, *s.options.lootTables, tableId, px, py, 0,
+                            "object.crate", request.stableId);
+                        if (entity == entt::null &&
+                            tableId != "event_supply_crate") {
+                            entity = game::SpawnLootContainer(
+                                *s.ecs, *s.options.lootTables,
+                                "event_supply_crate", px, py, 0,
+                                "object.crate", request.stableId);
+                        }
+                        if (entity == entt::null) {
+                            return false;
+                        }
+                        s.ecs->Registry()
+                            .emplace_or_replace<ecs::WorldEventContainer>(
+                                entity,
+                                ecs::WorldEventContainer{request.eventId,
+                                                         request.index});
+                        return true;
+                    };
+                WorldEventSpawnResult result;
+                if (!EnsureWorldEventContent(plan, callbacks, &result)) {
+                    if (s.worldEventContentWarned.insert(event.id).second) {
+                        ZL_WARN("events",
+                                "世界事件内容生成未完成：{}（{}/{}），将重试",
+                                event.name, result.ready, result.total);
+                    }
+                    continue;
+                }
+                s.worldEventContentReady.insert(event.id);
+                s.worldEventContentWarned.erase(event.id);
+                s.worldEvents->MarkContentSpawned(event.id);
+                if (result.total > 0) {
+                    ZL_INFO("events", "世界事件内容：{}（{}）生成 {} 个，位置 ({:.1f},{:.1f})",
+                            event.name, event.defId, result.ready,
+                            static_cast<double>(event.x),
+                            static_cast<double>(event.y));
+                }
+            }
+        }
+        value.Registry()
+            .view<ecs::WorldEventActor, ecs::Health>()
+            .each([&s, &value](const ecs::Entity entity,
+                               const ecs::WorldEventActor& actor,
+                               const ecs::Health& health) {
+                if (health.current > 0.0f || !value.Alive(entity)) {
+                    return;
+                }
+                const std::uint64_t stableId = value.IdOf(entity).id;
+                if (stableId == 0 ||
+                    !s.worldEventKilled.insert(stableId).second) {
+                    return;
+                }
+                const WorldEventInstance* event =
+                    s.worldEvents->Find(actor.eventId);
+                if (event == nullptr ||
+                    event->status != WorldEventStatus::Active) {
+                    return;
+                }
+                if (event->stageKind != WorldEventStageKind::Kill &&
+                    event->stageKind != WorldEventStageKind::Defend) {
+                    return;
+                }
+                std::string error;
+                if (!s.worldEvents->ReportStageProgress(
+                        actor.eventId, event->stageKind, actor.target, 1,
+                        &error)) {
+                    ZL_DEBUG("events", "世界事件击杀推进失败：{}", error);
+                }
+            });
     });
     systems.AddSystem("AnimationSystem", [&s](ecs::EcsWorld& value, float dt) {
         s.animationSystem->Update(value, dt);
@@ -1513,8 +1997,12 @@ bool WorldSimulation::Init(std::string* error) {
                       });
 
     s.focus = s.options.focus;
+    s.focuses = {s.focus};
     if (s.animalSystem != nullptr) {
         s.animalSystem->SetFocus(s.focus.x, s.focus.y);
+    }
+    if (s.regions != nullptr) {
+        s.regions->SetFocuses(s.focuses);
     }
     s.initialized = true;
     ZL_INFO("sim", "模拟已就绪（无窗口可运行）：{} 个系统，世界 {}×{} chunks",
@@ -1559,6 +2047,14 @@ void WorldSimulation::Shutdown() {
     s.perceptionSystem.reset();
     s.pathfinding.reset();
     s.physics.reset();
+    s.graph.reset();
+    s.regionEvents.reset();
+    s.worldEvents.reset();
+    s.worldEventOutcomes.Reset();
+    s.worldEventContentReady.clear();
+    s.worldEventContentWarned.clear();
+    s.worldEventKilled.clear();
+    s.regions.reset();
     s.chunks.reset();
     s.world.reset();
     s.ecs.reset();
@@ -1567,11 +2063,51 @@ void WorldSimulation::Shutdown() {
 }
 
 void WorldSimulation::SetFocus(float gridX, float gridY) {
-    if (std::isfinite(gridX) && std::isfinite(gridY)) {
-        m_impl->focus = glm::vec2(gridX, gridY);
-        if (m_impl->animalSystem != nullptr) {
-            m_impl->animalSystem->SetFocus(gridX, gridY);
+    Impl& s = *m_impl;
+    if (!std::isfinite(gridX) || !std::isfinite(gridY)) {
+        return;
+    }
+    SetFocuses({glm::vec2(gridX, gridY)});
+    if (s.regions != nullptr) {
+        glm::vec2 velocity{0.0f, 0.0f};
+        const ecs::Entity player = Player();
+        if (s.ecs != nullptr && player != entt::null && s.ecs->Alive(player)) {
+            if (const auto* value =
+                    s.ecs->Registry().try_get<ecs::Velocity>(player);
+                value != nullptr) {
+                velocity = glm::vec2(value->x, value->y);
+            }
         }
+        s.regions->SetFocus(gridX, gridY, velocity.x, velocity.y);
+    }
+}
+
+void WorldSimulation::SetFocuses(const std::vector<glm::vec2>& focuses) {
+    Impl& s = *m_impl;
+    std::vector<glm::vec2> valid;
+    valid.reserve(focuses.size());
+    for (const glm::vec2& focus : focuses) {
+        if (std::isfinite(focus.x) && std::isfinite(focus.y)) {
+            valid.push_back(focus);
+        }
+    }
+    if (valid.empty()) {
+        return;
+    }
+    s.focuses = std::move(valid);
+    s.focus = s.focuses.front();
+    if (s.animalSystem != nullptr) {
+        s.animalSystem->SetFocus(s.focus.x, s.focus.y);
+    }
+    if (s.regions != nullptr) {
+        s.regions->SetFocuses(s.focuses);
+    }
+    if (s.spawnLodSystem != nullptr) {
+        s.spawnLodSystem->SetFocus(s.focus.x, s.focus.y);
+    }
+    if (s.graph != nullptr && s.spawnLodSystem != nullptr) {
+        s.spawnLodSystem->SetDensityScale(
+            s.graph->DensityScaleAt(s.focus.x, s.focus.y));
     }
 }
 
@@ -1584,8 +2120,924 @@ void WorldSimulation::Stream() {
     if (!s.initialized || s.chunks == nullptr) {
         return;
     }
-    s.chunks->Update(s.focus.x, s.focus.y);
+    if (s.focuses.size() > 1) {
+        StreamAtFocuses(s.focuses);
+        return;
+    }
+    glm::vec2 velocity{0.0f, 0.0f};
+    const ecs::Entity player = Player();
+    if (s.ecs != nullptr && player != entt::null && s.ecs->Alive(player)) {
+        if (const auto* value = s.ecs->Registry().try_get<ecs::Velocity>(player);
+            value != nullptr) {
+            velocity = glm::vec2(value->x, value->y);
+        }
+    }
+    StreamAt(s.focus.x, s.focus.y, velocity.x, velocity.y);
+}
+
+void WorldSimulation::StreamAt(float focusX, float focusY, float velocityX,
+                               float velocityY) {
+    Impl& s = *m_impl;
+    if (!s.initialized || s.chunks == nullptr || !std::isfinite(focusX) ||
+        !std::isfinite(focusY)) {
+        return;
+    }
+    s.focus = glm::vec2(focusX, focusY);
+    s.focuses = {s.focus};
+    if (s.regions != nullptr) {
+        s.regions->SetFocus(focusX, focusY, velocityX, velocityY);
+        s.chunks->SetPrediction(velocityX, velocityY);
+    } else {
+        // Legacy maps keep the pre-M31 camera-centered window.
+        s.chunks->SetPrediction(0.0f, 0.0f);
+    }
+    s.chunks->Update(focusX, focusY);
     s.chunks->ProcessResults();
+}
+
+void WorldSimulation::StreamAtFocuses(
+    const std::vector<glm::vec2>& focuses) {
+    Impl& s = *m_impl;
+    if (!s.initialized || s.chunks == nullptr) {
+        return;
+    }
+    SetFocuses(focuses);
+    if (s.focuses.empty()) {
+        return;
+    }
+    s.chunks->SetPrediction(0.0f, 0.0f);
+    std::vector<world::ChunkManager::FocusPoint> points;
+    points.reserve(s.focuses.size());
+    for (const glm::vec2& focus : s.focuses) {
+        points.push_back(world::ChunkManager::FocusPoint{focus.x, focus.y});
+    }
+    s.chunks->UpdateFocuses(points);
+    s.chunks->ProcessResults();
+}
+
+world::RegionStreaming* WorldSimulation::Regions() {
+    return m_impl->regions.get();
+}
+
+world::WorldGraph* WorldSimulation::Graph() {
+    return m_impl->graph.get();
+}
+
+RegionEventDirector* WorldSimulation::RegionEvents() {
+    return m_impl->regionEvents.get();
+}
+
+WorldEventDirector* WorldSimulation::WorldEvents() {
+    return m_impl->worldEvents.get();
+}
+
+const WorldEventDirector* WorldSimulation::WorldEvents() const {
+    return m_impl->worldEvents.get();
+}
+
+bool WorldSimulation::ChooseWorldEvent(std::string_view eventId,
+                                       std::string_view choiceId,
+                                       ecs::Entity player,
+                                       WorldEventSettlement* out,
+                                       std::string* error) {
+    if (out != nullptr) {
+        *out = {};
+    }
+    auto fail = [&](std::string message) {
+        if (error != nullptr) {
+            *error = std::move(message);
+        }
+        return false;
+    };
+    Impl& s = *m_impl;
+    if (s.worldEvents == nullptr || s.options.worldEvents == nullptr) {
+        return fail("世界事件不可用");
+    }
+    if (s.ecs == nullptr || player == entt::null || !s.ecs->Alive(player)) {
+        return fail("世界事件玩家无效");
+    }
+    const WorldEventInstance* event = s.worldEvents->Find(eventId);
+    if (event == nullptr) {
+        return fail("世界事件不存在");
+    }
+    if (event->status != WorldEventStatus::Active) {
+        return fail("世界事件未进行中");
+    }
+    const WorldEventDef* def = s.options.worldEvents->Find(event->defId);
+    if (def == nullptr) {
+        return fail("世界事件定义缺失");
+    }
+    const auto choice = std::find_if(
+        def->choices.begin(), def->choices.end(),
+        [choiceId](const WorldEventChoiceDef& value) {
+            return value.id == choiceId;
+        });
+    if (choice == def->choices.end()) {
+        return fail("世界事件选项无效");
+    }
+    if (!s.worldEvents->Choose(eventId, choiceId, error)) {
+        return false;
+    }
+    return SettleWorldEvent(eventId, player, out, error);
+}
+
+bool WorldSimulation::SettleWorldEvent(std::string_view eventId,
+                                       ecs::Entity player,
+                                       WorldEventSettlement* out,
+                                       std::string* error) {
+    if (out != nullptr) {
+        *out = {};
+    }
+    auto fail = [&](std::string message) {
+        if (error != nullptr) {
+            *error = std::move(message);
+        }
+        return false;
+    };
+    Impl& s = *m_impl;
+    if (s.worldEvents == nullptr || s.options.worldEvents == nullptr) {
+        return fail("世界事件不可用");
+    }
+    if (s.ecs == nullptr || player == entt::null || !s.ecs->Alive(player)) {
+        return fail("世界事件玩家无效");
+    }
+    const WorldEventInstance* event = s.worldEvents->Find(eventId);
+    if (event == nullptr) {
+        return fail("世界事件不存在");
+    }
+    const WorldEventDef* def = s.options.worldEvents->Find(event->defId);
+    if (def == nullptr) {
+        return fail("世界事件定义缺失");
+    }
+    WorldEventOutcome outcome;
+    std::string outcomeError;
+    if (!BuildWorldEventOutcome(*def, *event, &outcome, &outcomeError)) {
+        return fail(outcomeError.empty() ? "世界事件结果无效"
+                                         : outcomeError);
+    }
+    if (out != nullptr) {
+        out->choiceId = outcome.choiceId;
+    }
+    const std::uint64_t playerId = s.ecs->IdOf(player).id;
+    if (playerId == 0) {
+        return fail("世界事件玩家 StableId 无效");
+    }
+    if (s.worldEventOutcomes.Contains(event->id, playerId)) {
+        if (out != nullptr) {
+            out->alreadyApplied = true;
+        }
+        if (error != nullptr) {
+            error->clear();
+        }
+        return true;
+    }
+    if (!s.worldEventOutcomes.Claim(event->id, playerId)) {
+        return fail("世界事件结果重复或超出上限");
+    }
+
+    const std::string key = WorldEventOutcomeKey(event->id, playerId);
+    if (outcome.reputation != 0 && s.options.settlements != nullptr &&
+        s.options.settlements->reputation.enabled) {
+        const SettlementDef* settlement = FindSettlementContaining(
+            *s.options.settlements, event->x, event->y);
+        if (settlement != nullptr) {
+            const SettlementReputationChange change =
+                AwardSettlementReputationDelta(
+                    *s.ecs, player, s.options.settlements->reputation,
+                    settlement->id, outcome.reputation, key,
+                    settlement->startingReputation);
+            if (out != nullptr) {
+                out->reputationDelta = change.delta;
+                out->reputationScore = change.current;
+            }
+        }
+    }
+
+    if (outcome.pressure != 0 && s.strategic != nullptr &&
+        s.options.strategic != nullptr) {
+        std::int64_t gameMinute = s.strategicGameMinute;
+        if (s.options.gameTime != nullptr) {
+            gameMinute = std::max<std::int64_t>(
+                0, static_cast<std::int64_t>(
+                       std::floor(s.options.gameTime->TotalGameMinutes())));
+        }
+        StrategicWorldEventResult pressure;
+        if (!ApplyStrategicWorldEventEffect(
+                *s.strategic, *s.options.strategic, event->regionId,
+                outcome.pressure, event->id, gameMinute, &pressure, error)) {
+            return false;
+        }
+        if (out != nullptr) {
+            out->pressureDelta = pressure.applied ? outcome.pressure : 0;
+            out->pressureBefore = pressure.pressureBefore;
+            out->pressureAfter = pressure.pressureAfter;
+        }
+    }
+
+    if (outcome.xp > 0.0f && s.progressionConfig.enabled && s.ecs != nullptr) {
+        auto* progression =
+            s.ecs->Registry().try_get<ecs::Progression>(player);
+        if (progression != nullptr) {
+            const ecs::SkillKind skill = ParseWorldEventSkill(outcome.skill);
+            (void)AwardXp(*progression, skill, outcome.xp,
+                           s.progressionConfig);
+            RefreshDerived(*progression, s.progressionConfig);
+            if (out != nullptr) {
+                out->xp = outcome.xp;
+            }
+        }
+    }
+
+    if (out != nullptr) {
+        out->item = outcome.item;
+        out->itemCount = outcome.itemCount;
+    }
+    if (!outcome.item.empty() && s.options.items != nullptr) {
+        const items::ItemDef* itemDef =
+            s.options.items->Find(outcome.item);
+        if (itemDef != nullptr) {
+            ecs::ItemInstance item{outcome.item,
+                                   std::max(1, outcome.itemCount), 1.0f};
+            auto* container =
+                s.ecs->Registry().try_get<ecs::Container>(player);
+            const auto* position =
+                s.ecs->Registry().try_get<ecs::Position>(player);
+            const int added =
+                container != nullptr
+                    ? items::AddItem(*container, *s.options.items, item)
+                    : 0;
+            if (added < item.count && position != nullptr) {
+                ecs::ItemInstance remainder = item;
+                remainder.count -= added;
+                if (SpawnGroundItem(*s.ecs, *s.options.items, remainder,
+                                    position->x, position->y,
+                                    position->z) != entt::null &&
+                    out != nullptr) {
+                    out->itemDropped = true;
+                }
+            }
+        }
+    }
+
+    if (out != nullptr) {
+        out->applied = true;
+    }
+    if (error != nullptr) {
+        error->clear();
+    }
+    ZL_INFO("events",
+            "世界事件结果：{}（{}）选择={}，声望 {:+d}，压力 {:+d}，经验 {:.0f}，物品 {}{}",
+            def->name, def->id, outcome.choiceId, outcome.reputation,
+            outcome.pressure, static_cast<double>(outcome.xp),
+            outcome.item.empty() ? "无" : outcome.item,
+            out != nullptr && out->itemDropped ? "（背包已满，部分掉落）" : "");
+    return true;
+}
+
+StrategicState* WorldSimulation::Strategic() {
+    return m_impl->strategic.get();
+}
+
+const StrategicState* WorldSimulation::Strategic() const {
+    return m_impl->strategic.get();
+}
+
+const StrategicConfig* WorldSimulation::StrategicSettings() const {
+    return m_impl->options.strategic;
+}
+
+bool WorldSimulation::TickStrategic(const StrategicTickInput& input,
+                                    StrategicTickReport* report,
+                                    std::string* error) {
+    m_impl->strategicGameMinute = input.gameMinute;
+    if (m_impl->strategic == nullptr || m_impl->options.strategic == nullptr) {
+        return true;
+    }
+    StrategicTickReport local;
+    StrategicTickReport* out = report != nullptr ? report : &local;
+    if (!game::AdvanceStrategic(*m_impl->strategic,
+                                *m_impl->options.strategic, input, out,
+                                error)) {
+        return false;
+    }
+    const auto settlementForRegion =
+        [this](std::string_view regionId) -> std::string {
+        Impl& s = *m_impl;
+        if (s.options.settlements == nullptr || s.options.strategic == nullptr) {
+            return {};
+        }
+        const StrategicRegionConfig* def =
+            s.options.strategic->Find(regionId);
+        if (def == nullptr || !def->hasAnchor) {
+            return {};
+        }
+        const SettlementDef* settlement =
+            FindSettlementContaining(*s.options.settlements, def->anchorX,
+                                     def->anchorY);
+        return settlement != nullptr ? settlement->id : std::string{};
+    };
+    for (const std::string& regionId : out->detailedRegions) {
+        if (m_impl->regionalSiege != nullptr &&
+            m_impl->regionalSiege->Active() &&
+            std::string_view(m_impl->regionalSiege->RegionId()) == regionId) {
+            continue;
+        }
+        if (!StartRegionalSiege(regionId)) {
+            ZL_WARN("strategic", "战略区域未能启动详细围攻：{}", regionId);
+        }
+    }
+    for (const std::string& regionId : out->recoveryRegions) {
+        if (m_impl->regionalSiege != nullptr &&
+            m_impl->regionalSiege->Active() &&
+            std::string_view(m_impl->regionalSiege->RegionId()) == regionId) {
+            continue;
+        }
+        if (!StartRegionalReclaim(regionId)) {
+            ZL_WARN("strategic", "战略区域未能启动反攻波次：{}", regionId);
+        }
+    }
+    for (const std::string& regionId : out->completedRecoveries) {
+        const std::string settlementId = settlementForRegion(regionId);
+        if (!settlementId.empty() && m_impl->settlementNpcSystem != nullptr) {
+            m_impl->settlementNpcSystem->RestoreSettlement(
+                *m_impl->ecs, settlementId);
+        }
+        ZL_INFO("strategic", "区域恢复 Human：{}", regionId);
+    }
+    for (const StrategicEconomyInfo& economy : out->economy) {
+        ZL_INFO("strategic",
+                "战略经济：第 {} 日（{} 天）产出补给 {}，消耗 {}，短缺 {}，"
+                "区域补给恢复 {}，工事修复 {}，交易弹药 {} 燃料 {}",
+                economy.day, economy.days, economy.producedSupplies,
+                economy.consumedSupplies, economy.shortageSupplies,
+                economy.restoredRegionSupply, economy.repairedFortification,
+                economy.tradedAmmo, economy.tradedFuel);
+    }
+    for (const StrategicWarningInfo& warning : out->warnings) {
+        ZL_INFO("strategic",
+                "战略预警：{} 于 {} 分钟后受袭，防御 {}（守军 {} + 工事 {} + "
+                "补给 {}）vs 敌约 {}/{}（情报 {}，预计 {}）",
+                warning.regionId, warning.warningMinutes, warning.defenseScore,
+                warning.defenseFromGarrison, warning.defenseFromFortification,
+                warning.defenseFromSupply, warning.reportedEnemyStrength,
+                warning.enemyStrength, warning.intelLevel,
+                warning.reportedAttackMinute);
+    }
+    for (const StrategicResolutionInfo& resolution : out->resolutions) {
+        if (!resolution.held && !resolution.coreProtected &&
+            m_impl->settlementNpcSystem != nullptr) {
+            const std::string settlementId =
+                settlementForRegion(resolution.regionId);
+            if (!settlementId.empty()) {
+                m_impl->settlementNpcSystem->MarkFallen(
+                    *m_impl->ecs, settlementId);
+            }
+        }
+        ZL_INFO("strategic",
+                "战略自动结算：{} {}，防御 {}（守军 {} + 工事 {} + 补给 {}）"
+                "vs 敌军 {}；守军 {}/{}，人口 {}/{}，工事 {}/{}，设施损伤 "
+                "{}/{}，区域补给 {}/{}{}",
+                resolution.regionId,
+                resolution.held ? "守住" : "失守",
+                resolution.defenseScore, resolution.defenseFromGarrison,
+                resolution.defenseFromFortification,
+                resolution.defenseFromSupply, resolution.enemyStrength,
+                resolution.garrisonBefore, resolution.garrisonAfter,
+                resolution.populationBefore, resolution.populationAfter,
+                resolution.fortificationBefore, resolution.fortificationAfter,
+                resolution.facilityDamageBefore,
+                resolution.facilityDamageAfter, resolution.regionSupplyBefore,
+                resolution.regionSupplyAfter,
+                resolution.coreProtected ? "（核心区转争夺）" : "");
+    }
+    return true;
+}
+
+bool WorldSimulation::ClearRegionalRecoveryCore(
+    std::string_view regionId, std::string* error) {
+    Impl& s = *m_impl;
+    if (s.strategic == nullptr || s.options.strategic == nullptr) {
+        if (error != nullptr) {
+            *error = "战略状态不可用";
+        }
+        return false;
+    }
+    if (!game::ClearStrategicRecoveryCore(
+            *s.strategic, *s.options.strategic, regionId, s.strategicGameMinute,
+            error)) {
+        return false;
+    }
+    ZL_INFO("strategic", "感染核心已清理：{}，下一步修复设施", regionId);
+    return true;
+}
+
+bool WorldSimulation::RepairRegionalRecoveryFacility(
+    std::string_view regionId, std::string* error) {
+    Impl& s = *m_impl;
+    if (s.strategic == nullptr || s.options.strategic == nullptr) {
+        if (error != nullptr) {
+            *error = "战略状态不可用";
+        }
+        return false;
+    }
+    if (!game::RepairStrategicRecoveryFacility(
+            *s.strategic, *s.options.strategic, regionId, s.strategicGameMinute,
+            error)) {
+        return false;
+    }
+    ZL_INFO("strategic", "区域设施已修复：{}，准备反攻波次", regionId);
+    return true;
+}
+
+bool WorldSimulation::GrantStrategicMissionReward(std::string_view missionId,
+                                                  std::string* error) {
+    Impl& s = *m_impl;
+    if (s.strategic == nullptr || s.options.strategic == nullptr) {
+        if (error != nullptr) {
+            *error = "战略状态不可用";
+        }
+        return false;
+    }
+    if (!game::ApplyStrategicMissionReward(
+            *s.strategic, *s.options.strategic, missionId, s.strategicGameMinute,
+            error)) {
+        return false;
+    }
+    if (s.options.strategic->economy.FindMission(missionId) != nullptr) {
+        ZL_INFO("strategic", "任务战略奖励已结算：{}（{}）", missionId,
+                s.strategicGameMinute);
+    }
+    return true;
+}
+
+bool WorldSimulation::DonateStrategicSupply(std::string_view regionId,
+                                            int amount,
+                                            std::uint64_t donorStableId,
+                                            std::string* error,
+                                            int* deliveredOut) {
+    if (deliveredOut != nullptr) {
+        *deliveredOut = 0;
+    }
+    auto fail = [&](std::string message) {
+        if (error != nullptr) {
+            *error = std::move(message);
+        }
+        return false;
+    };
+    Impl& s = *m_impl;
+    if (s.strategic == nullptr || s.options.strategic == nullptr) {
+        return fail("战略状态不可用");
+    }
+    if (amount <= 0 || amount > 50) {
+        return fail("支援补给数量非法");
+    }
+    StrategicRegionState* region = s.strategic->FindRegion(regionId);
+    if (region == nullptr) {
+        return fail("战略区域不存在");
+    }
+    if (region->owner != StrategicOwner::Human &&
+        region->owner != StrategicOwner::Contested) {
+        return fail("只能支援人类或争夺中的区域");
+    }
+    if (region->supply >= 100.0f) {
+        return fail("目标区域补给已满");
+    }
+    if (s.strategic->resources.supplies < amount) {
+        return fail("战略补给不足");
+    }
+    const int capacity = std::max(
+        0, 100 - static_cast<int>(std::ceil(region->supply)));
+    const int delivered = std::min(amount, capacity);
+    if (delivered <= 0) {
+        return fail("目标区域补给已满");
+    }
+    const std::string eventId =
+        "support." + std::string(regionId) + "." +
+        std::to_string(s.strategicGameMinute) + "." +
+        std::to_string(donorStableId);
+    if (s.strategic->FindEvent(eventId) != nullptr) {
+        return fail("重复支援请求");
+    }
+    const float before = region->supply;
+    region->supply += static_cast<float>(delivered);
+    StrategicResources delta;
+    delta.supplies = -delivered;
+    if (!s.strategic->ApplyResourceDelta(regionId, delta, eventId,
+                                        s.strategicGameMinute, error)) {
+        region->supply = before;
+        return false;
+    }
+    if (deliveredOut != nullptr) {
+        *deliveredOut = delivered;
+    }
+    ZL_INFO("strategic",
+            "战略支援：{} +{} 区域补给（全球补给 -{}，玩家 {}）",
+            regionId, delivered, delivered,
+            static_cast<unsigned long long>(donorStableId));
+    return true;
+}
+
+bool WorldSimulation::StartRegionalSiege(std::string_view regionId) {
+    Impl& s = *m_impl;
+    if (s.regionalSiege == nullptr || s.strategic == nullptr ||
+        s.options.strategic == nullptr || s.regions == nullptr) {
+        return false;
+    }
+    StrategicRegionState* region = s.strategic->FindRegion(regionId);
+    const StrategicRegionConfig* def =
+        s.options.strategic->Find(regionId);
+    if (region == nullptr || def == nullptr ||
+        region->siegePhase != StrategicSiegePhase::Active) {
+        return false;
+    }
+    if (s.regionalSiege->Active()) {
+        return std::string_view(s.regionalSiege->RegionId()) == regionId;
+    }
+
+    float anchorX = 0.0f;
+    float anchorY = 0.0f;
+    if (def->hasAnchor) {
+        anchorX = def->anchorX;
+        anchorY = def->anchorY;
+    } else {
+        const world::WorldDefinition& world = s.regions->Definition();
+        const auto found = std::find_if(
+            world.regions.begin(), world.regions.end(),
+            [&](const world::WorldRegion& item) {
+                return item.id == regionId;
+            });
+        if (found == world.regions.end()) {
+            return false;
+        }
+        anchorX = static_cast<float>(found->rect.chunkX * core::kChunkSize) +
+                  static_cast<float>(found->rect.chunksW *
+                                     core::kChunkSize) /
+                      2.0f;
+        anchorY = static_cast<float>(found->rect.chunkY * core::kChunkSize) +
+                  static_cast<float>(found->rect.chunksH *
+                                     core::kChunkSize) /
+                      2.0f;
+    }
+
+    std::uint64_t seed = s.options.strategic->seed;
+    for (const unsigned char c : region->id) {
+        seed ^= static_cast<std::uint64_t>(c);
+        seed *= 1099511628211ull;
+    }
+    seed ^= static_cast<std::uint64_t>(
+                std::max<std::int64_t>(0, region->nextAttackMinute)) *
+            0x9e3779b97f4a7c15ull;
+    seed ^= seed >> 30u;
+    seed *= 0xbf58476d1ce4e5b9ull;
+    seed ^= seed >> 27u;
+    BaseSiegePlanInput planInput;
+    planInput.centerX = anchorX;
+    planInput.centerY = anchorY;
+    planInput.fallbackSeed = seed;
+    const BaseSiegeAttackPlan plan = MakeBaseSiegeAttackPlan({}, planInput);
+
+    const SettlementDef* settlement =
+        s.options.settlements != nullptr
+            ? FindSettlementContaining(*s.options.settlements, anchorX, anchorY)
+            : nullptr;
+
+    RegionalSiegeStart start;
+    start.regionId = region->id;
+    start.settlementId =
+        settlement != nullptr ? settlement->id : std::string{};
+    const StrategicRegionConfig* opposing =
+        s.options.strategic->Find(region->id);
+    start.contestedFaction = opposing != nullptr
+                                 ? opposing->contestedFaction
+                                 : ContestedFaction::Infected;
+    start.regionName = WorldMapRegionName(region->id);
+    start.centerX = anchorX;
+    start.centerY = anchorY;
+    start.attackMinute =
+        region->nextAttackMinute >= 0 ? region->nextAttackMinute
+                                      : s.strategicGameMinute;
+    const double defense =
+        static_cast<double>(region->defense) +
+        static_cast<double>(region->garrison) *
+            static_cast<double>(s.options.strategic->autoResolve
+                                    .defensePerGarrison) +
+        static_cast<double>(region->fortification) *
+            static_cast<double>(s.options.strategic->autoResolve
+                                    .defensePerFortification) +
+        static_cast<double>(region->supply) *
+            static_cast<double>(s.options.strategic->autoResolve
+                                    .defensePerSupply);
+    start.defenseScore = std::clamp(
+        static_cast<int>(std::llround(defense)), 0, 1000000);
+    start.enemyStrength = std::clamp(
+        static_cast<int>(std::llround(
+            static_cast<double>(std::clamp(region->pressure, 0.0f, 100.0f)) *
+            static_cast<double>(s.options.strategic->autoResolve
+                                    .enemyStrengthPerPressure))),
+        1, 1000000);
+    start.primaryDirection = plan.primaryDirection;
+    start.secondaryDirection = plan.secondaryDirection;
+    if (!s.regionalSiege->Start(start, s.strategicGameMinute)) {
+        return false;
+    }
+    ZL_INFO("strategic",
+            "详细围攻开始：{}（{}），锚点 {:.1f},{:.1f}，{} 波，敌约 {}，防御评分 {}",
+            region->id, start.regionName, static_cast<double>(anchorX),
+            static_cast<double>(anchorY),
+            static_cast<int>(s.regionalSiege->Config().waves.size()),
+            start.enemyStrength, start.defenseScore);
+    return true;
+}
+
+bool WorldSimulation::StartRegionalReclaim(std::string_view regionId) {
+    Impl& s = *m_impl;
+    if (s.regionalSiege == nullptr || s.strategic == nullptr ||
+        s.options.strategic == nullptr || s.options.settlements == nullptr ||
+        s.regions == nullptr) {
+        return false;
+    }
+    StrategicRegionState* region = s.strategic->FindRegion(regionId);
+    const StrategicRegionConfig* def =
+        s.options.strategic->Find(regionId);
+    if (region == nullptr || def == nullptr ||
+        region->owner != StrategicOwner::Infested ||
+        region->recoveryStage != StrategicRecoveryStage::Counterattack ||
+        region->recoveryReadyMinute < 0 ||
+        s.strategicGameMinute < region->recoveryReadyMinute) {
+        return false;
+    }
+    if (s.regionalSiege->Active()) {
+        return std::string_view(s.regionalSiege->RegionId()) == regionId;
+    }
+
+    float anchorX = def->anchorX;
+    float anchorY = def->anchorY;
+    if (!def->hasAnchor) {
+        const world::WorldDefinition& world = s.regions->Definition();
+        const auto found = std::find_if(
+            world.regions.begin(), world.regions.end(),
+            [&](const world::WorldRegion& item) {
+                return item.id == regionId;
+            });
+        if (found == world.regions.end()) {
+            return false;
+        }
+        anchorX = static_cast<float>(found->rect.chunkX * core::kChunkSize) +
+                  static_cast<float>(found->rect.chunksW *
+                                     core::kChunkSize) /
+                      2.0f;
+        anchorY = static_cast<float>(found->rect.chunkY * core::kChunkSize) +
+                  static_cast<float>(found->rect.chunksH *
+                                     core::kChunkSize) /
+                      2.0f;
+    }
+    const SettlementDef* settlement =
+        FindSettlementContaining(*s.options.settlements, anchorX, anchorY);
+    if (settlement == nullptr) {
+        ZL_WARN("strategic", "反攻区域没有可复用的聚落节点：{}", regionId);
+        return false;
+    }
+
+    std::uint64_t seed = s.options.strategic->seed;
+    for (const unsigned char c : region->id) {
+        seed ^= static_cast<std::uint64_t>(c);
+        seed *= 1099511628211ull;
+    }
+    seed ^= static_cast<std::uint64_t>(
+                std::max<std::int64_t>(0, s.strategicGameMinute)) *
+            0x9e3779b97f4a7c15ull;
+    seed ^= seed >> 30u;
+    seed *= 0xbf58476d1ce4e5b9ull;
+    seed ^= seed >> 27u;
+    BaseSiegePlanInput planInput;
+    planInput.centerX = anchorX;
+    planInput.centerY = anchorY;
+    planInput.fallbackSeed = seed;
+    const BaseSiegeAttackPlan plan = MakeBaseSiegeAttackPlan({}, planInput);
+
+    RegionalSiegeStart start;
+    start.regionId = region->id;
+    start.settlementId = settlement->id;
+    start.regionName = WorldMapRegionName(region->id);
+    start.centerX = anchorX;
+    start.centerY = anchorY;
+    start.attackMinute = s.strategicGameMinute;
+    start.defenseScore = 0;
+    start.enemyStrength = std::max(1, static_cast<int>(
+                                           s.regionalReclaimConfig.waves.size() *
+                                           5));
+    start.primaryDirection = plan.primaryDirection;
+    start.secondaryDirection = plan.secondaryDirection;
+    start.reclaim = true;
+    if (!s.regionalSiege->Start(start, s.strategicGameMinute)) {
+        return false;
+    }
+    ZL_INFO("strategic",
+            "区域反攻开始：{}（{}），锚点 {:.1f},{:.1f}，{} 波，聚落 {}", region->id,
+            start.regionName, static_cast<double>(anchorX),
+            static_cast<double>(anchorY),
+            static_cast<int>(s.regionalReclaimConfig.waves.size()),
+            settlement->id);
+    return true;
+}
+
+void WorldSimulation::UpdateRegionalSiege(float dt, bool paused,
+                                          std::string_view playerRegion) {
+    Impl& s = *m_impl;
+    if (s.regionalSiege == nullptr || !s.regionalSiege->Active()) {
+        return;
+    }
+    if (s.strategic == nullptr) {
+        s.regionalSiege->Abort(s.strategicGameMinute, "战略状态不可用");
+        return;
+    }
+    const StrategicRegionState* region =
+        s.strategic->FindRegion(s.regionalSiege->RegionId());
+    const bool reclaim =
+        region != nullptr &&
+        region->recoveryStage == StrategicRecoveryStage::Counterattack;
+    if (region == nullptr ||
+        (reclaim ? region->owner != StrategicOwner::Infested
+                 : region->siegePhase != StrategicSiegePhase::Active)) {
+        s.regionalSiege->Abort(s.strategicGameMinute, "围攻已由战略层结算");
+        return;
+    }
+    if (playerRegion != std::string_view(s.regionalSiege->RegionId())) {
+        s.regionalSiege->Abort(s.strategicGameMinute,
+                               "你离开区域，围攻转为战略自动结算");
+        return;
+    }
+    if (paused) {
+        return;
+    }
+    s.regionalSiege->Update(dt, s.strategicGameMinute, true);
+}
+
+const RegionalSiegeSnapshot& WorldSimulation::RegionalSiegeStatus() const {
+    static const RegionalSiegeSnapshot kEmpty;
+    return m_impl->regionalSiege != nullptr ? m_impl->regionalSiege->Snapshot()
+                                            : kEmpty;
+}
+
+const RegionalSiegeResult& WorldSimulation::RegionalSiegeLastResult() const {
+    static const RegionalSiegeResult kEmpty;
+    return m_impl->regionalSiege != nullptr ? m_impl->regionalSiege->Result()
+                                            : kEmpty;
+}
+
+bool WorldSimulation::CaptureStrategicToManifest(
+    save::WorldManifest* manifest, std::string* error) const {
+    if (m_impl->strategic == nullptr) {
+        return true;
+    }
+    return CaptureStrategicState(*m_impl->strategic, manifest, error);
+}
+
+bool WorldSimulation::RestoreStrategicFromManifest(
+    const save::WorldManifest& manifest, std::string* error) {
+    if (m_impl->strategic == nullptr || m_impl->options.strategic == nullptr) {
+        return true;
+    }
+    if (!RestoreStrategicState(manifest, *m_impl->options.strategic,
+                               m_impl->strategic.get(), error)) {
+        return false;
+    }
+    ZL_INFO("strategic", "战略状态已恢复：{} 个区域，事件 {}，资源 人{} 补给{} 弹药{} 燃料{}",
+            m_impl->strategic->regions.size(),
+            m_impl->strategic->events.size(),
+            m_impl->strategic->resources.people,
+            m_impl->strategic->resources.supplies,
+            m_impl->strategic->resources.ammo,
+            m_impl->strategic->resources.fuel);
+    return true;
+}
+
+bool WorldSimulation::CaptureWorldEventsToManifest(
+    save::WorldManifest* manifest, std::string* error) const {
+    if (manifest == nullptr) {
+        if (error != nullptr) {
+            *error = "world event manifest output is null";
+        }
+        return false;
+    }
+    manifest->worldEvents.clear();
+    manifest->worldEventOutcomes.clear();
+    const Impl& s = *m_impl;
+    if (s.worldEvents == nullptr) {
+        return true;
+    }
+    for (const WorldEventInstance& event : s.worldEvents->Events()) {
+        save::ManifestWorldEvent saved;
+        saved.id = event.id;
+        saved.defId = event.defId;
+        saved.name = event.name;
+        saved.kind = event.kind;
+        saved.regionId = event.regionId;
+        saved.x = event.x;
+        saved.y = event.y;
+        saved.status = static_cast<std::uint8_t>(event.status);
+        saved.stageKind = static_cast<std::uint8_t>(event.stageKind);
+        saved.day = event.day;
+        saved.stageIndex = event.stageIndex;
+        saved.stageProgress = event.stageProgress;
+        saved.stageTarget = event.stageTarget;
+        saved.stageRadius = event.stageRadius;
+        saved.stageTargetId = event.stageTargetId;
+        saved.scheduledMinute = event.scheduledMinute;
+        saved.warningMinute = event.warningMinute;
+        saved.activeMinute = event.activeMinute;
+        saved.deadlineMinute = event.deadlineMinute;
+        saved.resolvedMinute = event.resolvedMinute;
+        saved.chainDepth = event.chainDepth;
+        saved.detail = event.detail;
+        saved.downgraded = event.downgraded;
+        saved.stagesComplete = event.stagesComplete;
+        saved.contentSpawned = event.contentSpawned;
+        saved.choiceId = event.choiceId;
+        saved.nextEventId = event.nextEventId;
+        manifest->worldEvents.push_back(std::move(saved));
+    }
+    manifest->worldEventOutcomes = s.worldEventOutcomes.Keys();
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
+}
+
+bool WorldSimulation::RestoreWorldEventsFromManifest(
+    const save::WorldManifest& manifest, std::string* error) {
+    Impl& s = *m_impl;
+    s.worldEventContentReady.clear();
+    s.worldEventContentWarned.clear();
+    s.worldEventKilled.clear();
+    if (s.worldEvents == nullptr) {
+        s.worldEventOutcomes.Reset();
+        return true;
+    }
+    if (manifest.worldEvents.empty()) {
+        s.worldEvents->Reset();
+    } else {
+        std::vector<WorldEventInstance> events;
+        events.reserve(manifest.worldEvents.size());
+        for (const save::ManifestWorldEvent& saved : manifest.worldEvents) {
+            WorldEventInstance event;
+            event.id = saved.id;
+            event.defId = saved.defId;
+            event.name = saved.name;
+            event.kind = saved.kind;
+            event.regionId = saved.regionId;
+            event.x = saved.x;
+            event.y = saved.y;
+            event.status = static_cast<WorldEventStatus>(saved.status);
+            event.stageKind =
+                static_cast<WorldEventStageKind>(saved.stageKind);
+            event.day = saved.day;
+            event.stageIndex = saved.stageIndex;
+            event.stageProgress = saved.stageProgress;
+            event.stageTarget = saved.stageTarget;
+            event.stageRadius = saved.stageRadius;
+            event.stageTargetId = saved.stageTargetId;
+            event.scheduledMinute = saved.scheduledMinute;
+            event.warningMinute = saved.warningMinute;
+            event.activeMinute = saved.activeMinute;
+            event.deadlineMinute = saved.deadlineMinute;
+            event.resolvedMinute = saved.resolvedMinute;
+            event.chainDepth = saved.chainDepth;
+            event.detail = saved.detail;
+            event.downgraded = saved.downgraded;
+            event.stagesComplete = saved.stagesComplete;
+            event.contentSpawned = saved.contentSpawned;
+            event.choiceId = saved.choiceId;
+            event.nextEventId = saved.nextEventId;
+            events.push_back(std::move(event));
+        }
+        const double now = s.options.gameTime != nullptr
+                               ? s.options.gameTime->TotalGameMinutes()
+                               : 0.0;
+        const int day =
+            s.options.gameTime != nullptr
+                ? 1 + static_cast<int>(
+                          s.options.gameTime->TotalGameMinutes() / 1440.0)
+                : 1;
+        if (!s.worldEvents->Restore(events, day, now, error)) {
+            return false;
+        }
+        for (const save::ManifestWorldEvent& saved : manifest.worldEvents) {
+            if (saved.contentSpawned) {
+                s.worldEventContentReady.insert(saved.id);
+            }
+        }
+    }
+    if (!s.worldEventOutcomes.Restore(manifest.worldEventOutcomes)) {
+        if (error != nullptr) {
+            *error = "世界事件结果账本恢复失败";
+        }
+        return false;
+    }
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
 }
 
 void WorldSimulation::Tick(float dt) {
@@ -1846,6 +3298,116 @@ ecs::Entity WorldSimulation::SpawnZombieAt(float x, float y,
                        stableId, &s.combatRules);
 }
 
+int WorldSimulation::SpawnRegionEventContent(const RegionEvent& event) {
+    Impl& s = *m_impl;
+    if (!s.initialized || s.ecs == nullptr ||
+        !std::isfinite(event.x) || !std::isfinite(event.y)) {
+        return 0;
+    }
+
+    int wx = 0;
+    int wy = 0;
+    if (!ai::FindNearestWalkable(
+            static_cast<int>(std::floor(event.x)),
+            static_cast<int>(std::floor(event.y)), 8,
+            [&s](int x, int y) { return !s.IsBlocked(x, y); }, &wx, &wy)) {
+        return 0;
+    }
+    const float baseX = static_cast<float>(wx) + 0.5f;
+    const float baseY = static_cast<float>(wy) + 0.5f;
+    const auto stableId = [&event](int index) {
+        return game::RandomEventStableId(event.id, event.day, index);
+    };
+    const auto spawnZombie = [&](int index, float dx, float dy,
+                                 ecs::ZombieVariantKind variant) {
+        if (s.IsBlocked(static_cast<int>(std::floor(baseX + dx)),
+                        static_cast<int>(std::floor(baseY + dy)))) {
+            return false;
+        }
+        return SpawnZombieAt(baseX + dx, baseY + dy, variant,
+                             stableId(index)) != entt::null;
+    };
+    const auto spawnContainer = [&](int index, float dx, float dy,
+                                    const char* tableId) {
+        if (s.options.lootTables == nullptr ||
+            s.IsBlocked(static_cast<int>(std::floor(baseX + dx)),
+                        static_cast<int>(std::floor(baseY + dy)))) {
+            return false;
+        }
+        return game::SpawnLootContainer(
+                   *s.ecs, *s.options.lootTables, tableId, baseX + dx,
+                   baseY + dy, 0, "object.crate", stableId(index)) != entt::null;
+    };
+
+    int spawned = 0;
+    switch (event.kind) {
+        case RegionEventKind::Horde: {
+            static constexpr ecs::ZombieVariantKind kVariants[8] = {
+                ecs::ZombieVariantKind::Normal, ecs::ZombieVariantKind::Normal,
+                ecs::ZombieVariantKind::Fast, ecs::ZombieVariantKind::Normal,
+                ecs::ZombieVariantKind::Normal, ecs::ZombieVariantKind::Fast,
+                ecs::ZombieVariantKind::Normal, ecs::ZombieVariantKind::Normal};
+            for (int i = 0; i < 8; ++i) {
+                const float angle = static_cast<float>(i) * 0.7853982f;
+                const float radius = 2.0f + static_cast<float>(i % 3) * 0.65f;
+                if (spawnZombie(i + 1, std::cos(angle) * radius,
+                                std::sin(angle) * radius, kVariants[i])) {
+                    ++spawned;
+                }
+            }
+            break;
+        }
+        case RegionEventKind::Caravan: {
+            for (int i = 0; i < 2; ++i) {
+                const ecs::Entity npc =
+                    s.ecs->CreateWithStableId(stableId(20 + i));
+                if (npc == entt::null) {
+                    continue;
+                }
+                const SettlementNpcKind kind =
+                    i == 0 ? SettlementNpcKind::Merchant
+                           : SettlementNpcKind::Guard;
+                game::ConfigureSettlementNpc(
+                    *s.ecs, npc, "region_event", kind,
+                    baseX + (i == 0 ? -1.0f : 1.0f),
+                    baseY + (i == 0 ? -0.5f : 0.5f), 2.0f);
+                ++spawned;
+            }
+            break;
+        }
+        case RegionEventKind::SupplyDrop:
+            if (spawnContainer(31, 0.0f, 0.0f, "event_supply_crate")) {
+                ++spawned;
+            }
+            if (spawnContainer(32, 1.5f, 0.0f, "event_supply_crate")) {
+                ++spawned;
+            }
+            break;
+        case RegionEventKind::Outbreak:
+            for (int i = 0; i < 5; ++i) {
+                const float offset = static_cast<float>(i) - 2.0f;
+                if (spawnZombie(
+                        i + 1, offset * 0.8f,
+                        static_cast<float>((i % 2 == 0) ? -1 : 1) *
+                            (1.0f + static_cast<float>(i % 3) * 0.5f),
+                        ecs::ZombieVariantKind::Normal)) {
+                    ++spawned;
+                }
+            }
+            if (spawnContainer(40, 0.0f, 0.0f, "event_infected_cache")) {
+                ++spawned;
+            }
+            break;
+    }
+    if (spawned > 0) {
+        ZL_INFO("events", "区域事件内容：{}（{}）生成 {} 个，位置 ({:.1f},{:.1f})",
+                RegionEventKindName(event.kind), event.regionId, spawned,
+                static_cast<double>(event.x),
+                static_cast<double>(event.y));
+    }
+    return spawned;
+}
+
 void WorldSimulation::DespawnEntity(ecs::Entity entity) {
     Impl& s = *m_impl;
     if (!s.initialized || s.ecs == nullptr || entity == entt::null ||
@@ -1995,6 +3557,26 @@ bool WorldSimulation::LoadSave(const std::string& saveId, std::string* error) {
         return fail("读档失败：存档 id 为空");
     }
 
+    save::WorldManifest manifest;
+    bool hasManifest = false;
+    if (s.regions != nullptr) {
+        std::string manifestError;
+        const save::SaveManager::LoadResult manifestResult =
+            s.options.saveManager->ReadWorldManifest(saveId, &manifest,
+                                                     &manifestError);
+        if (manifestResult == save::SaveManager::LoadResult::Ok) {
+            hasManifest = true;
+            std::string mismatch;
+            if (world::CheckWorldSaveCompatibility(
+                    s.regions->Definition(), &manifest.identity,
+                    &mismatch) == world::WorldSaveCompatibility::Mismatch) {
+                return fail(mismatch);
+            }
+        } else if (manifestResult != save::SaveManager::LoadResult::NotFound) {
+            return fail("读档失败：world manifest 不可用：" + manifestError);
+        }
+    }
+
     save::SaveMetadata metadata;
     save::EntitySnapshot snapshot;
     save::SaveManager::LoadReport report;
@@ -2037,6 +3619,46 @@ bool WorldSimulation::LoadSave(const std::string& saveId, std::string* error) {
     }
     if (s.options.gameTime != nullptr) {
         s.options.gameTime->SetTotalGameMinutes(metadata.gameMinutes);
+    }
+    if (s.regionEvents != nullptr) {
+        if (!hasManifest) {
+            s.regionEvents->Reset();
+        } else {
+            std::vector<RegionEvent> restoredEvents;
+            restoredEvents.reserve(manifest.events.size());
+            for (const save::ManifestRegionEvent& saved : manifest.events) {
+                RegionEvent event;
+                event.id = saved.id;
+                event.regionId = saved.regionId;
+                event.kind = static_cast<RegionEventKind>(saved.kind);
+                event.status = static_cast<RegionEventStatus>(saved.status);
+                event.day = saved.day;
+                event.x = saved.x;
+                event.y = saved.y;
+                event.remainingSeconds = saved.remainingSeconds;
+                event.targetCount = saved.targetCount;
+                event.spawnedCount = saved.spawnedCount;
+                event.contentSpawned = saved.contentSpawned;
+                restoredEvents.push_back(std::move(event));
+            }
+            const int day =
+                s.options.gameTime != nullptr
+                    ? 1 + static_cast<int>(
+                              s.options.gameTime->TotalGameMinutes() / 1440.0)
+                    : 1;
+            std::string eventError;
+            if (!s.regionEvents->Restore(restoredEvents, day, &eventError)) {
+                return fail("区域事件状态恢复失败：" + eventError);
+            }
+        }
+    }
+    std::string worldEventError;
+    if (!RestoreWorldEventsFromManifest(manifest, &worldEventError)) {
+        return fail("世界事件状态恢复失败：" + worldEventError);
+    }
+    std::string strategicError;
+    if (!RestoreStrategicFromManifest(manifest, &strategicError)) {
+        return fail("战略状态恢复失败：" + strategicError);
     }
 
     if (s.options.activeSaveId != nullptr) {

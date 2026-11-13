@@ -10,6 +10,7 @@
 #include "game/Missions.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/WorldEvent.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
 #include "items/RecipeRegistry.h"
@@ -32,6 +33,7 @@ struct ContentBundle {
     MissionConfig missionConfig;
     std::string missionSourceJson;
     SettlementConfig settlements;
+    WorldEventConfig worldEvents;
 };
 
 struct ContentBundleResult {
@@ -41,7 +43,8 @@ struct ContentBundleResult {
     bool Ok() const { return bundle != nullptr; }
 };
 
-ContentBundleResult LoadContentBundle(const core::Config& config);
+ContentBundleResult LoadContentBundle(const core::Config& config,
+                                       const core::Config* contentConfig = nullptr);
 
 inline constexpr char kContentReloadNetworkBlockedMessage[] =
     "联机中不支持 mod 内容热重载；请重启服务器和所有客户端后重连";

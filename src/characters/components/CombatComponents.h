@@ -214,6 +214,7 @@ inline DamageCause DamageCauseFromType(DamageType type) {
 struct LastDamage {
     DamageCause cause = DamageCause::Unknown;
     float amount = 0.0f;
+    std::uint64_t sourceId = 0;
 };
 
 // M15-T4：疼痛（纯数据）。baseLevel 由伤口严重度汇总，level 是止痛后的有效值；

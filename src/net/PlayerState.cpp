@@ -203,6 +203,29 @@ bool ValidSettlementProgress(const PlayerState& state) {
     return true;
 }
 
+bool ValidSettlementReputation(const PlayerState& state) {
+    if (state.settlementReputation.size() >
+        kMaxPlayerStateSettlementReputation) {
+        return false;
+    }
+    std::unordered_set<std::string> seen;
+    for (const PlayerSettlementReputation& entry :
+         state.settlementReputation) {
+        if (entry.id.empty() || entry.id.size() > 64 ||
+            !seen.insert(entry.id).second || entry.score < -100 ||
+            entry.score > 100) {
+            return false;
+        }
+        for (const char c : entry.id) {
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                  c == '_' || c == '.')) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool ValidNeeds(const PlayerState& state) {
     const PlayerNeedsState& needs = state.needs;
     if (!std::isfinite(needs.hunger) || !std::isfinite(needs.thirst) ||
@@ -706,6 +729,10 @@ std::vector<std::uint8_t> EncodePlayerState(const PlayerState& state,
         SetError(error, "玩家状态聚落字段非法");
         return {};
     }
+    if (!ValidSettlementReputation(state)) {
+        SetError(error, "玩家状态聚落声望字段非法");
+        return {};
+    }
     if (!ValidNeeds(state)) {
         SetError(error, "玩家状态需求字段非法");
         return {};
@@ -1038,6 +1065,15 @@ std::vector<std::uint8_t> EncodePlayerState(const PlayerState& state,
     writer.F32(state.combat.parryWindowLeft);
     writer.F32(state.combat.guardBreakLeft);
     writer.F32(state.combat.dodgeInvulnLeft);
+
+    writer.U16(static_cast<std::uint16_t>(state.settlementReputation.size()));
+    for (const PlayerSettlementReputation& entry :
+         state.settlementReputation) {
+        if (!writer.String(entry.id, 64, false, error)) {
+            return {};
+        }
+        writer.I32(entry.score);
+    }
 
     if (writer.Bytes().size() > kMaxPlayerStateBytes) {
         SetError(error, "玩家状态超过单包字节上限");
@@ -1671,6 +1707,28 @@ bool DecodePlayerState(std::span<const std::uint8_t> bytes, PlayerState* state,
         decoded.combat.valid = valid != 0;
         if (!ValidCombat(decoded)) {
             SetError(error, "玩家状态战斗数值非法");
+            return false;
+        }
+    }
+    if (version >= 21) {
+        std::uint16_t count = 0;
+        if (!reader.U16(&count) ||
+            count > kMaxPlayerStateSettlementReputation) {
+            SetError(error, "玩家状态聚落声望数量非法");
+            return false;
+        }
+        decoded.settlementReputation.resize(count);
+        for (PlayerSettlementReputation& entry :
+             decoded.settlementReputation) {
+            std::int32_t score = 0;
+            if (!reader.String(&entry.id, 64, false) || !reader.I32(&score)) {
+                SetError(error, "玩家状态聚落声望字段非法");
+                return false;
+            }
+            entry.score = static_cast<int>(score);
+        }
+        if (!ValidSettlementReputation(decoded)) {
+            SetError(error, "玩家状态聚落声望数值非法");
             return false;
         }
     }

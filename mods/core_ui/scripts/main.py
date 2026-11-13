@@ -41,6 +41,58 @@ def refresh_mod_fields(s):
                    "block" if any_visible else "none")
 
 
+def refresh_world_event(s):
+    visible = s.get("worldEventVisible", False)
+    tone = s.get("worldEventTone", "info")
+    UI.SetProperty(DOC, "world-event-panel", "display",
+                   "block" if visible else "none")
+    UI.SetClass(DOC, "world-event-panel", "status-warn", tone == "warn")
+    UI.SetClass(DOC, "world-event-panel", "status-ok", tone == "ok")
+    UI.SetClass(DOC, "world-event-panel", "status-fail", tone == "fail")
+    if not visible:
+        return
+    UI.SetText(DOC, "world-event-meta", s.get("worldEventMeta", ""))
+    UI.SetText(DOC, "world-event-title", s.get("worldEventName", ""))
+    UI.SetText(DOC, "world-event-stage", s.get("worldEventStage", ""))
+    hint = s.get("worldEventHint", "")
+    UI.SetText(DOC, "world-event-hint", hint)
+    UI.SetProperty(DOC, "world-event-hint", "display",
+                   "block" if hint != "" else "none")
+    result = s.get("worldEventResult", "")
+    result_tone = s.get("worldEventResultTone", "ok")
+    UI.SetText(DOC, "world-event-result", result)
+    UI.SetProperty(DOC, "world-event-result", "display",
+                   "block" if result != "" else "none")
+    UI.SetClass(DOC, "world-event-result", "status-ok", result_tone == "ok")
+    UI.SetClass(DOC, "world-event-result", "status-fail", result_tone == "fail")
+    options = s.get("worldEventOptions", []) or []
+    option_count = s.get("worldEventOptionCount", 0)
+    can_choose = s.get("worldEventCanChoose", False)
+    choice_open = s.get("worldEventChoiceOpen", False)
+    any_option = can_choose and option_count > 0
+    UI.SetProperty(DOC, "world-event-options", "display",
+                   "block" if any_option else "none")
+    for i in range(8):
+        option = options[i] if i < len(options) else ""
+        row = "world-event-option-%d" % i
+        show = any_option and i < option_count
+        UI.SetProperty(DOC, row, "display", "block" if show else "none")
+        if show:
+            UI.SetText(DOC, row, option)
+            UI.SetClass(DOC, row, "active", choice_open)
+    logs = s.get("worldEventLog", []) or []
+    log_count = s.get("worldEventLogCount", 0)
+    UI.SetProperty(DOC, "world-event-log", "display",
+                   "block" if log_count > 0 else "none")
+    for i in range(6):
+        line = logs[i] if i < len(logs) else ""
+        row = "world-event-log-%d" % i
+        show = i < log_count
+        UI.SetProperty(DOC, row, "display", "block" if show else "none")
+        if show:
+            UI.SetText(DOC, row, line)
+
+
 def refresh():
     s = Hud.GetState()
     if not s["active"]:
@@ -154,7 +206,10 @@ def refresh():
     UI.SetProperty(DOC, "hud-objective", "display",
                    "block" if (s["objective"] != ""
                                or s.get("missionGuide", "") != ""
-                               or s.get("eventGuide", "") != "") else "none")
+                               or s.get("eventGuide", "") != ""
+                               or s.get("regionGuide", "") != ""
+                               or s.get("settlementGuide", "") != ""
+                               or s.get("strategicGuide", "") != "") else "none")
     UI.SetClass(DOC, "objective-text", "objective-warn", s["objectiveTone"] == "warn")
     UI.SetClass(DOC, "objective-text", "objective-ok", s["objectiveTone"] == "ok")
     UI.SetText(DOC, "objective-hint", s["objectiveHint"])
@@ -182,6 +237,33 @@ def refresh():
     UI.SetClass(DOC, "event-guide", "status-warn", event_tone == "warn")
     UI.SetClass(DOC, "event-guide", "status-ok", event_tone == "ok")
     UI.SetClass(DOC, "event-guide", "status-fail", event_tone == "fail")
+    region_guide = s.get("regionGuide", "")
+    region_tone = s.get("regionTone", "info")
+    UI.SetText(DOC, "region-guide", region_guide)
+    UI.SetProperty(DOC, "region-guide", "display",
+                   "block" if region_guide != "" else "none")
+    UI.SetClass(DOC, "region-guide", "status-warn", region_tone == "warn")
+    UI.SetClass(DOC, "region-guide", "status-ok", region_tone == "ok")
+    settlement_guide = s.get("settlementGuide", "")
+    settlement_tone = s.get("settlementTone", "info")
+    UI.SetText(DOC, "settlement-guide", settlement_guide)
+    UI.SetProperty(DOC, "settlement-guide", "display",
+                   "block" if settlement_guide != "" else "none")
+    UI.SetClass(DOC, "settlement-guide", "status-warn",
+                settlement_tone == "warn")
+    UI.SetClass(DOC, "settlement-guide", "status-fail",
+                settlement_tone == "fail")
+    UI.SetClass(DOC, "settlement-guide", "status-ok",
+                settlement_tone == "ok")
+    strategic_guide = s.get("strategicGuide", "")
+    strategic_tone = s.get("strategicTone", "info")
+    UI.SetText(DOC, "strategic-guide", strategic_guide)
+    UI.SetProperty(DOC, "strategic-guide", "display",
+                   "block" if strategic_guide != "" else "none")
+    UI.SetClass(DOC, "strategic-guide", "status-warn",
+                strategic_tone == "warn")
+    UI.SetClass(DOC, "strategic-guide", "status-fail",
+                strategic_tone == "fail")
 
     UI.SetText(DOC, "siege-status", s["siegeStatus"])
     UI.SetProperty(DOC, "siege-status", "display",
@@ -197,6 +279,7 @@ def refresh():
     UI.SetClass(DOC, "base-status", "status-warn", base_tone == "warn")
     UI.SetClass(DOC, "base-status", "status-fail", base_tone == "fail")
     refresh_mod_fields(s)
+    refresh_world_event(s)
 
     report_open = s.get("siegeReportOpen", False)
     report_tone = s.get("siegeReportTone", "info")

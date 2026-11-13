@@ -1,0 +1,522 @@
+{
+  "format": "zomboidlike-world-content-v1",
+  "mapId": "village_demo_m31",
+  "pois": {
+    "enabled": true,
+    "guideRange": 140.0,
+    "defs": [
+      {
+        "id": "clinic",
+        "name": "废弃诊所",
+        "threat": 2,
+        "markerX": 150.5,
+        "markerY": 64.5,
+        "containers": [
+          {
+            "x": 148.5,
+            "y": 65.5,
+            "tableId": "poi_clinic_medicine",
+            "sprite": "object.crate"
+          },
+          {
+            "x": 150.5,
+            "y": 66.5,
+            "tableId": "poi_clinic_supplies",
+            "sprite": "object.crate"
+          }
+        ],
+        "enemies": {
+          "count": 5,
+          "kind": "mixed",
+          "radius": 7.0
+        },
+        "task": {
+          "description": "清剿诊所守军并搜刮药柜，取回急救物资",
+          "targetTable": "poi_clinic_medicine",
+          "rewardXp": 80.0,
+          "rewardItem": "bandage",
+          "rewardCount": 2
+        }
+      },
+      {
+        "id": "farmstead",
+        "name": "废弃农场",
+        "threat": 2,
+        "markerX": 110.5,
+        "markerY": 210.5,
+        "containers": [
+          {
+            "x": 107.5,
+            "y": 208.5,
+            "tableId": "poi_farm_barn",
+            "sprite": "object.crate"
+          },
+          {
+            "x": 114.5,
+            "y": 208.5,
+            "tableId": "poi_farm_tools",
+            "sprite": "object.crate"
+          }
+        ],
+        "enemies": {
+          "count": 4,
+          "kind": "mixed",
+          "radius": 8.0
+        },
+        "task": {
+          "description": "清理农场守军并搜刮粮仓，带回食物与工具",
+          "targetTable": "poi_farm_barn",
+          "rewardXp": 100.0,
+          "rewardItem": "canned_beans",
+          "rewardCount": 2
+        }
+      },
+      {
+        "id": "river_hut",
+        "name": "河畔补给点",
+        "threat": 2,
+        "markerX": 252.5,
+        "markerY": 224.5,
+        "containers": [
+          {
+            "x": 252.5,
+            "y": 224.5,
+            "tableId": "poi_farm_tools",
+            "sprite": "object.crate"
+          },
+          {
+            "x": 254.5,
+            "y": 225.5,
+            "tableId": "poi_farm_barn",
+            "sprite": "object.crate"
+          }
+        ],
+        "enemies": {
+          "count": 5,
+          "kind": "mixed",
+          "radius": 7.0
+        },
+        "task": {
+          "description": "河畔补给点（资源/危险区）：清剿守军并搜刮工具与口粮",
+          "targetTable": "poi_farm_tools",
+          "rewardXp": 90.0,
+          "rewardItem": "ammo_9mm",
+          "rewardCount": 12
+        }
+      },
+      {
+        "id": "checkpoint",
+        "name": "废弃检查站",
+        "threat": 3,
+        "markerX": 300.5,
+        "markerY": 280.5,
+        "containers": [
+          {
+            "x": 302.5,
+            "y": 278.5,
+            "tableId": "poi_military_armory",
+            "sprite": "object.locker"
+          },
+          {
+            "x": 303.5,
+            "y": 280.5,
+            "tableId": "poi_military_supplies",
+            "sprite": "object.crate"
+          }
+        ],
+        "enemies": {
+          "count": 8,
+          "kind": "strong",
+          "armoredCount": 2,
+          "radius": 9.0
+        },
+        "task": {
+          "description": "危险区：清剿检查站守军并搜刮军械柜，取回巡逻记录",
+          "targetTable": "poi_military_armory",
+          "rewardXp": 130.0,
+          "rewardItem": "ammo_shells",
+          "rewardCount": 6
+        }
+      }
+    ]
+  },
+  "missions": {
+    "enabled": true,
+    "randomSeed": 20261110,
+    "defs": [
+      {
+        "id": "m31_clinic_supply",
+        "name": "诊所急救",
+        "chain": "m31_slice",
+        "order": 1,
+        "kind": "once",
+        "source": "radio",
+        "prerequisite": "",
+        "objectives": [
+          {
+            "kind": "poi",
+            "target": "clinic",
+            "count": 1,
+            "description": "沿主路前往诊所，清剿守军并搜刮药柜"
+          }
+        ],
+        "reward": {
+          "xp": 80.0,
+          "skill": "survival",
+          "item": "bandage",
+          "itemCount": 2,
+          "label": "80 生存经验 + 绷带×2"
+        }
+      },
+      {
+        "id": "m31_farm_supply",
+        "name": "农场粮仓",
+        "chain": "m31_slice",
+        "order": 2,
+        "kind": "once",
+        "source": "radio",
+        "prerequisite": "m31_clinic_supply",
+        "objectives": [
+          {
+            "kind": "poi",
+            "target": "farmstead",
+            "count": 1,
+            "description": "经村庄主路南下，清理农场并搜刮粮仓"
+          }
+        ],
+        "reward": {
+          "xp": 100.0,
+          "skill": "survival",
+          "item": "canned_beans",
+          "itemCount": 2,
+          "label": "100 生存经验 + 罐头豆×2"
+        }
+      },
+      {
+        "id": "m31_river_cache",
+        "name": "河畔补给",
+        "chain": "m31_slice",
+        "order": 3,
+        "kind": "once",
+        "source": "radio",
+        "prerequisite": "m31_farm_supply",
+        "objectives": [
+          {
+            "kind": "poi",
+            "target": "river_hut",
+            "count": 1,
+            "description": "前往河畔补给点（资源/危险区），清剿守军并取回工具"
+          }
+        ],
+        "reward": {
+          "xp": 90.0,
+          "skill": "survival",
+          "item": "ammo_9mm",
+          "itemCount": 12,
+          "label": "90 生存经验 + 9mm 弹药×12"
+        }
+      },
+      {
+        "id": "m31_checkpoint_armory",
+        "name": "检查站军械",
+        "chain": "m31_slice",
+        "order": 4,
+        "kind": "once",
+        "source": "radio",
+        "prerequisite": "m31_river_cache",
+        "objectives": [
+          {
+            "kind": "poi",
+            "target": "checkpoint",
+            "count": 1,
+            "description": "危险区：穿过桥东道路，清剿检查站并搜刮军械柜"
+          }
+        ],
+        "reward": {
+          "xp": 130.0,
+          "skill": "melee",
+          "item": "ammo_shells",
+          "itemCount": 6,
+          "label": "130 近战经验 + 霰弹×6"
+        }
+      },
+      {
+        "id": "m31_return",
+        "name": "带着补给回家",
+        "chain": "m31_slice",
+        "order": 5,
+        "kind": "once",
+        "source": "radio",
+        "prerequisite": "m31_checkpoint_armory",
+        "objectives": [
+          {
+            "kind": "reach",
+            "x": 75.0,
+            "y": 26.5,
+            "radius": 4.0,
+            "count": 1,
+            "description": "沿原路返回村庄营地，交付物资（F12 存档后重载验收）"
+          }
+        ],
+        "reward": {
+          "xp": 150.0,
+          "skill": "survival",
+          "item": "first_aid_kit",
+          "itemCount": 1,
+          "label": "150 生存经验 + 急救包×1"
+        }
+      },
+      {
+        "id": "farm_tools",
+        "name": "农场工具",
+        "chain": "m31_side",
+        "order": 1,
+        "kind": "once",
+        "source": "note",
+        "prerequisite": "m31_farm_supply",
+        "objectives": [
+          {
+            "kind": "loot",
+            "target": "poi_farm_tools",
+            "count": 1,
+            "description": "搜索农场工具柜，取回工具图纸"
+          }
+        ],
+        "reward": {
+          "xp": 60.0,
+          "skill": "survival",
+          "blueprint": "fill_bottle",
+          "label": "60 生存经验 + 图纸：装水（解锁雨水收集器）"
+        }
+      },
+      {
+        "id": "settlement_help",
+        "name": "伤员的药",
+        "chain": "settlement",
+        "order": 1,
+        "kind": "once",
+        "source": "npc",
+        "task": "help",
+        "prerequisite": "",
+        "minDay": 1,
+        "minSettlementReputation": -39,
+        "autoActivate": false,
+        "timeLimitDays": 2,
+        "retryDays": 1,
+        "objectives": [
+          {
+            "kind": "collect",
+            "target": "bandage",
+            "count": 2,
+            "description": "为营地伤员收集绷带"
+          }
+        ],
+        "reward": {
+          "xp": 70.0,
+          "skill": "survival",
+          "item": "antibiotics",
+          "itemCount": 1,
+          "label": "70 生存经验 + 抗生素×1"
+        }
+      },
+      {
+        "id": "settlement_escort",
+        "name": "接应幸存者",
+        "chain": "settlement",
+        "order": 2,
+        "kind": "once",
+        "source": "npc",
+        "task": "escort",
+        "prerequisite": "settlement_help",
+        "minDay": 1,
+        "minSettlementReputation": 0,
+        "autoActivate": false,
+        "timeLimitDays": 3,
+        "retryDays": 1,
+        "objectives": [
+          {
+            "kind": "reach",
+            "x": 150.0,
+            "y": 70.0,
+            "radius": 3.0,
+            "count": 1,
+            "description": "前往诊所南门外接应幸存者"
+          },
+          {
+            "kind": "reach",
+            "x": 75.0,
+            "y": 26.5,
+            "radius": 4.0,
+            "count": 1,
+            "description": "把幸存者护送回村庄营地"
+          }
+        ],
+        "reward": {
+          "xp": 80.0,
+          "skill": "survival",
+          "item": "painkillers",
+          "itemCount": 1,
+          "label": "80 生存经验 + 止痛药×1"
+        }
+      },
+      {
+        "id": "settlement_clear",
+        "name": "营地外围清剿",
+        "chain": "settlement",
+        "order": 3,
+        "kind": "once",
+        "source": "npc",
+        "task": "clear",
+        "prerequisite": "settlement_escort",
+        "minDay": 1,
+        "minSettlementReputation": 20,
+        "autoActivate": false,
+        "timeLimitDays": 2,
+        "retryDays": 1,
+        "objectives": [
+          {
+            "kind": "kill",
+            "target": "any",
+            "count": 6,
+            "description": "清理营地外围的感染者"
+          }
+        ],
+        "reward": {
+          "xp": 90.0,
+          "skill": "melee",
+          "item": "ammo_9mm",
+          "itemCount": 12,
+          "label": "90 近战经验 + 9mm 弹药×12"
+        }
+      },
+      {
+        "id": "settlement_supply",
+        "name": "药房补给",
+        "chain": "settlement",
+        "order": 4,
+        "kind": "once",
+        "source": "npc",
+        "task": "supply",
+        "prerequisite": "settlement_clear",
+        "minDay": 1,
+        "minSettlementReputation": 30,
+        "autoActivate": false,
+        "timeLimitDays": 3,
+        "retryDays": 1,
+        "objectives": [
+          {
+            "kind": "loot",
+            "target": "poi_clinic_supplies",
+            "count": 1,
+            "description": "搜刮诊所物资箱，取回急救药品"
+          },
+          {
+            "kind": "reach",
+            "x": 75.0,
+            "y": 26.5,
+            "radius": 4.0,
+            "count": 1,
+            "description": "把急救药品送回村庄营地"
+          }
+        ],
+        "reward": {
+          "xp": 100.0,
+          "skill": "survival",
+          "item": "antibiotics",
+          "itemCount": 2,
+          "label": "100 生存经验 + 抗生素×2"
+        }
+      },
+      {
+        "id": "north_blood_drive",
+        "name": "诊所血库告急",
+        "chain": "north_clinic",
+        "order": 1,
+        "kind": "once",
+        "source": "npc",
+        "task": "help",
+        "prerequisite": "",
+        "minDay": 1,
+        "minSettlementReputation": -39,
+        "autoActivate": false,
+        "timeLimitDays": 2,
+        "retryDays": 1,
+        "objectives": [
+          {
+            "kind": "collect",
+            "target": "bandage",
+            "count": 3,
+            "description": "为北部诊所补上绷带库存"
+          }
+        ],
+        "reward": {
+          "xp": 75.0,
+          "skill": "survival",
+          "item": "antibiotics",
+          "itemCount": 1,
+          "label": "75 生存经验 + 抗生素×1"
+        }
+      },
+      {
+        "id": "south_harvest_help",
+        "name": "农场的野果",
+        "chain": "south_farm",
+        "order": 1,
+        "kind": "once",
+        "source": "npc",
+        "task": "supply",
+        "prerequisite": "",
+        "minDay": 1,
+        "minSettlementReputation": 0,
+        "autoActivate": false,
+        "timeLimitDays": 3,
+        "retryDays": 1,
+        "objectives": [
+          {
+            "kind": "collect",
+            "target": "wild_berries",
+            "count": 4,
+            "description": "为南部农场补采野果"
+          }
+        ],
+        "reward": {
+          "xp": 65.0,
+          "skill": "survival",
+          "item": "potato_seeds",
+          "itemCount": 4,
+          "label": "65 生存经验 + 土豆种子×4"
+        }
+      },
+      {
+        "id": "river_fish_supply",
+        "name": "桥头的鱼获",
+        "chain": "river_camp",
+        "order": 1,
+        "kind": "once",
+        "source": "npc",
+        "task": "supply",
+        "prerequisite": "",
+        "minDay": 1,
+        "minSettlementReputation": -39,
+        "autoActivate": false,
+        "timeLimitDays": 2,
+        "retryDays": 1,
+        "objectives": [
+          {
+            "kind": "collect",
+            "target": "small_fish",
+            "count": 3,
+            "description": "为河畔营地带回小鱼"
+          }
+        ],
+        "reward": {
+          "xp": 60.0,
+          "skill": "survival",
+          "item": "fish_bait",
+          "itemCount": 5,
+          "label": "60 生存经验 + 鱼饵×5"
+        }
+      }
+    ]
+  }
+}

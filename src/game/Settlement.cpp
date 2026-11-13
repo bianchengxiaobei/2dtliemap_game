@@ -78,6 +78,227 @@ bool ReadString(const nlohmann::json& node, const char* key,
     return true;
 }
 
+bool ReadOptionalString(const nlohmann::json& node, const char* key,
+                        std::size_t maxBytes, std::string* out,
+                        std::string* error) {
+    if (!node.contains(key)) {
+        return true;
+    }
+    if (!ReadString(node, key, maxBytes, out)) {
+        if (error != nullptr) {
+            *error = std::string(key) + " 非法";
+        }
+        return false;
+    }
+    return true;
+}
+
+bool ParseServices(const nlohmann::json& entry, SettlementServiceMask* out,
+                   std::string* error) {
+    if (!entry.contains("services")) {
+        *out = kDefaultSettlementServices;
+        return true;
+    }
+    const nlohmann::json& services = entry["services"];
+    if (!services.is_array() || services.empty() ||
+        services.size() > 4) {
+        if (error != nullptr) {
+            *error = "services 必须是 1~4 项数组";
+        }
+        return false;
+    }
+    SettlementServiceMask mask = 0;
+    for (const nlohmann::json& serviceNode : services) {
+        if (!serviceNode.is_string()) {
+            if (error != nullptr) {
+                *error = "services 条目必须是字符串";
+            }
+            return false;
+        }
+        SettlementService service = SettlementService::Trade;
+        const std::string value = serviceNode.get<std::string>();
+        if (!ParseSettlementService(value, &service)) {
+            if (error != nullptr) {
+                *error = "未知聚落服务 '" + value + "'";
+            }
+            return false;
+        }
+        const SettlementServiceMask bit =
+            static_cast<SettlementServiceMask>(1u << static_cast<unsigned>(
+                                                       service));
+        if ((mask & bit) != 0) {
+            if (error != nullptr) {
+                *error = "services 条目重复";
+            }
+            return false;
+        }
+        mask = static_cast<SettlementServiceMask>(mask | bit);
+    }
+    *out = mask;
+    return true;
+}
+
+bool ParseReputationTiers(const nlohmann::json& node,
+                          SettlementReputationConfig* out,
+                          std::string* error) {
+    if (!node.is_array() ||
+        node.size() != kSettlementReputationTierCount) {
+        if (error != nullptr) {
+            *error = "reputation.tiers 必须是 5 项数组";
+        }
+        return false;
+    }
+    for (std::size_t i = 0; i < kSettlementReputationTierCount; ++i) {
+        const nlohmann::json& entry = node[i];
+        if (!entry.is_object()) {
+            if (error != nullptr) {
+                *error = "reputation.tiers 条目必须是对象";
+            }
+            return false;
+        }
+        const auto tier = static_cast<SettlementReputationTier>(i);
+        std::string id;
+        if (!ReadString(entry, "id", kMaxSettlementIdBytes, &id) ||
+            id != SettlementReputationTierName(tier)) {
+            if (error != nullptr) {
+                *error = "reputation.tiers id 顺序必须是 hostile/wary/neutral/friendly/trusted";
+            }
+            return false;
+        }
+        std::string name = out->tiers[i].name;
+        if (!ReadOptionalString(entry, "name", kMaxSettlementNameBytes, &name,
+                                error)) {
+            return false;
+        }
+        int minScore = 0;
+        int maxScore = 0;
+        if (!ReadInt(entry, "minScore", kSettlementReputationMinScore,
+                     kSettlementReputationMaxScore, &minScore) ||
+            !ReadInt(entry, "maxScore", kSettlementReputationMinScore,
+                     kSettlementReputationMaxScore, &maxScore) ||
+            minScore > maxScore) {
+            if (error != nullptr) {
+                *error = "reputation.tiers 分数范围非法";
+            }
+            return false;
+        }
+        if (i == 0 && minScore != kSettlementReputationMinScore) {
+            if (error != nullptr) {
+                *error = "reputation.tiers 首段必须从 -100 开始";
+            }
+            return false;
+        }
+        if (i > 0 && minScore != out->tiers[i - 1].maxScore + 1) {
+            if (error != nullptr) {
+                *error = "reputation.tiers 分数区间必须连续";
+            }
+            return false;
+        }
+        if (i + 1 == kSettlementReputationTierCount &&
+            maxScore != kSettlementReputationMaxScore) {
+            if (error != nullptr) {
+                *error = "reputation.tiers 末段必须到 100 结束";
+            }
+            return false;
+        }
+        out->tiers[i].tier = tier;
+        out->tiers[i].id = std::move(id);
+        out->tiers[i].name = std::move(name);
+        out->tiers[i].minScore = minScore;
+        out->tiers[i].maxScore = maxScore;
+    }
+    return true;
+}
+
+bool ParseReputationSources(const nlohmann::json& node,
+                            SettlementReputationSources* out,
+                            std::string* error) {
+    if (!node.is_object()) {
+        if (error != nullptr) {
+            *error = "reputation.sources 必须是对象";
+        }
+        return false;
+    }
+    const std::array<std::pair<const char*, int*>, 6> fields{{
+        {"missionComplete", &out->missionComplete},
+        {"defenseComplete", &out->defenseComplete},
+        {"trade", &out->trade},
+        {"missionAbandon", &out->missionAbandon},
+        {"attackNpc", &out->attackNpc},
+        {"theft", &out->theft},
+    }};
+    for (const auto& [key, value] : fields) {
+        if (!node.contains(key)) {
+            continue;
+        }
+        if (!ReadInt(node, key, -100, 100, value)) {
+            if (error != nullptr) {
+                *error = std::string("reputation.sources.") + key +
+                         " 必须是 -100~100";
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ParseReputationPriceMultipliers(const nlohmann::json& node,
+                                     SettlementReputationConfig* out,
+                                     std::string* error) {
+    if (!node.is_object()) {
+        if (error != nullptr) {
+            *error = "reputation.priceMultipliers 必须是对象";
+        }
+        return false;
+    }
+    for (const auto& [key, value] : node.items()) {
+        bool known = false;
+        for (const SettlementReputationTierDef& tier : out->tiers) {
+            if (tier.id == key) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            if (error != nullptr) {
+                *error = "reputation.priceMultipliers 未知等级 '" + key + "'";
+            }
+            return false;
+        }
+        if (!value.is_object()) {
+            if (error != nullptr) {
+                *error = "reputation.priceMultipliers." + key + " 必须是对象";
+            }
+            return false;
+        }
+        for (const auto& [field, ignored] : value.items()) {
+            (void)ignored;
+            if (field != "buy" && field != "sell") {
+                if (error != nullptr) {
+                    *error = "reputation.priceMultipliers." + key +
+                             " 只支持 buy/sell";
+                }
+                return false;
+            }
+        }
+        for (SettlementPriceMultiplierDef& multiplier : out->priceMultipliers) {
+            if (SettlementReputationTierName(multiplier.tier) != key) {
+                continue;
+            }
+            if (!ReadFloat(value, "buy", 0.1f, 5.0f, &multiplier.buy) ||
+                !ReadFloat(value, "sell", 0.1f, 5.0f, &multiplier.sell)) {
+                if (error != nullptr) {
+                    *error = "reputation.priceMultipliers." + key +
+                             " 的 buy/sell 必须是 0.1~5.0";
+                }
+                return false;
+            }
+            break;
+        }
+    }
+    return true;
+}
+
 bool ParseDefense(const nlohmann::json& entry, SettlementDefenseConfig* out,
                   std::string* error) {
     if (!entry.is_object()) {
@@ -196,6 +417,14 @@ bool ParseDefense(const nlohmann::json& entry, SettlementDefenseConfig* out,
         }
         return false;
     }
+    if (entry.contains("guardEngageRadius") &&
+        !ReadFloat(entry, "guardEngageRadius", 0.0f, 64.0f,
+                   &defense.guardEngageRadius)) {
+        if (error != nullptr) {
+            *error = "defense.guardEngageRadius 非法";
+        }
+        return false;
+    }
     if (entry.contains("guardAttackSeconds") &&
         !ReadFloat(entry, "guardAttackSeconds", 0.2f, 10.0f,
                    &defense.guardAttackSeconds)) {
@@ -305,6 +534,35 @@ bool ParseSettlementDef(const nlohmann::json& entry, SettlementDef* out,
         }
         return false;
     }
+    if (!ReadOptionalString(entry, "regionId", kMaxSettlementIdBytes,
+                            &def.regionId, error) ||
+        (!def.regionId.empty() && !ValidSettlementId(def.regionId))) {
+        if (error != nullptr && error->empty()) {
+            *error = "聚落 regionId 非法";
+        }
+        return false;
+    }
+    if (!ParseServices(entry, &def.services, error)) {
+        return false;
+    }
+    if (entry.contains("startingReputation") &&
+        !ReadInt(entry, "startingReputation", kSettlementReputationMinScore,
+                 kSettlementReputationMaxScore, &def.startingReputation)) {
+        if (error != nullptr) {
+            *error = "聚落 startingReputation 必须是 -100~100";
+        }
+        return false;
+    }
+    if (!ReadOptionalString(entry, "dialogueProfile",
+                            kMaxSettlementIdBytes, &def.dialogueProfile,
+                            error) ||
+        (!def.dialogueProfile.empty() &&
+         !ValidSettlementId(def.dialogueProfile))) {
+        if (error != nullptr && error->empty()) {
+            *error = "聚落 dialogueProfile 非法";
+        }
+        return false;
+    }
     if (!ReadFloat(entry, "centerX", -1000000.0f, 1000000.0f,
                    &def.centerX) ||
         !ReadFloat(entry, "centerY", -1000000.0f, 1000000.0f,
@@ -362,9 +620,10 @@ bool ParseSettlementDef(const nlohmann::json& entry, SettlementDef* out,
         }
         def.npcPoints.push_back(std::move(point));
     }
-    if (!hasMerchant || !hasGuard || !hasRequester) {
+    if (!hasMerchant || (!hasGuard && !hasRequester)) {
         if (error != nullptr) {
-            *error = "聚落 '" + def.id + "' 必须包含 merchant/guard/requester";
+            *error = "聚落 '" + def.id +
+                     "' 必须包含 merchant，且至少包含 guard 或 requester";
         }
         return false;
     }
@@ -547,6 +806,71 @@ bool ParseJsonText(std::string_view json, const std::string& source,
 
 }  // namespace
 
+bool LoadSettlementReputationConfig(const core::Config& config,
+                                    SettlementReputationConfig* out,
+                                    std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "聚落声望配置输出为空";
+        }
+        return false;
+    }
+    SettlementReputationConfig result;
+    const nlohmann::json& root = config.Raw();
+    if (!root.is_object()) {
+        *out = std::move(result);
+        return true;
+    }
+    const auto settlementsIt = root.find("settlements");
+    if (settlementsIt == root.end() || !settlementsIt->is_object()) {
+        *out = std::move(result);
+        return true;
+    }
+    const auto reputationIt = settlementsIt->find("reputation");
+    if (reputationIt == settlementsIt->end()) {
+        *out = std::move(result);
+        return true;
+    }
+    if (!reputationIt->is_object()) {
+        if (error != nullptr) {
+            *error = "settlements.reputation 必须是对象";
+        }
+        return false;
+    }
+    const nlohmann::json& reputation = *reputationIt;
+    if (reputation.contains("enabled") &&
+        !ReadBool(reputation, "enabled", &result.enabled)) {
+        if (error != nullptr) {
+            *error = "settlements.reputation.enabled 必须是布尔值";
+        }
+        return false;
+    }
+    if (reputation.contains("dailyTradeGainLimit") &&
+        !ReadInt(reputation, "dailyTradeGainLimit", 0, 100,
+                 &result.dailyTradeGainLimit)) {
+        if (error != nullptr) {
+            *error = "settlements.reputation.dailyTradeGainLimit 必须是 0~100";
+        }
+        return false;
+    }
+    if (reputation.contains("tiers") &&
+        !ParseReputationTiers(reputation["tiers"], &result, error)) {
+        return false;
+    }
+    if (reputation.contains("sources") &&
+        !ParseReputationSources(reputation["sources"], &result.sources,
+                                error)) {
+        return false;
+    }
+    if (reputation.contains("priceMultipliers") &&
+        !ParseReputationPriceMultipliers(reputation["priceMultipliers"],
+                                         &result, error)) {
+        return false;
+    }
+    *out = std::move(result);
+    return true;
+}
+
 bool LoadSettlementConfig(const core::Config& config, SettlementConfig* out,
                           std::string* error) {
     if (out == nullptr) {
@@ -556,6 +880,9 @@ bool LoadSettlementConfig(const core::Config& config, SettlementConfig* out,
         return false;
     }
     SettlementConfig result;
+    if (!LoadSettlementReputationConfig(config, &result.reputation, error)) {
+        return false;
+    }
     result.enabled = config.Get<bool>("settlements.enabled", false);
     if (!result.enabled) {
         *out = std::move(result);
@@ -650,6 +977,206 @@ bool ParseSettlementGuardBehavior(std::string_view value,
         return true;
     }
     return false;
+}
+
+const char* SettlementServiceName(SettlementService service) {
+    switch (service) {
+        case SettlementService::Trade:
+            return "trade";
+        case SettlementService::Missions:
+            return "missions";
+        case SettlementService::Defense:
+            return "defense";
+        case SettlementService::Recruit:
+            return "recruit";
+    }
+    return "trade";
+}
+
+bool ParseSettlementService(std::string_view value, SettlementService* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    if (value == "trade") {
+        *out = SettlementService::Trade;
+        return true;
+    }
+    if (value == "missions") {
+        *out = SettlementService::Missions;
+        return true;
+    }
+    if (value == "defense") {
+        *out = SettlementService::Defense;
+        return true;
+    }
+    if (value == "recruit") {
+        *out = SettlementService::Recruit;
+        return true;
+    }
+    return false;
+}
+
+bool HasSettlementService(const SettlementDef& def, SettlementService service) {
+    const SettlementServiceMask bit =
+        static_cast<SettlementServiceMask>(1u << static_cast<unsigned>(service));
+    return (def.services & bit) != 0;
+}
+
+const char* SettlementReputationTierName(SettlementReputationTier tier) {
+    switch (tier) {
+        case SettlementReputationTier::Hostile:
+            return "hostile";
+        case SettlementReputationTier::Wary:
+            return "wary";
+        case SettlementReputationTier::Neutral:
+            return "neutral";
+        case SettlementReputationTier::Friendly:
+            return "friendly";
+        case SettlementReputationTier::Trusted:
+            return "trusted";
+    }
+    return "neutral";
+}
+
+bool ParseSettlementReputationTier(std::string_view value,
+                                   SettlementReputationTier* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    for (std::size_t i = 0; i < kSettlementReputationTierCount; ++i) {
+        const auto tier = static_cast<SettlementReputationTier>(i);
+        if (value == SettlementReputationTierName(tier)) {
+            *out = tier;
+            return true;
+        }
+    }
+    return false;
+}
+
+const SettlementReputationTierDef* FindSettlementReputationTier(
+    const SettlementReputationConfig& config, SettlementReputationTier tier) {
+    for (const SettlementReputationTierDef& def : config.tiers) {
+        if (def.tier == tier) {
+            return &def;
+        }
+    }
+    return nullptr;
+}
+
+const SettlementPriceMultiplierDef* FindSettlementPriceMultiplier(
+    const SettlementReputationConfig& config, SettlementReputationTier tier) {
+    for (const SettlementPriceMultiplierDef& def : config.priceMultipliers) {
+        if (def.tier == tier) {
+            return &def;
+        }
+    }
+    return nullptr;
+}
+
+const SettlementReputationTierDef* SettlementReputationTierForScore(
+    const SettlementReputationConfig& config, int score) {
+    const int clamped =
+        std::clamp(score, kSettlementReputationMinScore,
+                   kSettlementReputationMaxScore);
+    for (const SettlementReputationTierDef& def : config.tiers) {
+        if (clamped >= def.minScore && clamped <= def.maxScore) {
+            return &def;
+        }
+    }
+    return FindSettlementReputationTier(config,
+                                        SettlementReputationTier::Neutral);
+}
+
+bool SettlementIsHostile(const SettlementReputationConfig& config, int score) {
+    if (!config.enabled) {
+        return false;
+    }
+    const SettlementReputationTierDef* tier =
+        SettlementReputationTierForScore(config, score);
+    return tier != nullptr && tier->tier == SettlementReputationTier::Hostile;
+}
+
+bool SettlementCanUseService(const SettlementDef& def,
+                             const SettlementReputationConfig& config,
+                             SettlementService service, int score) {
+    if (!HasSettlementService(def, service)) {
+        return false;
+    }
+    if (service == SettlementService::Defense) {
+        return true;
+    }
+    return !config.enabled || !SettlementIsHostile(config, score);
+}
+
+bool SettlementProvidesDefense(const SettlementDef& def) {
+    return def.defense.enabled &&
+           HasSettlementService(def, SettlementService::Defense);
+}
+
+int SettlementAdjustedPrice(int basePrice, float multiplier) {
+    if (basePrice <= 0) {
+        return 0;
+    }
+    const float safeMultiplier = std::clamp(multiplier, 0.1f, 5.0f);
+    return std::max(1, static_cast<int>(std::lround(
+                           static_cast<float>(basePrice) * safeMultiplier)));
+}
+
+int SettlementBuyPrice(int baseCost,
+                       const SettlementReputationConfig& config, int score) {
+    if (baseCost <= 0) {
+        return 0;
+    }
+    if (!config.enabled) {
+        return baseCost;
+    }
+    const SettlementReputationTierDef* tier =
+        SettlementReputationTierForScore(config, score);
+    const SettlementPriceMultiplierDef* multiplier =
+        tier != nullptr ? FindSettlementPriceMultiplier(config, tier->tier)
+                        : nullptr;
+    return SettlementAdjustedPrice(
+        baseCost, multiplier != nullptr ? multiplier->buy : 1.0f);
+}
+
+int SettlementSellPrice(int baseValue,
+                        const SettlementReputationConfig& config, int score) {
+    if (baseValue <= 0) {
+        return 0;
+    }
+    if (!config.enabled) {
+        return baseValue;
+    }
+    const SettlementReputationTierDef* tier =
+        SettlementReputationTierForScore(config, score);
+    const SettlementPriceMultiplierDef* multiplier =
+        tier != nullptr ? FindSettlementPriceMultiplier(config, tier->tier)
+                        : nullptr;
+    return SettlementAdjustedPrice(
+        baseValue, multiplier != nullptr ? multiplier->sell : 1.0f);
+}
+
+std::string SettlementServicesText(SettlementServiceMask services) {
+    std::string text;
+    const auto append = [&](const char* label) {
+        if (!text.empty()) {
+            text += "/";
+        }
+        text += label;
+    };
+    if ((services & kSettlementServiceTrade) != 0) {
+        append("交易");
+    }
+    if ((services & kSettlementServiceMissions) != 0) {
+        append("委托");
+    }
+    if ((services & kSettlementServiceDefense) != 0) {
+        append("防御");
+    }
+    if ((services & kSettlementServiceRecruit) != 0) {
+        append("招募");
+    }
+    return text.empty() ? "无" : text;
 }
 
 const SettlementNpcPoint* FindSettlementNpc(const SettlementDef& def,

@@ -155,6 +155,55 @@ body {
     color: #ff8a7a;
 }
 
+.region-guide {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 16px;
+    color: #9fb3c8;
+}
+
+.region-guide.status-warn {
+    color: #ffd479;
+}
+
+.region-guide.status-ok {
+    color: #7fe08a;
+}
+
+.settlement-guide {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 16px;
+    color: #8fd3ff;
+}
+
+.settlement-guide.status-warn {
+    color: #ffd479;
+}
+
+.settlement-guide.status-fail {
+    color: #ff8a7a;
+}
+
+.settlement-guide.status-ok {
+    color: #7fe08a;
+}
+
+.strategic-guide {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 16px;
+    color: #ffb86b;
+}
+
+.strategic-guide.status-warn {
+    color: #ffd479;
+}
+
+.strategic-guide.status-fail {
+    color: #ff8a7a;
+}
+
 #hud-left {
     display: block;
     position: absolute;
@@ -850,4 +899,141 @@ body {
     text-align: right;
     font-size: 11px;
     color: #9fb3c8;
+}
+
+#world-event-panel {
+    position: absolute;
+    left: 16px;
+    top: 150px;
+    width: 420px;
+    display: none;
+    z-index: 18;
+    pointer-events: none;
+}
+
+.world-event-card {
+    padding: 9px 13px 10px 13px;
+    background-color: #10161df2;
+    border-width: 1px;
+    border-color: #5f4c33;
+    border-left-width: 3px;
+    border-radius: 10px;
+}
+
+.world-event-panel.status-warn .world-event-card {
+    border-color: #9a7137;
+}
+
+.world-event-panel.status-ok .world-event-card {
+    border-color: #3f7a50;
+}
+
+.world-event-panel.status-fail .world-event-card {
+    border-color: #8a4a4a;
+}
+
+.world-event-header {
+    height: 16px;
+}
+
+.world-event-kicker {
+    display: inline-block;
+    font-size: 10px;
+    color: #ffb86b;
+    letter-spacing: 1px;
+}
+
+.world-event-panel.status-ok .world-event-kicker {
+    color: #7fe08a;
+}
+
+.world-event-panel.status-fail .world-event-kicker {
+    color: #ff8a7a;
+}
+
+.world-event-meta {
+    display: inline-block;
+    margin-left: 8px;
+    font-size: 10px;
+    color: #9fb3c8;
+}
+
+.world-event-title {
+    margin-top: 2px;
+    font-size: 17px;
+    font-weight: bold;
+    line-height: 22px;
+    color: #ffffff;
+}
+
+.world-event-stage {
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 17px;
+    color: #ffd479;
+}
+
+.world-event-result {
+    display: none;
+    margin-top: 5px;
+    padding: 3px 7px;
+    font-size: 12px;
+    line-height: 17px;
+    color: #7fe08a;
+    background-color: #14251bcc;
+    border-radius: 4px;
+}
+
+.world-event-result.status-fail {
+    color: #ff8a7a;
+    background-color: #2a1717cc;
+}
+
+.world-event-options {
+    display: none;
+    margin-top: 6px;
+}
+
+.world-event-option {
+    display: none;
+    margin-top: 3px;
+    padding: 2px 7px;
+    font-size: 12px;
+    line-height: 17px;
+    color: #c8d5e1;
+    border-radius: 4px;
+}
+
+.world-event-option.active {
+    background-color: #243444;
+    color: #ffd479;
+}
+
+.world-event-hint {
+    display: none;
+    margin-top: 5px;
+    font-size: 11px;
+    line-height: 16px;
+    color: #9fb3c8;
+}
+
+.world-event-log {
+    display: none;
+    margin-top: 7px;
+    padding-top: 5px;
+    border-top-width: 1px;
+    border-color: #2c3e4f;
+}
+
+.world-event-log-title {
+    font-size: 10px;
+    color: #8ea4b4;
+}
+
+.world-event-log-line {
+    display: none;
+    margin-top: 2px;
+    font-size: 10px;
+    line-height: 14px;
+    color: #aebdca;
 }

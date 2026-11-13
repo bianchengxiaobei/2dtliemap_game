@@ -39,6 +39,7 @@
 #include "game/Objectives.h"
 #include "game/Poi.h"
 #include "game/PoiComponents.h"
+#include "game/WorldMap.h"
 #include "game/ProgressionRules.h"
 #include "game/RenderCollectSystem.h"
 #include "game/Settlement.h"
@@ -139,14 +140,17 @@ private:
     bool FindPoiGuardCell(const PoiDef& poi, int index, int* wx, int* wy) const;
     const ecs::PoiTasks* PlayerPoiTasks() const;
     void RefreshPoiGuide(ui::HudState& hud);
+    bool IsM31World() const;
     void RefreshObjectiveHud(ui::HudState& hud);
     void InitializeMissionRuntime();
     void UpdateMissions();
     void UpdateMissionAvailability(ecs::MissionLog& log, int day);
+    void TryActivateRefugeeMission(ecs::MissionLog& log, int day);
     void EnsureRandomEventContentForActiveMissions(ecs::MissionLog& log,
                                                    int day);
     void PruneRandomEventActors();
-    void ActivateMission(ecs::MissionLog& log, const MissionDef& def, int day);
+    void ActivateMission(ecs::MissionLog& log, const MissionDef& def, int day,
+                         std::string_view settlementId = {});
     void CompleteMission(ecs::MissionRunState& state, const MissionDef& def);
     void FailMission(ecs::MissionRunState& state, const MissionDef& def,
                      std::string_view reason, int day);
@@ -157,6 +161,24 @@ private:
     void AbandonFocusedMission();
     void RefreshMissionGuide(ui::HudState& hud);
     void RefreshEventGuide(ui::HudState& hud);
+    void RefreshRegionEventGuide(ui::HudState& hud);
+    void RefreshRegionGuide(ui::HudState& hud);
+    void RefreshStrategicGuide(ui::HudState& hud);
+    void UpdateWorldEventUi(float frameDt);
+    void RefreshWorldEventHud(ui::HudState& hud);
+    void RefreshNetworkWorldEventHud(ui::HudState& hud);
+    bool TryInteractWorldEvent();
+    bool TryChooseWorldEvent(int index);
+    void PushWorldEventLog(std::string line);
+    void UpdateWorldMapDiscovery();
+    void RefreshWorldMapState();
+    void ToggleWorldMap();
+    void OpenWorldMap();
+    void CloseWorldMap();
+    void HandleWorldMapSelect(const std::string& poiId);
+    void HandleWorldMapStrategicAction(
+        const std::string& regionId, game::WorldMapStrategicAction action);
+    void PollStrategicActionResult();
     std::vector<const MissionDef*> SortedActiveMissions() const;
     bool MissionTargetPoint(const MissionDef& def,
                             const ecs::MissionRunState& state, float* x,
@@ -325,10 +347,14 @@ private:
                                   bool* raidActive) const;
     void UpdateHomestead(float tickDt);
     bool TryInteractHomestead();
+    bool TryInteractStrategicRecovery();
     bool TryFarmCare();
     void CycleFarmSeed();
     const CropDef* SelectedFarmCrop() const;
     FarmSeason CurrentFarmSeason() const;
+    bool OpenTrade(ecs::Entity merchant);
+    void CloseTrade();
+    bool TradeNpcInRange() const;
     bool TryBuyTradeOffer(int index);
     void HandleTradeInput(core::Input& input);
     bool TryInteractSettlementNpc();
@@ -343,6 +369,10 @@ private:
     void HandleDialogueInput(core::Input& input);
     void ExecuteDialogueOption(const DialogueOption& option);
     void SyncDialogueHud(ui::HudState& hud);
+    void SyncSettlementHud(ui::HudState& hud) const;
+    const SettlementDef* CurrentSettlementForHud() const;
+    int SettlementReputationForHud(std::string_view settlementId,
+                                   int fallback) const;
     void PollSettlementDefenseNotices();
     std::string SettlementNpcHint() const;
     bool AcceptSettlementMissionFromDialogue();
@@ -448,6 +478,7 @@ private:
     std::string SpecialWarningText() const;
     void ShowBaseSiegeNotice(const std::string& text,
                              const std::string& tone);
+    void PollLocalRegionalSiegeReport();
     void OpenSiegeReport(const std::string& text, const std::string& tone);
     bool HasSiegeMarkers() const;
     void DrawSiegeOverlay(render::SpriteBatch& batch);
@@ -583,6 +614,7 @@ private:
                                  const render::SpriteRect& rect,
                                  VehicleDamageVisualLevel level);
     VehicleSurface VehicleSurfaceAt(float x, float y, int z) const;
+    bool VehicleBlockedAt(int x, int y, int z) const;
     void ApplyLocalVehicleRam(
         const VehicleMotion* previousMotion = nullptr);
     void ApplyLocalVehicleAttacks();
@@ -630,6 +662,7 @@ private:
     // M4-T5：相机跟随（follow=平滑跟随玩家+地图边界；自由=方向键/拖拽，无边界）
     void ApplyCameraMode();
     void UpdateCameraFollow(double frameDt);
+    glm::vec2 StreamingVelocity() const;
     void UpdateCruise(double frameDt);
     void LogPerfSample(const char* tag);
     void PushObject(const world::SquareObject& object, int wx, int wy, int z,
@@ -811,6 +844,7 @@ private:
     };
     std::unordered_map<std::string, NetworkSettlementStatus>
         m_networkSettlements;
+    std::unordered_map<std::string, int> m_networkSettlementReputation;
     std::uint32_t m_networkSettlementNoticeSerial = 0;
     std::string m_networkSettlementNotice;
     std::string m_networkSettlementNoticeTone = "info";
@@ -899,6 +933,7 @@ private:
     std::string m_missionFocusId;
     std::uint64_t m_lastMissionKills = 0;
     bool m_missionKillsInitialized = false;
+    bool m_refugeeMissionTriggered = false;
     struct RandomEventRuntime {
         float siteX = 0.0f;
         float siteY = 0.0f;
@@ -963,6 +998,8 @@ private:
     BaseSiege m_baseSiege;
     HomesteadConfig m_homesteadConfig;
     bool m_tradeOpen = false;
+    ecs::Entity m_tradeNpc = entt::null;
+    std::string m_tradeSettlementId;
     int m_tradeIndex = 0;
     bool m_dialogueOpen = false;
     ecs::Entity m_dialogueNpc = entt::null;
@@ -999,6 +1036,7 @@ private:
     std::string m_siegeReportTone = "info";
     std::string m_siegeReportHint;
     std::array<std::string, 8> m_siegeReportLines{};
+    std::string m_lastRegionalSiegeResultKey;
     float m_baseWalkSpeed = 4.0f;
     // M4-T7：点击移动反馈（notice 文本 + 目标格标记）
     std::string m_noticeText;
@@ -1010,6 +1048,29 @@ private:
     float m_markerTimer = 0.0f;
     bool m_markerPathActive = false;  // 寻路中（Pending/Following）：目标标记常显
     uint32_t m_markerColor = 0xFFFFFFFFu;
+    // M31-T7: world map, fog of war and non-fast-travel navigation.
+    bool m_worldMapOpen = false;
+    bool m_worldMapPausedByMap = false;
+    core::GameTime::Speed m_worldMapSpeedBefore = core::GameTime::Speed::X1;
+    float m_worldMapDiscoveryRadius = 36.0f;
+    std::unordered_set<std::string> m_discoveredRegions;
+    std::unordered_set<std::string> m_discoveredPois;
+    WorldMapState m_worldMapState;
+    WorldMapRoute m_worldMapRoute;
+    std::string m_worldMapSelectedPoi;
+    std::string m_worldEventUiId;
+    int m_worldEventUiStatus = -1;
+    int m_worldEventUiStage = -1;
+    bool m_worldEventUiNear = false;
+    bool m_worldEventChoiceOpen = false;
+    std::array<std::string, 6> m_worldEventLog{};
+    int m_worldEventLogCount = 0;
+    std::string m_worldEventResult;
+    std::string m_worldEventResultTone = "ok";
+    float m_worldEventResultTimer = 0.0f;
+    std::string m_worldEventSettledId;
+    std::string m_worldEventSettleError;
+    std::uint64_t m_lastStrategicResultSequence = 0;
     ecs::PathStatus m_lastPlayerPathState = ecs::PathStatus::None;
     // M14-T1：遮挡墙体透明度（config render.wallOcclusionAlpha）
     float m_wallOcclusionAlpha = 0.35f;

@@ -30,12 +30,18 @@ namespace zl::platform {
 class Window;
 }
 
+namespace zl::game {
+enum class WorldMapStrategicAction : std::uint8_t;
+struct WorldMapState;
+}
+
 namespace zl::ui {
 
 class InventoryPanel;
 class MenuPanel;
 class MultiplayerPanel;
 class SocialPanel;
+class WorldMapPanel;
 class RmlBgfxRenderInterface;
 class RmlSystemInterface;
 class ScriptUiHost;
@@ -54,6 +60,14 @@ public:
     void Update(core::Input& input);
     void Render();
     void SetHudState(const HudState& state);
+    void SetWorldMapState(const game::WorldMapState& state, bool open);
+    bool IsWorldMapOpen() const;
+    void SetWorldMapCloseHandler(std::function<void()> handler);
+    void SetWorldMapSelectHandler(
+        std::function<void(const std::string&)> handler);
+    void SetWorldMapStrategicActionHandler(
+        std::function<void(const std::string&,
+                           game::WorldMapStrategicAction)> handler);
     void SetInventoryState(const InventoryState& state);
     void SetInventoryActionHandler(InventoryActionHandler handler);
     bool GetInventoryState(InventoryState& out) const;
@@ -111,6 +125,7 @@ public:
 private:
     bool EnsureDebugDocument();
     bool EnsureHudDocument();
+    bool EnsureWorldMapPanel();
     bool EnsureInventoryPanel();
     bool EnsureMenuPanel();
     bool ScriptHudAvailable() const;
@@ -145,6 +160,7 @@ private:
     std::unique_ptr<MenuPanel> m_menu;
     std::unique_ptr<MultiplayerPanel> m_multiplayer;
     std::unique_ptr<SocialPanel> m_social;
+    std::unique_ptr<WorldMapPanel> m_worldMap;
     std::unique_ptr<ScriptUiHost> m_scriptUi;
     MenuSettings m_pendingMenuSettings;
     MenuSettingsHandler m_pendingMenuSettingsHandler;
@@ -156,6 +172,10 @@ private:
     InventoryActionHandler m_pendingInventoryActionHandler;
     std::function<void()> m_menuSoundHandler;
     std::function<void()> m_inventorySoundHandler;
+    std::function<void()> m_worldMapCloseHandler;
+    std::function<void(const std::string&)> m_worldMapSelectHandler;
+    std::function<void(const std::string&, game::WorldMapStrategicAction)>
+        m_worldMapStrategicActionHandler;
     InventoryState m_pendingInventoryState;
     bool m_hasPendingInventoryState = false;
     bool m_debugLoadAttempted = false;
@@ -163,6 +183,7 @@ private:
     bool m_menuLoadAttempted = false;
     bool m_multiplayerLoadAttempted = false;
     bool m_socialLoadAttempted = false;
+    bool m_worldMapLoadAttempted = false;
     bool m_hudLoadAttempted = false;
     Rml::Element* m_counterElement = nullptr;
     Rml::Element* m_disableSampleElement = nullptr;
@@ -195,6 +216,19 @@ private:
     Rml::Element* m_poiGuideElement = nullptr;
     Rml::Element* m_missionGuideElement = nullptr;
     Rml::Element* m_eventGuideElement = nullptr;
+    Rml::Element* m_worldEventPanelElement = nullptr;
+    Rml::Element* m_worldEventNameElement = nullptr;
+    Rml::Element* m_worldEventMetaElement = nullptr;
+    Rml::Element* m_worldEventStageElement = nullptr;
+    Rml::Element* m_worldEventHintElement = nullptr;
+    Rml::Element* m_worldEventResultElement = nullptr;
+    Rml::Element* m_worldEventOptionsElement = nullptr;
+    Rml::Element* m_worldEventLogElement = nullptr;
+    std::array<Rml::Element*, 8> m_worldEventOptionElements{};
+    std::array<Rml::Element*, 6> m_worldEventLogLines{};
+    Rml::Element* m_regionGuideElement = nullptr;
+    Rml::Element* m_settlementGuideElement = nullptr;
+    Rml::Element* m_strategicGuideElement = nullptr;
     Rml::Element* m_siegeStatusElement = nullptr;
     Rml::Element* m_baseStatusElement = nullptr;
     Rml::Element* m_modFieldsElement = nullptr;

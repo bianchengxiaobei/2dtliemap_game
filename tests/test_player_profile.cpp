@@ -51,6 +51,8 @@ TEST_CASE("M13-T8 PlayerProfileStore：身份分配高位 StableId 并跨加载�
     alice.state.food.nutrition = 0.45f;
     alice.state.food.poisonRemaining = 8.0f;
     alice.state.food.poisonDamagePerSecond = 0.12f;
+    alice.state.settlementReputation.push_back(
+        zl::net::PlayerSettlementReputation{"village_haven", 25});
     alice.hasSnapshot = true;
     alice.entity.stableId = alice.stableId;
 
@@ -79,6 +81,9 @@ TEST_CASE("M13-T8 PlayerProfileStore：身份分配高位 StableId 并跨加载�
     CHECK(restored->state.food.nutrition == doctest::Approx(0.45f));
     CHECK(restored->state.food.poisonRemaining == doctest::Approx(8.0f));
     CHECK(restored->state.food.poisonDamagePerSecond == doctest::Approx(0.12f));
+    REQUIRE(restored->state.settlementReputation.size() == 1u);
+    CHECK(restored->state.settlementReputation[0].id == "village_haven");
+    CHECK(restored->state.settlementReputation[0].score == 25);
     CHECK(restored->hasSnapshot);
     CHECK(restored->entity.stableId == alice.stableId);
 

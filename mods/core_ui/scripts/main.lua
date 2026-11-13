@@ -42,6 +42,62 @@ local function refresh_mod_fields(s)
                    any_visible and "block" or "none")
 end
 
+local function refresh_world_event(s)
+    local visible = s.worldEventVisible or false
+    local tone = s.worldEventTone or "info"
+    UI.SetProperty(HUD_DOC, "world-event-panel", "display",
+                   visible and "block" or "none")
+    UI.SetClass(HUD_DOC, "world-event-panel", "status-warn", tone == "warn")
+    UI.SetClass(HUD_DOC, "world-event-panel", "status-ok", tone == "ok")
+    UI.SetClass(HUD_DOC, "world-event-panel", "status-fail", tone == "fail")
+    if not visible then
+        return
+    end
+    UI.SetText(HUD_DOC, "world-event-meta", s.worldEventMeta or "")
+    UI.SetText(HUD_DOC, "world-event-title", s.worldEventName or "")
+    UI.SetText(HUD_DOC, "world-event-stage", s.worldEventStage or "")
+    UI.SetText(HUD_DOC, "world-event-hint", s.worldEventHint or "")
+    UI.SetProperty(HUD_DOC, "world-event-hint", "display",
+                   (s.worldEventHint or "") ~= "" and "block" or "none")
+    local result = s.worldEventResult or ""
+    local result_tone = s.worldEventResultTone or "ok"
+    UI.SetText(HUD_DOC, "world-event-result", result)
+    UI.SetProperty(HUD_DOC, "world-event-result", "display",
+                   result ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "world-event-result", "status-ok", result_tone == "ok")
+    UI.SetClass(HUD_DOC, "world-event-result", "status-fail", result_tone == "fail")
+    local options = s.worldEventOptions or {}
+    local option_count = s.worldEventOptionCount or 0
+    local can_choose = s.worldEventCanChoose or false
+    local choice_open = s.worldEventChoiceOpen or false
+    local any_option = can_choose and option_count > 0
+    UI.SetProperty(HUD_DOC, "world-event-options", "display",
+                   any_option and "block" or "none")
+    for i = 1, 8 do
+        local option = options[i] or ""
+        local row = "world-event-option-" .. (i - 1)
+        local show = any_option and i <= option_count
+        UI.SetProperty(HUD_DOC, row, "display", show and "block" or "none")
+        if show then
+            UI.SetText(HUD_DOC, row, option)
+            UI.SetClass(HUD_DOC, row, "active", choice_open)
+        end
+    end
+    local logs = s.worldEventLog or {}
+    local log_count = s.worldEventLogCount or 0
+    UI.SetProperty(HUD_DOC, "world-event-log", "display",
+                   log_count > 0 and "block" or "none")
+    for i = 1, 6 do
+        local line = logs[i] or ""
+        local row = "world-event-log-" .. (i - 1)
+        local show = i <= log_count
+        UI.SetProperty(HUD_DOC, row, "display", show and "block" or "none")
+        if show then
+            UI.SetText(HUD_DOC, row, line)
+        end
+    end
+end
+
 local function refresh_hud()
     local s = Hud.GetState()
     if not s.active then
@@ -163,7 +219,10 @@ local function refresh_hud()
     UI.SetText(HUD_DOC, "objective-text", s.objective)
     UI.SetProperty(HUD_DOC, "hud-objective", "display",
                    (s.objective ~= "" or (s.missionGuide or "") ~= ""
-                    or (s.eventGuide or "") ~= "")
+                    or (s.eventGuide or "") ~= ""
+                    or (s.regionGuide or "") ~= ""
+                    or (s.settlementGuide or "") ~= ""
+                    or (s.strategicGuide or "") ~= "")
                    and "block" or "none")
     UI.SetClass(HUD_DOC, "objective-text", "objective-warn", s.objectiveTone == "warn")
     UI.SetClass(HUD_DOC, "objective-text", "objective-ok", s.objectiveTone == "ok")
@@ -192,6 +251,33 @@ local function refresh_hud()
     UI.SetClass(HUD_DOC, "event-guide", "status-warn", event_tone == "warn")
     UI.SetClass(HUD_DOC, "event-guide", "status-ok", event_tone == "ok")
     UI.SetClass(HUD_DOC, "event-guide", "status-fail", event_tone == "fail")
+    local region_guide = s.regionGuide or ""
+    local region_tone = s.regionTone or "info"
+    UI.SetText(HUD_DOC, "region-guide", region_guide)
+    UI.SetProperty(HUD_DOC, "region-guide", "display",
+                   region_guide ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "region-guide", "status-warn", region_tone == "warn")
+    UI.SetClass(HUD_DOC, "region-guide", "status-ok", region_tone == "ok")
+    local settlement_guide = s.settlementGuide or ""
+    local settlement_tone = s.settlementTone or "info"
+    UI.SetText(HUD_DOC, "settlement-guide", settlement_guide)
+    UI.SetProperty(HUD_DOC, "settlement-guide", "display",
+                   settlement_guide ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "settlement-guide", "status-warn",
+                settlement_tone == "warn")
+    UI.SetClass(HUD_DOC, "settlement-guide", "status-fail",
+                settlement_tone == "fail")
+    UI.SetClass(HUD_DOC, "settlement-guide", "status-ok",
+                settlement_tone == "ok")
+    local strategic_guide = s.strategicGuide or ""
+    local strategic_tone = s.strategicTone or "info"
+    UI.SetText(HUD_DOC, "strategic-guide", strategic_guide)
+    UI.SetProperty(HUD_DOC, "strategic-guide", "display",
+                   strategic_guide ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "strategic-guide", "status-warn",
+                strategic_tone == "warn")
+    UI.SetClass(HUD_DOC, "strategic-guide", "status-fail",
+                strategic_tone == "fail")
 
     UI.SetText(HUD_DOC, "siege-status", s.siegeStatus)
     UI.SetProperty(HUD_DOC, "siege-status", "display",
@@ -207,6 +293,7 @@ local function refresh_hud()
     UI.SetClass(HUD_DOC, "base-status", "status-warn", base_tone == "warn")
     UI.SetClass(HUD_DOC, "base-status", "status-fail", base_tone == "fail")
     refresh_mod_fields(s)
+    refresh_world_event(s)
 
     local report_open = s.siegeReportOpen or false
     local report_tone = s.siegeReportTone or "info"

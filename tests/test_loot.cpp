@@ -1,4 +1,4 @@
-#include <algorithm>
+﻿#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -594,7 +594,7 @@ TEST_CASE("M14-T5 LootContainer 存档往") {
     std::string error;
     REQUIRE(save::RegisterBuiltinComponents(components, &error));
     CHECK(error.empty());
-    CHECK(components.Size() == 45u);
+    CHECK(components.Size() == 46u);
 
     ecs::EcsWorld source;
     const ecs::Entity container = source.Create();

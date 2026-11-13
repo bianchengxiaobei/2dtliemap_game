@@ -1,0 +1,52 @@
+{
+ "cx": 26,
+ "cy": 22,
+ "floors": [
+  "dddggggggg",
+  "dddggggggg",
+  "dddggggggg",
+  "dddggggggg",
+  "dddggggggg",
+  "dddggggggg",
+  "dddggggggg",
+  "dddggggggg",
+  "gggggggggg",
+  "gggggggggg"
+ ],
+ "objects": [
+  {
+   "x": 0,
+   "y": 0,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  },
+  {
+   "x": 0,
+   "y": 7,
+   "z": 0,
+   "layer": "wall",
+   "sprite": "wall.brick",
+   "solid": true
+  }
+ ],
+ "rooms": [
+  {
+   "x": 0,
+   "y": 1,
+   "w": 2,
+   "h": 6,
+   "id": 13,
+   "name": "ruin_river_hut"
+  }
+ ]
+}

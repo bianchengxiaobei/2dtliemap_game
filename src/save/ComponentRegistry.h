@@ -25,6 +25,7 @@ inline constexpr std::uint16_t kSaveComponentVersionLoadedAmmo = 2;
 inline constexpr std::uint16_t kSaveComponentVersionFarmPlot = 2;
 // M25-T4-V2：Vehicle 增加车灯开关；旧 v1 仍可读，缺失时按 false 处理。
 inline constexpr std::uint16_t kSaveComponentVersionVehicle = 3;
+inline constexpr std::uint16_t kSaveComponentVersionMissionLog = 2;
 
 inline constexpr std::uint32_t kSaveComponentPosition =
     MakeMagic('P', 'O', 'S', 'N');
@@ -116,6 +117,8 @@ inline constexpr std::uint32_t kSaveComponentVehicle =
     MakeMagic('V', 'E', 'H', 'I');
 inline constexpr std::uint32_t kSaveComponentRandomEventActor =
     MakeMagic('R', 'E', 'V', 'T');
+inline constexpr std::uint32_t kSaveComponentSettlementReputation =
+    MakeMagic('S', 'R', 'P', 'T');
 
 struct ComponentCodec {
     std::uint32_t type = 0;

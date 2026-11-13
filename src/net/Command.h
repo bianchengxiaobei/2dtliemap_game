@@ -62,6 +62,7 @@ enum class CommandType : std::uint16_t {
     GiveDriverSeat = 47,           // M25-T4-V24：驾驶员停车时把驾驶位让给乘客
     Block = 48,                    // M30-T6：flags bit0 1=按下 0=松开
     Dodge = 49,                    // M30-T6：payload.x/y = 世界闪避方向
+    ChooseWorldEvent = 50,         // M33-F2-T5：payload.index = 当前事件选项索引
 };
 
 inline constexpr std::uint64_t kNoEntity = 0;
@@ -94,7 +95,7 @@ struct Command {
 };
 
 constexpr bool IsValidCommandType(CommandType type) {
-    return type >= CommandType::Move && type <= CommandType::Dodge;
+    return type >= CommandType::Move && type <= CommandType::ChooseWorldEvent;
 }
 
 const char* CommandTypeName(CommandType type);

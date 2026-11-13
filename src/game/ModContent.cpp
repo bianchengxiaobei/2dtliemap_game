@@ -258,6 +258,24 @@ bool ValidateSettlementDoc(const nlohmann::json& doc, std::string& error) {
     return true;
 }
 
+bool ValidateWorldEventDoc(const nlohmann::json& doc, std::string& error) {
+    if (!doc.is_object()) {
+        error = "root must be an object";
+        return false;
+    }
+    if (!doc.contains("format") || !doc["format"].is_string() ||
+        doc["format"].get<std::string>() != "world-events-v1") {
+        error = "format must be world-events-v1";
+        return false;
+    }
+    if (!doc.contains("defs") || !doc["defs"].is_array() ||
+        doc["defs"].empty()) {
+        error = "defs must be a non-empty array";
+        return false;
+    }
+    return true;
+}
+
 bool ValidateMissionsDoc(const nlohmann::json& doc, std::string& error) {
     if (!doc.is_object()) {
         error = "根节点必须是对象";
@@ -396,6 +414,7 @@ ModContentResult LoadModContent(const core::Config& config,
         nlohmann::json modMissions;
         nlohmann::json modCrops;
         nlohmann::json modSettlements;
+        nlohmann::json modWorldEvents;
         const ContentReadStatus itemsStatus =
             ReadJson(contentDir / "items.json", modItems, error);
         if (itemsStatus == ContentReadStatus::Error) {
@@ -468,6 +487,14 @@ ModContentResult LoadModContent(const core::Config& config,
             ++result.skipped;
             continue;
         }
+        const ContentReadStatus worldEventStatus =
+            ReadJson(contentDir / "world_events.json", modWorldEvents, error);
+        if (worldEventStatus == ContentReadStatus::Error) {
+            ZL_WARN(kLogModule, "跳过 mod 内容 [{}]：{}", manifest.id, error);
+            result.skippedIds.push_back(manifest.id);
+            ++result.skipped;
+            continue;
+        }
         if (itemsStatus == ContentReadStatus::Missing &&
             recipesStatus == ContentReadStatus::Missing &&
             buildingsStatus == ContentReadStatus::Missing &&
@@ -476,7 +503,8 @@ ModContentResult LoadModContent(const core::Config& config,
             poiStatus == ContentReadStatus::Missing &&
             missionStatus == ContentReadStatus::Missing &&
             cropsStatus == ContentReadStatus::Missing &&
-            settlementStatus == ContentReadStatus::Missing) {
+            settlementStatus == ContentReadStatus::Missing &&
+            worldEventStatus == ContentReadStatus::Missing) {
             if (hasAssetManifest) {
                 ++result.applied;
                 result.assetManifests.push_back(
@@ -552,6 +580,14 @@ ModContentResult LoadModContent(const core::Config& config,
         if (settlementStatus == ContentReadStatus::Ok &&
             !ValidateSettlementDoc(modSettlements, error)) {
             ZL_WARN(kLogModule, "跳过 mod 内容 [{}]：settlements.json {}",
+                    manifest.id, error);
+            result.skippedIds.push_back(manifest.id);
+            ++result.skipped;
+            continue;
+        }
+        if (worldEventStatus == ContentReadStatus::Ok &&
+            !ValidateWorldEventDoc(modWorldEvents, error)) {
+            ZL_WARN(kLogModule, "跳过 mod 内容 [{}]：world_events.json {}",
                     manifest.id, error);
             result.skippedIds.push_back(manifest.id);
             ++result.skipped;
@@ -637,6 +673,10 @@ ModContentResult LoadModContent(const core::Config& config,
             result.settlementFiles.push_back(
                 (contentDir / "settlements.json").generic_string());
         }
+        if (worldEventStatus == ContentReadStatus::Ok) {
+            result.worldEventFiles.push_back(
+                (contentDir / "world_events.json").generic_string());
+        }
         for (const BuildableDef& def : modBuildableDefs) {
             const std::vector<BuildableDef> one{def};
             if (AppendBuildableDefs(knownBuildings, one) == 1) {
@@ -656,7 +696,7 @@ ModContentResult LoadModContent(const core::Config& config,
     ZL_INFO(kLogModule,
             "mod 内容合并完成：{} 个目录，应用 {}，跳过 {}；物品 +{}，配方 +{}，"
             "建造 +{}（跳过 {}），战利品表 {}，觅食 {}，POI {}，任务 {}，作物 {}，"
-            "聚落 {}，资源清单 {}",
+            "聚落 {}，世界事件 {}，资源清单 {}",
             result.found, result.applied, result.skipped, result.itemsAdded,
             result.recipesAdded,
             static_cast<int>(result.buildables.size()),
@@ -667,6 +707,7 @@ ModContentResult LoadModContent(const core::Config& config,
             static_cast<int>(result.missionFiles.size()),
             static_cast<int>(result.cropFiles.size()),
             static_cast<int>(result.settlementFiles.size()),
+            static_cast<int>(result.worldEventFiles.size()),
             static_cast<int>(result.assetManifests.size()));
     return result;
 }

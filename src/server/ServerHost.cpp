@@ -1,4 +1,4 @@
-﻿#include "server/ServerHost.h"
+#include "server/ServerHost.h"
 
 #include <algorithm>
 #include <array>
@@ -6,7 +6,9 @@
 #include <chrono>
 #include <climits>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <string_view>
 #include <thread>
@@ -52,17 +54,25 @@
 #include "game/Poi.h"
 #include "game/PoiComponents.h"
 #include "game/RandomEvents.h"
+#include "game/RegionEventDirector.h"
 #include "game/Homestead.h"
 #include "game/ModContent.h"
 #include "game/Objectives.h"
 #include "game/PlayerInventoryService.h"
 #include "game/PlayerCombat.h"
 #include "game/SettlementNpc.h"
+#include "game/SettlementReputation.h"
+#include "game/StrategicDirector.h"
+#include "game/StrategicMap.h"
 #include "game/PlayerStorage.h"
 #include "game/StructureComponents.h"
 #include "game/VehicleComponents.h"
+#include "game/WorldEventDirector.h"
+#include "game/WorldEventRuntime.h"
 #include "game/WorldQueries.h"
 #include "game/WorldSimulation.h"
+#include "world/WorldGraph.h"
+#include "world/WorldSelection.h"
 #include "items/InventoryOps.h"
 #include "items/ItemComponents.h"
 #include "items/ItemRegistry.h"
@@ -74,18 +84,25 @@
 #include "net/PlayerIdentity.h"
 #include "net/PlayerState.h"
 #include "net/Replication.h"
+#include "net/StrategicProtocol.h"
+#include "net/WorldEventProtocol.h"
 #include "net/WorldSound.h"
 #include "save/ChunkDiff.h"
 #include "save/ComponentRegistry.h"
 #include "save/EntityStore.h"
+#include "save/RegionEntityBuckets.h"
 #include "save/SaveManager.h"
 #include "save/SaveService.h"
+#include "save/WorldManifest.h"
 #include "physics/PhysicsWorld.h"
 #include "server/PlayerProfile.h"
 #include "ui/InventoryUi.h"
 #include "world/Chunk.h"
 #include "world/ChunkManager.h"
 #include "world/GridSquare.h"
+#include "world/RegionStreaming.h"
+#include "world/WorldDefinition.h"
+#include "world/WorldGraph.h"
 
 namespace zl::server {
 namespace {
@@ -102,7 +119,58 @@ std::string ForageNodeKey(const game::ForageNode& node) {
            std::to_string(node.y) + ":" + std::to_string(node.z);
 }
 
+bool ChunkWithinInterest(const world::Chunk& chunk, float x, float y,
+                         float radius) {
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(radius) ||
+        radius < 0.0f) {
+        return false;
+    }
+    const float minX =
+        static_cast<float>(chunk.ChunkX() * core::kChunkSize);
+    const float minY =
+        static_cast<float>(chunk.ChunkY() * core::kChunkSize);
+    const float maxX = minX + static_cast<float>(core::kChunkSize);
+    const float maxY = minY + static_cast<float>(core::kChunkSize);
+    const float dx = x < minX ? minX - x : (x > maxX ? x - maxX : 0.0f);
+    const float dy = y < minY ? minY - y : (y > maxY ? y - maxY : 0.0f);
+    return dx * dx + dy * dy <= radius * radius;
+}
+
 constexpr std::uint64_t kServerForageStateStableId = 0x4D3233464F524147ull;
+
+void MergeSettlementReputationSummary(
+    ecs::EcsWorld& world, ecs::Entity player,
+    const std::vector<net::PlayerSettlementReputation>& summary) {
+    if (player == entt::null || !world.Alive(player) || summary.empty()) {
+        return;
+    }
+    auto* reputation = world.Registry().try_get<game::SettlementReputation>(player);
+    if (reputation == nullptr) {
+        reputation =
+            &world.Registry().emplace<game::SettlementReputation>(player);
+    }
+    for (const net::PlayerSettlementReputation& entry : summary) {
+        if (entry.id.empty() ||
+            reputation->settlements.size() >=
+                game::kMaxSettlementReputationEntries) {
+            break;
+        }
+        const auto found = std::find_if(
+            reputation->settlements.begin(), reputation->settlements.end(),
+            [&](const game::SettlementReputationEntry& existing) {
+                return existing.settlementId == entry.id;
+            });
+        if (found == reputation->settlements.end()) {
+            reputation->settlements.push_back(
+                game::SettlementReputationEntry{entry.id, entry.score});
+        }
+    }
+    std::sort(reputation->settlements.begin(), reputation->settlements.end(),
+              [](const game::SettlementReputationEntry& left,
+                 const game::SettlementReputationEntry& right) {
+                  return left.settlementId < right.settlementId;
+              });
+}
 
 game::VehicleVisualDirection VehicleVisualDirectionFromSprite(
     std::uint32_t spriteHash) {
@@ -351,6 +419,31 @@ bool ServerHost::Init(const Options& options, std::string* error) {
         m_config->ApplyCommandLine(m_options.argc, m_options.argv);
     }
     core::SetLogLevel(m_config->Get<std::string>("log.level", "debug"));
+    if (!m_options.saveRoot.empty()) {
+        m_config->Set("save.root", m_options.saveRoot);
+    }
+    world::WorldSelection worldSelection =
+        world::ResolveWorldSelection(*m_config, true);
+    if (!m_options.mapDir.empty()) {
+        worldSelection.mapDir = m_options.mapDir;
+        worldSelection.contentFile = m_options.contentFile;
+        const std::string m31Map = m_config->Get<std::string>(
+            "world.m31.mapDir", "assets/maps/village_demo_m31");
+        if (worldSelection.contentFile.empty() &&
+            world::NormalizeWorldPath(m_options.mapDir) ==
+                world::NormalizeWorldPath(m31Map)) {
+            worldSelection.contentFile = m_config->Get<std::string>(
+                "world.m31.contentFile",
+                "assets/maps/village_demo_m31_content.json");
+        }
+        worldSelection.m31 = !worldSelection.contentFile.empty();
+    }
+    m_selectedMapDir = worldSelection.mapDir;
+    m_selectedContentFile = worldSelection.contentFile;
+    ZL_INFO("world", "服务器地图选择：{}（{}；内容 {}）", m_selectedMapDir,
+            worldSelection.m31 ? "M31 垂直切片" : "旧地图",
+            m_selectedContentFile.empty() ? "config/game.json"
+                                          : m_selectedContentFile);
     if (!m_options.network) {
         m_options.network = m_config->Get<bool>("server.network", false);
     }
@@ -389,6 +482,9 @@ bool ServerHost::Init(const Options& options, std::string* error) {
     m_structureSyncIntervalTicks = static_cast<std::uint32_t>(
         std::clamp(m_config->Get<int>("net.structureSyncIntervalTicks", 180), 30,
                    3600));
+    m_structureInterestRadius = static_cast<float>(std::clamp(
+        m_config->Get<double>("net.structureInterestRadius", 48.0), 8.0,
+        256.0));
     m_forageInteractRange = static_cast<float>(
         std::clamp(m_config->Get<double>("forage.interactRange", 2.2), 0.5, 8.0));
     m_fishingInteractRange = static_cast<float>(
@@ -799,7 +895,7 @@ bool ServerHost::Init(const Options& options, std::string* error) {
     const std::uint64_t computedContentHash = game::ComputeContentHash(
         *m_items, *m_recipes, m_buildables, *m_lootTables, *m_poiConfig,
         *m_missionConfig, modsHash, m_forage.get(), m_animals.get(),
-        m_crops.get(), m_settlements.get());
+        m_crops.get(), m_settlements.get(), m_worldEvents.get());
     if (m_options.contentHash == 0) {
         const std::int64_t configuredContentHash =
             m_config->Get<std::int64_t>("net.contentHash", 0);
@@ -823,17 +919,22 @@ bool ServerHost::Init(const Options& options, std::string* error) {
     simulationOptions.events = m_events.get();
     simulationOptions.gameTime = m_gameTime.get();
     simulationOptions.items = m_items.get();
+    simulationOptions.lootTables = m_lootTables.get();
     simulationOptions.animals = m_animals.get();
     simulationOptions.pois = m_poiConfig.get();
     simulationOptions.settlements = m_settlements.get();
+    simulationOptions.worldEvents = m_worldEvents.get();
+    simulationOptions.strategic = m_strategic.get();
     simulationOptions.spawnAnimals = m_options.spawnAnimals;
     simulationOptions.fire = m_fire.get();
     simulationOptions.tasks = m_tasks.get();
     simulationOptions.saveManager = m_saveManager.get();
+    simulationOptions.saveService = m_saveService.get();
     simulationOptions.saveComponents = m_saveComponents.get();
     simulationOptions.activeSaveId = &m_activeSaveId;
     simulationOptions.activeSaveUseBackup = &m_activeSaveUseBackup;
     simulationOptions.saveWarning = &m_saveWarning;
+    simulationOptions.mapDir = m_selectedMapDir;
     simulationOptions.focus = glm::vec2(m_options.playerTargetX, m_options.playerTargetY);
     m_simulation = std::make_unique<game::WorldSimulation>(simulationOptions);
     std::string simulationError;
@@ -921,6 +1022,16 @@ bool ServerHost::Init(const Options& options, std::string* error) {
             return fail(simulationError);
         }
         m_worldLoadedFromSave = true;
+        m_strategicContributions.clear();
+        if (const game::StrategicState* strategic =
+                m_simulation->Strategic();
+            strategic != nullptr) {
+            for (const game::StrategicContributionRecord& record :
+                 strategic->contributions) {
+                m_strategicContributions[record.stableId]
+                                        [record.regionId] = record.points;
+            }
+        }
         float floodlightHp = 80.0f;
         for (const game::BuildableDef& def : m_buildables) {
             if (def.id == "floodlight") {
@@ -1001,6 +1112,15 @@ bool ServerHost::InitNetwork(std::string* error) {
 }
 
 bool ServerHost::LoadContent(std::string* error) {
+    core::Config contentProfile;
+    const core::Config* contentConfig = m_config.get();
+    if (!m_selectedContentFile.empty()) {
+        if (!contentProfile.LoadFile(m_selectedContentFile)) {
+            *error = "服务器 M31 内容配置加载失败：" + m_selectedContentFile;
+            return false;
+        }
+        contentConfig = &contentProfile;
+    }
     m_items = std::make_unique<items::ItemRegistry>();
     const std::string itemsFile =
         m_config->Get<std::string>("items.file", "assets/items.json");
@@ -1094,7 +1214,7 @@ bool ServerHost::LoadContent(std::string* error) {
 
     m_poiConfig = std::make_unique<game::PoiConfig>();
     std::string poiError;
-    if (!game::LoadPoiConfig(*m_config, m_poiConfig.get(), &poiError)) {
+    if (!game::LoadPoiConfig(*contentConfig, m_poiConfig.get(), &poiError)) {
         ZL_ERROR("poi", "服务器 POI 配置加载失败：{}", poiError);
     } else {
         game::PoiMergeStats poiStats;
@@ -1114,13 +1234,13 @@ bool ServerHost::LoadContent(std::string* error) {
 
     m_missionConfig = std::make_unique<game::MissionConfig>();
     std::string missionError;
-    if (!game::LoadMissionConfig(*m_config, m_missionConfig.get(),
+    if (!game::LoadMissionConfig(*contentConfig, m_missionConfig.get(),
                                  &missionError)) {
         ZL_ERROR("missions", "服务器任务配置加载失败：{}", missionError);
     } else {
         game::MissionMergeStats missionStats;
         if (m_missionConfig->enabled && !modContent.missionFiles.empty()) {
-            if (!game::MergeMissionFiles(modContent.missionFiles, *m_config,
+            if (!game::MergeMissionFiles(modContent.missionFiles, *contentConfig,
                                          m_missionConfig.get(), &missionStats,
                                          &missionError)) {
                 ZL_WARN("missions", "服务器 mod 任务合并失败：{}", missionError);
@@ -1155,6 +1275,50 @@ bool ServerHost::LoadContent(std::string* error) {
                     m_settlements->defs.size(), settlementStats.filesLoaded,
                     settlementStats.defsAdded);
         }
+    }
+
+    m_worldEvents = std::make_unique<game::WorldEventConfig>();
+    std::string worldEventError;
+    if (!game::LoadWorldEventConfig(*m_config, m_worldEvents.get(),
+                                    &worldEventError, m_items.get())) {
+        ZL_ERROR("world-events", "server world event config failed: {}",
+                 worldEventError);
+    } else {
+        game::WorldEventMergeStats worldEventStats;
+        if (m_worldEvents->enabled) {
+            for (const std::string& modWorldEvent :
+                 modContent.worldEventFiles) {
+                if (!game::MergeWorldEventFile(
+                        modWorldEvent, m_worldEvents.get(), &worldEventStats,
+                        &worldEventError, m_items.get())) {
+                    ZL_WARN("world-events",
+                            "server skipping mod world event file {}: {}",
+                            modWorldEvent, worldEventError);
+                }
+            }
+            ZL_INFO("world-events",
+                    "server world events: {} definitions (mod files {}, added {})",
+                    m_worldEvents->defs.size(), worldEventStats.filesLoaded,
+                    worldEventStats.defsAdded);
+        }
+    }
+    m_worldEventDetailRadius = static_cast<float>(std::clamp(
+        m_config->Get<double>("worldEvents.detailRadius", 32.0), 0.0, 256.0));
+
+    m_strategic = std::make_unique<game::StrategicConfig>();
+    const std::string strategicFile = m_config->Get<std::string>(
+        "strategic.file", "assets/strategic.json");
+    std::string strategicError;
+    if (!game::LoadStrategicConfig(strategicFile, m_strategic.get(),
+                                   &strategicError)) {
+        ZL_WARN("strategic", "服务器战略配置不可用（文件: {}）：{}",
+                strategicFile, strategicError);
+        m_strategic.reset();
+    } else {
+        ZL_INFO("strategic",
+                "服务器战略配置：{} 个区域（tick {} 分钟，预警 {} / {} 小时）",
+                m_strategic->regions.size(), m_strategic->tickMinutes,
+                m_strategic->warningHours, m_strategic->remoteWarningHours);
     }
 
     save::SaveManager::Options saveOptions;
@@ -1246,6 +1410,121 @@ void ServerHost::Shutdown() {
     ZL_INFO("server", "服务器资源已释放");
 }
 
+bool ServerHost::ProfilePosition(const PlayerProfile& profile,
+                                 glm::vec2* out) const {
+    if (out == nullptr || !profile.hasSnapshot) {
+        return false;
+    }
+    for (const save::SavedComponent& component : profile.entity.components) {
+        if (component.type != save::kSaveComponentPosition ||
+            component.bytes.size() < sizeof(float) * 2) {
+            continue;
+        }
+        float x = 0.0f;
+        float y = 0.0f;
+        std::memcpy(&x, component.bytes.data(), sizeof(float));
+        std::memcpy(&y, component.bytes.data() + sizeof(float),
+                    sizeof(float));
+        if (std::isfinite(x) && std::isfinite(y)) {
+            *out = glm::vec2(x, y);
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<glm::vec2> ServerHost::CollectInterestFocuses() const {
+    std::vector<glm::vec2> focuses;
+    const auto add = [&focuses](float x, float y) {
+        if (!std::isfinite(x) || !std::isfinite(y)) {
+            return;
+        }
+        for (const glm::vec2& existing : focuses) {
+            if (std::abs(existing.x - x) < 0.01f &&
+                std::abs(existing.y - y) < 0.01f) {
+                return;
+            }
+        }
+        focuses.emplace_back(x, y);
+    };
+
+    if (m_simulation->Player() != entt::null) {
+        const ecs::Entity local = m_simulation->Player();
+        if (const auto* position =
+                m_simulation->Ecs().Registry().try_get<ecs::Position>(local);
+            position != nullptr) {
+            add(position->x, position->y);
+        }
+    }
+
+    std::vector<std::pair<std::uint64_t, const SessionPlayer*>> sessions;
+    sessions.reserve(m_sessions.size());
+    for (const auto& [sessionId, session] : m_sessions) {
+        static_cast<void>(sessionId);
+        sessions.emplace_back(session.playerStableId, &session);
+    }
+    std::sort(sessions.begin(), sessions.end(),
+              [](const auto& left, const auto& right) {
+                  if (left.first != right.first) {
+                      return left.first < right.first;
+                  }
+                  return left.second->identity < right.second->identity;
+              });
+    for (const auto& [stableId, session] : sessions) {
+        const ecs::Entity player = m_simulation->Ecs().FindById(stableId);
+        if (player == entt::null) {
+            continue;
+        }
+        if (const auto* position =
+                m_simulation->Ecs().Registry().try_get<ecs::Position>(player);
+            position != nullptr) {
+            add(position->x, position->y);
+        }
+    }
+
+    // Sessions that are still waiting for a profile/chunk need their target
+    // window before the first spawn attempt; otherwise a player returning to
+    // a far-away base would wait on the default spawn area forever.
+    bool waitingWithoutProfile = false;
+    bool waitingForRespawn = false;
+    for (const auto& [stableId, session] : sessions) {
+        static_cast<void>(stableId);
+        if (session->dead) {
+            waitingForRespawn = true;
+        }
+        if (m_simulation->Ecs().FindById(session->playerStableId) !=
+            entt::null) {
+            continue;
+        }
+        const PlayerProfile* profile =
+            m_profilesEnabled && m_playerProfiles != nullptr
+                ? m_playerProfiles->Find(session->identity)
+                : nullptr;
+        glm::vec2 target{0.0f, 0.0f};
+        if (!session->dead && profile != nullptr &&
+            ProfilePosition(*profile, &target)) {
+            add(target.x, target.y);
+        } else {
+            waitingWithoutProfile = true;
+        }
+    }
+    if (waitingWithoutProfile || waitingForRespawn || focuses.empty()) {
+        add(m_options.playerTargetX, m_options.playerTargetY);
+    }
+    return focuses;
+}
+
+void ServerHost::StreamServerInterest() {
+    if (m_simulation == nullptr) {
+        return;
+    }
+    const std::vector<glm::vec2> focuses = CollectInterestFocuses();
+    if (focuses.empty()) {
+        return;
+    }
+    m_simulation->StreamAtFocuses(focuses);
+}
+
 void ServerHost::Tick(float dt) {
     if (!m_initialized || m_simulation == nullptr) {
         return;
@@ -1254,15 +1533,15 @@ void ServerHost::Tick(float dt) {
         dt = 1.0f / 60.0f;
     }
 
-    ecs::Entity player = m_simulation->Player();
-    if (player != entt::null) {
-        const auto& position = m_simulation->Ecs().Registry().get<ecs::Position>(player);
-        m_simulation->SetFocus(position.x, position.y);
-    } else {
-        m_simulation->SetFocus(m_options.playerTargetX, m_options.playerTargetY);
+    if (m_networkEnabled) {
+        for (auto& [sessionId, session] : m_sessions) {
+            static_cast<void>(sessionId);
+            session.commandsThisTick = 0;
+            session.strategicRequestsThisTick = 0;
+        }
+        PollNetwork();
     }
-
-    m_simulation->Stream();
+    StreamServerInterest();
     m_tasks->ProcessResults();
     m_poiScanTimer += dt;
     if (m_poiScanTimer >= 0.5f) {
@@ -1272,11 +1551,6 @@ void ServerHost::Tick(float dt) {
     }
 
     if (m_networkEnabled) {
-        for (auto& [sessionId, session] : m_sessions) {
-            static_cast<void>(sessionId);
-            session.commandsThisTick = 0;
-        }
-        PollNetwork();
         for (auto& [sessionId, session] : m_sessions) {
             if (!EnsureSessionPlayer(sessionId, session)) {
                 break;  // chunk 尚未就绪；下一 tick 继续
@@ -1316,8 +1590,95 @@ void ServerHost::Tick(float dt) {
         FinishServerSleep(game::SleepStopReason::SiegeStarted,
                           "守夜事件开始");
     }
+    if (m_simulation != nullptr && m_gameTime != nullptr) {
+        game::StrategicTickInput strategic;
+        strategic.gameMinute =
+            static_cast<std::int64_t>(m_gameTime->TotalGameMinutes());
+        strategic.anyPlayerOnline =
+            !m_sessions.empty() || m_simulation->Player() != entt::null;
+        strategic.detailedEnabled = true;
+        std::string primaryPlayerRegion;
+        for (const auto& [sessionId, session] : m_sessions) {
+            static_cast<void>(sessionId);
+            if (!session.spawned || session.dead ||
+                session.playerStableId == 0) {
+                continue;
+            }
+            const ecs::Entity entity =
+                m_simulation->Ecs().FindById(session.playerStableId);
+            if (entity == entt::null) {
+                continue;
+            }
+            const auto* position =
+                m_simulation->Ecs().Registry().try_get<ecs::Position>(entity);
+            if (position == nullptr || m_simulation->Graph() == nullptr) {
+                continue;
+            }
+            const world::WorldRegion* region =
+                m_simulation->Graph()->RegionAt(position->x, position->y);
+            if (region == nullptr) {
+                continue;
+            }
+            if (std::find(strategic.playerRegions.begin(),
+                          strategic.playerRegions.end(),
+                          region->id) == strategic.playerRegions.end()) {
+                strategic.playerRegions.push_back(region->id);
+            }
+            if (primaryPlayerRegion.empty()) {
+                primaryPlayerRegion = region->id;
+            }
+        }
+        // 单机/嵌入式服务器没有 session 时仍以本地玩家作为战略在场者。
+        if (strategic.playerRegions.empty() &&
+            m_simulation->Player() != entt::null &&
+            m_simulation->Graph() != nullptr) {
+            const auto* position =
+                m_simulation->Ecs().Registry().try_get<ecs::Position>(
+                    m_simulation->Player());
+            if (position != nullptr) {
+                if (const world::WorldRegion* region =
+                        m_simulation->Graph()->RegionAt(position->x,
+                                                        position->y);
+                    region != nullptr) {
+                    strategic.playerRegions.push_back(region->id);
+                    primaryPlayerRegion = region->id;
+                }
+            }
+        }
+        std::string strategicError;
+        if (!m_simulation->TickStrategic(strategic, nullptr,
+                                         &strategicError)) {
+            ZL_WARN("strategic", "服务器战略 tick 失败：{}", strategicError);
+        }
+        // M32-T7：详细围攻只允许一条，但可以选择与当前 Active 战线同区域的
+        // 任一玩家；否则第二个玩家在另一区域发起反攻会被 primary 区域误判离场。
+        std::string detailedPlayerRegion = primaryPlayerRegion;
+        if (m_simulation->RegionalSiegeStatus().active) {
+            const std::string& siegeRegion =
+                m_simulation->RegionalSiegeStatus().regionId;
+            if (std::find(strategic.playerRegions.begin(),
+                          strategic.playerRegions.end(),
+                          siegeRegion) != strategic.playerRegions.end()) {
+                detailedPlayerRegion = siegeRegion;
+            }
+        }
+        m_simulation->UpdateRegionalSiege(
+            dt, m_serverSleep.phase == ServerSleepPhase::Sleeping,
+            detailedPlayerRegion);
+        if (m_serverSleep.phase == ServerSleepPhase::Sleeping &&
+            m_simulation->RegionalSiegeStatus().active) {
+            FinishServerSleep(game::SleepStopReason::SiegeStarted,
+                              "战略围攻开始");
+        }
+        ProcessRegionalSiegeResult();
+        UpdateStrategicContributionRewards();
+    }
     m_events->EmitQueued(core::kOnTick, static_cast<int64_t>(m_ticks));
     m_simulation->Tick(dt);
+    DrainFireDamageCredits();
+    CheckSiegeGuardKills();
+    TrackServerWorldEventParticipants();
+    SettleTerminalServerWorldEvents();
     TickServerVehicles(dt);
     TickServerFloodlightAttacks(dt);
     TickHomestead(dt);
@@ -1344,6 +1705,8 @@ void ServerHost::Tick(float dt) {
     ++m_ticks;
     if (m_networkEnabled) {
         BroadcastSnapshots();
+        BroadcastStrategicSnapshots();
+        BroadcastWorldEventSnapshots();
         BroadcastStructureDiffs();
         BroadcastPlayerStates();
         BroadcastSocialStates();
@@ -1501,6 +1864,23 @@ void ServerHost::PollNetwork() {
                     }
                     ++m_networkStats.chatMessagesReceived;
                     HandleChatMessage(event.sessionId, it->second, chat.text);
+                    break;
+                }
+                if (event.data.size() >= 4 &&
+                    ReadU32Le(event.data.data()) ==
+                        net::kStrategicRequestMagic) {
+                    net::StrategicRequest request;
+                    std::string strategicError;
+                    if (!net::DecodeStrategicRequest(event.data, &request,
+                                                    &strategicError)) {
+                        ++m_networkStats.malformedPackets;
+                        ++m_networkStats.strategicRequestsRejected;
+                        ZL_WARN("strategic", "session={} 战略请求无效：{}",
+                                event.sessionId, strategicError);
+                        break;
+                    }
+                    (void)HandleStrategicRequest(event.sessionId, it->second,
+                                                 request, &strategicError);
                     break;
                 }
                 net::CommandPacket packet;
@@ -1662,6 +2042,10 @@ bool ServerHost::SpawnOrRestoreSessionPlayer(std::uint64_t sessionId,
     }
     session.lastProgressionMinute =
         m_gameTime != nullptr ? m_gameTime->TotalGameMinutes() : 0.0;
+    if (profile != nullptr) {
+        MergeSettlementReputationSummary(
+            m_simulation->Ecs(), player, profile->state.settlementReputation);
+    }
     ApplyProgressionRuntime(player, &session);
     EnsureServerVehicles();
     PlacePlayerOutsideServerVehicle(player);
@@ -1680,6 +2064,10 @@ bool ServerHost::SpawnOrRestoreSessionPlayer(std::uint64_t sessionId,
     }
     session.assignmentSent = false;
     session.needsFullSnapshot = true;
+    session.needsStrategicSnapshot = true;
+    session.needsWorldEventSnapshot = true;
+    session.lastStrategicRequestSequence = 0;
+    session.strategicRequestsThisTick = 0;
     session.stateDirty = true;
     session.lastStateTick = 0;
     session.dead = false;
@@ -1702,6 +2090,1089 @@ bool ServerHost::SpawnOrRestoreSessionPlayer(std::uint64_t sessionId,
     ZL_INFO("net", "身份={} 分配玩家 stableId={}（当前 {} 人）", session.identity,
             session.playerStableId, m_sessions.size());
     return true;
+}
+
+bool ServerHost::BuildStrategicSnapshot(net::StrategicSnapshot* snapshot,
+                                        std::string* error) const {
+    if (snapshot == nullptr || m_simulation == nullptr) {
+        if (error != nullptr) {
+            *error = "战略快照输出或模拟为空";
+        }
+        return false;
+    }
+    if (error != nullptr) {
+        error->clear();
+    }
+    std::int64_t gameMinute = 0;
+    if (m_gameTime != nullptr) {
+        gameMinute = static_cast<std::int64_t>(
+            std::llround(m_gameTime->TotalGameMinutes()));
+    }
+    game::StrategicMapState map;
+    const game::StrategicState* state = m_simulation->Strategic();
+    const game::StrategicConfig* config = m_simulation->StrategicSettings();
+    if (state != nullptr && config != nullptr) {
+        map = game::BuildStrategicMapState(*config, *state, gameMinute);
+    } else {
+        map.enabled = false;
+        map.gameMinute = std::max<std::int64_t>(0, gameMinute);
+    }
+
+    net::StrategicSnapshot out;
+    out.serverTick = m_ticks;
+    out.enabled = map.enabled;
+    out.gameMinute = map.gameMinute;
+    out.tickMinutes = map.tickMinutes;
+    out.warningHours = map.warningHours;
+    out.remoteWarningHours = map.remoteWarningHours;
+    out.autoResolveGraceMinutes = map.autoResolveGraceMinutes;
+    out.people = map.resources.people;
+    out.supplies = map.resources.supplies;
+    out.ammo = map.resources.ammo;
+    out.fuel = map.resources.fuel;
+    out.regions.reserve(map.regions.size());
+    for (const game::StrategicMapRegion& region : map.regions) {
+        net::StrategicRegionSnapshot entry;
+        entry.id = region.id;
+        entry.owner = static_cast<std::uint8_t>(region.owner);
+        entry.contestedFaction =
+            static_cast<std::uint8_t>(region.contestedFaction);
+        entry.siegePhase = static_cast<std::uint8_t>(region.siegePhase);
+        entry.recoveryStage = static_cast<std::uint8_t>(region.recoveryStage);
+        entry.coreSafe = region.coreSafe;
+        entry.remote = region.remote;
+        entry.pressure = region.pressure;
+        entry.defense = region.defense;
+        entry.supply = region.supply;
+        entry.morale = region.morale;
+        entry.population = region.population;
+        entry.garrison = region.garrison;
+        entry.fortification = region.fortification;
+        entry.intelLevel = region.intelLevel;
+        entry.strategicValue = region.strategicValue;
+        entry.facilityDamage = region.facilityDamage;
+        entry.refugees = region.refugees;
+        entry.infectionCores = region.infectionCores;
+        entry.recoveryReadyMinute = region.recoveryReadyMinute;
+        entry.warningValid = region.warning.valid;
+        entry.warningMinute = region.warning.warningMinute;
+        entry.attackMinute = region.warning.attackMinute;
+        entry.reportedAttackMinute = region.warning.reportedAttackMinute;
+        entry.warningMinutes = region.warning.warningMinutes;
+        entry.remainingMinutes = region.warning.remainingMinutes;
+        entry.warningIntelLevel = region.warning.intelLevel;
+        entry.enemyStrength = region.warning.enemyStrength;
+        entry.reportedEnemyStrength = region.warning.reportedEnemyStrength;
+        entry.warningDefenseScore = region.warning.defenseScore;
+        out.regions.push_back(std::move(entry));
+    }
+    out.events.reserve(map.events.size());
+    for (const game::StrategicMapEvent& event : map.events) {
+        net::StrategicEventSnapshot entry;
+        entry.id = event.id;
+        entry.regionId = event.regionId;
+        entry.kind = static_cast<std::uint8_t>(event.kind);
+        entry.ownerAfter = static_cast<std::uint8_t>(event.ownerAfter);
+        entry.gameMinute = event.gameMinute;
+        entry.people = event.delta.people;
+        entry.supplies = event.delta.supplies;
+        entry.ammo = event.delta.ammo;
+        entry.fuel = event.delta.fuel;
+        out.events.push_back(std::move(entry));
+    }
+    *snapshot = std::move(out);
+    return true;
+}
+
+void ServerHost::BroadcastStrategicSnapshots() {
+    if (!m_networkEnabled || m_network == nullptr || m_simulation == nullptr ||
+        m_sessions.empty()) {
+        return;
+    }
+    bool anyNeeds = false;
+    for (const auto& [sessionId, session] : m_sessions) {
+        static_cast<void>(sessionId);
+        if (session.playerStableId != 0 && session.needsStrategicSnapshot) {
+            anyNeeds = true;
+            break;
+        }
+    }
+    // 战略状态按分钟级变化；0.5 秒全量快照足够 HUD/地图，也避免占据
+    // 战斗命令的 KCP 发送窗口。请求/任务奖励会置 dirty 立即补发。
+    const bool periodic = (m_ticks % 30u) == 0u;
+    if (!anyNeeds && !periodic && !m_strategicDirty) {
+        return;
+    }
+
+    net::StrategicSnapshot snapshot;
+    std::string error;
+    if (!BuildStrategicSnapshot(&snapshot, &error)) {
+        ++m_networkStats.strategicSnapshotFailures;
+        ZL_WARN("strategic", "服务器战略快照构建失败：{}", error);
+        return;
+    }
+    ++m_strategicSequence;
+    if (m_strategicSequence == 0) {
+        m_strategicSequence = 1;
+    }
+    snapshot.sequence = m_strategicSequence;
+    const std::vector<std::uint8_t> bytes =
+        net::EncodeStrategicSnapshot(snapshot, &error);
+    if (bytes.empty()) {
+        ++m_networkStats.strategicSnapshotFailures;
+        ZL_WARN("strategic", "服务器战略快照编码失败：{}", error);
+        return;
+    }
+    bool sentAny = false;
+    for (auto& [sessionId, session] : m_sessions) {
+        if (session.playerStableId == 0) {
+            continue;
+        }
+        if (!session.needsStrategicSnapshot && !periodic &&
+            !m_strategicDirty) {
+            continue;
+        }
+        std::string sendError;
+        if (!m_network->Send(sessionId, bytes, &sendError)) {
+            ++m_networkStats.strategicSnapshotFailures;
+            session.needsStrategicSnapshot = true;
+            ZL_WARN("strategic", "session={} 战略快照发送失败：{}", sessionId,
+                    sendError);
+            continue;
+        }
+        session.needsStrategicSnapshot = false;
+        sentAny = true;
+        ++m_networkStats.strategicSnapshotsSent;
+    }
+    if (sentAny) {
+        m_strategicDirty = false;
+    }
+}
+
+bool ServerHost::BuildWorldEventSnapshot(
+    net::WorldEventSnapshot* snapshot, std::string* error) const {
+    if (snapshot == nullptr || m_simulation == nullptr) {
+        if (error != nullptr) {
+            *error = "world event snapshot output or simulation is null";
+        }
+        return false;
+    }
+    net::WorldEventSnapshot out;
+    out.serverTick = m_ticks;
+    out.gameMinute =
+        m_gameTime != nullptr
+            ? std::max<std::int64_t>(
+                  0, static_cast<std::int64_t>(
+                         std::floor(m_gameTime->TotalGameMinutes())))
+            : 0;
+    const game::WorldEventDirector* director = m_simulation->WorldEvents();
+    out.enabled = director != nullptr && director->Enabled();
+    if (!out.enabled) {
+        *snapshot = std::move(out);
+        if (error != nullptr) {
+            error->clear();
+        }
+        return true;
+    }
+
+    std::vector<const game::WorldEventInstance*> ordered;
+    ordered.reserve(director->Events().size());
+    for (const game::WorldEventInstance& event : director->Events()) {
+        ordered.push_back(&event);
+    }
+    const auto priority = [](const game::WorldEventInstance& event) {
+        switch (event.status) {
+            case game::WorldEventStatus::Active:
+                return 0;
+            case game::WorldEventStatus::Warning:
+                return 1;
+            case game::WorldEventStatus::Resolved:
+            case game::WorldEventStatus::Failed:
+            case game::WorldEventStatus::Expired:
+                return 2;
+            case game::WorldEventStatus::Scheduled:
+                return 3;
+        }
+        return 4;
+    };
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [&](const game::WorldEventInstance* left,
+                         const game::WorldEventInstance* right) {
+                         const int leftPriority = priority(*left);
+                         const int rightPriority = priority(*right);
+                         if (leftPriority != rightPriority) {
+                             return leftPriority < rightPriority;
+                         }
+                         if (left->day != right->day) {
+                             return left->day > right->day;
+                         }
+                         return left->id < right->id;
+                     });
+    const std::size_t count =
+        std::min<std::size_t>(ordered.size(),
+                              net::kMaxWorldEventSnapshotEntries);
+    out.events.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const game::WorldEventInstance& event = *ordered[i];
+        net::WorldEventSnapshotEntry entry;
+        entry.id = event.id;
+        entry.defId = event.defId;
+        entry.name = event.name;
+        entry.kind = event.kind;
+        entry.regionId = event.regionId;
+        entry.x = event.x;
+        entry.y = event.y;
+        entry.status = static_cast<std::uint8_t>(event.status);
+        entry.stageKind = static_cast<std::uint8_t>(event.stageKind);
+        entry.day = event.day;
+        entry.stageIndex = event.stageIndex;
+        entry.stageProgress = event.stageProgress;
+        entry.stageTarget = event.stageTarget;
+        entry.stageRadius = event.stageRadius;
+        entry.stageTargetId = event.stageTargetId;
+        entry.scheduledMinute = event.scheduledMinute;
+        entry.warningMinute = event.warningMinute;
+        entry.activeMinute = event.activeMinute;
+        entry.deadlineMinute = event.deadlineMinute;
+        entry.resolvedMinute = event.resolvedMinute;
+        entry.chainDepth = event.chainDepth;
+        entry.detail = event.detail;
+        entry.downgraded = event.downgraded;
+        entry.stagesComplete = event.stagesComplete;
+        entry.choiceId = event.choiceId;
+        entry.nextEventId = event.nextEventId;
+        out.events.push_back(std::move(entry));
+    }
+    *snapshot = std::move(out);
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
+}
+
+void ServerHost::BroadcastWorldEventSnapshots() {
+    if (!m_networkEnabled || m_network == nullptr || m_simulation == nullptr ||
+        m_sessions.empty() || m_worldEvents == nullptr ||
+        !m_worldEvents->enabled) {
+        return;
+    }
+    bool anyNeeds = false;
+    for (const auto& [sessionId, session] : m_sessions) {
+        static_cast<void>(sessionId);
+        if (session.playerStableId != 0 && session.assignmentSent &&
+            session.needsWorldEventSnapshot) {
+            anyNeeds = true;
+            break;
+        }
+    }
+    const bool periodic = (m_ticks % 30u) == 0u;
+    if (!anyNeeds && !periodic && !m_worldEventDirty) {
+        return;
+    }
+
+    net::WorldEventSnapshot snapshot;
+    std::string error;
+    if (!BuildWorldEventSnapshot(&snapshot, &error)) {
+        ++m_networkStats.worldEventSnapshotFailures;
+        ZL_WARN("world-events", "server world event snapshot failed: {}", error);
+        return;
+    }
+    ++m_worldEventSequence;
+    if (m_worldEventSequence == 0) {
+        m_worldEventSequence = 1;
+    }
+    snapshot.sequence = m_worldEventSequence;
+    const std::vector<std::uint8_t> bytes =
+        net::EncodeWorldEventSnapshot(snapshot, &error);
+    if (bytes.empty()) {
+        ++m_networkStats.worldEventSnapshotFailures;
+        ZL_WARN("world-events", "server world event snapshot encode failed: {}",
+                error);
+        return;
+    }
+    bool sentAny = false;
+    for (auto& [sessionId, session] : m_sessions) {
+        if (session.playerStableId == 0 || !session.assignmentSent) {
+            continue;
+        }
+        if (!session.needsWorldEventSnapshot && !periodic &&
+            !m_worldEventDirty) {
+            continue;
+        }
+        std::string sendError;
+        if (!m_network->Send(sessionId, bytes, &sendError)) {
+            ++m_networkStats.worldEventSnapshotFailures;
+            session.needsWorldEventSnapshot = true;
+            ZL_WARN("world-events", "session={} world event snapshot failed: {}",
+                    sessionId, sendError);
+            continue;
+        }
+        session.needsWorldEventSnapshot = false;
+        sentAny = true;
+        ++m_networkStats.worldEventSnapshotsSent;
+    }
+    if (sentAny) {
+        m_worldEventDirty = false;
+    }
+}
+
+void ServerHost::TrackServerWorldEventParticipants() {
+    if (m_simulation == nullptr || m_worldEvents == nullptr ||
+        !m_worldEvents->enabled) {
+        return;
+    }
+    game::WorldEventDirector* director = m_simulation->WorldEvents();
+    if (director == nullptr || !director->Enabled()) {
+        return;
+    }
+    for (const game::WorldEventInstance& event : director->Events()) {
+        if (event.status != game::WorldEventStatus::Active) {
+            continue;
+        }
+        const float radiusSq =
+            m_worldEventDetailRadius * m_worldEventDetailRadius;
+        for (const auto& [sessionId, session] : m_sessions) {
+            static_cast<void>(sessionId);
+            if (session.playerStableId == 0 || !session.spawned ||
+                session.dead) {
+                continue;
+            }
+            const ecs::Entity player =
+                m_simulation->Ecs().FindById(session.playerStableId);
+            if (player == entt::null) {
+                continue;
+            }
+            const auto* position =
+                m_simulation->Ecs().Registry().try_get<ecs::Position>(player);
+            if (position == nullptr) {
+                continue;
+            }
+            const float dx = position->x - event.x;
+            const float dy = position->y - event.y;
+            if (dx * dx + dy * dy <= radiusSq) {
+                m_worldEventParticipants[event.id].insert(
+                    session.playerStableId);
+            }
+        }
+    }
+}
+
+void ServerHost::SettleServerWorldEventParticipants(
+    std::string_view eventId) {
+    if (m_simulation == nullptr || m_simulation->WorldEvents() == nullptr) {
+        return;
+    }
+    const game::WorldEventInstance* event =
+        m_simulation->WorldEvents()->Find(eventId);
+    if (event == nullptr) {
+        return;
+    }
+    auto& participants = m_worldEventParticipants[std::string(eventId)];
+    const float radiusSq =
+        m_worldEventDetailRadius * m_worldEventDetailRadius;
+    for (const auto& [sessionId, session] : m_sessions) {
+        static_cast<void>(sessionId);
+        if (session.playerStableId == 0 || !session.spawned || session.dead) {
+            continue;
+        }
+        const ecs::Entity player =
+            m_simulation->Ecs().FindById(session.playerStableId);
+        if (player == entt::null) {
+            continue;
+        }
+        const auto* position =
+            m_simulation->Ecs().Registry().try_get<ecs::Position>(player);
+        if (position == nullptr) {
+            continue;
+        }
+        const float dx = position->x - event->x;
+        const float dy = position->y - event->y;
+        if (dx * dx + dy * dy <= radiusSq) {
+            participants.insert(session.playerStableId);
+        }
+    }
+    if (participants.empty()) {
+        m_worldEventParticipants.erase(std::string(eventId));
+        return;
+    }
+    for (const std::uint64_t stableId : participants) {
+        const ecs::Entity player = m_simulation->Ecs().FindById(stableId);
+        if (player == entt::null) {
+            continue;
+        }
+        game::WorldEventSettlement settlement;
+        std::string error;
+        if (!m_simulation->SettleWorldEvent(eventId, player, &settlement,
+                                            &error) &&
+            !error.empty()) {
+            ZL_DEBUG("world-events", "participant settlement skipped ({}): {}",
+                      eventId, error);
+        }
+    }
+    m_worldEventParticipants.erase(std::string(eventId));
+}
+
+void ServerHost::SettleTerminalServerWorldEvents() {
+    if (m_simulation == nullptr || m_worldEvents == nullptr ||
+        !m_worldEvents->enabled) {
+        return;
+    }
+    game::WorldEventDirector* director = m_simulation->WorldEvents();
+    if (director == nullptr || !director->Enabled()) {
+        return;
+    }
+    for (const game::WorldEventInstance& event : director->Events()) {
+        if (event.status != game::WorldEventStatus::Resolved &&
+            event.status != game::WorldEventStatus::Failed &&
+            event.status != game::WorldEventStatus::Expired) {
+            continue;
+        }
+        if (!m_worldEventTerminalHandled.insert(event.id).second) {
+            continue;
+        }
+        SettleServerWorldEventParticipants(event.id);
+        m_worldEventDirty = true;
+    }
+}
+
+bool ServerHost::ChooseServerWorldEvent(SessionPlayer& session,
+                                        const net::Command& command,
+                                        std::string* error) {
+    ++m_networkStats.worldEventChoicesReceived;
+    auto fail = [&](std::string message) {
+        ++m_networkStats.worldEventChoicesRejected;
+        if (error != nullptr) {
+            *error = std::move(message);
+        }
+        return false;
+    };
+    if (m_simulation == nullptr || m_worldEvents == nullptr ||
+        !m_worldEvents->enabled || m_gameTime == nullptr) {
+        return fail("世界事件不可用");
+    }
+    game::WorldEventDirector* director = m_simulation->WorldEvents();
+    if (director == nullptr || !director->Enabled()) {
+        return fail("世界事件导演未启用");
+    }
+    const ecs::Entity player =
+        m_simulation->Ecs().FindById(session.playerStableId);
+    if (player == entt::null) {
+        return fail("玩家实体不存在");
+    }
+    const auto* position =
+        m_simulation->Ecs().Registry().try_get<ecs::Position>(player);
+    if (position == nullptr) {
+        return fail("玩家位置不存在");
+    }
+    const game::WorldEventInstance* event = nullptr;
+    for (const game::WorldEventInstance& candidate : director->Events()) {
+        if (candidate.status != game::WorldEventStatus::Active) {
+            continue;
+        }
+        const game::WorldEventDef* candidateDef =
+            m_worldEvents->Find(candidate.defId);
+        if (candidateDef != nullptr &&
+            game::WorldEventCanChoose(*candidateDef, candidate,
+                                      position->x, position->y)) {
+            event = &candidate;
+            break;
+        }
+    }
+    if (event == nullptr) {
+        return fail("当前没有可抉择的世界事件");
+    }
+    const game::WorldEventDef* def = m_worldEvents->Find(event->defId);
+    if (def == nullptr) {
+        return fail("世界事件定义缺失");
+    }
+    if (command.payload.index < 0 ||
+        command.payload.index >= static_cast<int>(def->choices.size())) {
+        return fail("世界事件选项越界");
+    }
+    const game::WorldEventChoiceDef& choice =
+        def->choices[static_cast<std::size_t>(command.payload.index)];
+    const std::string eventId = event->id;
+    game::WorldEventSettlement settlement;
+    std::string chooseError;
+    m_worldEventParticipants[eventId].insert(session.playerStableId);
+    if (!m_simulation->ChooseWorldEvent(eventId, choice.id, player,
+                                        &settlement, &chooseError)) {
+        return fail(chooseError.empty() ? "世界事件选择失败" : chooseError);
+    }
+    SettleServerWorldEventParticipants(eventId);
+    m_worldEventTerminalHandled.insert(eventId);
+    m_worldEventDirty = true;
+    session.stateDirty = true;
+    SetSessionStatus(session, "世界事件已结算：" + choice.label, 1);
+    ZL_INFO("world-events", "server world event choice: {} ({}) by {}",
+            choice.label, eventId, session.playerStableId);
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
+}
+
+bool ServerHost::HandleStrategicRequest(std::uint64_t sessionId,
+                                        SessionPlayer& session,
+                                        const net::StrategicRequest& request,
+                                        std::string* error) {
+    ++m_networkStats.strategicRequestsReceived;
+    auto finish = [&](bool accepted, std::string reason) {
+        net::StrategicRequestResult result;
+        result.sequence = request.sequence;
+        result.action = request.action;
+        result.regionId = request.regionId;
+        result.accepted = accepted;
+        result.reason = std::move(reason);
+        if (accepted) {
+            m_strategicDirty = true;
+        } else {
+            ++m_networkStats.strategicRequestsRejected;
+        }
+        std::string encodeError;
+        const std::vector<std::uint8_t> bytes =
+            net::EncodeStrategicResult(result, &encodeError);
+        if (!bytes.empty() && m_network != nullptr) {
+            std::string sendError;
+            if (!m_network->Send(sessionId, bytes, &sendError)) {
+                ZL_WARN("strategic", "session={} 战略结果发送失败：{}", sessionId,
+                        sendError);
+            }
+        }
+        SetSessionStatus(session, "战略 · " + result.reason,
+                         accepted ? 1 : 2);
+        if (error != nullptr) {
+            *error = result.reason;
+        }
+        return accepted;
+    };
+
+    if (request.sequence <= session.lastStrategicRequestSequence) {
+        ++m_networkStats.strategicRequestsRateLimited;
+        return finish(false, "重复或过期的战略请求");
+    }
+    session.lastStrategicRequestSequence = request.sequence;
+    if (session.strategicRequestsThisTick >= 4) {
+        ++m_networkStats.strategicRequestsRateLimited;
+        return finish(false, "战略请求过于频繁");
+    }
+    ++session.strategicRequestsThisTick;
+    if (!session.spawned || session.dead || m_simulation == nullptr ||
+        m_simulation->Graph() == nullptr) {
+        return finish(false, "玩家尚未在场");
+    }
+    const ecs::Entity player =
+        m_simulation->Ecs().FindById(session.playerStableId);
+    if (player == entt::null) {
+        return finish(false, "玩家实体不存在");
+    }
+    const auto* position =
+        m_simulation->Ecs().Registry().try_get<ecs::Position>(player);
+    if (position == nullptr) {
+        return finish(false, "玩家位置不可用");
+    }
+    const world::WorldRegion* worldRegion =
+        m_simulation->Graph()->RegionAt(position->x, position->y);
+    if (worldRegion == nullptr || worldRegion->id != request.regionId) {
+        return finish(false, "不在目标战略区域");
+    }
+    const game::StrategicRegionState* region =
+        m_simulation->Strategic() != nullptr
+            ? m_simulation->Strategic()->FindRegion(request.regionId)
+            : nullptr;
+    if (region == nullptr) {
+        return finish(false, "战略区域不存在");
+    }
+    if (m_strategic != nullptr) {
+        const game::StrategicRegionConfig* def =
+            m_strategic->Find(request.regionId);
+        if (def != nullptr && def->hasAnchor) {
+            const float dx = position->x - def->anchorX;
+            const float dy = position->y - def->anchorY;
+            if (dx * dx + dy * dy > 4.0f * 4.0f) {
+                return finish(false, "离战略锚点太远");
+            }
+        }
+    }
+
+    const game::StrategicContributionConfig* contributionConfig =
+        m_simulation->StrategicSettings() != nullptr
+            ? &m_simulation->StrategicSettings()->contribution
+            : nullptr;
+    std::string actionError;
+    bool accepted = false;
+    int contribution = 0;
+    switch (request.action) {
+        case net::StrategicRequestAction::DonateSupply: {
+            int delivered = 0;
+            accepted = m_simulation->DonateStrategicSupply(
+                request.regionId, request.amount, session.playerStableId,
+                &actionError, &delivered);
+            if (accepted && contributionConfig != nullptr) {
+                contribution = delivered * contributionConfig->donatePerSupply;
+            }
+            break;
+        }
+        case net::StrategicRequestAction::Reclaim:
+            accepted = m_simulation->StartRegionalReclaim(request.regionId);
+            if (!accepted) {
+                actionError = "当前阶段不能反攻";
+            } else if (contributionConfig != nullptr) {
+                contribution = contributionConfig->reclaim;
+            }
+            break;
+        case net::StrategicRequestAction::ClearCore:
+            accepted = m_simulation->ClearRegionalRecoveryCore(
+                request.regionId, &actionError);
+            if (accepted && contributionConfig != nullptr) {
+                contribution = contributionConfig->clearCore;
+            }
+            break;
+        case net::StrategicRequestAction::RepairFacility:
+            accepted = m_simulation->RepairRegionalRecoveryFacility(
+                request.regionId, &actionError);
+            if (accepted && contributionConfig != nullptr) {
+                contribution = contributionConfig->repairFacility;
+            }
+            break;
+    }
+    if (!accepted &&
+        actionError.empty()) {
+        actionError = "战略请求被拒绝";
+    }
+    if (accepted) {
+        AddStrategicContribution(session.playerStableId, request.regionId,
+                                 contribution);
+        ZL_INFO("strategic", "玩家 {} 执行战略 {}：{}，贡献 +{}",
+                session.playerStableId,
+                net::StrategicRequestActionName(request.action),
+                request.regionId, contribution);
+    }
+    const std::string reason =
+        accepted
+            ? (contribution > 0
+                   ? "已执行 · 贡献 +" + std::to_string(contribution)
+                   : "已执行")
+            : actionError;
+    return finish(accepted, reason);
+}
+
+void ServerHost::AddStrategicContribution(std::uint64_t stableId,
+                                          std::string_view regionId,
+                                          int points) {
+    if (stableId == 0 || regionId.empty() || points <= 0) {
+        return;
+    }
+    int& total = m_strategicContributions[stableId][std::string(regionId)];
+    total = std::min(total + points, 1000000);
+}
+
+void ServerHost::RewardStrategicContributors(
+    const game::StrategicRegionState& region) {
+    if (m_simulation == nullptr) {
+        return;
+    }
+    const game::StrategicConfig* config =
+        m_simulation->StrategicSettings();
+    const int rewardPool =
+        config != nullptr ? config->contribution.rewardXp : 0;
+    const int minContribution =
+        config != nullptr ? config->contribution.minContribution : 1;
+
+    struct Share {
+        SessionPlayer* session = nullptr;
+        std::uint64_t stableId = 0;
+        int contribution = 0;
+        int xp = 0;
+        std::int64_t remainder = 0;
+    };
+    std::vector<Share> shares;
+    std::int64_t totalContribution = 0;
+    for (auto& [sessionId, session] : m_sessions) {
+        static_cast<void>(sessionId);
+        if (session.playerStableId == 0 || session.dead) {
+            continue;
+        }
+        const auto playerIt =
+            m_strategicContributions.find(session.playerStableId);
+        if (playerIt == m_strategicContributions.end()) {
+            continue;
+        }
+        const auto regionIt = playerIt->second.find(region.id);
+        if (regionIt == playerIt->second.end() ||
+            regionIt->second < minContribution) {
+            continue;
+        }
+        shares.push_back(Share{&session, session.playerStableId,
+                               regionIt->second, 0, 0});
+        totalContribution += regionIt->second;
+    }
+
+    if (totalContribution > 0 && rewardPool > 0) {
+        for (Share& share : shares) {
+            const std::int64_t weighted =
+                static_cast<std::int64_t>(rewardPool) * share.contribution;
+            share.xp = static_cast<int>(weighted / totalContribution);
+            share.remainder = weighted % totalContribution;
+        }
+        std::sort(shares.begin(), shares.end(),
+                  [](const Share& left, const Share& right) {
+                      if (left.remainder != right.remainder) {
+                          return left.remainder > right.remainder;
+                      }
+                      if (left.contribution != right.contribution) {
+                          return left.contribution > right.contribution;
+                      }
+                      return left.stableId < right.stableId;
+                  });
+        int awarded = 0;
+        for (const Share& share : shares) {
+            awarded += share.xp;
+        }
+        int remainder = rewardPool - awarded;
+        for (std::size_t i = 0;
+             i < shares.size() && remainder > 0; ++i, --remainder) {
+            ++shares[i].xp;
+        }
+        for (const Share& share : shares) {
+            if (share.xp <= 0 || share.session == nullptr) {
+                continue;
+            }
+            const ecs::Entity player =
+                m_simulation->Ecs().FindById(share.stableId);
+            if (player == entt::null) {
+                continue;
+            }
+            AwardProgressionXp(player, ecs::SkillKind::Survival,
+                               static_cast<float>(share.xp), share.session);
+            SetSessionStatus(
+                *share.session,
+                "战略贡献奖励：+" + std::to_string(share.xp) +
+                    " 生存经验",
+                1);
+            ZL_INFO("strategic",
+                    "区域 {} 转 Human，玩家 {} 贡献 {} 获得 {} 生存经验",
+                    region.id, share.stableId, share.contribution,
+                    share.xp);
+        }
+    }
+
+    for (auto it = m_strategicContributions.begin();
+         it != m_strategicContributions.end();) {
+        it->second.erase(region.id);
+        if (it->second.empty()) {
+            it = m_strategicContributions.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void ServerHost::RewardSiegeContributors(
+    std::string_view regionId,
+    const std::unordered_map<std::uint64_t, int>& points, int rewardPool) {
+    if (m_simulation == nullptr || rewardPool <= 0 || points.empty()) {
+        return;
+    }
+    struct Share {
+        SessionPlayer* session = nullptr;
+        ecs::Entity player = entt::null;
+        std::uint64_t stableId = 0;
+        int contribution = 0;
+        int xp = 0;
+        std::int64_t remainder = 0;
+    };
+    std::vector<Share> shares;
+    std::int64_t totalContribution = 0;
+    for (const auto& [stableId, contribution] : points) {
+        if (contribution <= 0) {
+            continue;
+        }
+        SessionPlayer* session = FindSessionByPlayerStableId(stableId);
+        if (session != nullptr && session->dead) {
+            continue;
+        }
+        const ecs::Entity player =
+            m_simulation->Ecs().FindById(stableId);
+        if (player == entt::null || !m_simulation->Ecs().Alive(player)) {
+            continue;
+        }
+        if (session == nullptr && player != m_simulation->Player()) {
+            continue;
+        }
+        shares.push_back(
+            Share{session, player, stableId, contribution, 0, 0});
+        totalContribution += contribution;
+    }
+    if (totalContribution <= 0) {
+        return;
+    }
+
+    for (Share& share : shares) {
+        const std::int64_t weighted =
+            static_cast<std::int64_t>(rewardPool) * share.contribution;
+        share.xp = static_cast<int>(weighted / totalContribution);
+        share.remainder = weighted % totalContribution;
+    }
+    std::sort(shares.begin(), shares.end(),
+              [](const Share& left, const Share& right) {
+                  if (left.remainder != right.remainder) {
+                      return left.remainder > right.remainder;
+                  }
+                  if (left.contribution != right.contribution) {
+                      return left.contribution > right.contribution;
+                  }
+                  return left.stableId < right.stableId;
+              });
+    int awarded = 0;
+    for (const Share& share : shares) {
+        awarded += share.xp;
+    }
+    int remainder = rewardPool - awarded;
+    for (std::size_t i = 0; i < shares.size() && remainder > 0;
+         ++i, --remainder) {
+        ++shares[i].xp;
+    }
+
+    for (const Share& share : shares) {
+        if (share.xp <= 0) {
+            continue;
+        }
+        AwardProgressionXp(share.player, ecs::SkillKind::Survival,
+                           static_cast<float>(share.xp), share.session);
+        if (share.session != nullptr) {
+            SetSessionStatus(
+                *share.session,
+                "守城贡献奖励：+" + std::to_string(share.xp) +
+                    " 生存经验",
+                1);
+        }
+        ZL_INFO("strategic",
+                "守城区域 {} 玩家 {} 伤害贡献 {} 获得 {} 生存经验",
+                regionId, share.stableId, share.contribution, share.xp);
+    }
+
+    std::string report = "守城战报 · " + std::string(regionId) + " · 守住";
+    int shown = 0;
+    for (const Share& share : shares) {
+        if (share.xp <= 0 || shown >= 3) {
+            continue;
+        }
+        std::string name = share.session != nullptr
+                               ? share.session->playerName
+                               : "本地玩家";
+        if (name.size() > 16) {
+            name.resize(16);
+        }
+        report += " · " + name + " 贡献+" +
+                  std::to_string(share.contribution) + " 经验+" +
+                  std::to_string(share.xp);
+        ++shown;
+    }
+    if (shown == 0) {
+        return;
+    }
+    if (report.size() > 480) {
+        report.resize(480);
+    }
+    PublishSiegeReport(report);
+}
+
+void ServerHost::ProcessRegionalSiegeResult() {
+    if (m_simulation == nullptr) {
+        return;
+    }
+    const game::RegionalSiegeResult& result =
+        m_simulation->RegionalSiegeLastResult();
+    if (result.regionId.empty()) {
+        return;
+    }
+    const std::string key =
+        result.regionId + ":" + std::to_string(result.attackMinute) + ":" +
+        std::to_string(result.resolvedMinute) + ":" +
+        (result.reclaim ? "r" : "d") + (result.held ? "h" : "l");
+    if (key == m_lastSiegeResultKey) {
+        return;
+    }
+    m_lastSiegeResultKey = key;
+
+    const game::StrategicState* strategic = m_simulation->Strategic();
+    const game::StrategicConfig* settings = m_simulation->StrategicSettings();
+    world::WorldGraph* graph = m_simulation->Graph();
+    const game::StrategicRegionState* region =
+        strategic != nullptr ? strategic->FindRegion(result.regionId)
+                             : nullptr;
+    std::unordered_map<std::uint64_t, int> damagePoints;
+    if (settings != nullptr) {
+        const int damagePerPoint =
+            std::max(1, settings->contribution.defenseDamagePerPoint);
+        for (const auto& [stableId, damage] : m_siegeDefenseDamage) {
+            const int points = static_cast<int>(
+                std::ceil(damage / static_cast<float>(damagePerPoint)));
+            if (points > 0) {
+                damagePoints[stableId] += points;
+            }
+        }
+    }
+    const auto previous = m_lastStrategicOwners.find(result.regionId);
+    const bool humanDefense =
+        result.held && !result.reclaim && result.wavesSpawned > 0 &&
+        region != nullptr && region->owner == game::StrategicOwner::Human &&
+        previous != m_lastStrategicOwners.end() &&
+        previous->second == game::StrategicOwner::Human;
+    if (!humanDefense) {
+        if (region != nullptr) {
+            for (const auto& [stableId, points] : damagePoints) {
+                AddStrategicContribution(stableId, result.regionId, points);
+            }
+        }
+ResetSiegeDefenseLedger();
+        return;
+    }
+
+    const game::SettlementDef* defenseSettlement =
+        m_settlements != nullptr && !result.settlementId.empty()
+            ? m_settlements->Find(result.settlementId)
+            : nullptr;
+    const std::string reputationKey =
+        "defense:" + result.settlementId + ":" + key;
+    const auto awardDefenseReputation = [&](std::uint64_t stableId) {
+        if (defenseSettlement == nullptr) {
+            return;
+        }
+        const ecs::Entity player = m_simulation->Ecs().FindById(stableId);
+        if (player == entt::null) {
+            return;
+        }
+        (void)game::AwardSettlementReputation(
+            m_simulation->Ecs(), player, m_settlements->reputation,
+            defenseSettlement->id, game::SettlementReputationEvent::DefenseComplete,
+            reputationKey, defenseSettlement->startingReputation,
+            m_gameTime != nullptr
+                ? 1 + static_cast<int>(
+                          m_gameTime->TotalGameMinutes() / (24.0 * 60.0))
+                : 1);
+    };
+
+    const int rewardPool =
+        settings != nullptr ? settings->contribution.defenseRewardXp : 0;
+    if (!damagePoints.empty()) {
+        for (const auto& [stableId, points] : damagePoints) {
+            if (points > 0) {
+                awardDefenseReputation(stableId);
+            }
+        }
+        RewardSiegeContributors(result.regionId, damagePoints, rewardPool);
+ResetSiegeDefenseLedger();
+        return;
+    }
+    if (rewardPool <= 0 || graph == nullptr) {
+ResetSiegeDefenseLedger();
+        return;
+    }
+
+    std::vector<ecs::Entity> participants;
+    std::vector<std::uint64_t> participantIds;
+    const auto consider = [&](ecs::Entity entity) {
+        if (entity == entt::null || !m_simulation->Ecs().Alive(entity)) {
+            return;
+        }
+        const auto* position =
+            m_simulation->Ecs().Registry().try_get<ecs::Position>(entity);
+        if (position == nullptr) {
+            return;
+        }
+        const world::WorldRegion* worldRegion =
+            graph->RegionAt(position->x, position->y);
+        if (worldRegion == nullptr || worldRegion->id != result.regionId) {
+            return;
+        }
+        const std::uint64_t stableId = m_simulation->Ecs().IdOf(entity).id;
+        if (std::find(participantIds.begin(), participantIds.end(),
+                      stableId) != participantIds.end()) {
+            return;
+        }
+        participantIds.push_back(stableId);
+        participants.push_back(entity);
+    };
+    if (m_simulation->Player() != entt::null) {
+        consider(m_simulation->Player());
+    }
+    for (auto& [sessionId, session] : m_sessions) {
+        static_cast<void>(sessionId);
+        if (!session.spawned || session.dead || session.playerStableId == 0) {
+            continue;
+        }
+        consider(m_simulation->Ecs().FindById(session.playerStableId));
+    }
+    if (participants.empty()) {
+ResetSiegeDefenseLedger();
+        return;
+    }
+    std::sort(participants.begin(), participants.end(),
+              [&](ecs::Entity left, ecs::Entity right) {
+                  return m_simulation->Ecs().IdOf(left).id <
+                         m_simulation->Ecs().IdOf(right).id;
+              });
+
+    const int count = static_cast<int>(participants.size());
+    const int base = rewardPool / count;
+    const int remainder = rewardPool % count;
+    for (int i = 0; i < count; ++i) {
+        const int amount = base + (i < remainder ? 1 : 0);
+        if (amount <= 0) {
+            continue;
+        }
+        const ecs::Entity player = participants[static_cast<std::size_t>(i)];
+        const std::uint64_t stableId = m_simulation->Ecs().IdOf(player).id;
+        awardDefenseReputation(stableId);
+        SessionPlayer* session = FindSessionByPlayerStableId(stableId);
+        AwardProgressionXp(player, ecs::SkillKind::Survival,
+                           static_cast<float>(amount), session);
+        if (session != nullptr) {
+            SetSessionStatus(*session,
+                             "守城奖励：+" + std::to_string(amount) +
+                                 " 生存经验",
+                             1);
+        }
+    }
+    ZL_INFO("strategic",
+            "围攻击退：{}，{} 名在场玩家分享 {} 生存经验", result.regionId,
+            count, rewardPool);
+    PublishSiegeReport(
+        "守城战报 · " + result.regionId + " · 守住 · " +
+        std::to_string(count) + " 人在场均分 " +
+        std::to_string(rewardPool) + " 经验");
+ResetSiegeDefenseLedger();
+}
+
+void ServerHost::UpdateStrategicContributionRewards() {
+    if (m_simulation == nullptr) {
+        return;
+    }
+    const game::StrategicState* strategic = m_simulation->Strategic();
+    if (strategic == nullptr) {
+        m_lastStrategicOwners.clear();
+        return;
+    }
+    if (m_lastStrategicOwners.empty()) {
+        for (const game::StrategicRegionState& region : strategic->regions) {
+            m_lastStrategicOwners[region.id] = region.owner;
+        }
+        return;
+    }
+    for (const game::StrategicRegionState& region : strategic->regions) {
+        auto it = m_lastStrategicOwners.find(region.id);
+        if (it == m_lastStrategicOwners.end()) {
+            m_lastStrategicOwners[region.id] = region.owner;
+            continue;
+        }
+        if (it->second != game::StrategicOwner::Human &&
+            region.owner == game::StrategicOwner::Human) {
+            RewardStrategicContributors(region);
+        }
+        it->second = region.owner;
+    }
 }
 
 void ServerHost::BroadcastSnapshots() {
@@ -1807,6 +3278,16 @@ void ServerHost::BroadcastStructureDiffs() {
                 m_structureSyncIntervalTicks) {
             continue;
         }
+        const ecs::Entity sessionPlayer =
+            m_simulation->Ecs().FindById(session.playerStableId);
+        const auto* sessionPosition =
+            sessionPlayer != entt::null
+                ? m_simulation->Ecs().Registry().try_get<ecs::Position>(
+                      sessionPlayer)
+                : nullptr;
+        if (sessionPosition == nullptr) {
+            continue;
+        }
         session.lastStructureSyncTick = m_ticks;
         bool sendFailed = false;
         std::string error;
@@ -1837,6 +3318,12 @@ void ServerHost::BroadcastStructureDiffs() {
                 if (sendFailed) {
                     return;
                 }
+                if (!ChunkWithinInterest(chunk, sessionPosition->x,
+                                         sessionPosition->y,
+                                         m_structureInterestRadius)) {
+                    ++m_networkStats.structureChunksFiltered;
+                    return;
+                }
                 save::ChunkDiff diff;
                 if (!save::CaptureChunkDiff(chunk, &diff, &error)) {
                     ++m_networkStats.structureDiffFailures;
@@ -1859,7 +3346,10 @@ void ServerHost::BroadcastStructureDiffs() {
             }
             const world::Chunk* chunk =
                 FindServerLoadedChunk(tombstone.wx, tombstone.wy);
-            if (chunk == nullptr) {
+            if (chunk == nullptr ||
+                !ChunkWithinInterest(*chunk, sessionPosition->x,
+                                     sessionPosition->y,
+                                     m_structureInterestRadius)) {
                 continue;
             }
             const world::SquareLocal local =
@@ -2328,6 +3818,24 @@ void ServerHost::FillPlayerState(const SessionPlayer& session,
                 progress.guardHealthMax = status.guardHealthMax;
                 state->settlements.push_back(std::move(progress));
             }
+        }
+    }
+    state->settlementReputation.clear();
+    if (const auto* reputation =
+            registry.try_get<game::SettlementReputation>(player);
+        reputation != nullptr) {
+        state->settlementReputation.reserve(
+            std::min<std::size_t>(reputation->settlements.size(),
+                                  net::kMaxPlayerStateSettlementReputation));
+        for (const game::SettlementReputationEntry& entry :
+             reputation->settlements) {
+            if (state->settlementReputation.size() >=
+                net::kMaxPlayerStateSettlementReputation) {
+                break;
+            }
+            state->settlementReputation.push_back(
+                net::PlayerSettlementReputation{entry.settlementId,
+                                                entry.score});
         }
     }
     state->sleep = {};
@@ -2833,7 +4341,8 @@ void ServerHost::TickServerObjectives() {
 }
 
 void ServerHost::ActivateServerMission(SessionPlayer& session,
-                                       const game::MissionDef& def, int day) {
+                                       const game::MissionDef& def, int day,
+                                       std::string_view settlementId) {
     if (m_simulation == nullptr || session.playerStableId == 0) {
         return;
     }
@@ -2857,6 +4366,7 @@ void ServerHost::ActivateServerMission(SessionPlayer& session,
     state->status = ecs::MissionRunStatus::Active;
     state->day = day;
     state->rewardClaimed = false;
+    state->settlementId.assign(settlementId);
     session.stateDirty = true;
 }
 
@@ -2986,11 +4496,59 @@ void ServerHost::CompleteServerMission(SessionPlayer& session,
     state.status = ecs::MissionRunStatus::Completed;
     state.rewardClaimed = true;
     bool rewardDropped = false;
+    int strategicContribution = 0;
+    int reputationDelta = 0;
     if (m_simulation != nullptr) {
         const ecs::Entity player =
             m_simulation->Ecs().FindById(session.playerStableId);
         if (player != entt::null) {
             GrantServerMissionReward(player, def, &rewardDropped);
+            if (!state.settlementId.empty() && m_settlements != nullptr) {
+                if (const game::SettlementDef* settlement =
+                        m_settlements->Find(state.settlementId);
+                    settlement != nullptr) {
+                    const std::string key =
+                        "mission:" + state.settlementId + ":" + def.id + ":" +
+                        std::to_string(state.day) + ":complete";
+                    const game::SettlementReputationChange change =
+                        game::AwardSettlementReputation(
+                            m_simulation->Ecs(), player,
+                            m_settlements->reputation, state.settlementId,
+                            game::SettlementReputationEvent::MissionComplete,
+                            key, settlement->startingReputation, state.day);
+                    reputationDelta = change.delta;
+                    if (change.applied && change.delta != 0) {
+                        ZL_INFO("settlement",
+                                "服务器任务声望：{} {} {} → {}",
+                                settlement->name, def.id, change.delta,
+                                change.current);
+                    }
+                }
+            }
+        }
+        std::string strategicError;
+        if (m_simulation->GrantStrategicMissionReward(def.id,
+                                                       &strategicError)) {
+            m_strategicDirty = true;
+            const game::StrategicConfig* settings =
+                m_simulation->StrategicSettings();
+            const game::StrategicMissionRewardConfig* reward =
+                settings != nullptr
+                    ? settings->economy.FindMission(def.id)
+                    : nullptr;
+            if (reward != nullptr && !reward->regionId.empty() &&
+                m_simulation->Strategic() != nullptr &&
+                m_simulation->Strategic()->FindRegion(reward->regionId) !=
+                    nullptr &&
+                settings->contribution.mission > 0) {
+                strategicContribution = settings->contribution.mission;
+                AddStrategicContribution(session.playerStableId,
+                                         reward->regionId,
+                                         strategicContribution);
+            }
+        } else if (!strategicError.empty()) {
+            ZL_WARN("strategic", "服务器任务战略奖励失败：{}（{}）", def.id,
+                    strategicError);
         }
     }
     session.stateDirty = true;
@@ -2998,12 +4556,22 @@ void ServerHost::CompleteServerMission(SessionPlayer& session,
     if (!def.reward.label.empty()) {
         text += " · " + def.reward.label;
     }
+    if (strategicContribution > 0) {
+        text += " · 战略贡献 +" + std::to_string(strategicContribution);
+    }
+    if (reputationDelta != 0) {
+        text += " · 声望 " + std::to_string(reputationDelta);
+    }
     if (rewardDropped) {
         text += "（背包已满，奖励掉落脚下）";
     }
     SetSessionStatus(session, text, 1);
     ZL_INFO("missions", "服务器任务完成：{}（{}），玩家 {}", def.name, def.id,
             session.playerStableId);
+    if (strategicContribution > 0) {
+        ZL_INFO("strategic", "任务 {} 计入战略贡献 +{}，玩家 {}", def.id,
+                strategicContribution, session.playerStableId);
+    }
 }
 
 void ServerHost::EnsureServerRandomEventContent(int day) {
@@ -3078,6 +4646,118 @@ void ServerHost::EnsureServerRandomEventContent(int day) {
     }
 }
 
+void ServerHost::RecordSiegeDefenseDamage(std::uint64_t playerStableId,
+                                          ecs::Entity target, float damage) {
+    if (m_simulation == nullptr || playerStableId == 0 ||
+        !(damage > 0.0f) || !std::isfinite(damage) ||
+        FindSessionByPlayerStableId(playerStableId) == nullptr) {
+        return;
+    }
+    const game::RegionalSiegeSnapshot& siege =
+        m_simulation->RegionalSiegeStatus();
+    if (!siege.active || siege.settlementId.empty()) {
+        return;
+    }
+    if (siege.regionId != m_siegeDefenseRegion) {
+        ResetSiegeDefenseLedger();
+        m_siegeDefenseRegion = siege.regionId;
+    }
+    const auto* raid =
+        m_simulation->Ecs().Registry().try_get<game::SettlementRaidZombie>(
+            target);
+    if (raid == nullptr || raid->settlementId != siege.settlementId) {
+        return;
+    }
+    m_siegeDefenseDamage[playerStableId] += damage;
+    m_siegeTargetDamage[m_simulation->Ecs().IdOf(target).id][playerStableId] +=
+        damage;
+}
+
+void ServerHost::ResetSiegeDefenseLedger() {
+    m_siegeDefenseRegion.clear();
+    m_siegeDefenseDamage.clear();
+    m_siegeTargetDamage.clear();
+    m_siegeGuardKills.clear();
+}
+
+void ServerHost::CheckSiegeGuardKills() {
+    if (m_simulation == nullptr) {
+        return;
+    }
+    const game::RegionalSiegeSnapshot& siege =
+        m_simulation->RegionalSiegeStatus();
+    const game::StrategicConfig* settings =
+        m_simulation->StrategicSettings();
+    if (!siege.active || siege.settlementId.empty() || settings == nullptr ||
+        settings->contribution.defenseKillAssistPoints <= 0) {
+        return;
+    }
+    auto& registry = m_simulation->Ecs().Registry();
+    registry.view<game::SettlementRaidZombie, ecs::Health>().each(
+        [&](const ecs::Entity entity, const game::SettlementRaidZombie& raid,
+            const ecs::Health& health) {
+            if (raid.settlementId != siege.settlementId ||
+                health.current > 0.0f) {
+                return;
+            }
+            const std::uint64_t targetId =
+                m_simulation->Ecs().IdOf(entity).id;
+            if (!m_siegeGuardKills.insert(targetId).second) {
+                return;
+            }
+            const auto* last =
+                registry.try_get<ecs::LastDamage>(entity);
+            if (last == nullptr || last->sourceId == 0) {
+                return;
+            }
+            const ecs::Entity source =
+                m_simulation->Ecs().FindById(last->sourceId);
+            if (source == entt::null) {
+                return;
+            }
+            const auto* npc = registry.try_get<game::SettlementNpc>(source);
+            if (npc == nullptr || npc->kind != game::SettlementNpcKind::Guard ||
+                npc->settlementId != siege.settlementId) {
+                return;
+            }
+            const auto damageIt = m_siegeTargetDamage.find(targetId);
+            if (damageIt == m_siegeTargetDamage.end()) {
+                return;
+            }
+            const auto points = game::AllocateSiegeKillAssist(
+                damageIt->second,
+                settings->contribution.defenseKillAssistPoints);
+            for (const auto& [stableId, value] : points) {
+                if (value > 0) {
+                    m_siegeDefenseDamage[stableId] +=
+                        static_cast<float>(value);
+                    ZL_INFO("strategic",
+                            "守卫击杀助攻：目标 {} 玩家 {} +{} 点",
+                            targetId, stableId, value);
+                }
+            }
+        });
+}
+
+void ServerHost::DrainFireDamageCredits() {
+    if (m_simulation == nullptr || m_simulation->Fire() == nullptr) {
+        return;
+    }
+    for (const game::FireDamageCredit& credit :
+         m_simulation->Fire()->TakeDamageCredits()) {
+        if (credit.amount <= 0.0f || credit.ownerStableId == 0 ||
+            credit.targetStableId == 0) {
+            continue;
+        }
+        const ecs::Entity target =
+            m_simulation->Ecs().FindById(credit.targetStableId);
+        if (target != entt::null) {
+            RecordSiegeDefenseDamage(credit.ownerStableId, target,
+                                     credit.amount);
+        }
+    }
+}
+
 void ServerHost::TickServerMissions() {
     if (m_simulation == nullptr || m_missionConfig == nullptr ||
         !m_missionConfig->enabled) {
@@ -3085,15 +4765,29 @@ void ServerHost::TickServerMissions() {
     }
     // 击杀目标按本 tick 的实际命中记录归属到攻击者；与单机 CombatStats 不同，
     // 服务器必须按玩家拆分，避免多人共享击杀数。
+    const game::RegionalSiegeSnapshot& siege =
+        m_simulation->RegionalSiegeStatus();
+    if (siege.active && siege.regionId != m_siegeDefenseRegion) {
+        ResetSiegeDefenseLedger();
+        m_siegeDefenseRegion = siege.regionId;
+    }
     if (characters::CombatSystem* combat = m_simulation->Combat();
         combat != nullptr) {
         for (const characters::CombatSystem::HitInfo& hit : combat->GetHits()) {
-            if (!hit.lethal || hit.attacker == entt::null ||
-                hit.target == entt::null) {
+            if (hit.attacker == entt::null || hit.target == entt::null) {
                 continue;
             }
             const std::uint64_t attackerId =
                 m_simulation->Ecs().IdOf(hit.attacker).id;
+            SessionPlayer* attackerSession =
+                FindSessionByPlayerStableId(attackerId);
+            if (attackerSession == nullptr) {
+                continue;
+            }
+            RecordSiegeDefenseDamage(attackerId, hit.target, hit.damage);
+            if (!hit.lethal) {
+                continue;
+            }
             std::string target = "any";
             if (const auto* actor =
                     m_simulation->Ecs().Registry().try_get<ecs::RandomEventActor>(
@@ -3101,14 +4795,9 @@ void ServerHost::TickServerMissions() {
                 actor != nullptr) {
                 target = actor->eventId;
             }
-            for (auto& [sessionId, session] : m_sessions) {
-                static_cast<void>(sessionId);
-                if (session.playerStableId == attackerId) {
-                    RecordServerMissionEvent(
-                        session, game::MissionObjectiveKind::Kill, target, 1);
-                    break;
-                }
-            }
+            RecordServerMissionEvent(*attackerSession,
+                                     game::MissionObjectiveKind::Kill, target,
+                                     1);
         }
     }
 
@@ -3205,9 +4894,31 @@ void ServerHost::TickServerMissions() {
                 state.status = ecs::MissionRunStatus::Failed;
                 state.rewardClaimed = false;
                 state.day = day;
+                int reputationDelta = 0;
+                if (!state.settlementId.empty() && m_settlements != nullptr) {
+                    if (const game::SettlementDef* settlement =
+                            m_settlements->Find(state.settlementId);
+                        settlement != nullptr) {
+                        const std::string key =
+                            "mission:" + state.settlementId + ":" + def->id +
+                            ":" + std::to_string(day) + ":fail";
+                        const game::SettlementReputationChange change =
+                            game::AwardSettlementReputation(
+                                m_simulation->Ecs(), player,
+                                m_settlements->reputation,
+                                state.settlementId,
+                                game::SettlementReputationEvent::MissionTimeout,
+                                key, settlement->startingReputation, day);
+                        reputationDelta = change.delta;
+                    }
+                }
                 session.stateDirty = true;
-                SetSessionStatus(session, "任务失败：" + def->name + "（超时）",
-                                 2);
+                std::string text =
+                    "任务失败：" + def->name + "（超时）";
+                if (reputationDelta != 0) {
+                    text += " · 声望 " + std::to_string(reputationDelta);
+                }
+                SetSessionStatus(session, std::move(text), 2);
                 ZL_INFO("missions", "服务器任务超时：{}（{}），玩家 {}",
                         def->name, def->id, session.playerStableId);
                 continue;
@@ -3751,7 +5462,7 @@ bool ServerHost::IgniteFireAction(SessionPlayer& session,
         m_simulation->Fire()->IgniteAt(
             m_simulation->Ecs(), m_simulation->World(), campfireX, campfireY,
             position->z, m_simulation->CurrentWeather().wetnessIntensity,
-            &reason);
+            &reason, session.playerStableId);
     if (result == game::FireIgnitionResult::Ignited) {
         SetSessionStatus(session, "篝火点燃中", 1);
     } else if (result == game::FireIgnitionResult::AlreadyActive) {
@@ -5101,9 +6812,22 @@ void ServerHost::UpdateProjectiles(float dt) {
                     event.dirY = length > 0.0001f ? velocity.y / length : 0.0f;
                     event.knockback = value.knockback;
                     event.staggerSeconds = value.staggerSeconds;
+                    const auto* healthBefore =
+                        registry.try_get<ecs::Health>(best);
+                    const float healthValue =
+                        healthBefore != nullptr ? healthBefore->current : 0.0f;
                     if (m_simulation->Combat()->ApplyDamage(
                             m_simulation->Ecs(), best, event)) {
                         ++m_networkStats.projectilesHit;
+                        const auto* healthAfter =
+                            registry.try_get<ecs::Health>(best);
+                        const float applied =
+                            healthAfter != nullptr
+                                ? std::max(0.0f,
+                                           healthValue - healthAfter->current)
+                                : 0.0f;
+                        RecordSiegeDefenseDamage(value.ownerStableId, best,
+                                                 applied);
                     }
                 }
             }
@@ -5306,7 +7030,24 @@ bool ServerHost::IsServerVehicleCellWalkable(int wx, int wy, int z) const {
     if (m_simulation == nullptr || FindServerLoadedChunk(wx, wy) == nullptr) {
         return false;
     }
-    return !game::IsSquareBlocked(m_simulation->World(), wx, wy, z);
+    const bool blocked = game::IsSquareBlocked(m_simulation->World(), wx, wy, z);
+    world::WorldGraph* graph = m_simulation->Graph();
+    if (graph == nullptr) {
+        return !blocked;
+    }
+    const world::GridSquare* square =
+        m_simulation->World().GetSquare(wx, wy, z);
+    std::string_view floorSprite;
+    if (square != nullptr) {
+        const world::SquareObject* floor = square->Floor();
+        if (floor != nullptr) {
+            floorSprite = floor->sprite;
+        }
+    }
+    return graph
+        ->ClassifyTerrain(static_cast<float>(wx) + 0.5f,
+                          static_cast<float>(wy) + 0.5f, blocked, floorSprite)
+        .vehiclePassable;
 }
 
 game::VehicleSurface ServerHost::ServerVehicleSurfaceAt(float x, float y,
@@ -6289,10 +8030,14 @@ bool ServerHost::ApplyServerVehicleRam(
         event.knockback = game::VehicleRamKnockback(speed, m_vehicleTuning);
         event.staggerSeconds =
             game::VehicleRamStagger(speed, m_vehicleTuning);
+        const float healthBefore = health.current;
         if (!m_simulation->Combat()->ApplyDamage(m_simulation->Ecs(), entity,
                                                  event)) {
             return;
         }
+        RecordSiegeDefenseDamage(
+            vehicle.driverStableId, entity,
+            std::max(0.0f, healthBefore - health.current));
         vehicle.ramCooldowns[targetId] =
             m_vehicleTuning.ramCooldownSeconds;
         rammed = true;
@@ -7450,7 +9195,11 @@ bool ServerHost::SaveWorld(const char* reason) {
     m_simulation->Flush();
 
     save::EntitySnapshot entities;
+    save::EntityBucketSet entityBuckets;
     std::string error;
+    world::RegionStreaming* regions = m_simulation->Regions();
+    const world::WorldDefinition* definition =
+        regions != nullptr ? &regions->Definition() : nullptr;
     const auto withoutPlayers = [this](ecs::Entity entity) {
         const entt::registry& registry = m_simulation->Ecs().Registry();
         const bool temporaryNpc =
@@ -7467,11 +9216,20 @@ bool ServerHost::SaveWorld(const char* reason) {
                !temporaryNpc && !invalidHealth &&
                !registry.all_of<game::SettlementRaidZombie>(entity);
     };
-    if (!save::CaptureEntities(m_simulation->Ecs(), *m_saveComponents, &entities,
-                               withoutPlayers, &error)) {
+    const bool captured =
+        definition != nullptr
+            ? save::CaptureRegionEntityBuckets(
+                  m_simulation->Ecs(), *m_saveComponents, *definition,
+                  &entityBuckets, withoutPlayers, &error)
+            : save::CaptureEntities(m_simulation->Ecs(), *m_saveComponents,
+                                    &entities, withoutPlayers, &error);
+    if (!captured) {
         ZL_WARN("save", "服务器世界实体快照失败（{}）：{}",
                 reason != nullptr ? reason : "manual", error);
         return false;
+    }
+    if (definition != nullptr) {
+        entities = std::move(entityBuckets.global);
     }
 
     std::vector<save::ChunkDiff> chunks;
@@ -7497,6 +9255,61 @@ bool ServerHost::SaveWorld(const char* reason) {
     save::SaveManager::SaveOptions options;
     options.entities = &entities;
     options.chunks = &chunks;
+    save::WorldManifest manifest;
+    if (definition != nullptr && regions != nullptr) {
+        manifest.version = save::kWorldManifestVersion;
+        manifest.identity = world::MakeWorldIdentity(*definition);
+        manifest.worldSaveVersion = save::kWorldSaveVersion;
+        manifest.regions.reserve(regions->Regions().size());
+        for (const world::RegionRuntime& region : regions->Regions()) {
+            manifest.regions.push_back(
+                save::ManifestRegion{region.id,
+                                     static_cast<std::uint8_t>(region.phase)});
+        }
+        if (game::RegionEventDirector* events = m_simulation->RegionEvents();
+            events != nullptr) {
+            manifest.events.reserve(events->Events().size());
+            for (const game::RegionEvent& event : events->Events()) {
+                manifest.events.push_back(save::ManifestRegionEvent{
+                    event.id,
+                    event.regionId,
+                    static_cast<std::uint8_t>(event.kind),
+                    static_cast<std::uint8_t>(event.status),
+                    event.day,
+                    event.x,
+                    event.y,
+                    event.remainingSeconds,
+                    event.targetCount,
+                    event.spawnedCount,
+                    event.contentSpawned});
+            }
+        }
+        if (game::StrategicState* strategic = m_simulation->Strategic();
+            strategic != nullptr) {
+            strategic->contributions.clear();
+            for (const auto& [stableId, regions] : m_strategicContributions) {
+                for (const auto& [regionId, points] : regions) {
+                    if (points > 0) {
+                        strategic->contributions.push_back(
+                            game::StrategicContributionRecord{
+                                stableId, regionId, points});
+                    }
+                }
+            }
+        }
+        if (!m_simulation->CaptureStrategicToManifest(&manifest, &error)) {
+            ZL_WARN("save", "服务器战略状态快照失败（{}）：{}",
+                    reason != nullptr ? reason : "manual", error);
+            return false;
+        }
+        if (!m_simulation->CaptureWorldEventsToManifest(&manifest, &error)) {
+            ZL_WARN("save", "服务器世界事件快照失败（{}）：{}",
+                    reason != nullptr ? reason : "manual", error);
+            return false;
+        }
+        options.manifest = &manifest;
+        options.buckets = &entityBuckets.buckets;
+    }
     if (m_gameTime != nullptr) {
         options.gameMinutes = m_gameTime->TotalGameMinutes();
     }
@@ -7505,9 +9318,11 @@ bool ServerHost::SaveWorld(const char* reason) {
                 reason != nullptr ? reason : "manual", m_activeSaveId, error);
         return false;
     }
-    ZL_INFO("save", "服务器世界已保存（{}）：{}，实体 {}，chunk {}",
+    ZL_INFO("save",
+            "服务器世界已保存（{}）：{}，实体 {}，chunk {}，桶 {}，事件 {}",
             reason != nullptr ? reason : "manual", m_activeSaveId,
-            entities.entities.size(), chunks.size());
+            entities.entities.size(), chunks.size(), entityBuckets.buckets.size(),
+            manifest.events.size());
     return true;
 }
 
@@ -7599,6 +9414,8 @@ bool ServerHost::RespawnSessionPlayer(SessionPlayer& session) {
     session.survivalScanned = false;
     session.lastProgressionMinute =
         m_gameTime != nullptr ? m_gameTime->TotalGameMinutes() : 0.0;
+    MergeSettlementReputationSummary(
+        m_simulation->Ecs(), player, profile->state.settlementReputation);
     ApplyProgressionRuntime(player, &session);
     EnsureServerVehicles();
     PlacePlayerOutsideServerVehicle(player);
@@ -8551,6 +10368,10 @@ void ServerHost::EnsureServerMerchant() {
         m_simulation->Player() == entt::null) {
         return;
     }
+    if (m_settlements != nullptr && m_settlements->enabled &&
+        !m_settlements->defs.empty()) {
+        return;
+    }
     entt::registry& registry = m_simulation->Ecs().Registry();
     bool found = false;
     registry.view<ecs::MerchantStock>().each(
@@ -8559,32 +10380,10 @@ void ServerHost::EnsureServerMerchant() {
         return;
     }
 
-    const game::SettlementDef* settlement =
-        m_settlements != nullptr ? game::PrimarySettlement(*m_settlements)
-                                 : nullptr;
-    if (settlement != nullptr) {
-        m_homesteadConfig.trade.restockDays = settlement->restockDays;
-    }
-    const game::SettlementNpcPoint* merchantPoint =
-        settlement != nullptr
-            ? game::FindSettlementNpc(*settlement,
-                                      game::SettlementNpcKind::Merchant)
-            : nullptr;
-    float targetX = m_homesteadConfig.trade.merchantX;
-    float targetY = m_homesteadConfig.trade.merchantY;
-    if (merchantPoint != nullptr) {
-        targetX = merchantPoint->x;
-        targetY = merchantPoint->y;
-    } else if (const ecs::Entity player = m_simulation->Player();
-               player != entt::null) {
-        if (const auto* position = registry.try_get<ecs::Position>(player);
-            position != nullptr) {
-            targetX = position->x + 2.0f;
-            targetY = position->y + 1.0f;
-        }
-    }
-    const int targetGridX = static_cast<int>(std::floor(targetX));
-    const int targetGridY = static_cast<int>(std::floor(targetY));
+    const int targetGridX =
+        static_cast<int>(std::floor(m_homesteadConfig.trade.merchantX));
+    const int targetGridY =
+        static_cast<int>(std::floor(m_homesteadConfig.trade.merchantY));
     const auto walkable = [this](int wx, int wy) {
         const world::Chunk* chunk = FindServerLoadedChunk(wx, wy);
         if (chunk == nullptr) {
@@ -8607,17 +10406,7 @@ void ServerHost::EnsureServerMerchant() {
         m_simulation->Ecs(), static_cast<float>(wx) + 0.5f,
         static_cast<float>(wy) + 0.5f, 0);
     if (merchant != entt::null) {
-        if (auto* stock = registry.try_get<ecs::MerchantStock>(merchant);
-            stock != nullptr && settlement != nullptr) {
-            stock->stock = settlement->merchantStock;
-            stock->restockDay = 0;
-        }
-        if (settlement != nullptr) {
-            ZL_INFO("homestead", "服务器商人已就位：({}, {})（聚落 {}）", wx,
-                    wy, settlement->id);
-        } else {
-            ZL_INFO("homestead", "服务器商人已就位：({}, {})", wx, wy);
-        }
+        ZL_INFO("homestead", "服务器商人已就位：({}, {})", wx, wy);
     }
 }
 
@@ -8626,48 +10415,10 @@ void ServerHost::EnsureServerSettlementNpcs() {
         !m_settlements->enabled || m_simulation->Player() == entt::null) {
         return;
     }
-    const game::SettlementDef* settlement =
-        game::PrimarySettlement(*m_settlements);
-    if (settlement == nullptr) {
+    game::SettlementNpcSystem* system = m_simulation->SettlementNpcs();
+    if (system == nullptr) {
         return;
     }
-    entt::registry& registry = m_simulation->Ecs().Registry();
-    bool merchantConfigured = false;
-    bool hasGuard = false;
-    bool hasRequester = false;
-    registry.view<game::SettlementNpc>().each(
-        [&](const ecs::Entity, const game::SettlementNpc& npc) {
-            if (npc.settlementId != settlement->id) {
-                return;
-            }
-            merchantConfigured =
-                merchantConfigured ||
-                npc.kind == game::SettlementNpcKind::Merchant;
-            hasGuard = hasGuard || npc.kind == game::SettlementNpcKind::Guard;
-            hasRequester =
-                hasRequester ||
-                npc.kind == game::SettlementNpcKind::Requester;
-        });
-    if (!merchantConfigured) {
-        registry.view<ecs::MerchantStock, ecs::Position>().each(
-            [&](const ecs::Entity entity, const ecs::MerchantStock&,
-                const ecs::Position& position) {
-                if (merchantConfigured) {
-                    return;
-                }
-                const game::SettlementNpcPoint* merchantPoint =
-                    game::FindSettlementNpc(
-                        *settlement, game::SettlementNpcKind::Merchant);
-                game::ConfigureSettlementNpc(
-                    m_simulation->Ecs(), entity, settlement->id,
-                    game::SettlementNpcKind::Merchant, position.x,
-                    position.y,
-                    merchantPoint != nullptr ? merchantPoint->wanderRadius
-                                             : 1.5f);
-                merchantConfigured = true;
-            });
-    }
-
     const auto walkable = [this](int wx, int wy) {
         const world::Chunk* chunk = FindServerLoadedChunk(wx, wy);
         if (chunk == nullptr) {
@@ -8680,49 +10431,8 @@ void ServerHost::EnsureServerSettlementNpcs() {
         return !game::IsSquareBlocked(m_simulation->World(), wx, wy, 0) &&
                !ServerCellOccupied(wx, wy);
     };
-    auto spawnNpc = [&](game::SettlementNpcKind kind) {
-        const game::SettlementNpcPoint* point =
-            game::FindSettlementNpc(*settlement, kind);
-        if (point == nullptr) {
-            return false;
-        }
-        const int wx = static_cast<int>(std::floor(point->x));
-        const int wy = static_cast<int>(std::floor(point->y));
-        if (!walkable(wx, wy)) {
-            return false;
-        }
-        const ecs::Entity npc = game::SpawnSettlementNpc(
-            m_simulation->Ecs(), settlement->id, kind,
-            static_cast<float>(wx) + 0.5f, static_cast<float>(wy) + 0.5f,
-            point->wanderRadius,
-            kind == game::SettlementNpcKind::Guard
-                ? settlement->defense.guardHealth
-                : 0.0f);
-        if (npc == entt::null) {
-            return false;
-        }
-        if (kind == game::SettlementNpcKind::Guard) {
-            if (game::SettlementNpcSystem* system =
-                    m_simulation->SettlementNpcs();
-                system != nullptr) {
-                system->ApplyGuardHealth(m_simulation->Ecs(), npc,
-                                         settlement->id);
-            }
-        }
-        ZL_INFO("settlement", "服务器聚落 NPC 已就位：{}（{}，格 {},{}）",
-                game::SettlementNpcKindName(kind), settlement->id, wx, wy);
-        return true;
-    };
-    if (!hasGuard) {
-        const game::SettlementNpcSystem* system =
-            m_simulation->SettlementNpcs();
-        if (system == nullptr || !system->IsFallen(settlement->id)) {
-            (void)spawnNpc(game::SettlementNpcKind::Guard);
-        }
-    }
-    if (!hasRequester) {
-        (void)spawnNpc(game::SettlementNpcKind::Requester);
-    }
+    system->EnsurePopulation(m_simulation->Ecs(),
+                             m_homesteadConfig.trade.enabled, walkable);
 }
 
 bool ServerHost::ServerFindNearbyBed(ecs::Entity player,
@@ -9854,6 +11564,23 @@ void ServerHost::BroadcastServerNotice(const std::string& text,
     ZL_INFO("siege", "{}", text);
 }
 
+void ServerHost::PushServerChat(const std::string& sender, std::string text) {
+    if (text.size() > net::kMaxChatBytes) {
+        text.resize(net::kMaxChatBytes);
+    }
+    m_chatLog.push_back(
+        net::SocialChatLine{m_ticks, sender, std::move(text)});
+    while (m_chatLog.size() > net::kMaxSocialChatMessages) {
+        m_chatLog.pop_front();
+    }
+    m_socialDirty = true;
+}
+
+void ServerHost::PublishSiegeReport(const std::string& text) {
+    BroadcastServerNotice(text, "ok");
+    PushServerChat("系统", text);
+}
+
 void ServerHost::TickServerBaseSiege(float dt) {
     if (m_simulation == nullptr || m_gameTime == nullptr) {
         return;
@@ -10008,11 +11735,20 @@ void ServerHost::TickHomestead(float dt) {
         const int day = 1 + static_cast<int>(now / (24.0 * 60.0));
         const auto& offers = game::MerchantOffers();
         registry.view<ecs::MerchantStock>().each(
-            [&](const ecs::Entity, ecs::MerchantStock& stock) {
+            [&](const ecs::Entity entity, ecs::MerchantStock& stock) {
+                int restockDays = m_homesteadConfig.trade.restockDays;
+                if (const auto* npc =
+                        registry.try_get<game::SettlementNpc>(entity);
+                    npc != nullptr && m_settlements != nullptr) {
+                    if (const game::SettlementDef* settlement =
+                            m_settlements->Find(npc->settlementId);
+                        settlement != nullptr) {
+                        restockDays = settlement->restockDays;
+                    }
+                }
                 game::ClampMerchantStock(stock);
                 if (stock.restockDay <= 0 ||
-                    day >= stock.restockDay +
-                               m_homesteadConfig.trade.restockDays) {
+                    day >= stock.restockDay + restockDays) {
                     for (std::size_t i = 0;
                          i < offers.size() && i < stock.stock.size(); ++i) {
                         stock.stock[i] = offers[i].maxStock;
@@ -10405,12 +12141,14 @@ void ServerHost::TickTrapTriggers() {
             }
             ecs::Entity target = entt::null;
             float bestDistance = trap.radius * trap.radius;
-            registry.view<ecs::BaseSiegeZombie, ecs::AiState, ecs::Health,
-                          ecs::Position>()
+            registry.view<ecs::AiState, ecs::Health, ecs::Position>()
                 .each([&](const ecs::Entity entity, const ecs::AiState& ai,
                           const ecs::Health& health,
                           const ecs::Position& position) {
-                    if (health.current <= 0.0f ||
+                    if (!registry.any_of<ecs::BaseSiegeZombie,
+                                          game::SettlementRaidZombie>(
+                            entity) ||
+                        health.current <= 0.0f ||
                         ai.status == ecs::AiStatus::Dead ||
                         registry.any_of<ecs::Dying>(entity) ||
                         registry.any_of<ecs::PlayerTag>(entity) ||
@@ -10456,9 +12194,19 @@ void ServerHost::TickTrapTriggers() {
             event.dirY = dy / length;
         }
         characters::CombatSystem* combat = m_simulation->Combat();
+        const auto* targetHealth =
+            registry.try_get<ecs::Health>(hit.target);
+        const float healthBefore =
+            targetHealth != nullptr ? targetHealth->current : 0.0f;
         if (combat == nullptr ||
             !combat->ApplyDamage(m_simulation->Ecs(), hit.target, event)) {
             continue;
+        }
+        const auto* healthAfter = registry.try_get<ecs::Health>(hit.target);
+        if (event.sourceId != 0 && healthAfter != nullptr) {
+            RecordSiegeDefenseDamage(
+                event.sourceId, hit.target,
+                std::max(0.0f, healthBefore - healthAfter->current));
         }
         if (!game::ConsumeTrapUse(*trap)) {
             continue;
@@ -10914,6 +12662,25 @@ bool ServerHost::PurchaseMerchantOffer(ecs::Entity player,
         }
         return false;
     }
+    const game::SettlementNpc* npc =
+        registry.try_get<game::SettlementNpc>(merchant);
+    if (npc != nullptr &&
+        npc->kind != game::SettlementNpcKind::Merchant) {
+        if (error != nullptr) {
+            *error = "目标 NPC 不是商人";
+        }
+        return false;
+    }
+    const game::SettlementDef* settlement =
+        npc != nullptr && m_settlements != nullptr
+            ? m_settlements->Find(npc->settlementId)
+            : nullptr;
+    if (npc != nullptr && settlement == nullptr) {
+        if (error != nullptr) {
+            *error = "商人所属聚落数据不存在";
+        }
+        return false;
+    }
     const float dx = merchantPosition->x - playerPosition->x;
     const float dy = merchantPosition->y - playerPosition->y;
     if (dx * dx + dy * dy >
@@ -10925,13 +12692,12 @@ bool ServerHost::PurchaseMerchantOffer(ecs::Entity player,
         return false;
     }
 
-    if (const auto* npc = registry.try_get<game::SettlementNpc>(merchant);
-        npc != nullptr) {
+    if (settlement != nullptr) {
         if (game::SettlementNpcSystem* system =
                 m_simulation->SettlementNpcs();
             system != nullptr &&
-            (system->IsFallen(npc->settlementId) ||
-             system->RaidActive(npc->settlementId))) {
+            (system->IsFallen(settlement->id) ||
+             system->RaidActive(settlement->id))) {
             if (error != nullptr) {
                 *error = "聚落当前无法交易";
             }
@@ -10944,6 +12710,26 @@ bool ServerHost::PurchaseMerchantOffer(ecs::Entity player,
         offers[static_cast<std::size_t>(command.payload.index)];
     const std::size_t stockIndex =
         static_cast<std::size_t>(command.payload.index);
+    int cost = offer.costCount;
+    if (settlement != nullptr) {
+        const int score = game::SettlementReputationScoreFor(
+            m_simulation->Ecs(), player, settlement->id,
+            settlement->startingReputation);
+        if (!game::SettlementCanUseService(
+                *settlement, m_settlements->reputation,
+                game::SettlementService::Trade, score)) {
+            if (error != nullptr) {
+                *error =
+                    game::HasSettlementService(*settlement,
+                                               game::SettlementService::Trade)
+                        ? "声望敌视：商人拒绝交易"
+                        : "该聚落不提供交易";
+            }
+            return false;
+        }
+        cost = game::SettlementBuyPrice(
+            offer.costCount, m_settlements->reputation, score);
+    }
     if (stock->stock[stockIndex] <= 0) {
         if (error != nullptr) {
             *error = "商人库存不足";
@@ -10966,11 +12752,10 @@ bool ServerHost::PurchaseMerchantOffer(ecs::Entity player,
     }
 
     ecs::Container next = *container;
-    if (items::RemoveItem(next, offer.costDefId, offer.costCount) !=
-        offer.costCount) {
+    if (items::RemoveItem(next, offer.costDefId, cost) != cost) {
         if (error != nullptr) {
             *error = "物资不足：需要 " + std::string(offer.costDefId) +
-                     " ×" + std::to_string(offer.costCount);
+                     " ×" + std::to_string(cost);
         }
         return false;
     }
@@ -11000,6 +12785,21 @@ bool ServerHost::PurchaseMerchantOffer(ecs::Entity player,
     std::string message = "交易完成：" + std::string(offer.name);
     if (!offer.blueprint.empty()) {
         message += "（已学习图纸）";
+    }
+    if (settlement != nullptr) {
+        const int day =
+            m_gameTime != nullptr
+                ? 1 + static_cast<int>(
+                          m_gameTime->TotalGameMinutes() / (24.0 * 60.0))
+                : 1;
+        const game::SettlementReputationChange change =
+            game::AwardSettlementReputation(
+                m_simulation->Ecs(), player, m_settlements->reputation,
+                settlement->id, game::SettlementReputationEvent::Trade, {},
+                settlement->startingReputation, day);
+        if (change.applied && change.delta != 0) {
+            message += " · 声望 " + std::to_string(change.delta);
+        }
     }
     SetSessionStatus(session, std::move(message), 1);
     ZL_INFO("homestead", "服务器商人交易：{}，库存 {}", offer.id,
@@ -11071,6 +12871,21 @@ bool ServerHost::AcceptSettlementMission(ecs::Entity player,
         return false;
     }
 
+    const int score = game::SettlementReputationScoreFor(
+        m_simulation->Ecs(), player, settlement->id,
+        settlement->startingReputation);
+    if (!game::SettlementCanUseService(
+            *settlement, m_settlements->reputation,
+            game::SettlementService::Missions, score)) {
+        if (error != nullptr) {
+            *error =
+                game::HasSettlementService(*settlement,
+                                           game::SettlementService::Missions)
+                    ? "声望敌视：拒绝委托"
+                    : "该聚落不提供委托";
+        }
+        return false;
+    }
     auto* log = registry.try_get<ecs::MissionLog>(player);
     if (log == nullptr) {
         log = &registry.emplace<ecs::MissionLog>(player);
@@ -11081,14 +12896,14 @@ bool ServerHost::AcceptSettlementMission(ecs::Entity player,
                       m_gameTime->TotalGameMinutes() / (24.0 * 60.0))
             : 1;
     const game::MissionDef* def = game::FindAvailableSettlementMission(
-        *settlement, *m_missionConfig, *log, day);
+        *settlement, *m_missionConfig, *log, day, score);
     if (def == nullptr) {
         if (error != nullptr) {
             *error = "当前没有可接取的委托";
         }
         return false;
     }
-    ActivateServerMission(session, *def, day);
+    ActivateServerMission(session, *def, day, settlement->id);
     SetSessionStatus(session, "已接取委托：" + def->name, 1);
     ZL_INFO("missions", "服务器聚落委托接取：{}（{}），玩家 {}", def->name,
             def->id, session.playerStableId);
@@ -11818,6 +13633,8 @@ bool ServerHost::ExecuteSessionCommand(std::uint64_t sessionId, SessionPlayer& s
         case net::CommandType::AcceptSettlementMission:
             return applyBuild(
                 AcceptSettlementMission(player, session, command, error));
+        case net::CommandType::ChooseWorldEvent:
+            return ChooseServerWorldEvent(session, command, error);
         case net::CommandType::SearchLootContainer: {
             if (command.payload.entityId == 0) {
                 return fail("容器目标不存在");
@@ -11840,14 +13657,39 @@ bool ServerHost::ExecuteSessionCommand(std::uint64_t sessionId, SessionPlayer& s
                     ? 1 + static_cast<int>(
                               m_gameTime->TotalGameMinutes() / (24.0 * 60.0))
                     : 1;
+            const ecs::MissionRunState* before =
+                log != nullptr ? game::FindMissionState(*log, def.id)
+                               : nullptr;
+            const std::string settlementId =
+                before != nullptr ? before->settlementId : std::string{};
             if (log == nullptr ||
                 !game::AbandonMission(log, def.id, day)) {
                 return fail("当前没有可放弃的任务");
+            }
+            int reputationDelta = 0;
+            if (!settlementId.empty() && m_settlements != nullptr) {
+                if (const game::SettlementDef* settlement =
+                        m_settlements->Find(settlementId);
+                    settlement != nullptr) {
+                    const std::string key =
+                        "mission:" + settlementId + ":" + def.id + ":" +
+                        std::to_string(day) + ":abandon";
+                    const game::SettlementReputationChange change =
+                        game::AwardSettlementReputation(
+                            m_simulation->Ecs(), player,
+                            m_settlements->reputation, settlementId,
+                            game::SettlementReputationEvent::MissionAbandon,
+                            key, settlement->startingReputation, day);
+                    reputationDelta = change.delta;
+                }
             }
             session.stateDirty = true;
             std::string text = "任务已放弃：" + def.name;
             if (def.kind == game::MissionKind::Once) {
                 text += "（次日可重新接取）";
+            }
+            if (reputationDelta != 0) {
+                text += " · 声望 " + std::to_string(reputationDelta);
             }
             SetSessionStatus(session, text, 2);
             return true;
@@ -12050,16 +13892,17 @@ void ServerHost::LogStatus() {
         const auto& position = m_simulation->Ecs().Registry().get<ecs::Position>(player);
         playerPosition = glm::vec2(position.x, position.y);
     }
-    ZL_INFO("server", "tick={} 实体={} chunk={} loading={} 玩家={:.1f},{:.1f} 会话={}", m_ticks,
-            m_simulation->Ecs().AliveCount(), stats.loadedChunks, stats.loadingChunks,
-            playerPosition.x, playerPosition.y,
-            m_networkEnabled ? m_sessions.size() : 0);
+    ZL_INFO("server",
+            "tick={} 实体={} chunk={} loading={} 兴趣窗={} 玩家={:.1f},{:.1f} 会话={}",
+            m_ticks, m_simulation->Ecs().AliveCount(), stats.loadedChunks,
+            stats.loadingChunks, stats.focusCount, playerPosition.x,
+            playerPosition.y, m_networkEnabled ? m_sessions.size() : 0);
     if (m_networkEnabled && m_network != nullptr) {
         const net::KcpSessionServerStats sessionStats = m_network->GetStats();
         ZL_INFO("net",
                 "服务器网络: 收包={} 坏包={} 超大={} 过期={} | 命令 收/受/拒={}/{}/{} "
                 "限频={} 冷却={} 越权={} 距离={} 未实现={} | 分配={} 快照={} 失败={} "
-                "建筑={}/{} 状态 发/失败={}/{} 社交={} 聊天 收/拒={}/{} 枪声={} 投射物 发/中={}/{} | 档案 恢复/保存/死亡/复活={}/{}/{}/{} | KCP 数据报 收/发={}/{} 拒绝={}",
+                "建筑={}/{} 过滤={} 状态 发/失败={}/{} 社交={} 聊天 收/拒={}/{} 枪声={} 投射物 发/中={}/{} | 档案 恢复/保存/死亡/复活={}/{}/{}/{} | KCP 数据报 收/发={}/{} 拒绝={}",
                 m_networkStats.dataPacketsReceived, m_networkStats.malformedPackets,
                 m_networkStats.oversizedPackets, m_networkStats.stalePackets,
                 m_networkStats.commandsReceived, m_networkStats.commandsAccepted,
@@ -12068,7 +13911,9 @@ void ServerHost::LogStatus() {
                 m_networkStats.rangeRejected, m_networkStats.unsupportedCommands,
                 m_networkStats.assignmentsSent, m_networkStats.snapshotsSent,
                 m_networkStats.snapshotFailures, m_networkStats.structureDiffsSent,
-                m_networkStats.structureDiffFailures, m_networkStats.playerStatesSent,
+                m_networkStats.structureDiffFailures,
+                m_networkStats.structureChunksFiltered,
+                m_networkStats.playerStatesSent,
                 m_networkStats.playerStateFailures, m_networkStats.socialStatesSent,
                 m_networkStats.chatMessagesReceived, m_networkStats.chatMessagesRejected,
                 m_networkStats.gunshots, m_networkStats.projectilesFired,
