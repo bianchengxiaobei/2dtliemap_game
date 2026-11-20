@@ -4,6 +4,7 @@ body {
     color: #e6edf3;
     width: 100%;
     height: 100%;
+    pointer-events: none;
 }
 
 .hud-box {
@@ -119,6 +120,104 @@ body {
 
 .poi-guide.status-ok {
     color: #7fe08a;
+}
+
+/* M33-F5-T5：多阶段 POI 结构化 HUD；默认隐藏，靠近阶段 POI 才显示。 */
+.poi-stage-panel {
+    display: none;
+    margin-top: 6px;
+    padding: 6px 8px;
+    border-left-width: 3px;
+    border-left-color: #4f7ea8;
+    background-color: #0c141cb8;
+}
+
+.poi-stage-panel.status-warn {
+    border-left-color: #b58a45;
+}
+
+.poi-stage-panel.status-fail {
+    border-left-color: #9a4a4a;
+}
+
+.poi-stage-panel.status-ok {
+    border-left-color: #4f9a63;
+}
+
+.poi-stage-title {
+    font-size: 12px;
+    font-weight: bold;
+    line-height: 17px;
+    color: #ffffff;
+}
+
+.poi-stage-objective {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 16px;
+    color: #ffd479;
+}
+
+.poi-stage-meta {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 16px;
+    color: #9fd7ff;
+}
+
+.poi-stage-narrative {
+    display: none;
+    margin-top: 3px;
+    padding-top: 3px;
+    border-top-width: 1px;
+    border-color: #2c3e4f;
+    font-size: 11px;
+    line-height: 16px;
+    color: #c7b3ff;
+}
+
+#poi-result-panel {
+    display: none;
+    position: relative;
+    margin-top: 12px;
+    margin-left: 50px;
+    width: 256px;
+    padding: 7px 11px;
+    background-color: #0e1a14ee;
+    border-width: 1px;
+    border-color: #3f7a50;
+    border-left-width: 3px;
+    border-radius: 10px;
+}
+
+#poi-result-panel.status-fail {
+    background-color: #1c1010ee;
+    border-color: #8a4a4a;
+}
+
+.poi-result-kicker {
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: #7fe08a;
+}
+
+#poi-result-panel.status-fail .poi-result-kicker {
+    color: #ff8a7a;
+}
+
+.poi-result-title {
+    margin-top: 2px;
+    font-size: 14px;
+    font-weight: bold;
+    line-height: 19px;
+    color: #ffffff;
+}
+
+.poi-result-body {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 16px;
+    color: #c9d7e3;
 }
 
 .mission-guide {
@@ -268,6 +367,15 @@ body {
     color: #9fb3c8;
 }
 
+.stealth-status {
+    margin-top: 2px;
+    color: #9fd7ff;
+}
+
+.throw-status {
+    color: #ffd479;
+}
+
 .ranged-status {
     margin-top: 2px;
     color: #e5c97b;
@@ -289,6 +397,10 @@ body {
 
 .needs-status.status-fail {
     color: #ff8a7a;
+}
+
+.needs-status.status-ok {
+    color: #9fe08f;
 }
 
 .wound-status {
@@ -393,10 +505,10 @@ body {
     position: absolute;
     left: 3px;
     right: 3px;
-    top: 20px;
-    height: 32px;
+    top: 16px;
+    height: 28px;
     font-size: 11px;
-    line-height: 16px;
+    line-height: 14px;
     text-align: center;
     color: #d7e2ec;
     overflow: hidden;
@@ -407,9 +519,27 @@ body {
 .slot-count {
     position: absolute;
     right: 5px;
-    bottom: 2px;
+    bottom: 1px;
     font-size: 11px;
     color: #ffd479;
+}
+
+.slot.throwable {
+    border-color: #b88a3d;
+}
+
+.slot-throw {
+    position: absolute;
+    left: 3px;
+    right: 3px;
+    bottom: 11px;
+    height: 11px;
+    line-height: 10px;
+    font-size: 8px;
+    text-align: center;
+    color: #ffd479;
+    overflow: hidden;
+    white-space: nowrap;
 }
 
 #hud-bag {
@@ -425,6 +555,7 @@ body {
     border-color: #34495c;
     border-radius: 9px;
     cursor: pointer;
+    pointer-events: auto;
 }
 
 #hud-bag:hover {
@@ -470,6 +601,20 @@ body {
 
 #action-hint.status-fail {
     color: #ff8a7a;
+}
+
+#stealth-prompt {
+    position: absolute;
+    left: 50%;
+    bottom: 188px;
+    margin-left: -180px;
+    width: 360px;
+    display: none;
+    text-align: center;
+    font-size: 13px;
+    font-weight: bold;
+    line-height: 18px;
+    color: #9fd7ff;
 }
 
 #dialogue-panel {
@@ -623,6 +768,31 @@ body {
 
 #siege-status.status-fail {
     color: #ff8a7a;
+}
+
+#companion-status {
+    position: relative;
+    width: 560px;
+    margin-left: 70px;
+    margin-top: 4px;
+    display: none;
+    text-align: center;
+    font-size: 13px;
+    line-height: 18px;
+    font-weight: bold;
+    color: #9fd7ff;
+}
+
+#companion-status.status-warn {
+    color: #ffd479;
+}
+
+#companion-status.status-fail {
+    color: #ff8a7a;
+}
+
+#companion-status.status-ok {
+    color: #7fe08a;
 }
 
 #base-status {
@@ -812,6 +982,105 @@ body {
 .character-hint {
     margin-top: 12px;
     font-size: 11px;
+    color: #9fb3c8;
+}
+
+.companion-panel {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+    display: none;
+    background-color: #00000080;
+    z-index: 21;
+}
+
+.companion-card {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    margin-left: -270px;
+    margin-top: -215px;
+    width: 540px;
+    padding: 16px 20px;
+}
+
+.companion-title {
+    font-size: 18px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.companion-name {
+    margin-top: 5px;
+    font-size: 17px;
+    font-weight: bold;
+    color: #ffd479;
+}
+
+.companion-health {
+    margin-top: 9px;
+    font-size: 13px;
+    color: #d7e2ec;
+}
+
+.companion-track {
+    height: 7px;
+    margin-top: 5px;
+    background-color: #0b1117;
+    border-width: 1px;
+    border-color: #2c3e4f;
+    border-radius: 4px;
+}
+
+.companion-health-fill {
+    width: 100%;
+    height: 7px;
+    border-radius: 4px;
+    background-color: #7fe08a;
+}
+
+.companion-health-fill.low {
+    background-color: #ff8a7a;
+}
+
+.companion-state {
+    margin-top: 8px;
+    font-size: 14px;
+    font-weight: bold;
+    color: #9fd7ff;
+}
+
+.companion-trust {
+    margin-top: 4px;
+    font-size: 13px;
+    color: #ffd479;
+}
+
+.companion-section {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top-width: 1px;
+    border-color: #2c3e4f;
+    font-size: 11px;
+    color: #9fb3c8;
+}
+
+.companion-line {
+    margin-top: 5px;
+    font-size: 13px;
+    line-height: 19px;
+    color: #d7e2ec;
+}
+
+.companion-hint {
+    margin-top: 13px;
+    padding-top: 9px;
+    border-top-width: 1px;
+    border-color: #2c3e4f;
+    font-size: 11px;
+    line-height: 17px;
     color: #9fb3c8;
 }
 

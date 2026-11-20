@@ -34,9 +34,18 @@ class BuildingDataTest(unittest.TestCase):
                 "spike_trap",
                 "floodlight",
                 "electric_fence",
+                "bear_trap",
+                "tripwire_alarm",
+                "fuel_trap",
             ],
         )
         by_id = {entry["id"]: entry for entry in types}
+        self.assertEqual(by_id["bear_trap"]["woodCost"], 3)
+        self.assertEqual(by_id["tripwire_alarm"]["woodCost"], 1)
+        self.assertEqual(by_id["fuel_trap"]["woodCost"], 4)
+        for trap_id in ("bear_trap", "tripwire_alarm", "fuel_trap"):
+            self.assertEqual(by_id[trap_id]["sprite"], "object.trap")
+            self.assertEqual(by_id[trap_id]["category"], "defense")
         self.assertEqual(by_id["wall"]["layer"], "wall")
         self.assertEqual(by_id["wall"]["category"], "defense")
         self.assertEqual(by_id["wall"]["spriteVertical"], "object.wall_v")

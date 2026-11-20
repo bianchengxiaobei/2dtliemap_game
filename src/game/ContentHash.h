@@ -20,8 +20,11 @@ struct MissionConfig;
 struct PoiConfig;
 struct SettlementConfig;
 struct WorldEventConfig;
+struct CompanionConfig;
+struct TrapDefsConfig;
+struct VehicleModsConfig;
 
-inline constexpr std::uint32_t kContentHashVersion = 17;
+inline constexpr std::uint32_t kContentHashVersion = 23;
 
 std::uint64_t ComputeContentHash(
     const items::ItemRegistry& items, const items::RecipeRegistry& recipes,
@@ -32,7 +35,10 @@ std::uint64_t ComputeContentHash(
     const AnimalRegistry* animals = nullptr,
     const CropRegistry* crops = nullptr,
     const SettlementConfig* settlements = nullptr,
-    const WorldEventConfig* worldEvents = nullptr);
+    const WorldEventConfig* worldEvents = nullptr,
+    const CompanionConfig* companions = nullptr,
+    const VehicleModsConfig* vehicleMods = nullptr,
+    const TrapDefsConfig* traps = nullptr);
 
 std::uint64_t ComputeTreeHash(std::string_view root);
 

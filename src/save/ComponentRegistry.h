@@ -24,8 +24,13 @@ inline constexpr std::uint16_t kSaveComponentVersionLoadedAmmo = 2;
 // M23-F5-T2：FarmPlot 增加病害/施肥标记；旧 v1 仍可读，缺失时按 false 处理。
 inline constexpr std::uint16_t kSaveComponentVersionFarmPlot = 2;
 // M25-T4-V2：Vehicle 增加车灯开关；旧 v1 仍可读，缺失时按 false 处理。
-inline constexpr std::uint16_t kSaveComponentVersionVehicle = 3;
+inline constexpr std::uint16_t kSaveComponentVersionVehicle = 4;
+inline constexpr std::uint16_t kSaveComponentVersionVehicleMods = 1;
 inline constexpr std::uint16_t kSaveComponentVersionMissionLog = 2;
+// M33-F3-T5：CompanionState 增加信任个人委托状态；旧 v2 仍可读，默认无委托。
+inline constexpr std::uint16_t kSaveComponentVersionCompanionState = 3;
+// M33-F5-T2：PoiTasks 增加阶段奖励幂等键；旧 v1 仍可读，默认无已领奖励。
+inline constexpr std::uint16_t kSaveComponentVersionPoiTasks = 2;
 
 inline constexpr std::uint32_t kSaveComponentPosition =
     MakeMagic('P', 'O', 'S', 'N');
@@ -81,6 +86,10 @@ inline constexpr std::uint32_t kSaveComponentPoiGuard =
     MakeMagic('P', 'G', 'R', 'D');
 inline constexpr std::uint32_t kSaveComponentPoiTasks =
     MakeMagic('P', 'O', 'T', 'S');
+inline constexpr std::uint32_t kSaveComponentPoiWorldProgress =
+    MakeMagic('P', 'W', 'P', 'R');
+inline constexpr std::uint32_t kSaveComponentPoiStageEnemy =
+    MakeMagic('P', 'S', 'E', 'N');
 inline constexpr std::uint32_t kSaveComponentMissionLog =
     MakeMagic('M', 'S', 'L', 'G');
 inline constexpr std::uint32_t kSaveComponentFarmPlot =
@@ -93,6 +102,8 @@ inline constexpr std::uint32_t kSaveComponentFloodlight =
     MakeMagic('F', 'L', 'D', 'L');
 inline constexpr std::uint32_t kSaveComponentSpikeTrap =
     MakeMagic('T', 'R', 'A', 'P');
+inline constexpr std::uint32_t kSaveComponentPlacedTrap =
+    MakeMagic('T', 'R', 'P', '2');
 inline constexpr std::uint32_t kSaveComponentMerchantStock =
     MakeMagic('M', 'R', 'C', 'H');
 inline constexpr std::uint32_t kSaveComponentSettlementState =
@@ -115,10 +126,18 @@ inline constexpr std::uint32_t kSaveComponentAnimalWorldState =
     MakeMagic('A', 'W', 'S', 'T');
 inline constexpr std::uint32_t kSaveComponentVehicle =
     MakeMagic('V', 'E', 'H', 'I');
+inline constexpr std::uint32_t kSaveComponentVehicleMods =
+    MakeMagic('V', 'M', 'O', 'D');
 inline constexpr std::uint32_t kSaveComponentRandomEventActor =
     MakeMagic('R', 'E', 'V', 'T');
 inline constexpr std::uint32_t kSaveComponentSettlementReputation =
     MakeMagic('S', 'R', 'P', 'T');
+inline constexpr std::uint32_t kSaveComponentCompanion =
+    MakeMagic('C', 'O', 'M', 'P');
+inline constexpr std::uint32_t kSaveComponentCompanionState =
+    MakeMagic('C', 'M', 'S', 'T');
+inline constexpr std::uint32_t kSaveComponentModData =
+    MakeMagic('M', 'D', 'A', 'T');
 
 struct ComponentCodec {
     std::uint32_t type = 0;

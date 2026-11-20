@@ -58,8 +58,10 @@ public:
 private:
     // 视线粗判：沿线每 0.5 格采样（不含端点），任一格不可走 → 遮挡
     bool LineOfSight(float px, float py, float tx, float ty) const;
-    // 单个玩家的完整可见判定：距离 → （近距全向 | 视锥）→ 视线
-    bool CanSee(const ecs::Facing* facing, float px, float py, float tx, float ty) const;
+    // M34-F1-T3：玩家目标快照携带潜行可视倍率；1 = 正常，越小越难被远距发现。
+    // 近距 closeRadius 先判且不受该倍率影响，视线遮挡仍统一走 LineOfSight。
+    bool CanSee(const ecs::Facing* facing, float px, float py, float tx, float ty,
+                float visibilityScale) const;
     // M5-T4：听证判定 = 距离 ≤ 基础半径 → 沿连线数阻挡格 → 半径 × 系数^墙数 ≥ 距离
     bool HearsSound(const core::SoundEvent& sound, float lx, float ly) const;
 
@@ -73,6 +75,7 @@ private:
         std::uint64_t id = 0;
         float x = 0.0f;
         float y = 0.0f;
+        float visibilityScale = 1.0f;
     };
     std::vector<VisibleTarget> m_targetsScratch;
     Stats m_stats;

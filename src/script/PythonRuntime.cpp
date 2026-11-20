@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -15,6 +16,7 @@
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "core/EventBus.h"
@@ -157,6 +159,162 @@ py::dict MakeModGlobals(const std::string& modId, const std::string& path) {
     return globals;
 }
 
+constexpr std::size_t kMaxJsonDepth = 16;
+constexpr std::size_t kMaxJsonStringBytes = 64 * 1024;
+constexpr std::size_t kMaxJsonContainerItems = 1024;
+
+enum class PyJsonStatus {
+    Ok,
+    Cycle,
+    Invalid,
+};
+
+bool ValidatePyJsonString(PyObject* value, PyJsonStatus& status) {
+    Py_ssize_t size = 0;
+    const char* text = PyUnicode_AsUTF8AndSize(value, &size);
+    if (text == nullptr) {
+        PyErr_Clear();
+        status = PyJsonStatus::Invalid;
+        return false;
+    }
+    if (size < 0 ||
+        static_cast<std::size_t>(size) > kMaxJsonStringBytes) {
+        status = PyJsonStatus::Invalid;
+        return false;
+    }
+    return true;
+}
+
+bool ValidatePyJsonValue(py::handle value, std::size_t depth,
+                         std::unordered_set<PyObject*>& path,
+                         PyJsonStatus& status) {
+    PyObject* object = value.ptr();
+    if (object == Py_None || PyBool_Check(object)) {
+        return true;
+    }
+    if (PyUnicode_Check(object)) {
+        return ValidatePyJsonString(object, status);
+    }
+    if (PyLong_Check(object)) {
+        return true;
+    }
+    if (PyFloat_Check(object)) {
+        if (!std::isfinite(PyFloat_AS_DOUBLE(object))) {
+            status = PyJsonStatus::Invalid;
+            return false;
+        }
+        return true;
+    }
+
+    if (PyDict_Check(object)) {
+        if (depth > kMaxJsonDepth ||
+            PyDict_Size(object) > static_cast<Py_ssize_t>(
+                                     kMaxJsonContainerItems)) {
+            status = PyJsonStatus::Invalid;
+            return false;
+        }
+        if (!path.insert(object).second) {
+            status = PyJsonStatus::Cycle;
+            return false;
+        }
+        bool ok = true;
+        PyObject* key = nullptr;
+        PyObject* item = nullptr;
+        Py_ssize_t position = 0;
+        while (PyDict_Next(object, &position, &key, &item)) {
+            if (!PyUnicode_Check(key) ||
+                !ValidatePyJsonString(key, status) ||
+                !ValidatePyJsonValue(py::handle(item), depth + 1, path,
+                                     status)) {
+                ok = false;
+                break;
+            }
+        }
+        path.erase(object);
+        return ok;
+    }
+
+    if (PyList_Check(object)) {
+        const Py_ssize_t size = PyList_GET_SIZE(object);
+        if (depth > kMaxJsonDepth ||
+            size > static_cast<Py_ssize_t>(kMaxJsonContainerItems)) {
+            status = PyJsonStatus::Invalid;
+            return false;
+        }
+        if (!path.insert(object).second) {
+            status = PyJsonStatus::Cycle;
+            return false;
+        }
+        bool ok = true;
+        for (Py_ssize_t i = 0; i < size; ++i) {
+            if (!ValidatePyJsonValue(py::handle(PyList_GET_ITEM(object, i)),
+                                     depth + 1, path, status)) {
+                ok = false;
+                break;
+            }
+        }
+        path.erase(object);
+        return ok;
+    }
+
+    status = PyJsonStatus::Invalid;
+    return false;
+}
+
+std::optional<std::string> EncodePythonJson(py::handle value,
+                                            const std::string& modId) {
+    PyJsonStatus status = PyJsonStatus::Invalid;
+    std::unordered_set<PyObject*> path;
+    if (!ValidatePyJsonValue(value, 1, path, status)) {
+        if (status == PyJsonStatus::Cycle) {
+            ZL_WARN("script-mod", "[{}] Json.Encode 检测到循环引用", modId);
+        }
+        return std::nullopt;
+    }
+
+    try {
+        py::object dumps = py::module_::import("json").attr("dumps");
+        py::dict kwargs;
+        kwargs["ensure_ascii"] = false;
+        kwargs["sort_keys"] = true;
+        kwargs["allow_nan"] = false;
+        kwargs["separators"] = py::make_tuple(",", ":");
+        py::tuple args = py::make_tuple(value);
+        PyObject* result =
+            PyObject_Call(dumps.ptr(), args.ptr(), kwargs.ptr());
+        if (result == nullptr) {
+            PyErr_Clear();
+            return std::nullopt;
+        }
+        py::object text = py::reinterpret_steal<py::object>(result);
+        if (!py::isinstance<py::str>(text)) {
+            return std::nullopt;
+        }
+        return py::cast<std::string>(text);
+    } catch (const py::error_already_set&) {
+        PyErr_Clear();
+        return std::nullopt;
+    } catch (const py::cast_error&) {
+        return std::nullopt;
+    }
+}
+
+py::object DecodePythonJson(py::handle text) {
+    try {
+        py::object loads = py::module_::import("json").attr("loads");
+        py::object parsed = loads(py::str(text));
+        PyJsonStatus status = PyJsonStatus::Invalid;
+        std::unordered_set<PyObject*> path;
+        if (!ValidatePyJsonValue(parsed, 1, path, status)) {
+            return py::none();
+        }
+        return parsed;
+    } catch (const py::error_already_set&) {
+        PyErr_Clear();
+        return py::none();
+    }
+}
+
 // M8-T3：一次性定时器（seconds 为游戏秒；回调在后续 OnTick 派发时泵出）。
 struct Timer {
     py::function fn;
@@ -199,6 +357,192 @@ py::dict MakeEventArgDict(const core::ScriptEvent& event) {
     return out;
 }
 
+py::dict MakeItemStackDict(const ScriptItemStack& stack) {
+    py::dict out;
+    out["index"] = stack.index;
+    out["defId"] = stack.defId;
+    out["name"] = stack.name;
+    out["type"] = stack.type;
+    out["count"] = stack.count;
+    out["condition"] = stack.condition;
+    out["loadedAmmo"] = stack.loadedAmmo;
+    out["weightKg"] = stack.weightKg;
+    out["maxStack"] = stack.maxStack;
+    out["usable"] = stack.usable;
+    out["equippable"] = stack.equippable;
+    out["perishable"] = stack.perishable;
+    out["spoilDays"] = stack.spoilDays;
+    return out;
+}
+
+py::dict MakeActionResultDict(const ScriptActionResult& result) {
+    py::dict out;
+    out["ok"] = result.ok;
+    out["queued"] = result.queued;
+    out["error"] = result.error;
+    return out;
+}
+
+py::dict MakeXpResultDict(const ScriptXpResult& value) {
+    py::dict out = MakeActionResultDict(value.result);
+    out["characterLevels"] = value.award.characterLevels;
+    out["skillLevels"] = value.award.skillLevels;
+    out["perkPoints"] = value.award.perkPoints;
+    out["characterXp"] = value.award.characterXp;
+    out["skillXp"] = value.award.skillXp;
+    return out;
+}
+
+std::string EquipSlotText(const py::object& slot, const char* fallback) {
+    if (slot.is_none()) {
+        return fallback;
+    }
+    if (py::isinstance<py::bool_>(slot)) {
+        return "invalid";
+    }
+    if (py::isinstance<py::int_>(slot)) {
+        const int index = slot.cast<int>();
+        if (index == 0) {
+            return "primary";
+        }
+        if (index == 1) {
+            return "body";
+        }
+        return "invalid";
+    }
+    if (py::isinstance<py::str>(slot)) {
+        return slot.cast<std::string>();
+    }
+    return "invalid";
+}
+
+py::dict MakeEntityInfoDict(const ScriptEntityInfo& info) {
+    py::dict out;
+    out["id"] = info.id;
+    out["kind"] = info.kind;
+    out["x"] = info.x;
+    out["y"] = info.y;
+    out["z"] = info.z;
+    out["hasHealth"] = info.hasHealth;
+    out["health"] = info.health;
+    out["healthMax"] = info.healthMax;
+    out["defId"] = info.defId;
+    out["subKind"] = info.subKind;
+    out["ownerId"] = info.ownerId;
+    out["count"] = info.count;
+    out["tableId"] = info.tableId;
+    out["searched"] = info.searched;
+    out["downed"] = info.downed;
+    out["dead"] = info.dead;
+    out["command"] = info.command;
+    return out;
+}
+
+py::dict MakeRecipeIngredientDict(const ScriptRecipeIngredient& ingredient) {
+    py::dict out;
+    out["defId"] = ingredient.defId;
+    out["label"] = ingredient.label;
+    out["required"] = ingredient.required;
+    out["have"] = ingredient.have;
+    out["wear"] = ingredient.wear;
+    return out;
+}
+
+py::dict MakeRecipeDict(const ScriptRecipeInfo& recipe) {
+    py::list ingredients;
+    for (const ScriptRecipeIngredient& ingredient : recipe.ingredients) {
+        ingredients.append(MakeRecipeIngredientDict(ingredient));
+    }
+    py::list tools;
+    for (const ScriptRecipeIngredient& tool : recipe.tools) {
+        tools.append(MakeRecipeIngredientDict(tool));
+    }
+    py::dict out;
+    out["index"] = recipe.index;
+    out["id"] = recipe.id;
+    out["name"] = recipe.name;
+    out["category"] = recipe.category;
+    out["categoryLabel"] = recipe.categoryLabel;
+    out["outputDefId"] = recipe.outputDefId;
+    out["outputLabel"] = recipe.outputLabel;
+    out["outputCount"] = recipe.outputCount;
+    out["seconds"] = recipe.seconds;
+    out["station"] = recipe.station;
+    out["stationLabel"] = recipe.stationLabel;
+    out["stationNearby"] = recipe.stationNearby;
+    out["known"] = recipe.known;
+    out["canCraft"] = recipe.canCraft;
+    out["ingredients"] = ingredients;
+    out["tools"] = tools;
+    if (recipe.hasCookware) {
+        out["cookware"] = MakeRecipeIngredientDict(recipe.cookware);
+    }
+    if (recipe.hasFuel) {
+        out["fuel"] = MakeRecipeIngredientDict(recipe.fuel);
+    }
+    return out;
+}
+
+py::dict MakeBuildableDict(const ScriptBuildableInfo& info) {
+    py::dict out;
+    out["index"] = info.index;
+    out["id"] = info.id;
+    out["name"] = info.name;
+    out["sprite"] = info.sprite;
+    out["woodCost"] = info.woodCost;
+    out["maxHp"] = info.maxHp;
+    out["blocksMovement"] = info.blocksMovement;
+    out["storageKg"] = info.storageKg;
+    out["storageSlots"] = info.storageSlots;
+    out["layer"] = info.layer;
+    out["category"] = info.category;
+    out["door"] = info.door;
+    out["requiresMission"] = info.requiresMission;
+    return out;
+}
+
+py::dict MakeMissionDict(const ScriptMissionInfo& mission) {
+    py::list progress;
+    for (const int value : mission.progress) {
+        progress.append(value);
+    }
+    py::list objectives;
+    for (const ScriptMissionObjective& objective : mission.objectives) {
+        py::dict entry;
+        entry["kind"] = objective.kind;
+        entry["target"] = objective.target;
+        entry["count"] = objective.count;
+        entry["progress"] = objective.progress;
+        entry["description"] = objective.description;
+        objectives.append(entry);
+    }
+    py::dict reward;
+    reward["xp"] = mission.reward.xp;
+    reward["skill"] = mission.reward.skill;
+    reward["item"] = mission.reward.item;
+    reward["itemCount"] = mission.reward.itemCount;
+    reward["extraItem"] = mission.reward.extraItem;
+    reward["extraItemCount"] = mission.reward.extraItemCount;
+    reward["blueprint"] = mission.reward.blueprint;
+    reward["label"] = mission.reward.label;
+
+    py::dict out;
+    out["index"] = mission.index;
+    out["id"] = mission.id;
+    out["name"] = mission.name;
+    out["chain"] = mission.chain;
+    out["order"] = mission.order;
+    out["kind"] = mission.kind;
+    out["source"] = mission.source;
+    out["task"] = mission.task;
+    out["status"] = mission.status;
+    out["day"] = mission.day;
+    out["progress"] = progress;
+    out["objectives"] = objectives;
+    out["reward"] = reward;
+    return out;
+}
+
 }  // namespace
 
 struct PythonRuntime::Impl {
@@ -230,6 +574,15 @@ struct PythonRuntime::Impl {
         };
 
         py::object game = makeNamespace();
+        game.attr("GetApiVersion") = py::cpp_function([scriptApi]() -> int {
+            return scriptApi != nullptr ? scriptApi->GetApiVersion() : 0;
+        });
+        game.attr("IsMultiplayer") = py::cpp_function([scriptApi]() -> bool {
+            return scriptApi != nullptr && scriptApi->IsMultiplayer();
+        });
+        game.attr("GetNetMode") = py::cpp_function([scriptApi]() -> std::string {
+            return scriptApi != nullptr ? scriptApi->GetNetMode() : std::string("direct");
+        });
         game.attr("GetTick") = py::cpp_function([scriptApi]() -> std::int64_t {
             return scriptApi != nullptr ? scriptApi->GetTick() : 0;
         });
@@ -305,11 +658,272 @@ struct PythonRuntime::Impl {
             }
             return py::float_(static_cast<double>(hp));
         });
+        player.attr("GetNeeds") = py::cpp_function([scriptApi]() -> py::object {
+            ScriptNeeds needs;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerNeeds(needs)) {
+                return py::none();
+            }
+            py::dict out;
+            out["hunger"] = needs.hunger;
+            out["thirst"] = needs.thirst;
+            out["fatigue"] = needs.fatigue;
+            out["nutrition"] = needs.nutrition;
+            out["health"] = needs.health;
+            out["healthMax"] = needs.healthMax;
+            out["moveScale"] = needs.moveScale;
+            out["damageScale"] = needs.damageScale;
+            out["warning"] = needs.warning;
+            return out;
+        });
+        player.attr("GetStamina") = py::cpp_function([scriptApi]() -> py::object {
+            ScriptStamina stamina;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerStamina(stamina)) {
+                return py::none();
+            }
+            py::dict out;
+            out["current"] = stamina.current;
+            out["max"] = stamina.max;
+            out["exhausted"] = stamina.exhausted;
+            return out;
+        });
+        player.attr("GetWounds") = py::cpp_function([scriptApi]() -> py::object {
+            ScriptWounds wounds;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerWounds(wounds)) {
+                return py::none();
+            }
+            py::list list;
+            for (const ScriptWound& wound : wounds.wounds) {
+                py::dict entry;
+                entry["type"] = wound.type;
+                entry["severity"] = wound.severity;
+                entry["bandaged"] = wound.bandaged;
+                entry["bleeding"] = wound.bleeding;
+                list.append(entry);
+            }
+            py::dict out;
+            out["count"] = wounds.count;
+            out["wounds"] = list;
+            return out;
+        });
+        player.attr("GetPain") = py::cpp_function([scriptApi]() -> py::object {
+            ScriptPain pain;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerPain(pain)) {
+                return py::none();
+            }
+            py::dict out;
+            out["level"] = pain.level;
+            out["baseLevel"] = pain.baseLevel;
+            out["reliefRemaining"] = pain.reliefRemaining;
+            return out;
+        });
+        player.attr("GetInfection") = py::cpp_function([scriptApi]() -> py::object {
+            ScriptInfection infection;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerInfection(infection)) {
+                return py::none();
+            }
+            py::dict out;
+            out["stage"] = infection.stage;
+            out["progress"] = infection.progress;
+            out["slowRemaining"] = infection.slowRemaining;
+            out["timeToNextStage"] = infection.timeToNextStage;
+            return out;
+        });
+        player.attr("GetClimate") = py::cpp_function([scriptApi]() -> py::object {
+            ScriptClimate climate;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerClimate(climate)) {
+                return py::none();
+            }
+            py::dict out;
+            out["bodyC"] = climate.bodyC;
+            out["wetness"] = climate.wetness;
+            out["ambientC"] = climate.ambientC;
+            out["effectiveC"] = climate.effectiveC;
+            out["insulation"] = climate.insulation;
+            out["waterproof"] = climate.waterproof;
+            out["indoor"] = climate.indoor;
+            out["nearFire"] = climate.nearFire;
+            out["warning"] = climate.warning;
+            return out;
+        });
+        player.attr("GetProgression") = py::cpp_function([scriptApi]() -> py::object {
+            ScriptProgression progression;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerProgression(progression)) {
+                return py::none();
+            }
+            py::dict skills;
+            for (const ScriptSkillProgress& skill : progression.skills) {
+                py::dict entry;
+                entry["level"] = skill.level;
+                entry["xp"] = skill.xp;
+                entry["xpNext"] = skill.xpNext;
+                skills[py::str(skill.id)] = entry;
+            }
+            py::list perks;
+            for (const std::string& perk : progression.perks) {
+                perks.append(perk);
+            }
+            py::dict out;
+            out["level"] = progression.level;
+            out["xp"] = progression.xp;
+            out["xpNext"] = progression.xpNext;
+            out["perkPoints"] = progression.perkPoints;
+            out["skills"] = skills;
+            out["perks"] = perks;
+            return out;
+        });
+        player.attr("GetInventory") = py::cpp_function(
+            [scriptApi](int offset, int limit) -> py::object {
+                ScriptInventory inventory;
+                if (scriptApi == nullptr ||
+                    !scriptApi->GetPlayerInventory(offset, limit, inventory)) {
+                    return py::none();
+                }
+                py::list stacks;
+                for (const ScriptItemStack& stack : inventory.stacks) {
+                    stacks.append(MakeItemStackDict(stack));
+                }
+                py::dict out;
+                out["weightKg"] = inventory.weightKg;
+                out["capacityKg"] = inventory.capacityKg;
+                out["totalStacks"] = inventory.totalStacks;
+                out["truncated"] = inventory.truncated;
+                out["stacks"] = stacks;
+                return out;
+            },
+            py::arg("offset") = 0, py::arg("limit") = 0);
+        player.attr("GetEquipment") = py::cpp_function([scriptApi]() -> py::object {
+            ScriptEquipment equipment;
+            if (scriptApi == nullptr || !scriptApi->GetPlayerEquipment(equipment)) {
+                return py::none();
+            }
+            py::dict out;
+            if (equipment.hasPrimary) {
+                out["primary"] = MakeItemStackDict(equipment.primary);
+            }
+            if (equipment.hasBody) {
+                out["body"] = MakeItemStackDict(equipment.body);
+            }
+            return out;
+        });
+        player.attr("CountItem") = py::cpp_function(
+            [scriptApi](const std::string& defId) -> int {
+                return scriptApi != nullptr ? scriptApi->CountPlayerItem(defId) : 0;
+            },
+            py::arg("defId"));
+        player.attr("HasItem") = py::cpp_function(
+            [scriptApi](const std::string& defId, int count) -> bool {
+                return scriptApi != nullptr &&
+                       scriptApi->HasPlayerItem(defId, count);
+            },
+            py::arg("defId"), py::arg("count") = 1);
         player.attr("AddItem") = py::cpp_function(
             [scriptApi](const std::string& defId, int count) -> int {
                 return scriptApi != nullptr ? scriptApi->AddPlayerItem(defId, count) : 0;
             },
             py::arg("defId"), py::arg("count") = 1);
+        player.attr("UseItem") = py::cpp_function(
+            [scriptApi](int index) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(scriptApi->UseItem(index));
+            },
+            py::arg("index") = -1);
+        player.attr("EquipItem") = py::cpp_function(
+            [scriptApi](int index, const py::object& slot) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(
+                    scriptApi->EquipItem(index, EquipSlotText(slot, "primary")));
+            },
+            py::arg("index"), py::arg("slot") = py::none());
+        player.attr("Unequip") = py::cpp_function(
+            [scriptApi](const py::object& slot) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(
+                    scriptApi->Unequip(EquipSlotText(slot, "invalid")));
+            },
+            py::arg("slot"));
+        player.attr("DropItem") = py::cpp_function(
+            [scriptApi](int index) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(scriptApi->DropItem(index));
+            },
+            py::arg("index") = -1);
+        player.attr("PickupNearest") = py::cpp_function([scriptApi]() -> py::dict {
+            if (scriptApi == nullptr) {
+                return MakeActionResultDict(
+                    ScriptActionResult{false, false, "脚本 API 不可用"});
+            }
+            return MakeActionResultDict(scriptApi->PickupNearest());
+        });
+        player.attr("Pickup") = py::cpp_function(
+            [scriptApi](std::uint64_t entityId) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(scriptApi->Pickup(entityId));
+            },
+            py::arg("entityId"));
+        player.attr("Attack") = py::cpp_function(
+            [scriptApi](std::uint64_t targetId, bool heavy) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(scriptApi->Attack(targetId, heavy));
+            },
+            py::arg("targetId") = 0, py::arg("heavy") = false);
+        player.attr("ApplyDamage") = py::cpp_function(
+            [scriptApi](float amount, const py::object& damageType) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                const std::string type = damageType.is_none()
+                                             ? "blunt"
+                                             : damageType.cast<std::string>();
+                return MakeActionResultDict(
+                    scriptApi->ApplyDamage(amount, type));
+            },
+            py::arg("amount"), py::arg("damageType") = py::none());
+        player.attr("AdjustNeeds") = py::cpp_function(
+            [scriptApi](const py::object& hunger, const py::object& thirst,
+                        const py::object& fatigue) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                const auto valueOrZero = [](const py::object& value) {
+                    return value.is_none() ? 0.0f : value.cast<float>();
+                };
+                return MakeActionResultDict(scriptApi->AdjustNeeds(
+                    valueOrZero(hunger), valueOrZero(thirst),
+                    valueOrZero(fatigue)));
+            },
+            py::arg("hunger") = py::none(), py::arg("thirst") = py::none(),
+            py::arg("fatigue") = py::none());
+        player.attr("GiveXp") = py::cpp_function(
+            [scriptApi](const std::string& skill, float amount) -> py::dict {
+                if (scriptApi == nullptr) {
+                    ScriptXpResult out;
+                    out.result =
+                        ScriptActionResult{false, false, "脚本 API 不可用"};
+                    return MakeXpResultDict(out);
+                }
+                return MakeXpResultDict(scriptApi->GiveXp(skill, amount));
+            },
+            py::arg("skill"), py::arg("amount"));
         globals["Player"] = player;
 
         py::object world = makeNamespace();
@@ -364,20 +978,71 @@ struct PythonRuntime::Impl {
                                                    static_cast<float>(y), z);
             },
             py::arg("defId"), py::arg("x"), py::arg("y"), py::arg("z") = 0);
+        world.attr("EmitSound") = py::cpp_function(
+            [scriptApi](double x, double y, double radius,
+                        const std::string& kind,
+                        const std::string& clip) -> bool {
+                return scriptApi != nullptr &&
+                       scriptApi->EmitSound(static_cast<float>(x),
+                                            static_cast<float>(y),
+                                            static_cast<float>(radius), kind,
+                                            clip);
+            },
+            py::arg("x"), py::arg("y"), py::arg("radius"),
+            py::arg("kind") = "generic", py::arg("clip") = "");
+        world.attr("GetWeather") = py::cpp_function([scriptApi]() -> py::object {
+            ScriptWeather weather;
+            if (scriptApi == nullptr || !scriptApi->GetWeather(weather)) {
+                return py::none();
+            }
+            py::dict out;
+            out["kind"] = weather.kind;
+            out["ambientC"] = weather.ambientC;
+            out["isNight"] = weather.isNight;
+            return out;
+        });
+        world.attr("GetTimeOfDay") = py::cpp_function([scriptApi]() -> double {
+            return scriptApi != nullptr ? scriptApi->GetTimeOfDay() : 0.0;
+        });
         globals["World"] = world;
+
+        py::object audio = makeNamespace();
+        audio.attr("Play2D") = py::cpp_function(
+            [scriptApi](const std::string& clip, double volume) -> bool {
+                return scriptApi != nullptr &&
+                       scriptApi->PlayAudio2D(
+                           clip, static_cast<float>(volume));
+            },
+            py::arg("clip"), py::arg("volume") = 1.0);
+        audio.attr("Play3D") = py::cpp_function(
+            [scriptApi](const std::string& clip, double x, double y,
+                        double radius, double volume) -> bool {
+                return scriptApi != nullptr &&
+                       scriptApi->PlayAudio3D(
+                           clip, static_cast<float>(x),
+                           static_cast<float>(y),
+                           static_cast<float>(radius),
+                           static_cast<float>(volume));
+            },
+            py::arg("clip"), py::arg("x"), py::arg("y"),
+            py::arg("radius") = 0.0, py::arg("volume") = 1.0);
+        globals["Audio"] = audio;
 
         py::object zombies = makeNamespace();
         zombies.attr("Count") = py::cpp_function([scriptApi]() -> int {
             return scriptApi != nullptr ? scriptApi->ZombieCount() : 0;
         });
         zombies.attr("Spawn") = py::cpp_function(
-            [scriptApi](double x, double y, int z) -> std::uint64_t {
+            [scriptApi](double x, double y, int z,
+                        const std::string& variant) -> std::uint64_t {
                 if (scriptApi == nullptr) {
                     return 0;
                 }
-                return scriptApi->SpawnZombie(static_cast<float>(x), static_cast<float>(y), z);
+                return scriptApi->SpawnZombie(static_cast<float>(x),
+                                              static_cast<float>(y), z, variant);
             },
-            py::arg("x"), py::arg("y"), py::arg("z") = 0);
+            py::arg("x"), py::arg("y"), py::arg("z") = 0,
+            py::arg("variant") = "normal");
         zombies.attr("GetPosition") = py::cpp_function(
             [scriptApi](std::uint64_t handle) -> py::object {
                 ScriptVec3 position;
@@ -393,6 +1058,70 @@ struct PythonRuntime::Impl {
             py::arg("handle"));
         globals["Zombies"] = zombies;
 
+        py::object entities = makeNamespace();
+        entities.attr("Get") = py::cpp_function(
+            [scriptApi](std::uint64_t id) -> py::object {
+                ScriptEntityInfo info;
+                if (scriptApi == nullptr || !scriptApi->GetEntity(id, info)) {
+                    return py::none();
+                }
+                return MakeEntityInfoDict(info);
+            },
+            py::arg("id"));
+        entities.attr("Query") = py::cpp_function(
+            [scriptApi, modId](double x, double y, int z, double radius,
+                               const std::string& kind, int limit) -> py::dict {
+                py::dict out;
+                out["count"] = 0;
+                out["truncated"] = false;
+                out["entities"] = py::list();
+                if (scriptApi == nullptr) {
+                    return out;
+                }
+                ScriptEntityQuery query;
+                if (!scriptApi->QueryEntitiesForMod(
+                        modId, static_cast<float>(x), static_cast<float>(y), z,
+                        static_cast<float>(radius), kind, limit, query)) {
+                    return out;
+                }
+                py::list list;
+                for (const ScriptEntityInfo& info : query.entities) {
+                    list.append(MakeEntityInfoDict(info));
+                }
+                out["count"] = query.count;
+                out["truncated"] = query.truncated;
+                out["entities"] = list;
+                return out;
+            },
+            py::arg("x"), py::arg("y"), py::arg("z") = 0,
+            py::arg("radius") = 8.0, py::arg("kind") = "any",
+            py::arg("limit") = 0);
+        entities.attr("GetContainer") = py::cpp_function(
+            [scriptApi](std::uint64_t id) -> py::object {
+                ScriptContainerInfo container;
+                if (scriptApi == nullptr ||
+                    !scriptApi->GetEntityContainer(id, container)) {
+                    return py::none();
+                }
+                py::list stacks;
+                for (const ScriptItemStack& stack : container.stacks) {
+                    stacks.append(MakeItemStackDict(stack));
+                }
+                py::dict out;
+                out["id"] = container.id;
+                out["tableId"] = container.tableId;
+                out["searched"] = container.searched;
+                out["isStorage"] = container.isStorage;
+                out["capacityKg"] = container.capacityKg;
+                out["weightKg"] = container.weightKg;
+                out["totalStacks"] = container.totalStacks;
+                out["truncated"] = container.truncated;
+                out["stacks"] = stacks;
+                return out;
+            },
+            py::arg("id"));
+        globals["Entities"] = entities;
+
         py::object itemsApi = makeNamespace();
         itemsApi.attr("Exists") = py::cpp_function([scriptApi](const std::string& defId) -> bool {
             return scriptApi != nullptr && scriptApi->ItemExists(defId);
@@ -402,7 +1131,206 @@ struct PythonRuntime::Impl {
                 return scriptApi != nullptr ? scriptApi->ItemName(defId) : std::string();
             },
             py::arg("defId"));
+        itemsApi.attr("GetInfo") = py::cpp_function(
+            [scriptApi](const std::string& defId) -> py::object {
+                ScriptItemInfo info;
+                if (scriptApi == nullptr || !scriptApi->GetItemInfo(defId, info)) {
+                    return py::none();
+                }
+                py::dict out;
+                out["id"] = info.id;
+                out["name"] = info.name;
+                out["icon"] = info.icon;
+                out["weight"] = info.weight;
+                out["maxStack"] = info.maxStack;
+                out["type"] = info.type;
+                out["spoilDays"] = info.spoilDays;
+                out["repairEfficiency"] = info.repairEfficiency;
+                out["usable"] = info.usable;
+                out["equippable"] = info.equippable;
+                out["throwable"] = info.throwable;
+                out["ranged"] = info.ranged;
+                return out;
+            },
+            py::arg("defId"));
         globals["Items"] = itemsApi;
+
+        py::object craft = makeNamespace();
+        craft.attr("List") = py::cpp_function([scriptApi]() -> py::dict {
+            ScriptRecipeList recipes;
+            if (scriptApi != nullptr) {
+                (void)scriptApi->ListRecipes(recipes);
+            }
+            py::list list;
+            for (const ScriptRecipeInfo& recipe : recipes.recipes) {
+                list.append(MakeRecipeDict(recipe));
+            }
+            py::dict out;
+            out["count"] = recipes.count;
+            out["truncated"] = recipes.truncated;
+            out["recipes"] = list;
+            return out;
+        });
+        craft.attr("GetState") = py::cpp_function([scriptApi]() -> py::dict {
+            ScriptCraftState state;
+            if (scriptApi != nullptr) {
+                (void)scriptApi->GetCraftState(state);
+            }
+            py::list queue;
+            for (const ScriptCraftQueueEntry& entry : state.queue) {
+                py::dict item;
+                item["recipeId"] = entry.recipeId;
+                item["count"] = entry.count;
+                queue.append(item);
+            }
+            py::dict out;
+            out["active"] = state.active;
+            out["recipeId"] = state.recipeId;
+            out["outputDefId"] = state.outputDefId;
+            out["outputLabel"] = state.outputLabel;
+            out["outputCount"] = state.outputCount;
+            out["elapsed"] = state.elapsed;
+            out["duration"] = state.duration;
+            out["progress"] = state.progress;
+            out["batchTotal"] = state.batchTotal;
+            out["batchCompleted"] = state.batchCompleted;
+            out["queue"] = queue;
+            return out;
+        });
+        craft.attr("IsKnown") = py::cpp_function(
+            [scriptApi](const std::string& recipeId) -> bool {
+                return scriptApi != nullptr &&
+                       scriptApi->IsRecipeKnown(recipeId);
+            },
+            py::arg("recipeId"));
+        craft.attr("Start") = py::cpp_function(
+            [scriptApi](const std::string& recipeId, int count) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(
+                    scriptApi->StartCraft(recipeId, count));
+            },
+            py::arg("recipeId"), py::arg("count") = 1);
+        craft.attr("Cancel") = py::cpp_function([scriptApi]() -> py::dict {
+            if (scriptApi == nullptr) {
+                return MakeActionResultDict(
+                    ScriptActionResult{false, false, "脚本 API 不可用"});
+            }
+            return MakeActionResultDict(scriptApi->CancelCraft());
+        });
+        craft.attr("Learn") = py::cpp_function(
+            [scriptApi](const std::string& recipeId) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(
+                    scriptApi->LearnRecipe(recipeId));
+            },
+            py::arg("recipeId"));
+        globals["Craft"] = craft;
+
+        py::object build = makeNamespace();
+        build.attr("List") = py::cpp_function([scriptApi]() -> py::dict {
+            ScriptBuildableList buildables;
+            if (scriptApi != nullptr) {
+                (void)scriptApi->ListBuildables(buildables);
+            }
+            py::list list;
+            for (const ScriptBuildableInfo& info : buildables.buildables) {
+                list.append(MakeBuildableDict(info));
+            }
+            py::dict out;
+            out["count"] = buildables.count;
+            out["truncated"] = buildables.truncated;
+            out["items"] = list;
+            return out;
+        });
+        build.attr("CanPlace") = py::cpp_function(
+            [scriptApi](const std::string& defId, int x, int y,
+                        bool vertical) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(
+                    scriptApi->CanPlaceBuild(defId, x, y, vertical));
+            },
+            py::arg("defId"), py::arg("x"), py::arg("y"),
+            py::arg("vertical") = false);
+        build.attr("Place") = py::cpp_function(
+            [scriptApi](const std::string& defId, int x, int y,
+                        bool vertical) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(
+                    scriptApi->PlaceBuild(defId, x, y, vertical));
+            },
+            py::arg("defId"), py::arg("x"), py::arg("y"),
+            py::arg("vertical") = false);
+        build.attr("Demolish") = py::cpp_function(
+            [scriptApi](int x, int y) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(
+                    scriptApi->DemolishBuild(x, y));
+            },
+            py::arg("x"), py::arg("y"));
+        build.attr("Repair") = py::cpp_function(
+            [scriptApi](int x, int y) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(scriptApi->RepairBuild(x, y));
+            },
+            py::arg("x"), py::arg("y"));
+        build.attr("ToggleDoor") = py::cpp_function(
+            [scriptApi](int x, int y) -> py::dict {
+                if (scriptApi == nullptr) {
+                    return MakeActionResultDict(
+                        ScriptActionResult{false, false, "脚本 API 不可用"});
+                }
+                return MakeActionResultDict(
+                    scriptApi->ToggleBuildDoor(x, y));
+            },
+            py::arg("x"), py::arg("y"));
+        globals["Build"] = build;
+
+        py::object mission = makeNamespace();
+        mission.attr("List") = py::cpp_function(
+            [scriptApi](const std::string& filter) -> py::dict {
+                ScriptMissionList missions;
+                if (scriptApi != nullptr) {
+                    (void)scriptApi->ListMissions(filter, missions);
+                }
+                py::list list;
+                for (const ScriptMissionInfo& info : missions.missions) {
+                    list.append(MakeMissionDict(info));
+                }
+                py::dict out;
+                out["count"] = missions.count;
+                out["truncated"] = missions.truncated;
+                out["missions"] = list;
+                return out;
+            },
+            py::arg("filter") = "all");
+        mission.attr("Get") = py::cpp_function(
+            [scriptApi](const std::string& id) -> py::object {
+                ScriptMissionInfo info;
+                if (scriptApi == nullptr || !scriptApi->GetMission(id, info)) {
+                    return py::none();
+                }
+                return MakeMissionDict(info);
+            },
+            py::arg("id"));
+        globals["Mission"] = mission;
 
         py::object contentApi = makeNamespace();
         contentApi.attr("RegisterItems") = py::cpp_function(
@@ -485,6 +1413,16 @@ struct PythonRuntime::Impl {
             out["staminaMax"] = state.staminaMax;
             out["combatStatus"] = state.combatStatus;
             out["combatTone"] = state.combatTone;
+            out["stealthValid"] = state.stealthValid;
+            out["stealthCrouched"] = state.stealthCrouched;
+            out["stealthMoveSpeed"] = state.stealthMoveSpeed;
+            out["stealthFootstepRadius"] = state.stealthFootstepRadius;
+            out["stealthAwarenessValid"] = state.stealthAwarenessValid;
+            out["stealthNearbyAlertCount"] = state.stealthNearbyAlertCount;
+            out["stealthBackstabAvailable"] = state.stealthBackstabAvailable;
+            out["stealthStatus"] = state.stealthStatus;
+            out["stealthTone"] = state.stealthTone;
+            out["stealthPrompt"] = state.stealthPrompt;
             out["rangedValid"] = state.rangedValid;
             out["rangedName"] = state.rangedName;
             out["rangedLoaded"] = state.rangedLoaded;
@@ -495,6 +1433,19 @@ struct PythonRuntime::Impl {
             out["rangedReloadRemaining"] = state.rangedReloadRemaining;
             out["rangedStatus"] = state.rangedStatus;
             out["rangedTone"] = state.rangedTone;
+            out["throwValid"] = state.throwValid;
+            out["throwName"] = state.throwName;
+            out["throwRange"] = state.throwRange;
+            out["throwReturnable"] = state.throwReturnable;
+            out["throwBreakChance"] = state.throwBreakChance;
+            out["throwFire"] = state.throwFire;
+            out["throwFireRadius"] = state.throwFireRadius;
+            out["throwCooldownRemaining"] = state.throwCooldownRemaining;
+            out["throwCooldownDuration"] = state.throwCooldownDuration;
+            out["throwLastResult"] = state.throwLastResult;
+            out["throwLastTone"] = state.throwLastTone;
+            out["throwTone"] = state.throwTone;
+            out["throwStatus"] = state.throwStatus;
             out["forageValid"] = state.forageValid;
             out["forageName"] = state.forageName;
             out["forageToolName"] = state.forageToolName;
@@ -542,6 +1493,16 @@ struct PythonRuntime::Impl {
             out["objectiveHint"] = state.objectiveHint;
             out["poiGuide"] = state.poiGuide;
             out["poiGuideTone"] = state.poiGuideTone;
+            out["poiStageVisible"] = state.poiStageVisible;
+            out["poiStageTitle"] = state.poiStageTitle;
+            out["poiStageObjective"] = state.poiStageObjective;
+            out["poiStageMeta"] = state.poiStageMeta;
+            out["poiStageNarrative"] = state.poiStageNarrative;
+            out["poiStageTone"] = state.poiStageTone;
+            out["poiResultVisible"] = state.poiResultVisible;
+            out["poiResultTitle"] = state.poiResultTitle;
+            out["poiResultBody"] = state.poiResultBody;
+            out["poiResultTone"] = state.poiResultTone;
             out["missionGuide"] = state.missionGuide;
             out["missionTone"] = state.missionTone;
             out["eventGuide"] = state.eventGuide;
@@ -626,6 +1587,25 @@ struct PythonRuntime::Impl {
             out["progressionChoiceCount"] = state.progressionChoiceCount;
             out["perkPrompt"] = state.perkPrompt;
             out["characterOpen"] = state.characterOpen;
+            py::dict companion;
+            companion["valid"] = state.companion.valid;
+            companion["open"] = state.companion.open;
+            companion["name"] = state.companion.name;
+            companion["health"] = state.companion.health;
+            companion["status"] = state.companion.status;
+            companion["trust"] = state.companion.trust;
+            companion["equipment"] = state.companion.equipment;
+            companion["bag"] = state.companion.bag;
+            companion["quest"] = state.companion.quest;
+            companion["hint"] = state.companion.hint;
+            companion["alert"] = state.companion.alert;
+            companion["alertTone"] = state.companion.alertTone;
+            companion["lowHealth"] = state.companion.lowHealth;
+            companion["downed"] = state.companion.downed;
+            companion["dead"] = state.companion.dead;
+            companion["healthCurrent"] = state.companion.healthCurrent;
+            companion["healthMax"] = state.companion.healthMax;
+            out["companion"] = companion;
             py::list skills;
             for (const std::string& line : state.progressionSkills) {
                 skills.append(line);
@@ -659,6 +1639,8 @@ struct PythonRuntime::Impl {
                 py::dict item;
                 item["label"] = slot.label;
                 item["count"] = slot.count;
+                item["throwable"] = slot.throwable;
+                item["throwTag"] = slot.throwTag;
                 slots.append(item);
             }
             out["slots"] = slots;
@@ -822,6 +1804,124 @@ struct PythonRuntime::Impl {
         });
         globals["Save"] = save;
 
+        auto modDataWarned = std::make_shared<bool>(false);
+        auto warnModDataBlocked = [scriptApi, modId, modDataWarned]() {
+            if (scriptApi == nullptr || !scriptApi->IsMultiplayer() ||
+                *modDataWarned) {
+                return;
+            }
+            *modDataWarned = true;
+            ZL_WARN("script-mod",
+                    "[{}] Mod.Data 在联机模式下不可用（后续不再警告）", modId);
+        };
+
+        py::object modDataApi = makeNamespace();
+        modDataApi.attr("Get") = py::cpp_function(
+            [scriptApi, modId, warnModDataBlocked](
+                const std::string& key) -> py::object {
+                if (scriptApi == nullptr) {
+                    return py::none();
+                }
+                if (scriptApi->IsMultiplayer()) {
+                    warnModDataBlocked();
+                    return py::none();
+                }
+                const std::optional<std::string> value =
+                    scriptApi->GetModData(modId, key);
+                return value.has_value() ? py::object(py::str(*value))
+                                         : py::object(py::none());
+            },
+            py::arg("key"));
+        modDataApi.attr("Set") = py::cpp_function(
+            [scriptApi, modId, warnModDataBlocked](
+                const std::string& key, py::object value) -> bool {
+                if (scriptApi == nullptr) {
+                    return false;
+                }
+                if (scriptApi->IsMultiplayer()) {
+                    warnModDataBlocked();
+                    return false;
+                }
+                if (!py::isinstance<py::str>(value)) {
+                    return false;
+                }
+                return scriptApi->SetModData(
+                    modId, key, py::cast<std::string>(value));
+            },
+            py::arg("key"), py::arg("value"));
+        modDataApi.attr("Remove") = py::cpp_function(
+            [scriptApi, modId, warnModDataBlocked](
+                const std::string& key) -> bool {
+                if (scriptApi == nullptr) {
+                    return false;
+                }
+                if (scriptApi->IsMultiplayer()) {
+                    warnModDataBlocked();
+                    return false;
+                }
+                return scriptApi->RemoveModData(modId, key);
+            },
+            py::arg("key"));
+        modDataApi.attr("Keys") = py::cpp_function(
+            [scriptApi, modId, warnModDataBlocked]() -> py::list {
+                py::list out;
+                if (scriptApi == nullptr) {
+                    return out;
+                }
+                if (scriptApi->IsMultiplayer()) {
+                    warnModDataBlocked();
+                    return out;
+                }
+                for (const std::string& key :
+                     scriptApi->ListModDataKeys(modId)) {
+                    out.append(key);
+                }
+                return out;
+            });
+        modDataApi.attr("Clear") =
+            py::cpp_function([scriptApi, modId, warnModDataBlocked]() -> bool {
+                if (scriptApi == nullptr) {
+                    return false;
+                }
+                if (scriptApi->IsMultiplayer()) {
+                    warnModDataBlocked();
+                    return false;
+                }
+                return scriptApi->ClearModData(modId);
+            });
+
+        py::object modApi = makeNamespace();
+        modApi.attr("Id") = py::cpp_function([modId]() -> std::string {
+            return modId;
+        });
+        modApi.attr("Data") = modDataApi;
+        globals["Mod"] = modApi;
+
+        py::object jsonApi = makeNamespace();
+        jsonApi.attr("Array") = py::cpp_function([]() -> py::list {
+            return py::list();
+        });
+        jsonApi.attr("Null") = py::cpp_function([]() -> py::object {
+            return py::none();
+        });
+        jsonApi.attr("Encode") = py::cpp_function(
+            [modId](py::object value) -> py::object {
+                const std::optional<std::string> text =
+                    EncodePythonJson(value, modId);
+                return text.has_value() ? py::object(py::str(*text))
+                                        : py::object(py::none());
+            },
+            py::arg("value"));
+        jsonApi.attr("Decode") = py::cpp_function(
+            [](py::object text) -> py::object {
+                if (!py::isinstance<py::str>(text)) {
+                    return py::none();
+                }
+                return DecodePythonJson(text);
+            },
+            py::arg("text"));
+        globals["Json"] = jsonApi;
+
         py::object inventory = makeNamespace();
         inventory.attr("GetState") = py::cpp_function([scriptApi]() -> py::dict {
             ui::InventoryState state;
@@ -837,6 +1937,9 @@ struct PythonRuntime::Impl {
             out["lootStacks"] = state.lootStacks;
             out["lootTitle"] = state.lootTitle;
             out["lootIsStorage"] = state.lootIsStorage;
+            out["lootIsVehicle"] = state.lootIsVehicle;
+            out["vehicleModsEnabled"] = state.vehicleModsEnabled;
+            out["vehicleModsReadOnly"] = state.vehicleModsReadOnly;
             out["lootCanTakeAll"] = state.lootCanTakeAll;
             out["lootEntityId"] = state.lootEntityId;
             out["status"] = state.status;
@@ -929,6 +2032,8 @@ struct PythonRuntime::Impl {
                     slot["damaged"] = entry.damaged;
                     slot["repairAvailable"] = entry.repairAvailable;
                     slot["perishable"] = entry.perishable;
+                    slot["throwable"] = entry.throwable;
+                    slot["throwTag"] = entry.throwTag;
                     target.append(slot);
                 }
             };
@@ -997,6 +2102,8 @@ struct PythonRuntime::Impl {
                     parsed.type = ui::InventoryActionType::TakeAll;
                 } else if (type == "sort_storage") {
                     parsed.type = ui::InventoryActionType::SortStorage;
+                } else if (type == "open_vehicle_mods") {
+                    parsed.type = ui::InventoryActionType::OpenVehicleMods;
                 } else {
                     return false;
                 }

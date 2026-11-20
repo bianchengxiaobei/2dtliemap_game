@@ -9,6 +9,7 @@
 
 namespace zl::ecs {
 struct Container;
+struct Health;
 struct MissionLog;
 }  // namespace zl::ecs
 
@@ -18,6 +19,9 @@ class ItemRegistry;
 
 namespace zl::game {
 
+struct CompanionConfig;
+struct CompanionDef;
+struct CompanionState;
 struct MissionConfig;
 struct MissionDef;
 
@@ -28,6 +32,16 @@ enum class DialogueConditionKind : std::uint8_t {
     MissionNone = 3,
     ItemAtLeast = 4,
     MissionLocked = 5,
+    CompanionRecruitOffered = 6,
+    CompanionRecallAvailable = 7,
+    CompanionDismissAvailable = 8,
+    CompanionQuestAvailable = 9,
+    CompanionQuestActive = 10,
+    CompanionQuestCompleted = 11,
+    CompanionQuestFailed = 12,
+    CompanionLowHealth = 13,
+    CompanionDowned = 14,
+    CompanionTrustAtLeast = 15,
 };
 
 struct DialogueCondition {
@@ -44,6 +58,11 @@ enum class DialogueResultKind : std::uint8_t {
     OpenTrade = 3,
     AcceptSettlementMission = 4,
     FocusSettlementMission = 5,
+    RecruitCompanion = 6,
+    DismissCompanion = 7,
+    AcceptCompanionQuest = 8,
+    AbandonCompanionQuest = 9,
+    GiftToCompanion = 10,
 };
 
 struct DialogueResult {
@@ -76,11 +95,18 @@ struct DialogueTree {
 struct DialogueContext {
     const SettlementDef* settlement = nullptr;
     const MissionConfig* missions = nullptr;
+    const CompanionConfig* companions = nullptr;
     const ecs::MissionLog* missionLog = nullptr;
     const ecs::Container* inventory = nullptr;
     const items::ItemRegistry* items = nullptr;
     int day = 1;
     int settlementReputation = kSettlementReputationMaxScore;
+    bool hasCompanion = false;
+    bool companionStandby = false;
+    std::string companionHomeSettlementId;
+    const CompanionDef* companionDef = nullptr;
+    const CompanionState* companionState = nullptr;
+    const ecs::Health* companionHealth = nullptr;
 };
 
 bool EvaluateDialogueCondition(const DialogueCondition& condition,
@@ -103,5 +129,8 @@ DialogueTree MakeSettlementDialogue(const SettlementDef& settlement,
                                     SettlementNpcKind kind,
                                     const SettlementReputationConfig& reputation,
                                     int score);
+DialogueTree MakeCompanionDialogue(const CompanionDef& companion,
+                                   const CompanionState& state,
+                                   const ecs::Health& health);
 
 }  // namespace zl::game

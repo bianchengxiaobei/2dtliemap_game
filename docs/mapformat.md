@@ -331,6 +331,10 @@ M31 的运行时容器/守军/任务不能塞进 `world.json` 的地形契约，
 
 `ServerHost` 和 `GameApp` 只把选择结果写入 `WorldSimulation::Options.mapDir`，不修改配置文件；因此设置保存不会把 M31 内容写回 `game.json`。旧 `village_demo` 存档不会自动迁移；默认 M31 下会因 mapId/manifest 不匹配而拒绝写入，需以 `--world.m31.enabled=false` 启动后读取。M31 自身存档继续按 `mapId + seed + generatorVersion + mapHash` 校验，内容 profile 不参与 mapHash。
 
+### 7.10.1 M33-F5 多阶段 POI 内容（T1–T7）
+
+M33-F5 不新增 `world.json` 字段：默认 M31 的 staged POI 仍位于地图目录之外的 `assets/maps/village_demo_m31_content.json`，每个 `pois.defs[]` 可选 `stages/entries/keys/branches/boss/narrative`。阶段世界进度写入 `PoiWorldProgress`（`PWPR` 存档组件），不参与 `mapHash`；旧 `config/game.json` 的 11 个单段 POI 与旧 `village_demo` 地图保持原行为。T7 已验证双客户端共享阶段/每人奖励幂等/服务器重启恢复，以及 15.3 游戏分钟跨包循环；旧图迁移取舍仍由后续实机反馈决定。
+
 ### 7.11 战略状态（M32-T1）
 
 `assets/strategic.json`（`format:"zomboidlike-strategic-v1"`）由 `config/game.json` 的 `strategic.file` 指定；当前含 4 个区域，region id 必须存在于 M31 `world.json`。字段包括 `strategicValue/initialOwner/garrison/fortification/defense/supply/population/pressure/morale/intelLevel/coreSafe`，以及可选的 `attackRoutes`（最多 16 条，T1 只校验）。

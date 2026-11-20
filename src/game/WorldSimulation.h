@@ -74,6 +74,8 @@ class FireSystem;
 class RegionEventDirector;
 class WorldEventDirector;
 class SettlementNpcSystem;
+struct CompanionConfig;
+struct CompanionDef;
 struct PoiConfig;
 struct WorldEventConfig;
 struct RegionEvent;
@@ -82,6 +84,7 @@ struct StrategicConfig;
 struct StrategicState;
 struct StrategicTickInput;
 struct StrategicTickReport;
+struct TrapDefsConfig;
 
 struct WorldEventSettlement {
     bool applied = false;
@@ -119,6 +122,8 @@ public:
         const SettlementConfig* settlements = nullptr;
         const WorldEventConfig* worldEvents = nullptr;
         const StrategicConfig* strategic = nullptr;
+        const CompanionConfig* companions = nullptr;
+        const TrapDefsConfig* traps = nullptr;
         bool spawnAnimals = false;
         FireRegistry* fire = nullptr;
         core::TaskScheduler* tasks = nullptr;
@@ -143,6 +148,7 @@ public:
     // 鍔犺浇鍦板浘鍏冩暟鎹苟鍒涘缓涓栫晫/鐗╃悊/瀵昏矾/绯荤粺锛涗笉鍒涘缓绐楀彛銆佷笉鍒濆鍖栨覆鏌撱€?
     bool Init(std::string* error = nullptr);
     void Shutdown();
+    void SetTrapDefs(const TrapDefsConfig* traps);
 
     // 鍥哄畾 tick 浣跨敤鐨勭劍鐐癸紙鍗曟満=鐩告満涓績锛屾湇鍔″櫒=鐜╁闄勮繎锛夛紱褰卞搷 LOD/鍒锋€€?
     void SetFocus(float gridX, float gridY);
@@ -244,6 +250,16 @@ public:
     // M19-F2锛歅OI 瀹堝啗绛夐渶瑕佹寚瀹氬彉浣撴椂浣跨敤锛涗粛鐢辫皟鐢ㄦ柟淇濊瘉浣嶇疆鍙蛋銆?
     ecs::Entity SpawnZombieAt(float x, float y, ecs::ZombieVariantKind variant,
                               std::uint64_t stableId = 0);
+
+    ecs::Entity SpawnCompanionAt(const CompanionDef& def,
+                                 std::uint64_t ownerStableId,
+                                 std::string_view homeSettlementId,
+                                 float targetX, float targetY,
+                                 int searchRadius = 4);
+    bool TeleportCompanion(ecs::Entity companion, float targetX, float targetY,
+                           int searchRadius = 4);
+    bool RescueCompanion(ecs::Entity companion, ecs::Entity rescuer,
+                         std::string* error = nullptr);
 
     // 鏈嶅姟鍣ㄤ細璇濇竻鐞嗭細閿€姣佺帺瀹?浠绘剰瀹炰綋鍙婄墿鐞嗕綋锛涗細寤惰繜鍒颁笅涓€娆?Flush 鍥炴敹銆?
     void DespawnEntity(ecs::Entity entity);

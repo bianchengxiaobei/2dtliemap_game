@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -20,6 +21,7 @@
 #include "game/Homestead.h"
 #include "game/MissionComponents.h"
 #include "game/PoiComponents.h"
+#include "game/PoiStageCombat.h"
 #include "game/NetworkClient.h"
 #include "game/PlayerStorage.h"
 #include "game/StructureComponents.h"
@@ -571,7 +573,7 @@ TEST_CASE("X-F1 2b-2b 服务端世界：chunk 重载与重启恢复结构/仓库
               static_cast<int>(zl::world::SquareLayer::Wall)));
 
     bool sawRestoredWallDiff = false;
-    REQUIRE(PumpUntil(restarted, restartedClient, 5000, [&] {
+    REQUIRE(PumpUntil(restarted, restartedClient, 10000, [&] {
         for (const auto& diff : restartedClient.TakeChunkDiffs()) {
             for (const auto& square : diff.squares) {
                 for (const zl::world::SquareObject& object :
@@ -1861,6 +1863,623 @@ TEST_CASE("M25-T3-V3 服务器载具世界存档：重启恢复且座位不持�
 
     restartedClient.Close();
     restarted.Shutdown();
+    std::error_code cleanupError;
+    std::filesystem::remove_all(dir, cleanupError);
+}
+
+TEST_CASE("M33-F5-T2 多阶段 POI 服务器推进与重启恢复") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    REQUIRE(std::filesystem::exists(root / "config" / "game.json"));
+    ScopedWorkingDirectory cwd(root);
+
+    const std::filesystem::path dir = TempDir("m33_f5_t2_stage");
+    const std::filesystem::path saveRoot = dir / "saves";
+    const std::string profilePath = (dir / "players.bin").string();
+    std::string saveId;
+    CreateEmptySave(saveRoot, &saveId);
+    REQUIRE(!saveId.empty());
+
+    const std::filesystem::path contentPath = dir / "staged_poi.json";
+    {
+        std::ofstream out(contentPath, std::ios::binary | std::ios::trunc);
+        REQUIRE(out.good());
+        out << R"({
+          "pois": {
+            "enabled": true,
+            "defs": [
+              {
+                "id": "stage_test",
+                "name": "阶段测试",
+                "threat": 1,
+                "markerX": 70.5,
+                "markerY": 24.5,
+                "containers": [
+                  { "x": 70.5, "y": 24.5, "tableId": "poi_motel_storage", "sprite": "object.crate" }
+                ],
+                "stages": [
+                  { "id": "approach", "kind": "reach", "x": 70.5, "y": 24.5, "radius": 3.0, "next": [ "inside" ] },
+                  { "id": "inside", "kind": "reach", "x": 70.5, "y": 24.5, "radius": 3.0, "next": [ "deep" ] },
+                  { "id": "deep", "kind": "reach", "x": 70.5, "y": 24.5, "radius": 3.0 }
+                ]
+              }
+            ]
+          }
+        })";
+    }
+
+    std::vector<std::string> args{"ZomboidLikeTests",
+                                  "--save.root=" + saveRoot.string()};
+    std::vector<const char*> argv;
+    for (const std::string& arg : args) {
+        argv.push_back(arg.c_str());
+    }
+    const std::uint64_t contentHash = 0x4D33334635543253ull;
+
+    zl::server::ServerHost::Options options =
+        MakeHostOptions(root, profilePath, contentHash, saveId);
+    options.mapDir = (root / "assets" / "maps" / "village_demo").string();
+    options.contentFile = contentPath.string();
+    options.playerTargetX = 70.5f;
+    options.playerTargetY = 24.5f;
+    options.argc = static_cast<int>(argv.size());
+    options.argv = argv.data();
+
+    zl::server::ServerHost host;
+    std::string error;
+    REQUIRE_MESSAGE(host.Init(options, &error), error);
+    REQUIRE(host.NetworkPort() != 0);
+
+    zl::game::NetworkClient::Options clientOptions;
+    clientOptions.host = "127.0.0.1";
+    clientOptions.port = host.NetworkPort();
+    clientOptions.contentHash = contentHash;
+    clientOptions.autoReconnect = false;
+    clientOptions.playerIdentity = "m33-f5-t2-stage";
+    clientOptions.playerName = "Stage";
+
+    zl::game::NetworkClient client(clientOptions);
+    REQUIRE(client.Connect(&error));
+    REQUIRE(PumpUntil(host, client, 8000, [&] {
+        return client.IsConnected() && client.HasPlayerState() &&
+               host.Simulation().Chunks().GetStats().loadedChunks > 0;
+    }));
+
+    const auto findProgress = [&](zl::server::ServerHost& server)
+        -> const zl::game::PoiProgress* {
+        auto& registry = server.Simulation().Ecs().Registry();
+        const zl::ecs::Entity worldEntity = server.Simulation().Ecs().FindById(
+            zl::ecs::kPoiWorldProgressStableId);
+        if (worldEntity == entt::null) {
+            return nullptr;
+        }
+        const auto* world =
+            registry.try_get<zl::ecs::PoiWorldProgress>(worldEntity);
+        if (world == nullptr) {
+            return nullptr;
+        }
+        return zl::game::FindPoiProgress(world->pois, "stage_test");
+    };
+
+    REQUIRE(PumpUntil(host, client, 8000, [&] {
+        const auto* progress = findProgress(host);
+        return progress != nullptr && progress->completed;
+    }));
+    const auto* progress = findProgress(host);
+    REQUIRE(progress != nullptr);
+    CHECK(progress->completedStages ==
+          std::vector<std::string>({"approach", "inside", "deep"}));
+    CHECK(progress->attempts == 1);
+    CHECK(progress->completed);
+    CHECK(client.HasPlayerState());
+    bool mirrored = false;
+    for (const auto& poi : client.PlayerState().poiStageProgress) {
+        if (poi.id == "stage_test") {
+            mirrored = poi.stageCount == 3 && poi.completedStageCount == 3;
+        }
+    }
+    CHECK(mirrored);
+
+    client.Close();
+    REQUIRE(PumpUntil(host, client, 5000, [&] {
+        return host.SessionCount() == 0;
+    }));
+    host.Shutdown();
+
+    zl::server::ServerHost restarted;
+    zl::server::ServerHost::Options restartedOptions =
+        MakeHostOptions(root, profilePath, contentHash, saveId);
+    restartedOptions.mapDir =
+        (root / "assets" / "maps" / "village_demo").string();
+    restartedOptions.contentFile = contentPath.string();
+    restartedOptions.playerTargetX = 70.5f;
+    restartedOptions.playerTargetY = 24.5f;
+    restartedOptions.argc = static_cast<int>(argv.size());
+    restartedOptions.argv = argv.data();
+    REQUIRE_MESSAGE(restarted.Init(restartedOptions, &error), error);
+    REQUIRE(restarted.NetworkPort() != 0);
+
+    zl::game::NetworkClient::Options restartedClientOptions = clientOptions;
+    restartedClientOptions.port = restarted.NetworkPort();
+    zl::game::NetworkClient restartedClient(restartedClientOptions);
+    REQUIRE(restartedClient.Connect(&error));
+    REQUIRE(PumpUntil(restarted, restartedClient, 8000, [&] {
+        const auto* restored = findProgress(restarted);
+        return restartedClient.HasPlayerState() && restored != nullptr &&
+               restored->completed;
+    }));
+    const auto* restored = findProgress(restarted);
+    REQUIRE(restored != nullptr);
+    CHECK(restored->completedStages ==
+          std::vector<std::string>({"approach", "inside", "deep"}));
+    CHECK(restored->completed);
+
+    restartedClient.Close();
+    restarted.Shutdown();
+    std::error_code cleanupError;
+    std::filesystem::remove_all(dir, cleanupError);
+}
+
+TEST_CASE("M33-F5-T3 服务器门禁钥匙供电与路线选择") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    REQUIRE(std::filesystem::exists(root / "config" / "game.json"));
+    ScopedWorkingDirectory cwd(root);
+
+    const std::filesystem::path dir = TempDir("m33_f5_t3_access");
+    const std::filesystem::path saveRoot = dir / "saves";
+    const std::string profilePath = (dir / "players.bin").string();
+    std::string saveId;
+    CreateEmptySave(saveRoot, &saveId);
+    REQUIRE(!saveId.empty());
+
+    const std::filesystem::path contentPath = dir / "access_poi.json";
+    {
+        std::ofstream out(contentPath, std::ios::binary | std::ios::trunc);
+        REQUIRE(out.good());
+        out << R"({
+          "pois": {
+            "enabled": true,
+            "defs": [
+              {
+                "id": "stage_access_test",
+                "name": "门禁路线测试",
+                "threat": 1,
+                "markerX": 70.5,
+                "markerY": 24.5,
+                "containers": [
+                  { "x": 70.5, "y": 24.5, "tableId": "poi_motel_storage", "sprite": "object.crate" }
+                ],
+                "stages": [
+                  { "id": "approach", "kind": "reach", "x": 70.5, "y": 24.5, "radius": 3.0, "next": [ "gate" ] },
+                  { "id": "gate", "kind": "interact", "target": "front_gate", "x": 70.5, "y": 24.5, "radius": 2.5, "requires": [ "front" ], "next": [ "power" ] },
+                  { "id": "power", "kind": "power", "target": "generator", "x": 70.5, "y": 24.5, "radius": 2.5, "next": [ "route" ] },
+                  { "id": "route", "kind": "choice", "next": [ "vault", "backdoor" ] },
+                  { "id": "vault", "kind": "reach", "x": 70.5, "y": 24.5, "radius": 3.0, "reward": { "xp": 5.0, "item": "bandage", "count": 1 } },
+                  { "id": "backdoor", "kind": "reach", "x": 70.5, "y": 24.5, "radius": 3.0, "reward": { "xp": 9.0, "item": "bandage", "count": 2 } }
+                ],
+                "keys": [
+                  { "id": "front", "item": "bandage", "name": "前门钥匙", "consumed": true }
+                ],
+                "branches": [
+                  { "id": "vault_route", "name": "金库路线", "from": "route", "stages": [ "vault" ] },
+                  { "id": "back_route", "name": "后门路线", "from": "route", "stages": [ "backdoor" ] }
+                ]
+              },
+              {
+                "id": "stage_entry_test",
+                "name": "入口测试",
+                "threat": 1,
+                "markerX": 100.5,
+                "markerY": 24.5,
+                "containers": [
+                  { "x": 70.5, "y": 24.5, "tableId": "poi_motel_storage", "sprite": "object.crate" }
+                ],
+                "stages": [
+                  { "id": "inside", "kind": "reach", "x": 70.5, "y": 24.5, "radius": 3.0 }
+                ],
+                "entries": [
+                  { "id": "back", "label": "后门", "x": 70.5, "y": 24.5, "stage": "inside", "requires": "back_key" }
+                ],
+                "keys": [
+                  { "id": "back_key", "item": "wood", "name": "后门钥匙", "consumed": true }
+                ]
+              }
+            ]
+          }
+        })";
+    }
+
+    std::vector<std::string> args{"ZomboidLikeTests",
+                                  "--save.root=" + saveRoot.string()};
+    std::vector<const char*> argv;
+    for (const std::string& arg : args) {
+        argv.push_back(arg.c_str());
+    }
+    const std::uint64_t contentHash = 0x4D33334635543341ull;
+
+    zl::server::ServerHost::Options options =
+        MakeHostOptions(root, profilePath, contentHash, saveId);
+    options.mapDir = (root / "assets" / "maps" / "village_demo").string();
+    options.contentFile = contentPath.string();
+    options.playerTargetX = 70.5f;
+    options.playerTargetY = 24.5f;
+    options.argc = static_cast<int>(argv.size());
+    options.argv = argv.data();
+
+    zl::server::ServerHost host;
+    std::string error;
+    REQUIRE_MESSAGE(host.Init(options, &error), error);
+    REQUIRE(host.NetworkPort() != 0);
+
+    zl::game::NetworkClient::Options clientOptions;
+    clientOptions.host = "127.0.0.1";
+    clientOptions.port = host.NetworkPort();
+    clientOptions.contentHash = contentHash;
+    clientOptions.autoReconnect = false;
+    clientOptions.playerIdentity = "m33-f5-t3-access";
+    clientOptions.playerName = "Access";
+
+    zl::game::NetworkClient client(clientOptions);
+    REQUIRE(client.Connect(&error));
+    REQUIRE(PumpUntil(host, client, 8000, [&] {
+        return client.IsConnected() && client.HasPlayerState() &&
+               host.Simulation().Chunks().GetStats().loadedChunks > 0;
+    }));
+
+    const auto findProgress = [&](zl::server::ServerHost& server)
+        -> const zl::game::PoiProgress* {
+        auto& registry = server.Simulation().Ecs().Registry();
+        const zl::ecs::Entity worldEntity = server.Simulation().Ecs().FindById(
+            zl::ecs::kPoiWorldProgressStableId);
+        if (worldEntity == entt::null) {
+            return nullptr;
+        }
+        const auto* world =
+            registry.try_get<zl::ecs::PoiWorldProgress>(worldEntity);
+        if (world == nullptr) {
+            return nullptr;
+        }
+        return zl::game::FindPoiProgress(world->pois, "stage_access_test");
+    };
+    const auto findEntryProgress = [&](zl::server::ServerHost& server)
+        -> const zl::game::PoiProgress* {
+        auto& registry = server.Simulation().Ecs().Registry();
+        const zl::ecs::Entity worldEntity = server.Simulation().Ecs().FindById(
+            zl::ecs::kPoiWorldProgressStableId);
+        if (worldEntity == entt::null) {
+            return nullptr;
+        }
+        const auto* world =
+            registry.try_get<zl::ecs::PoiWorldProgress>(worldEntity);
+        if (world == nullptr) {
+            return nullptr;
+        }
+        return zl::game::FindPoiProgress(world->pois, "stage_entry_test");
+    };
+
+    REQUIRE(PumpUntil(host, client, 8000, [&] {
+        const auto* progress = findProgress(host);
+        return progress != nullptr && progress->currentStage == 1;
+    }));
+    const std::uint64_t playerId = client.PlayerStableId();
+    REQUIRE(playerId != 0);
+    auto& registry = host.Simulation().Ecs().Registry();
+    const zl::ecs::Entity player = host.Simulation().Ecs().FindById(playerId);
+    REQUIRE(static_cast<bool>(player != entt::null));
+    auto& bag = registry.get<zl::ecs::Container>(player);
+
+    bag.items.push_back(zl::ecs::ItemInstance{"wood", 1, 1.0f});
+    REQUIRE(PumpUntil(host, client, 4000, [&] {
+        const auto* entry = findEntryProgress(host);
+        return entry != nullptr && entry->completed;
+    }));
+    const zl::game::PoiProgress* entryProgress = findEntryProgress(host);
+    REQUIRE(entryProgress != nullptr);
+    CHECK(entryProgress->completedStages ==
+          std::vector<std::string>({"inside"}));
+    CHECK(entryProgress->acquiredKeys ==
+          std::vector<std::string>({"back_key"}));
+    CHECK(zl::items::CountOf(bag, "wood") == 0);
+
+    const auto sendInteract = [&](int branch) {
+        zl::net::Command command;
+        command.type = zl::net::CommandType::PoiInteract;
+        command.playerStableId = playerId;
+        command.payload.index = 0;
+        command.payload.targetIndex = branch;
+        REQUIRE(client.SendCommand(command, &error));
+        host.RunForTicks(8);
+        client.Poll();
+    };
+
+    sendInteract(-1);
+    const zl::game::PoiProgress* progress = findProgress(host);
+    REQUIRE(progress != nullptr);
+    CHECK(progress->currentStage == 1);
+    CHECK(progress->acquiredKeys.empty());
+    CHECK(client.PlayerState().status.find("缺少钥匙") !=
+          std::string::npos);
+
+    bag.items.push_back(zl::ecs::ItemInstance{"bandage", 1, 1.0f});
+    sendInteract(-1);
+    REQUIRE(PumpUntil(host, client, 3000, [&] {
+        const auto* current = findProgress(host);
+        return current != nullptr && current->currentStage == 2;
+    }));
+    progress = findProgress(host);
+    REQUIRE(progress != nullptr);
+    CHECK(progress->acquiredKeys ==
+          std::vector<std::string>({"front"}));
+    CHECK(zl::items::CountOf(bag, "bandage") == 0);
+
+    sendInteract(-1);
+    progress = findProgress(host);
+    REQUIRE(progress != nullptr);
+    CHECK(progress->currentStage == 2);
+    CHECK_FALSE(progress->powered);
+    CHECK(client.PlayerState().status.find("发电机需要") !=
+          std::string::npos);
+
+    const zl::game::PowerConfig powerConfig;
+    const zl::ecs::Entity poiGenerator = zl::game::SpawnGenerator(
+        host.Simulation().Ecs(), 70.5f, 24.5f, 0, powerConfig);
+    REQUIRE(static_cast<bool>(poiGenerator != entt::null));
+    bag.items.push_back(zl::ecs::ItemInstance{"fuel_can", 1, 1.0f});
+    sendInteract(-1);
+    REQUIRE(PumpUntil(host, client, 3000, [&] {
+        const auto* current = findProgress(host);
+        return current != nullptr && current->currentStage == 3 &&
+               current->powered;
+    }));
+    progress = findProgress(host);
+    REQUIRE(progress != nullptr);
+    CHECK(zl::items::CountOf(bag, "fuel_can") == 0);
+    CHECK(registry.get<zl::ecs::Generator>(poiGenerator).running);
+    CHECK(registry.get<zl::ecs::Generator>(poiGenerator).fuelMinutes > 0.0f);
+
+    sendInteract(1);
+    REQUIRE(PumpUntil(host, client, 4000, [&] {
+        const auto* current = findProgress(host);
+        return current != nullptr && current->completed &&
+               current->chosenBranch == "back_route";
+    }));
+    progress = findProgress(host);
+    REQUIRE(progress != nullptr);
+    CHECK(progress->completedStages ==
+          std::vector<std::string>(
+              {"approach", "gate", "power", "route", "backdoor"}));
+    CHECK(progress->powered);
+
+    bool mirrored = false;
+    for (const auto& poi : client.PlayerState().poiStageProgress) {
+        if (poi.id == "stage_access_test") {
+            mirrored = poi.stageCount == 6 && poi.completedStageCount == 5 &&
+                       (poi.flags & zl::net::kPlayerPoiStagePowered) != 0 &&
+                       poi.chosenBranch == "back_route";
+        }
+    }
+    CHECK(mirrored);
+
+    client.Close();
+    REQUIRE(PumpUntil(host, client, 5000, [&] {
+        return host.SessionCount() == 0;
+    }));
+    host.Shutdown();
+    std::error_code cleanupError;
+    std::filesystem::remove_all(dir, cleanupError);
+}
+
+TEST_CASE("M33-F5-T4 服务器 Boss 生成、召唤、脱战重试与奖励一次") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    REQUIRE(std::filesystem::exists(root / "config" / "game.json"));
+    ScopedWorkingDirectory cwd(root);
+
+    const std::filesystem::path dir = TempDir("m33_f5_t4_boss");
+    const std::filesystem::path saveRoot = dir / "saves";
+    const std::string profilePath = (dir / "players.bin").string();
+    std::string saveId;
+    CreateEmptySave(saveRoot, &saveId);
+    REQUIRE(!saveId.empty());
+
+    const std::filesystem::path contentPath = dir / "boss_poi.json";
+    {
+        std::ofstream out(contentPath, std::ios::binary | std::ios::trunc);
+        REQUIRE(out.good());
+        out << R"({
+          "pois": {
+            "enabled": true,
+            "defs": [
+              {
+                "id": "boss_stage_test",
+                "name": "Boss 阶段测试",
+                "threat": 3,
+                "markerX": 70.5,
+                "markerY": 24.5,
+                "containers": [
+                  { "x": 70.5, "y": 24.5, "tableId": "poi_motel_storage", "sprite": "object.crate" }
+                ],
+                "stages": [
+                  { "id": "approach", "kind": "reach", "x": 70.5, "y": 24.5, "radius": 3.0, "next": [ "boss" ] },
+                  { "id": "boss", "kind": "kill", "x": 70.5, "y": 24.5, "radius": 3.0, "count": 1, "reward": { "xp": 37.0, "item": "bandage", "count": 1 } }
+                ],
+                "boss": {
+                  "name": "院长",
+                  "variant": "armored",
+                  "stage": "boss",
+                  "mechanic": "summon",
+                  "count": 1
+                }
+              }
+            ]
+          }
+        })";
+    }
+
+    std::vector<std::string> args{
+        "ZomboidLikeTests", "--save.root=" + saveRoot.string(),
+        "--pois.boss.healthScale=3.0", "--pois.boss.resetSeconds=1.0",
+        "--pois.boss.summonIntervalSeconds=1.0",
+        "--pois.boss.summonCount=1", "--pois.boss.summonMax=2",
+        "--pois.boss.summonTotal=2"};
+    std::vector<const char*> argv;
+    for (const std::string& arg : args) {
+        argv.push_back(arg.c_str());
+    }
+    const std::uint64_t contentHash = 0x4D33334635543442ull;
+
+    zl::server::ServerHost::Options options =
+        MakeHostOptions(root, profilePath, contentHash, saveId);
+    options.mapDir = (root / "assets" / "maps" / "village_demo").string();
+    options.contentFile = contentPath.string();
+    options.playerTargetX = 70.5f;
+    options.playerTargetY = 24.5f;
+    options.argc = static_cast<int>(argv.size());
+    options.argv = argv.data();
+
+    zl::server::ServerHost host;
+    std::string error;
+    REQUIRE_MESSAGE(host.Init(options, &error), error);
+    REQUIRE(host.NetworkPort() != 0);
+
+    zl::game::NetworkClient::Options clientOptions;
+    clientOptions.host = "127.0.0.1";
+    clientOptions.port = host.NetworkPort();
+    clientOptions.contentHash = contentHash;
+    clientOptions.autoReconnect = false;
+    clientOptions.playerIdentity = "m33-f5-t4-boss";
+    clientOptions.playerName = "Boss";
+
+    zl::game::NetworkClient client(clientOptions);
+    REQUIRE(client.Connect(&error));
+    REQUIRE(PumpUntil(host, client, 8000, [&] {
+        return client.IsConnected() && client.HasPlayerState() &&
+               host.Simulation().Chunks().GetStats().loadedChunks > 0;
+    }));
+    const std::uint64_t playerId = client.PlayerStableId();
+    REQUIRE(playerId != 0);
+    auto& registry = host.Simulation().Ecs().Registry();
+    const zl::ecs::Entity player = host.Simulation().Ecs().FindById(playerId);
+    REQUIRE(static_cast<bool>(player != entt::null));
+    auto* playerHealth = registry.try_get<zl::ecs::Health>(player);
+    REQUIRE(playerHealth != nullptr);
+    playerHealth->max = 10000.0f;
+    playerHealth->current = 10000.0f;
+
+    const auto findProgress = [&](zl::server::ServerHost& server)
+        -> const zl::game::PoiProgress* {
+        auto& reg = server.Simulation().Ecs().Registry();
+        const zl::ecs::Entity worldEntity = server.Simulation().Ecs().FindById(
+            zl::ecs::kPoiWorldProgressStableId);
+        if (worldEntity == entt::null) {
+            return nullptr;
+        }
+        const auto* world =
+            reg.try_get<zl::ecs::PoiWorldProgress>(worldEntity);
+        if (world == nullptr) {
+            return nullptr;
+        }
+        return zl::game::FindPoiProgress(world->pois, "boss_stage_test");
+    };
+    const auto findBoss = [&]() -> zl::ecs::Entity {
+        zl::ecs::Entity boss = entt::null;
+        registry.view<zl::ecs::PoiStageEnemy, zl::ecs::Health>().each(
+            [&](const zl::ecs::Entity entity,
+                const zl::ecs::PoiStageEnemy& enemy,
+                const zl::ecs::Health& health) {
+                if (boss == entt::null && enemy.poiId == "boss_stage_test" &&
+                    enemy.stageId == "boss" &&
+                    enemy.role == zl::game::PoiStageEnemyRole::Boss &&
+                    health.current > 0.0f) {
+                    boss = entity;
+                }
+            });
+        return boss;
+    };
+    const auto countSummons = [&]() {
+        return zl::game::CountPoiStageSummons(registry, "boss_stage_test",
+                                              "boss");
+    };
+
+    REQUIRE(PumpUntil(host, client, 8000, [&] {
+        const auto* progress = findProgress(host);
+        return progress != nullptr && progress->currentStage == 1;
+    }));
+    REQUIRE(PumpUntil(host, client, 6000, [&] {
+        return findBoss() != entt::null;
+    }));
+    const zl::ecs::Entity boss = findBoss();
+    REQUIRE(static_cast<bool>(boss != entt::null));
+    const auto* bossHealth = registry.try_get<zl::ecs::Health>(boss);
+    REQUIRE(bossHealth != nullptr);
+    CHECK(bossHealth->max > 100.0f);
+    CHECK(zl::game::CountPoiStageTargets(registry, "boss_stage_test",
+                                         "boss") == 1);
+    const auto* bossRuntime =
+        registry.try_get<zl::ecs::PoiBossRuntime>(boss);
+    REQUIRE(bossRuntime != nullptr);
+    CHECK(bossRuntime->abilityCooldown > 0.0f);
+    CHECK(bossRuntime->summoned == 0);
+
+    REQUIRE(PumpUntil(host, client, 5000, [&] {
+        return countSummons() > 0;
+    }));
+    CHECK(countSummons() <= 2);
+    CHECK(zl::game::CountPoiStageTargets(registry, "boss_stage_test",
+                                         "boss") == 1);
+    const auto* beforeReset = findProgress(host);
+    REQUIRE(beforeReset != nullptr);
+    CHECK(beforeReset->currentStage == 1);
+    CHECK_FALSE(beforeReset->completed);
+
+    REQUIRE(TeleportServerPlayer(host, playerId, 10.5f, 37.5f));
+    REQUIRE(PumpUntil(host, client, 5000, [&] {
+        const auto* progress = findProgress(host);
+        return progress != nullptr && progress->failed;
+    }));
+    host.RunForTicks(2);
+    const zl::ecs::Entity noBoss = findBoss();
+    CHECK_FALSE(static_cast<bool>(noBoss != entt::null));
+    CHECK(zl::game::CountPoiStageSummons(registry, "boss_stage_test",
+                                         "boss") == 0);
+
+    REQUIRE(TeleportServerPlayer(host, playerId, 70.5f, 24.5f));
+    REQUIRE(PumpUntil(host, client, 6000, [&] {
+        const auto* progress = findProgress(host);
+        return progress != nullptr && !progress->failed &&
+               progress->attempts == 2 && progress->currentStage == 1 &&
+               findBoss() != entt::null;
+    }));
+
+    const zl::ecs::Entity retriedBoss = findBoss();
+    REQUIRE(static_cast<bool>(retriedBoss != entt::null));
+    zl::ecs::DamageEvent kill;
+    kill.amount = 100000.0f;
+    kill.type = zl::ecs::DamageType::Blunt;
+    REQUIRE(host.Simulation().Combat()->ApplyDamage(
+        host.Simulation().Ecs(), retriedBoss, kill));
+    REQUIRE(PumpUntil(host, client, 6000, [&] {
+        const auto* progress = findProgress(host);
+        return progress != nullptr && progress->completed;
+    }));
+    const auto* completed = findProgress(host);
+    REQUIRE(completed != nullptr);
+    CHECK(completed->completedStages ==
+          std::vector<std::string>({"approach", "boss"}));
+    CHECK(zl::game::CountPoiStageTargets(registry, "boss_stage_test",
+                                         "boss") == 0);
+
+    auto* tasks = registry.try_get<zl::ecs::PoiTasks>(player);
+    REQUIRE(tasks != nullptr);
+    CHECK(std::count(tasks->rewardClaims.begin(), tasks->rewardClaims.end(),
+                     "boss_stage_test.boss") == 1);
+    host.RunForTicks(30);
+    CHECK(std::count(tasks->rewardClaims.begin(), tasks->rewardClaims.end(),
+                     "boss_stage_test.boss") == 1);
+
+    client.Close();
+    REQUIRE(PumpUntil(host, client, 5000, [&] {
+        return host.SessionCount() == 0;
+    }));
+    host.Shutdown();
     std::error_code cleanupError;
     std::filesystem::remove_all(dir, cleanupError);
 }

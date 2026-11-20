@@ -679,6 +679,43 @@ FireIgnitionResult FireSystem::IgniteAt(ecs::EcsWorld& ecs,
     return FireIgnitionResult::Ignited;
 }
 
+bool FireSystem::IgniteForcedAt(ecs::EcsWorld& ecs, world::World& world, int wx,
+                                int wy, int z, float burnSeconds,
+                                float heatRadius,
+                                std::uint64_t ownerStableId) {
+    if (!std::isfinite(burnSeconds) || burnSeconds <= 0.0f ||
+        !std::isfinite(heatRadius) || heatRadius < 0.0f ||
+        !SquareLoaded(world, wx, wy)) {
+        return false;
+    }
+    ecs::FireSource* existing = FindAt(ecs, wx, wy, z);
+    if (existing != nullptr && FireIsActive(*existing)) {
+        return true;
+    }
+    if (ActiveSourceCount(ecs) >=
+        static_cast<std::size_t>(m_params.maxActiveSources)) {
+        return false;
+    }
+    ecs::FireSource candidate;
+    candidate.materialId = "trap_fuel";
+    candidate.ownerStableId = ownerStableId;
+    candidate.phase = ecs::FirePhase::Burning;
+    candidate.ignitionProgress = 0.0f;
+    candidate.ignitionDuration = 0.0f;
+    candidate.burnDuration = burnSeconds;
+    candidate.burnRemaining = burnSeconds;
+    candidate.smokePerSecond = 2.0f;
+    candidate.heatRadius = heatRadius;
+    candidate.smolderElapsed = 0.0f;
+    candidate.spreadAccumulator = 0.0f;
+    if (existing != nullptr) {
+        *existing = std::move(candidate);
+        return true;
+    }
+    AddFireEntity(ecs, wx, wy, z, std::move(candidate));
+    return true;
+}
+
 bool FireSystem::ExtinguishAt(ecs::EcsWorld& ecs, int wx, int wy, int z) {
     ecs::FireSource* source = FindAt(ecs, wx, wy, z);
     if (source == nullptr || !FireIsActive(*source)) {

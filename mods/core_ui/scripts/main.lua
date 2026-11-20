@@ -132,6 +132,18 @@ local function refresh_hud()
                    combat_status ~= "" and "block" or "none")
     UI.SetClass(HUD_DOC, "combat-status", "status-warn", combat_tone == "warn")
     UI.SetClass(HUD_DOC, "combat-status", "status-fail", combat_tone == "fail")
+    local stealth_status = s.stealthStatus or ""
+    local stealth_tone = s.stealthTone or "info"
+    UI.SetText(HUD_DOC, "stealth-status", stealth_status)
+    UI.SetProperty(HUD_DOC, "stealth-status", "display",
+                   stealth_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "stealth-status", "status-ok", stealth_tone == "ok")
+    UI.SetClass(HUD_DOC, "stealth-status", "status-warn", stealth_tone == "warn")
+    UI.SetClass(HUD_DOC, "stealth-status", "status-fail", stealth_tone == "fail")
+    local stealth_prompt = s.stealthPrompt or ""
+    UI.SetText(HUD_DOC, "stealth-prompt", stealth_prompt)
+    UI.SetProperty(HUD_DOC, "stealth-prompt", "display",
+                   stealth_prompt ~= "" and "block" or "none")
     local ranged_status = s.rangedStatus or ""
     local ranged_tone = s.rangedTone or "info"
     UI.SetText(HUD_DOC, "ranged-status", ranged_status)
@@ -139,6 +151,14 @@ local function refresh_hud()
                    ranged_status ~= "" and "block" or "none")
     UI.SetClass(HUD_DOC, "ranged-status", "status-warn", ranged_tone == "warn")
     UI.SetClass(HUD_DOC, "ranged-status", "status-fail", ranged_tone == "fail")
+    local throw_status = s.throwStatus or ""
+    local throw_tone = s.throwTone or "info"
+    UI.SetText(HUD_DOC, "throw-status", throw_status)
+    UI.SetProperty(HUD_DOC, "throw-status", "display",
+                   throw_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "throw-status", "status-ok", throw_tone == "ok")
+    UI.SetClass(HUD_DOC, "throw-status", "status-warn", throw_tone == "warn")
+    UI.SetClass(HUD_DOC, "throw-status", "status-fail", throw_tone == "fail")
     local forage_status = s.forageStatus or ""
     local forage_tone = s.forageTone or "info"
     UI.SetText(HUD_DOC, "forage-status", forage_status)
@@ -218,7 +238,8 @@ local function refresh_hud()
 
     UI.SetText(HUD_DOC, "objective-text", s.objective)
     UI.SetProperty(HUD_DOC, "hud-objective", "display",
-                   (s.objective ~= "" or (s.missionGuide or "") ~= ""
+                   (s.objective ~= "" or s.poiStageVisible
+                    or (s.missionGuide or "") ~= ""
                     or (s.eventGuide or "") ~= ""
                     or (s.regionGuide or "") ~= ""
                     or (s.settlementGuide or "") ~= ""
@@ -236,6 +257,27 @@ local function refresh_hud()
                    poi_guide ~= "" and "block" or "none")
     UI.SetClass(HUD_DOC, "poi-guide", "status-warn", poi_tone == "warn")
     UI.SetClass(HUD_DOC, "poi-guide", "status-ok", poi_tone == "ok")
+    local poi_stage_visible = s.poiStageVisible or false
+    local poi_stage_tone = s.poiStageTone or "info"
+    UI.SetProperty(HUD_DOC, "poi-stage-panel", "display",
+                   poi_stage_visible and "block" or "none")
+    UI.SetClass(HUD_DOC, "poi-stage-panel", "status-warn", poi_stage_tone == "warn")
+    UI.SetClass(HUD_DOC, "poi-stage-panel", "status-fail", poi_stage_tone == "fail")
+    UI.SetClass(HUD_DOC, "poi-stage-panel", "status-ok", poi_stage_tone == "ok")
+    UI.SetText(HUD_DOC, "poi-stage-title", s.poiStageTitle or "")
+    UI.SetText(HUD_DOC, "poi-stage-objective", s.poiStageObjective or "")
+    UI.SetText(HUD_DOC, "poi-stage-meta", s.poiStageMeta or "")
+    local poi_stage_narrative = s.poiStageNarrative or ""
+    UI.SetText(HUD_DOC, "poi-stage-narrative", poi_stage_narrative)
+    UI.SetProperty(HUD_DOC, "poi-stage-narrative", "display",
+                   poi_stage_narrative ~= "" and "block" or "none")
+    local poi_result_visible = s.poiResultVisible or false
+    local poi_result_tone = s.poiResultTone or "info"
+    UI.SetProperty(HUD_DOC, "poi-result-panel", "display",
+                   poi_result_visible and "block" or "none")
+    UI.SetClass(HUD_DOC, "poi-result-panel", "status-fail", poi_result_tone == "fail")
+    UI.SetText(HUD_DOC, "poi-result-title", s.poiResultTitle or "")
+    UI.SetText(HUD_DOC, "poi-result-body", s.poiResultBody or "")
     local mission_guide = s.missionGuide or ""
     local mission_tone = s.missionTone or "info"
     UI.SetText(HUD_DOC, "mission-guide", mission_guide)
@@ -377,6 +419,39 @@ local function refresh_hud()
         end
     end
 
+    local companion = s.companion or {}
+    local companion_valid = companion.valid or false
+    local companion_open = companion_valid and (companion.open or false)
+    UI.SetProperty(HUD_DOC, "companion-panel", "display",
+                   companion_open and "block" or "none")
+    UI.SetText(HUD_DOC, "companion-name", companion.name or "")
+    UI.SetText(HUD_DOC, "companion-health", companion.health or "")
+    UI.SetText(HUD_DOC, "companion-state", companion.status or "")
+    UI.SetText(HUD_DOC, "companion-trust", companion.trust or "")
+    UI.SetText(HUD_DOC, "companion-equipment", companion.equipment or "")
+    UI.SetText(HUD_DOC, "companion-bag", companion.bag or "")
+    UI.SetText(HUD_DOC, "companion-quest", companion.quest or "")
+    UI.SetText(HUD_DOC, "companion-hint", companion.hint or "")
+    local companion_health_max = companion.healthMax or 0.0
+    local companion_health_ratio = 0.0
+    if companion_health_max > 0.0 then
+        companion_health_ratio = math.max(0.0,
+            math.min(1.0, (companion.healthCurrent or 0.0) / companion_health_max))
+    end
+    UI.SetProperty(HUD_DOC, "companion-health-fill", "width",
+                   string.format("%.1f%%", companion_health_ratio * 100.0))
+    UI.SetClass(HUD_DOC, "companion-health-fill", "low",
+                companion.lowHealth or companion.downed or companion.dead)
+    UI.SetText(HUD_DOC, "companion-status", companion.alert or "")
+    UI.SetProperty(HUD_DOC, "companion-status", "display",
+                   companion_valid and (companion.alert or "") ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "companion-status", "status-warn",
+                companion.alertTone == "warn")
+    UI.SetClass(HUD_DOC, "companion-status", "status-fail",
+                companion.alertTone == "fail")
+    UI.SetClass(HUD_DOC, "companion-status", "status-ok",
+                companion.alertTone == "ok")
+
     local dialogue_open = s.dialogueOpen or false
     local dialogue_options = s.dialogueOptions or {}
     local dialogue_count = s.dialogueOptionCount or 0
@@ -408,6 +483,12 @@ local function refresh_hud()
         UI.SetText(HUD_DOC, "slot-name-" .. index, slot and slot.label or "空")
         local count = slot and slot.count or 0
         UI.SetText(HUD_DOC, "slot-count-" .. index, count > 0 and tostring(count) or "")
+        local throwable = slot and slot.throwable or false
+        local throw_tag = slot and slot.throwTag or ""
+        UI.SetClass(HUD_DOC, "slot-" .. index, "throwable", throwable)
+        UI.SetText(HUD_DOC, "slot-throw-" .. index, throw_tag)
+        UI.SetProperty(HUD_DOC, "slot-throw-" .. index, "display",
+                       (throwable and throw_tag ~= "") and "block" or "none")
     end
 
     local notice_active = s.notice ~= "" and s.noticeRemaining > 0.0
@@ -908,12 +989,15 @@ local function inv_parse_slot(element)
     local prefixes = {
         { "bag-slot-", "bag" },
         { "bag-name-", "bag" },
+        { "bag-throw-", "bag" },
         { "bag-count-", "bag" },
         { "equip-slot-", "equipment" },
         { "equip-name-", "equipment" },
+        { "equip-throw-", "equipment" },
         { "equip-count-", "equipment" },
         { "loot-slot-", "loot" },
         { "loot-name-", "loot" },
+        { "loot-throw-", "loot" },
         { "loot-count-", "loot" },
     }
     for i = 1, #prefixes do
@@ -946,6 +1030,7 @@ local function inv_update_slot(area, index, slot)
     UI.SetClass(INV_DOC, id, "filled", slot.filled)
     UI.SetClass(INV_DOC, id, "usable", slot.filled and slot.usable)
     UI.SetClass(INV_DOC, id, "equippable", slot.filled and slot.equippable)
+    UI.SetClass(INV_DOC, id, "throwable", slot.filled and slot.throwable == true)
     if slot.filled then
         local name = slot.label
         local condition = slot.condition or 1.0
@@ -963,10 +1048,17 @@ local function inv_update_slot(area, index, slot)
         UI.SetText(INV_DOC, prefix .. "-name-" .. tostring(index), name)
         UI.SetText(INV_DOC, prefix .. "-count-" .. tostring(index),
                    slot.count > 1 and tostring(slot.count) or "")
+        local throw_tag = slot.throwTag or ""
+        UI.SetText(INV_DOC, prefix .. "-throw-" .. tostring(index), throw_tag)
+        UI.SetProperty(INV_DOC, prefix .. "-throw-" .. tostring(index), "display",
+                       throw_tag ~= "" and "block" or "none")
     else
         UI.SetText(INV_DOC, prefix .. "-name-" .. tostring(index),
                    area == "loot" and "无" or "空")
         UI.SetText(INV_DOC, prefix .. "-count-" .. tostring(index), "")
+        UI.SetText(INV_DOC, prefix .. "-throw-" .. tostring(index), "")
+        UI.SetProperty(INV_DOC, prefix .. "-throw-" .. tostring(index), "display",
+                       "none")
     end
 end
 
@@ -1158,6 +1250,12 @@ local function inv_refresh()
                    s.lootIsStorage == true and "block" or "none")
     UI.SetProperty(INV_DOC, "storage-take-all", "display",
                    canTakeAll and "block" or "none")
+    local showVehicleMods =
+        s.lootIsVehicle == true and s.vehicleModsEnabled == true
+    UI.SetProperty(INV_DOC, "storage-vehicle-mods", "display",
+                   showVehicleMods and "block" or "none")
+    UI.SetProperty(INV_DOC, "storage-vehicle-mods", "opacity",
+                   s.vehicleModsReadOnly == true and "0.55" or "1.0")
     UI.SetText(INV_DOC, "inv-status", s.status)
     UI.SetClass(INV_DOC, "inv-status", "status-info", s.statusTone == "info")
     UI.SetClass(INV_DOC, "inv-status", "status-ok", s.statusTone == "ok")
@@ -1593,6 +1691,21 @@ local function inv_on_click(element)
         local index = tonumber(string.sub(element, #craftPrefix + 1))
         if index ~= nil then
             inv_craft(index)
+        end
+        return
+    end
+    if element == "storage-vehicle-mods" then
+        local s = inv.state
+        if s ~= nil and s.vehicleModsEnabled == true then
+            Inventory.PlayClick()
+            Inventory.Action({
+                type = "open_vehicle_mods",
+                from = "loot",
+                fromIndex = -1,
+                fromEntityId = s.lootEntityId or 0,
+                to = "bag",
+                toIndex = -1,
+            })
         end
         return
     end

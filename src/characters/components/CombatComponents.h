@@ -84,6 +84,10 @@ struct AttackIntent {
     float windupLeft = 0.0f;         // 剩余前摇（运行时）
     float poiseDamage = 0.0f;        // 对目标硬直条的伤害
     float staminaCost = 0.0f;        // 动作开始时由输入/服务器扣除
+    // M34-F1-T4：1 = 不启用背刺；>1 时只对首个“未警觉且在背后”的 AI 目标
+    // 乘该倍率。判定发生在命中结算时，倍率由 game 层按 stealth 配置写入。
+    float backstabMultiplier = 1.0f;
+    float backstabHalfAngleDegrees = 60.0f;
     bool pending = false;            // true = 有攻击申请待消费
 };
 
@@ -210,6 +214,55 @@ inline DamageCause DamageCauseFromType(DamageType type) {
     }
     return DamageCause::Unknown;
 }
+
+// 脚本事件 OnDamage.damageType 的稳定小写标识。
+inline const char* DamageTypeName(DamageType type) {
+    switch (type) {
+        case DamageType::Blunt:
+            return "blunt";
+        case DamageType::Bite:
+            return "bite";
+        case DamageType::Claw:
+            return "claw";
+        case DamageType::Debug:
+            return "debug";
+        case DamageType::Fire:
+            return "fire";
+    }
+    return "unknown";
+}
+
+// 脚本事件用的稳定小写标识；不要本地化（HUD/日志才用中文标签）。
+inline const char* DamageCauseName(DamageCause cause) {
+    switch (cause) {
+        case DamageCause::Blunt:
+            return "blunt";
+        case DamageCause::Bite:
+            return "bite";
+        case DamageCause::Claw:
+            return "claw";
+        case DamageCause::Debug:
+            return "debug";
+        case DamageCause::Bleed:
+            return "bleed";
+        case DamageCause::Starvation:
+            return "starvation";
+        case DamageCause::Dehydration:
+            return "dehydration";
+        case DamageCause::Infection:
+            return "infection";
+        case DamageCause::Hypothermia:
+            return "hypothermia";
+        case DamageCause::Fire:
+            return "fire";
+        case DamageCause::Poison:
+            return "poison";
+        case DamageCause::Unknown:
+        default:
+            return "unknown";
+    }
+}
+
 
 struct LastDamage {
     DamageCause cause = DamageCause::Unknown;

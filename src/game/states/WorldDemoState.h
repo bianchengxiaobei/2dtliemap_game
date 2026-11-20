@@ -17,15 +17,18 @@
 #include <glm/glm.hpp>
 
 #include "ai/components/AiComponents.h"
+#include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
 #include "characters/components/ProgressionComponents.h"
 #include "characters/systems/CombatSystem.h"
+#include "characters/systems/StealthRules.h"
 #include "core/AppState.h"
 #include "core/GameTime.h"
 #include "ecs/EcsWorld.h"
 #include "game/AssetProvider.h"
 #include "game/BaseSiege.h"
 #include "game/CombatAudio.h"
+#include "game/Companion.h"
 #include "game/Dialogue.h"
 #include "game/BuildingRules.h"
 #include "game/GameContext.h"
@@ -34,15 +37,19 @@
 #include "game/ForageRuntime.h"
 #include "game/Homestead.h"
 #include "game/Sleeping.h"
+#include "game/VehicleComponents.h"
+#include "game/VehicleMods.h"
 #include "game/VehicleSpike.h"
 #include "game/Missions.h"
 #include "game/Objectives.h"
 #include "game/Poi.h"
 #include "game/PoiComponents.h"
+#include "game/WorldLifecycle.h"
 #include "game/WorldMap.h"
 #include "game/ProgressionRules.h"
 #include "game/RenderCollectSystem.h"
 #include "game/Settlement.h"
+#include "game/Throwing.h"
 #include "items/Crafting.h"
 #include "items/ItemComponents.h"
 #include "items/RangedWeapon.h"
@@ -53,6 +60,7 @@
 #include "save/SaveService.h"
 #include "ui/InventoryUi.h"
 #include "ui/MenuUi.h"
+#include "ui/VehicleModsUi.h"
 #include "world/GridSquare.h"
 
 namespace zl::world {
@@ -94,6 +102,11 @@ public:
 
 private:
     void HandleFrameInput(double frameDt);
+    bool CanToggleStealth() const;
+    void ToggleStealth();
+    void SetLocalStealth(bool crouched);
+    void ExitStealth(characters::StealthExitReason reason);
+    void UpdateStealthState();
     // M13-T5：把 EntityReplicationClient 副本同步成渲染用 ECS 实体（不参与本地模拟）。
     void SyncNetworkReplicas(float alpha);
     // X-F1：把服务器下发的单格 chunk diff 应用到已加载的客户端 chunk。
@@ -134,10 +147,45 @@ private:
     // M19-F2：POI 容器/守军/任务与 HUD 指引（单机）。
     void InitializePoiRuntime();
     void EnsurePoiContent();
-    void UpdatePoiTasks();
+    void UpdatePoiTasks(float dt);
+    ecs::PoiWorldProgress* PoiWorldProgressState();
+    void UpdateStagedPoi(const PoiDef& poi, ecs::PoiWorldProgress* world,
+                         ecs::PoiTasks* tasks, float dt);
+    bool FindPoiStartCandidate(const PoiDef& poi, float x, float y,
+                               const PoiEntryDef** entry) const;
+    bool PlayerHasPoiKeyItem(const PoiKeyDef& key) const;
+    bool ConsumePoiKeyItem(const PoiKeyDef& key);
+    bool CheckPoiStageKeys(const PoiDef& poi, const PoiProgress& progress,
+                           const PoiStageDef& stage,
+                           std::string* reason) const;
+    bool ConsumePoiStageKeys(const PoiDef& poi, PoiProgress* progress,
+                             const PoiStageDef& stage);
+    void GrantPoiStageReward(const PoiDef& poi, const PoiStageDef& stage,
+                             ecs::PoiTasks* tasks);
+    void GrantPoiStageKeys(const PoiDef& poi, const PoiStageDef& stage);
+    void ApplyPoiStageUpdate(const PoiDef& poi, const PoiStageUpdate& update,
+                             ecs::PoiTasks* tasks, int attempts);
+    void ShowPoiResult(std::string title, std::string body, std::string tone,
+                       float seconds = 10.0f);
+    bool TryInteractPoi();
+    bool TryChoosePoiBranchInput(core::Input& input);
+    void RefreshPoiStageGuide(ui::HudState& hud, bool* handled);
+    void RefreshPoiStageHint(ui::HudState& hud);
     bool PoiTargetSearched(const PoiDef& poi) const;
     int CountPoiGuards(std::string_view poiId) const;
     bool FindPoiGuardCell(const PoiDef& poi, int index, int* wx, int* wy) const;
+    bool FindPoiStageEnemyCell(const PoiDef& poi, const PoiStageDef& stage,
+                               int index, float originX, float originY,
+                               int* wx, int* wy) const;
+    ecs::Entity SpawnPoiStageEnemy(const PoiDef& poi, const PoiStageDef& stage,
+                                   PoiStageEnemyRole role, PoiGuardKind kind,
+                                   int index, float originX, float originY);
+    void EnsurePoiStageEnemies(const PoiDef& poi, PoiProgress* progress);
+    void UpdatePoiBossMechanics(const PoiDef& poi, const PoiProgress& progress,
+                                float dt);
+    void ClearPoiStageEnemies(std::string_view poiId,
+                              std::string_view stageId = {});
+    bool PoiPlayerNearStart(const PoiDef& poi, float x, float y) const;
     const ecs::PoiTasks* PlayerPoiTasks() const;
     void RefreshPoiGuide(ui::HudState& hud);
     bool IsM31World() const;
@@ -188,6 +236,7 @@ private:
     ecs::MissionRunState* FocusedMissionState();
     std::string FocusedMissionId() const;
     int CurrentMissionDay() const;
+    std::string CurrentSaveId() const;
     void SearchNearbyLootContainer();
     void UpdateForage(float tickDt);
     void RefreshForageNodes(float tickDt);
@@ -277,6 +326,15 @@ private:
         float elapsed = 0.0f;
         float duration = 0.0f;
         std::uint32_t startHitSerial = 0;
+    };
+    struct VehicleModAction {
+        bool active = false;
+        bool install = true;
+        ecs::Entity vehicle = entt::null;
+        std::string defId;
+        VehicleModSlot slot = VehicleModSlot::Armor;
+        float elapsed = 0.0f;
+        float duration = 0.0f;
     };
     struct FishingAction {
         bool active = false;
@@ -377,12 +435,31 @@ private:
     std::string SettlementNpcHint() const;
     bool AcceptSettlementMissionFromDialogue();
     bool FocusSettlementMissionFromDialogue();
+    bool RecruitCompanionFromDialogue();
+    bool DismissCompanionFromDialogue();
+    // M33-F3-T7：同伴面板、HUD、对话/赠礼/委托/救援交互。
+    bool FindOwnedCompanionEntity(ecs::Entity* out) const;
+    bool BuildCompanionUiSnapshot(ui::CompanionUiState* out) const;
+    void SyncCompanionHud(ui::HudState& hud) const;
+    void ToggleCompanionPanel();
+    void CloseCompanionPanel();
+    void HandleCompanionPanelInput(core::Input& input);
+    bool OpenCompanionDialogue(ecs::Entity companion);
+    bool TryRescueDownedCompanion();
+    bool TryInteractCompanion();
+    bool RescueOwnedCompanion();
+    bool SetOwnedCompanionCommand(CompanionCommand command);
+    bool GiftToOwnedCompanionFromUi();
+    bool AcceptCompanionQuestFromDialogue();
+    bool AbandonCompanionQuestFromDialogue();
+    std::string CompanionRecruitRequirementText() const;
     enum class HomesteadTargetKind {
         None,
         Farm,
         Generator,
         Floodlight,
         Trap,
+        PlacedTrap,
         Merchant,
     };
     struct HomesteadTarget {
@@ -395,6 +472,8 @@ private:
     ecs::Entity FindNearbyGenerator() const;
     ecs::Entity FindNearbyFloodlight() const;
     ecs::Entity FindNearbyTrap() const;
+    ecs::Entity FindNearbyPlacedTrap() const;
+    const BuildableDef* PlacedTrapBuildable(ecs::Entity entity) const;
     ecs::Entity FindNearbyMerchant() const;
     bool TryDemolishHomestead();
     void UpdateDemolishConfirm(float tickDt);
@@ -449,6 +528,17 @@ private:
     bool CanPlaceBuild(const BuildableDef& def, int wx, int wy,
                        std::string* reason) const;
     bool TryPlaceSelectedBuild(int wx, int wy);
+    // M35-F3-T5：按格坐标的脚本建造动作（不走建造模式/最近目标）。
+    bool BuildCellInActionRange(int wx, int wy, std::string& error) const;
+    bool FindPlayerBuiltStructureAt(int wx, int wy,
+                                    PlayerBuildTarget* out) const;
+    bool FindPlayerBuiltEntityAt(int wx, int wy, ecs::Entity* out,
+                                 const BuildableDef** def) const;
+    bool TryPlaceBuildAt(const BuildableDef& def, int wx, int wy, bool vertical,
+                         std::string& error);
+    bool TryDemolishBuildAt(int wx, int wy, std::string& error);
+    bool TryRepairBuildAt(int wx, int wy, std::string& error);
+    bool TryToggleDoorAt(int wx, int wy, std::string& error);
     void RemoveBarricade(std::uint64_t key);
     void SyncBarricadeHp(std::uint64_t key);
     void RebuildChunkCollision(int chunkX, int chunkY);
@@ -485,6 +575,7 @@ private:
     void DrawCombatOverlay(render::SpriteBatch& batch);
     void DrawLocalCombatOverlay(render::SpriteBatch& batch);
     void DrawRemoteCombatOverlay(render::SpriteBatch& batch);
+    void DrawRemoteStealthOverlay(render::SpriteBatch& batch);
     void DrawCombatStanceOverlay(render::SpriteBatch& batch,
                                  const glm::vec2& ground, float faceX,
                                  float faceY,
@@ -536,12 +627,17 @@ private:
                          std::string& error, int& actual);
     bool StartNextQueuedCraft(std::string_view prefix);
     std::string QueuedCraftLabel(std::string_view recipeId) const;
+    void EmitCraftStart(const items::RecipeDef& recipe, int batchCount);
+    void EmitCraftFinished(std::string_view recipeId, std::string_view outputDefId,
+                           int outputCount, int batchCompleted, bool failed);
     void SyncCraftingJobToEcs();
     void RestoreCraftingJobFromEcs();
     // M12-T1：玩家操作统一走 Command（direct 立即执行 / loopback 环回执行）
     net::Command MakePlayerCommand(net::CommandType type) const;
     bool ExecutePlayerCommand(const net::Command& command, std::string& error);
     bool SubmitPlayerCommand(const net::Command& command);
+    bool SubmitPlayerCommand(const net::Command& command, bool& queued,
+                             std::string& error);
     void SubmitMoveCommand(float screenX, float screenY);
     void SubmitInventoryAction(const ui::InventoryAction& action);
     // M9-T6：Esc 暂停菜单（保留当前世界状态；返回主菜单后“继续”可恢复）
@@ -554,6 +650,7 @@ private:
     void UseBagItem(int index);
     bool ApplyUseInfectionRisk(float risk, std::string_view defId);
     void ApplyFoodUse(const items::ItemDef& def, const items::UseResult& use);
+    void EmitItemUsed(std::string_view defId, bool spoiled, int remaining);
     bool UseBlueprintItem(int index, const items::ItemDef& def);
     void RepairBagItem(int index);
     // recipes-v3：工作台/制作站范围（空 station = 任意地点）
@@ -582,6 +679,24 @@ private:
     void PlayerRangedAttack(const glm::vec2& mousePx);
     bool TryStartRangedReload();
     void UpdateRangedWeapon(float tickDt);
+    // M34-F2-T2：投掷优先的瞄准上下文、射程夹取与预览（不消耗物品）。
+    bool TryGetThrowableAimSource(const items::ItemDef** outDef,
+                                  ecs::ItemInstance** outItem,
+                                  int* outSourceIndex = nullptr);
+    bool ThrowTargetCellValid(int cellX, int cellY) const;
+    ThrowAimBlockReason CurrentThrowAimBlock();
+    ThrowPathResult ClipThrowPathToWorld(float startX, float startY, float targetX,
+                                         float targetY, int z) const;
+    void ApplyThrowAimPath(const ThrowAimEvaluation& evaluation, int z);
+    bool TryBeginThrowAim(const glm::vec2& mousePx);
+    void UpdateThrowAimTarget(const glm::vec2& mousePx, bool announce);
+    void ReleaseThrowAim();
+    void CancelThrowAim(std::string_view reason, bool notice);
+    void DrawThrowAimOverlay(render::SpriteBatch& batch);
+    void UpdateThrownProjectiles(float tickDt);
+    void SettleThrownProjectiles();
+    void ResolveThrownProjectile(const ThrownProjectile& projectile);
+    void DrawThrownProjectiles(render::SpriteBatch& batch);
     // M23-F1-T4：单机弹道、枪口/命中特效与投射物生命周期。
     void SpawnRangedProjectile(float startX, float startY, int z, float dirX,
                                float dirY, const items::RangedCombat& ranged,
@@ -599,9 +714,12 @@ private:
     ecs::Entity SpawnLocalVehicle(int cellX, int cellY);
     void AdoptVehicleEntity(ecs::Entity entity);
     void SyncVehicleStateToEcs();
+    VehicleModStats VehicleModStatsForEntity(ecs::Entity entity) const;
+    void SyncLocalVehicleModStorage(ecs::Entity entity);
     void ApplyLocalVehicleVehicleCollision(
         float impactSpeed, ecs::Entity target,
-        const VehicleMotion& previousMotion);
+        const VehicleMotion& previousMotion,
+        const VehicleModStats& activeModStats);
     float PushLocalVehicleOnCollision(ecs::Entity target, float impactSpeed);
     void UpdateLocalParkedVehicleMotions(float tickDt);
     void UpdateVehicle(float tickDt);
@@ -616,8 +734,9 @@ private:
     VehicleSurface VehicleSurfaceAt(float x, float y, int z) const;
     bool VehicleBlockedAt(int x, int y, int z) const;
     void ApplyLocalVehicleRam(
-        const VehicleMotion* previousMotion = nullptr);
-    void ApplyLocalVehicleAttacks();
+        const VehicleMotion* previousMotion,
+        const VehicleModStats& modStats);
+    void ApplyLocalVehicleAttacks(const VehicleModStats& modStats);
     void SpawnVehicleHitFeedback(float wear, float x, float y, int z,
                                  bool shake = true);
     void UpdateVehicleHitFeedback(float frameDt);
@@ -648,6 +767,17 @@ private:
     bool VehicleNearPlayer(float range) const;
     std::string VehicleHint() const;
     bool TryServiceVehicle();
+    bool OpenVehicleModsPanel(ecs::Entity vehicle);
+    void CloseVehicleModsPanel();
+    void RefreshVehicleModsPanel();
+    void HandleVehicleModsAction(const ui::VehicleModPanelAction& action);
+    void SubmitNetworkVehicleModAction(bool install, int slot);
+    void StartVehicleModAction(bool install, int slot);
+    void UpdateVehicleModAction(float tickDt);
+    void CancelVehicleModAction(std::string_view reason, bool notice);
+    bool IsVehicleModTargetValid(ecs::Entity vehicle) const;
+    ecs::Entity FindVehicleForMods() const;
+    const VehicleModDef* SelectedVehicleModCandidate(int slot) const;
     void SyncNetworkVehicleBinding();
     void UpdateNetworkVehiclePrediction(float frameDt);
     void ApplyNetworkDriverVisibility();
@@ -658,7 +788,8 @@ private:
     void UpdatePathFeedback(double frameDt);
     void SetNotice(std::string text, uint32_t color, float seconds);
     void RefreshRangedHud(ui::HudState& hud);
-    void RefreshHud();
+    void RefreshStealthHud(ui::HudState& hud, bool networkState);
+    void RefreshHud(double frameDt);
     // M4-T5：相机跟随（follow=平滑跟随玩家+地图边界；自由=方向键/拖拽，无边界）
     void ApplyCameraMode();
     void UpdateCameraFollow(double frameDt);
@@ -701,6 +832,12 @@ private:
     int m_localVehicleCount = 3;
     std::string m_vehicleRepairItem = "repair_kit";
     std::string m_vehicleFuelItem = "fuel_can";
+    bool m_vehicleModsOpen = false;
+    ecs::Entity m_vehicleModsVehicle = entt::null;
+    std::array<int, ecs::kVehicleModSlotCount> m_vehicleModCandidates{};
+    VehicleModAction m_vehicleModAction;
+    std::string m_vehicleModsStatus;
+    std::string m_vehicleModsStatusTone = "info";
     bool m_driving = false;
     bool m_riding = false;
     bool m_vehicleFuelWarned = false;
@@ -822,6 +959,8 @@ private:
     net::PlayerRangedState m_networkRanged;
     // M30-T6：服务器权威战斗体力/姿态镜像（owner-only）。
     net::PlayerCombatState m_networkCombat;
+    // M34-F1-T5：服务器权威潜行摘要（owner-only）。
+    net::PlayerStealthState m_networkStealth;
     net::PlayerSurvivalState m_networkSurvival;
     net::PlayerAnimalHarvestState m_networkAnimalHarvest;
     void HandleNetworkSleepInput(core::Input& input);
@@ -834,6 +973,12 @@ private:
         bool completed = false;
         bool targetSearched = false;
         int liveGuards = 0;
+        std::uint8_t stageIndex = 0;
+        std::uint8_t stageCount = 0;
+        std::uint8_t completedStageCount = 0;
+        std::uint8_t stageFlags = 0;
+        std::string currentStage;
+        std::string chosenBranch;
     };
     std::unordered_map<std::string, NetworkPoiProgress> m_networkPoiProgress;
     struct NetworkSettlementStatus {
@@ -889,6 +1034,39 @@ private:
     items::RangedWeaponRuntime m_rangedWeapon;
     std::uint32_t m_rangedReloadHitSerial = 0;
     std::uint32_t m_rangedShotSerial = 0;
+    game::ThrowingConfig m_throwingConfig;
+    struct ThrowAimRuntime {
+        bool active = false;
+        int sourceIndex = -1;
+        std::string defId;
+        std::string name;
+        float itemRange = 0.0f;
+        float range = 0.0f;
+        float impactRadius = 0.0f;
+        float arcHeight = 0.0f;
+        float damage = 0.0f;
+        float noiseRadius = 0.0f;
+        float fireRadius = 0.0f;
+        float fireMinutes = 0.0f;
+        float breakChance = 0.0f;
+        bool returnable = false;
+        float targetX = 0.0f;
+        float targetY = 0.0f;
+        float distance = 0.0f;
+        float directionX = 1.0f;
+        float directionY = 0.0f;
+        bool clamped = false;
+        bool wallClipped = false;
+        int targetCellX = 0;
+        int targetCellY = 0;
+    };
+    ThrowAimRuntime m_throwAim;
+    std::vector<ThrownProjectile> m_thrownProjectiles;
+    float m_throwCooldownLeft = 0.0f;
+    std::string m_lastThrowResult;
+    std::string m_lastThrowTone = "info";
+    float m_lastThrowRemaining = 0.0f;
+    std::mt19937 m_throwRng{20261118u};
     // M6-T2：玩家背包容量（读档补建 Container 时使用；生成参数由 WorldSimulation 读取）
     float m_playerCapacityKg = 20.0f;
     // M6-T3：地面物品拾取半径（config inventory.pickupRadius）与散落标记
@@ -927,7 +1105,14 @@ private:
         bool guardsSpawned = false;
     };
     std::unordered_map<std::string, PoiRuntime> m_poiRuntime;
+    std::unordered_map<std::string, float> m_poiBossResetTimers;
     std::string m_poiNearId;
+    // M33-F5-T5：阶段完成/失败面板与叙事阅读状态。
+    std::string m_poiResultTitle;
+    std::string m_poiResultBody;
+    std::string m_poiResultTone = "info";
+    float m_poiResultTimer = 0.0f;
+    float m_poiEntryRange = 3.5f;
     SettlementConfig m_settlementConfig;
     MissionConfig m_missionConfig;
     std::string m_missionFocusId;
@@ -1001,9 +1186,14 @@ private:
     ecs::Entity m_tradeNpc = entt::null;
     std::string m_tradeSettlementId;
     int m_tradeIndex = 0;
+    bool m_companionOpen = false;
     bool m_dialogueOpen = false;
+    bool m_dialogueCompanion = false;
     ecs::Entity m_dialogueNpc = entt::null;
     std::string m_dialogueSettlementId;
+    CompanionState m_dialogueCompanionState;
+    const CompanionDef* m_dialogueCompanionDef = nullptr;
+    ecs::Health m_dialogueCompanionHealth;
     DialogueTree m_dialogueTree;
     std::string m_dialogueNodeId;
     int m_dialogueIndex = 0;
@@ -1023,6 +1213,7 @@ private:
     core::GameTime::Speed m_sleepSpeedBefore = core::GameTime::Speed::X1;
     std::string m_sleepBedName;
     ProgressionConfig m_progressionConfig;
+    characters::StealthRuleConfig m_stealthRules;
     ecs::Progression m_networkProgression;
     std::array<std::string, 3> m_networkPerkChoices{};
     bool m_networkProgressionValid = false;
@@ -1119,6 +1310,7 @@ private:
     std::string m_loadSaveId;
     std::string m_saveId;
     bool m_loadedFromSave = false;
+    WorldLifecycle m_worldLifecycle;
     bool m_autoSaveOnExit = true;
     bool m_savePending = false;         // 已交给 SaveService，等待结果
     bool m_saveRequestPending = false;  // 快照已采集，等待缩略图/提交

@@ -47,10 +47,16 @@ public:
     }
 
     void WriteLua(const std::string& id, const std::string& source) {
-        const std::filesystem::path dir = root / id / "scripts";
+        WriteLuaFile(id, "scripts/main.lua", source);
+    }
+
+    // 写 mod 内任意相对路径的 Lua 文件（require 多文件测试）
+    void WriteLuaFile(const std::string& id, const std::string& relative,
+                      const std::string& source) {
+        const std::filesystem::path path = root / id / relative;
         std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
-        std::ofstream out(dir / "main.lua", std::ios::binary | std::ios::trunc);
+        std::filesystem::create_directories(path.parent_path(), ec);
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
         out << source;
     }
 

@@ -1,4 +1,4 @@
-﻿#include <doctest/doctest.h>
+#include <doctest/doctest.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -10,12 +10,15 @@
 #include "core/Config.h"
 #include "game/Animals.h"
 #include "game/BuildingRules.h"
+#include "game/Companion.h"
 #include "game/ContentHash.h"
 #include "game/Crops.h"
 #include "game/Forage.h"
 #include "game/Missions.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/Traps.h"
+#include "game/VehicleMods.h"
 #include "game/WorldEvent.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
@@ -60,6 +63,19 @@ std::string HeavyItemsJson(float heavyDamage) {
     { "id": "axe", "name": "消防斧", "icon": "item.axe", "weight": 3.0, "maxStack": 1, "type": "weapon", "combat": { "damage": 65, "range": 1.9, "arc": 110, "cooldown": 0.7, "knockback": 4.0, "stagger": 0.45, "wear": 0.035, "stamina": 15, "windup": 0.10, "poise": 11, "blockReduction": 0.55, "blockStamina": 16, "heavy": { "damage": )") +
            std::to_string(heavyDamage) +
            R"(, "range": 2.0, "arc": 100, "cooldown": 0.95, "knockback": 5.0, "stagger": 0.60, "wear": 0.045, "stamina": 28, "windup": 0.38, "poise": 38 } } }
+  ]
+})";
+}
+
+std::string ThrowableItemsJson(float damage) {
+    return std::string(R"({
+  "format": "items-v1",
+  "items": [
+    { "id": "wood", "name": "木材", "icon": "item.wood", "weight": 0.5, "maxStack": 10, "type": "generic" },
+    { "id": "crate", "name": "木箱", "icon": "object.crate", "weight": 1.0, "maxStack": 1, "type": "generic" },
+    { "id": "rock", "name": "石块", "icon": "item.repair_kit", "weight": 0.5, "maxStack": 5, "type": "generic", "throwable": { "range": 7.5, "damage": )") +
+           std::to_string(damage) +
+           R"(, "impactRadius": 0.6, "arcHeight": 1.0, "noiseRadius": 6.0, "returnable": true, "breakChance": 0.05 } }
   ]
 })";
 }
@@ -139,6 +155,17 @@ struct Content {
                                       "content-hash-heavy-recipes", items,
                                       &error);
     }
+
+    bool LoadThrowable(float damage) {
+        std::string error;
+        if (!items.LoadFromString(ThrowableItemsJson(damage),
+                                  "content-hash-throwable-items", &error)) {
+            return false;
+        }
+        return recipes.LoadFromString(RecipesJson(1.0f),
+                                      "content-hash-throwable-recipes", items,
+                                      &error);
+    }
 };
 
 const items::LootTableRegistry& EmptyLoot() {
@@ -173,8 +200,8 @@ std::uint64_t Hash(const Content& content,
 
 }  // namespace
 
-TEST_CASE("M33-F2-T3 内容指纹版本升级到 v17") {
-    CHECK(zl::game::kContentHashVersion == 17u);
+TEST_CASE("M34-F3-T1 内容指纹版本升级到 v23") {
+    CHECK(zl::game::kContentHashVersion == 23u);
     Content content;
     REQUIRE(content.Load(0.5f, 1.0f));
     const std::vector<game::BuildableDef> buildables = Buildables();
@@ -303,6 +330,18 @@ TEST_CASE("M23-F1：ranged 字段变化会改变内容指纹") {
 
     Content changed;
     REQUIRE(changed.LoadRanged(19.0f));
+    CHECK(Hash(changed, buildables) != baselineHash);
+}
+
+TEST_CASE("M34-F2-T1：throwable 字段变化会改变内容指纹") {
+    Content baseline;
+    REQUIRE(baseline.LoadThrowable(8.0f));
+    const std::vector<game::BuildableDef> buildables = Buildables();
+    const std::uint64_t baselineHash = Hash(baseline, buildables);
+    CHECK(baselineHash != 0);
+
+    Content changed;
+    REQUIRE(changed.LoadThrowable(9.0f));
     CHECK(Hash(changed, buildables) != baselineHash);
 }
 
@@ -703,4 +742,288 @@ TEST_CASE("M33-F1-T6 第四聚落与新任务进入内容指纹") {
     CHECK(hash() == changedMission);
     missionIt->minSettlementReputation = -39;
     CHECK(hash() == base);
+}
+
+TEST_CASE("M33-F3-T1 内容指纹纳入同伴数据") {
+    Content content;
+    REQUIRE(content.Load(0.5f, 1.0f));
+    const std::vector<game::BuildableDef> buildables = Buildables();
+    game::CompanionConfig companions;
+    companions.enabled = true;
+    game::CompanionDef def;
+    def.id = "hash_companion";
+    def.name = "指纹同伴";
+    def.background = "背景";
+    def.baseHealth = 90.0f;
+    def.equipment.primary = "axe";
+    def.equipment.body = "jacket";
+    def.inventoryCapacityKg = 10.0f;
+    def.inventory.push_back(game::CompanionItemStack{"bandage", 2});
+    def.traits = {"scout"};
+    def.recruit.minReputationTier =
+        game::SettlementReputationTier::Friendly;
+    def.recruit.requiredMission = "settlement_help";
+    def.recruit.requiredItem = "bandage";
+    def.recruit.requiredItemCount = 1;
+    def.dialogueProfile = "hash_companion";
+    def.startingLoyalty = 40;
+    game::CompanionQuestStageDef quest;
+    quest.id = "hash_quest";
+    quest.name = "指纹委托";
+    quest.description = "测试";
+    quest.minTrust = 45;
+    quest.objective.kind = game::CompanionQuestObjectiveKind::Gift;
+    quest.objective.target = "bandage";
+    quest.objective.count = 2;
+    quest.rewardTrust = 4;
+    quest.rewardTrait = "hash_trait";
+    def.personalQuest.push_back(quest);
+    companions.defs.push_back(def);
+
+    const auto hash = [&] {
+        return game::ComputeContentHash(
+            content.items, content.recipes, buildables, EmptyLoot(),
+            EmptyPois(), EmptyMissions(), 0, nullptr, nullptr, nullptr,
+            nullptr, nullptr, &companions);
+    };
+    const std::uint64_t base = hash();
+    CHECK(base != game::ComputeContentHash(
+                       content.items, content.recipes, buildables, EmptyLoot(),
+                       EmptyPois(), EmptyMissions(), 0, nullptr, nullptr,
+                       nullptr, nullptr, nullptr, nullptr));
+
+    companions.defs[0].baseHealth = 91.0f;
+    const std::uint64_t changedHealth = hash();
+    CHECK(changedHealth != base);
+
+    companions.defs[0].baseHealth = 90.0f;
+    companions.defs[0].equipment.primary = "machete";
+    CHECK(hash() != base);
+
+    companions.defs[0].equipment.primary = "axe";
+    companions.defs[0].inventory[0].count = 3;
+    CHECK(hash() != base);
+
+    companions.defs[0].inventory[0].count = 2;
+    companions.defs[0].traits[0] = "cool_headed";
+    CHECK(hash() != base);
+
+    companions.defs[0].traits[0] = "scout";
+    companions.defs[0].recruit.requiredItemCount = 2;
+    CHECK(hash() != base);
+
+    companions.defs[0].recruit.requiredItemCount = 1;
+    companions.defs[0].dialogueProfile = "other_profile";
+    CHECK(hash() != base);
+
+    companions.defs[0].dialogueProfile = "hash_companion";
+    companions.defs[0].personalQuest[0].minTrust = 46;
+    CHECK(hash() != base);
+
+    companions.defs[0].personalQuest[0].minTrust = 45;
+    companions.defs[0].personalQuest[0].rewardTrait = "other_trait";
+    CHECK(hash() != base);
+
+    companions.defs[0].personalQuest[0].rewardTrait = "hash_trait";
+    companions.enabled = false;
+    CHECK(hash() != base);
+}
+
+TEST_CASE("M33-F4-T1 载具改装进入内容指纹") {
+    Content content;
+    REQUIRE(content.Load(0.5f, 1.0f));
+    const std::vector<game::BuildableDef> buildables = Buildables();
+
+    game::VehicleModsConfig mods;
+    mods.enabled = true;
+    game::VehicleModDef def;
+    def.id = "hash_vehicle_mod";
+    def.name = "指纹改装";
+    def.description = "测试";
+    def.slot = game::VehicleModSlot::Armor;
+    def.effects.crashConditionScale = 0.68f;
+    def.effects.zombieConditionScale = 0.72f;
+    def.effects.trunkCapacityKg = 24.0f;
+    def.effects.trunkStacks = 2;
+    def.effects.headlightRangeScale = 1.45f;
+    def.effects.maxSpeedScale = 1.18f;
+    def.effects.fuelUseScale = 1.15f;
+    def.materials.push_back(game::VehicleModMaterial{"wood", 4});
+    def.installSeconds = 30.0f;
+    def.weightKg = 28.0f;
+    mods.defs.push_back(def);
+
+    const auto hash = [&](const game::VehicleModsConfig* value) {
+        return game::ComputeContentHash(
+            content.items, content.recipes, buildables, EmptyLoot(),
+            EmptyPois(), EmptyMissions(), 0, nullptr, nullptr, nullptr,
+            nullptr, nullptr, nullptr, value);
+    };
+    const std::uint64_t base = hash(&mods);
+    CHECK(base != hash(nullptr));
+
+    mods.defs[0].effects.crashConditionScale = 0.5f;
+    const std::uint64_t changedEffect = hash(&mods);
+    CHECK(changedEffect != base);
+
+    mods.defs[0].effects.crashConditionScale = 0.68f;
+    mods.defs[0].materials[0].count = 5;
+    CHECK(hash(&mods) != base);
+
+    mods.defs[0].materials[0].count = 4;
+    mods.defs[0].installSeconds = 31.0f;
+    CHECK(hash(&mods) != base);
+
+    mods.defs[0].installSeconds = 30.0f;
+    mods.defs[0].excludes = {"other_mod"};
+    CHECK(hash(&mods) != base);
+
+    mods.defs[0].excludes.clear();
+    mods.enabled = false;
+    CHECK(hash(&mods) != base);
+}
+
+TEST_CASE("M34-F3-T1 陷阱数据进入内容指纹") {
+    Content content;
+    REQUIRE(content.Load(0.5f, 1.0f));
+    const std::vector<game::BuildableDef> buildables = Buildables();
+
+    game::TrapDefsConfig traps;
+    traps.enabled = true;
+    game::TrapDef def;
+    def.id = "hash_trap";
+    def.name = "指纹陷阱";
+    def.buildingId = "crate";
+    def.damage = 12.0f;
+    def.radius = 1.0f;
+    def.cooldownSeconds = 2.0f;
+    def.uses = 3;
+    def.staggerSeconds = 0.5f;
+    def.noiseRadius = 0.0f;
+    def.triggerMask = game::kTrapTriggerZombie;
+    def.armSeconds = 1.0f;
+    traps.defs.push_back(def);
+
+    const auto hash = [&](const game::TrapDefsConfig* value) {
+        return game::ComputeContentHash(
+            content.items, content.recipes, buildables, EmptyLoot(),
+            EmptyPois(), EmptyMissions(), 0, nullptr, nullptr, nullptr,
+            nullptr, nullptr, nullptr, nullptr, value);
+    };
+    const std::uint64_t base = hash(&traps);
+    CHECK(base != hash(nullptr));
+
+    traps.defs[0].damage = 20.0f;
+    CHECK(hash(&traps) != base);
+    traps.defs[0].damage = 12.0f;
+
+    traps.defs[0].triggerMask = game::kTrapTriggerAnimal;
+    CHECK(hash(&traps) != base);
+    traps.defs[0].triggerMask = game::kTrapTriggerZombie;
+
+    traps.defs[0].fire = game::TrapFireDef{1.5f, 45.0f};
+    CHECK(hash(&traps) != base);
+    traps.defs[0].fire.reset();
+
+    traps.enabled = false;
+    CHECK(hash(&traps) != base);
+}
+
+TEST_CASE("M33-F5-T1 阶段/入口/钥匙/分支/Boss/叙事进入指纹") {
+    Content content;
+    REQUIRE(content.Load(0.5f, 1.0f));
+    const std::vector<game::BuildableDef> buildables = Buildables();
+
+    game::PoiConfig pois;
+    pois.enabled = true;
+    game::PoiDef poi;
+    poi.id = "hash_staged_poi";
+    poi.name = "指纹阶段 POI";
+    poi.threat = 2;
+    poi.markerX = 10.0f;
+    poi.markerY = 20.0f;
+    game::PoiStageDef start;
+    start.id = "start";
+    start.kind = game::PoiStageKind::Reach;
+    start.hint = "进入";
+    start.x = 10.0f;
+    start.y = 20.0f;
+    start.radius = 2.0f;
+    start.next = {"end"};
+    start.requiredKeys = {"front_key"};
+    start.reward = {5.0f, "bandage", 1};
+    game::PoiStageDef end;
+    end.id = "end";
+    end.kind = game::PoiStageKind::Kill;
+    end.target = "elite";
+    end.count = 2;
+    poi.stages = {start, end};
+    poi.entries.push_back({"main", "正门", 10.0f, 20.0f, "start", ""});
+    poi.keys.push_back({"front_key", "keycard", "钥匙卡", "start", true});
+    poi.branches.push_back({"main_route", "主路线", "start", {"start", "end"}});
+    poi.boss = {true, "院长", "armored", "end", "summon", 1};
+    poi.narrative.push_back({"note", "start", "封锁记录", "hospital_note"});
+    pois.defs.push_back(poi);
+
+    const auto hash = [&] {
+        return Hash(content, buildables, EmptyLoot(), pois, EmptyMissions());
+    };
+    const std::uint64_t base = hash();
+    REQUIRE(base != 0u);
+
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].stages[0].hint = "接近";
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].stages[0].kind = game::PoiStageKind::Interact;
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].stages[0].x = 11.0f;
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].stages[0].next.clear();
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].stages[0].requiredKeys.clear();
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].stages[1].reward.item = "ammo_9mm";
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].entries[0].label = "后门";
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].keys[0].consumed = false;
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].branches[0].stages.pop_back();
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].boss.mechanic = "charge";
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
+    CHECK([&] {
+        game::PoiConfig copy = pois;
+        copy.defs[0].narrative[0].text = "另一份记录";
+        return Hash(content, buildables, EmptyLoot(), copy, EmptyMissions());
+    }() != base);
 }

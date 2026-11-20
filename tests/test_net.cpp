@@ -105,6 +105,10 @@ TEST_CASE("M12 CommandPacket：全字段往返 + 固定线格式") {
     packet.commands.push_back(MakeCommand(CommandType::Attack, 42, 24));
     packet.commands.back().payload.entityId = 0x99AABBCCDDEEFF00ull;
     packet.commands.back().payload.flags = kAttackHeavyFlag;
+    packet.commands.push_back(MakeCommand(CommandType::ThrowItem, 42, 25));
+    packet.commands.back().payload.index = 2;
+    packet.commands.back().payload.x = 36.5f;
+    packet.commands.back().payload.y = 28.5f;
 
     std::string error;
     const std::vector<std::uint8_t> bytes = EncodeCommandPacket(packet, &error);
@@ -137,6 +141,27 @@ TEST_CASE("M12 CommandPacket：全字段往返 + 固定线格式") {
           "GiveDriverSeat");
     CHECK(std::string(CommandTypeName(CommandType::Block)) == "Block");
     CHECK(std::string(CommandTypeName(CommandType::Dodge)) == "Dodge");
+    CHECK(std::string(CommandTypeName(CommandType::RecruitCompanion)) ==
+          "RecruitCompanion");
+    CHECK(std::string(CommandTypeName(CommandType::DismissCompanion)) ==
+          "DismissCompanion");
+    CHECK(std::string(CommandTypeName(CommandType::SetCompanionCommand)) ==
+          "SetCompanionCommand");
+    CHECK(std::string(CommandTypeName(CommandType::GiftToCompanion)) ==
+          "GiftToCompanion");
+    CHECK(std::string(CommandTypeName(CommandType::AcceptCompanionQuest)) ==
+          "AcceptCompanionQuest");
+    CHECK(std::string(CommandTypeName(CommandType::AbandonCompanionQuest)) ==
+          "AbandonCompanionQuest");
+    CHECK(std::string(CommandTypeName(CommandType::RescueCompanion)) ==
+          "RescueCompanion");
+    CHECK(std::string(CommandTypeName(CommandType::InstallVehicleMod)) ==
+          "InstallVehicleMod");
+    CHECK(std::string(CommandTypeName(CommandType::RemoveVehicleMod)) ==
+          "RemoveVehicleMod");
+    CHECK(std::string(CommandTypeName(CommandType::PoiInteract)) ==
+          "PoiInteract");
+    CHECK(std::string(CommandTypeName(CommandType::ThrowItem)) == "ThrowItem");
     CHECK(IsValidCommandType(CommandType::EnterVehicle));
     CHECK(IsValidCommandType(CommandType::ExitVehicle));
     CHECK(IsValidCommandType(CommandType::ServiceVehicle));
@@ -148,7 +173,18 @@ TEST_CASE("M12 CommandPacket：全字段往返 + 固定线格式") {
     CHECK(IsValidCommandType(CommandType::Block));
     CHECK(IsValidCommandType(CommandType::Dodge));
     CHECK(IsValidCommandType(CommandType::ChooseWorldEvent));
-    CHECK_FALSE(IsValidCommandType(static_cast<CommandType>(51)));
+    CHECK(IsValidCommandType(CommandType::RecruitCompanion));
+    CHECK(IsValidCommandType(CommandType::DismissCompanion));
+    CHECK(IsValidCommandType(CommandType::SetCompanionCommand));
+    CHECK(IsValidCommandType(CommandType::GiftToCompanion));
+    CHECK(IsValidCommandType(CommandType::AcceptCompanionQuest));
+    CHECK(IsValidCommandType(CommandType::AbandonCompanionQuest));
+    CHECK(IsValidCommandType(CommandType::RescueCompanion));
+    CHECK(IsValidCommandType(CommandType::InstallVehicleMod));
+    CHECK(IsValidCommandType(CommandType::RemoveVehicleMod));
+    CHECK(IsValidCommandType(CommandType::PoiInteract));
+    CHECK(IsValidCommandType(CommandType::ThrowItem));
+    CHECK_FALSE(IsValidCommandType(static_cast<CommandType>(63)));
 }
 
 TEST_CASE("M12 CommandPacket：拒绝截断、magic/类型/StableId/NaN/数量/尾部非法") {
@@ -289,6 +325,44 @@ TEST_CASE("M12 CommandPipeline：direct 立即执行，loopback 经编码/队列
     CHECK(loopStats.packetsReceived == 1);
     CHECK(loopStats.snapshotsReceived == 1);
     CHECK(loopStats.commandsRejected == 0);
+}
+
+TEST_CASE("M34-F1-T5 SetStealth loopback 命令：flags 往返且无其他 payload") {
+    CHECK(std::string(CommandTypeName(CommandType::SetStealth)) == "SetStealth");
+    bool crouched = false;
+    int handled = 0;
+    CommandPipeline::Options options;
+    options.mode = TransportMode::Loopback;
+    CommandPipeline pipeline(options);
+    pipeline.SetHandler([&](const Command& command, std::string&) {
+        CHECK(command.type == CommandType::SetStealth);
+        CHECK(command.payload.entityId == 0);
+        CHECK(command.payload.targetEntityId == 0);
+        CHECK(command.payload.index == -1);
+        CHECK(command.payload.targetIndex == -1);
+        CHECK(command.payload.x == 0.0f);
+        CHECK(command.payload.y == 0.0f);
+        crouched = (command.payload.flags & kStealthCrouchFlag) != 0;
+        ++handled;
+        return true;
+    });
+
+    Command down = MakeCommand(CommandType::SetStealth, 42, 1);
+    down.payload.flags = kStealthCrouchFlag;
+    REQUIRE(pipeline.Submit(down));
+    CHECK(handled == 0);
+    REQUIRE(pipeline.Flush());
+    pipeline.Pump();
+    CHECK(handled == 1);
+    CHECK(crouched);
+
+    Command up = MakeCommand(CommandType::SetStealth, 42, 2);
+    up.payload.flags = 0;
+    REQUIRE(pipeline.Submit(up));
+    REQUIRE(pipeline.Flush());
+    pipeline.Pump();
+    CHECK(handled == 2);
+    CHECK_FALSE(crouched);
 }
 
 TEST_CASE("M12 CommandPipeline：StableId 非法与处理拒绝计数") {

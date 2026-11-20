@@ -13,6 +13,7 @@
 #include "ui/MenuUi.h"
 #include "ui/MultiplayerUi.h"
 #include "ui/SocialUi.h"
+#include "ui/VehicleModsUi.h"
 
 namespace Rml {
 class Context;
@@ -42,6 +43,7 @@ class MenuPanel;
 class MultiplayerPanel;
 class SocialPanel;
 class WorldMapPanel;
+class VehicleModsPanel;
 class RmlBgfxRenderInterface;
 class RmlSystemInterface;
 class ScriptUiHost;
@@ -73,6 +75,9 @@ public:
     bool GetInventoryState(InventoryState& out) const;
     bool InvokeInventoryAction(const InventoryAction& action);
     void PlayInventoryClick();
+    void SetVehicleModsState(const VehicleModsUiState& state, bool open);
+    void SetVehicleModsActionHandler(VehicleModPanelActionHandler handler);
+    bool IsVehicleModsOpen() const;
 
     // 脚本 UI 文档宿主；无业务语义，供 ScriptUiApi 使用。
     ScriptUiHost* ScriptHost() const { return m_scriptUi.get(); }
@@ -126,6 +131,7 @@ private:
     bool EnsureDebugDocument();
     bool EnsureHudDocument();
     bool EnsureWorldMapPanel();
+    bool EnsureVehicleModsPanel();
     bool EnsureInventoryPanel();
     bool EnsureMenuPanel();
     bool ScriptHudAvailable() const;
@@ -161,6 +167,7 @@ private:
     std::unique_ptr<MultiplayerPanel> m_multiplayer;
     std::unique_ptr<SocialPanel> m_social;
     std::unique_ptr<WorldMapPanel> m_worldMap;
+    std::unique_ptr<VehicleModsPanel> m_vehicleMods;
     std::unique_ptr<ScriptUiHost> m_scriptUi;
     MenuSettings m_pendingMenuSettings;
     MenuSettingsHandler m_pendingMenuSettingsHandler;
@@ -176,6 +183,8 @@ private:
     std::function<void(const std::string&)> m_worldMapSelectHandler;
     std::function<void(const std::string&, game::WorldMapStrategicAction)>
         m_worldMapStrategicActionHandler;
+    VehicleModPanelActionHandler m_vehicleModsActionHandler;
+    VehicleModsUiState m_vehicleModsState;
     InventoryState m_pendingInventoryState;
     bool m_hasPendingInventoryState = false;
     bool m_debugLoadAttempted = false;
@@ -184,6 +193,7 @@ private:
     bool m_multiplayerLoadAttempted = false;
     bool m_socialLoadAttempted = false;
     bool m_worldMapLoadAttempted = false;
+    bool m_vehicleModsLoadAttempted = false;
     bool m_hudLoadAttempted = false;
     Rml::Element* m_counterElement = nullptr;
     Rml::Element* m_disableSampleElement = nullptr;
@@ -198,7 +208,9 @@ private:
     Rml::Element* m_staminaFillElement = nullptr;
     Rml::Element* m_staminaTextElement = nullptr;
     Rml::Element* m_combatStatusElement = nullptr;
+    Rml::Element* m_stealthStatusElement = nullptr;
     Rml::Element* m_rangedStatusElement = nullptr;
+    Rml::Element* m_throwStatusElement = nullptr;
     Rml::Element* m_forageStatusElement = nullptr;
     Rml::Element* m_fishingStatusElement = nullptr;
     Rml::Element* m_needsStatusElement = nullptr;
@@ -214,6 +226,14 @@ private:
     Rml::Element* m_objectiveElement = nullptr;
     Rml::Element* m_objectiveHintElement = nullptr;
     Rml::Element* m_poiGuideElement = nullptr;
+    Rml::Element* m_poiStagePanelElement = nullptr;
+    Rml::Element* m_poiStageTitleElement = nullptr;
+    Rml::Element* m_poiStageObjectiveElement = nullptr;
+    Rml::Element* m_poiStageMetaElement = nullptr;
+    Rml::Element* m_poiStageNarrativeElement = nullptr;
+    Rml::Element* m_poiResultPanelElement = nullptr;
+    Rml::Element* m_poiResultTitleElement = nullptr;
+    Rml::Element* m_poiResultBodyElement = nullptr;
     Rml::Element* m_missionGuideElement = nullptr;
     Rml::Element* m_eventGuideElement = nullptr;
     Rml::Element* m_worldEventPanelElement = nullptr;
@@ -246,6 +266,17 @@ private:
     Rml::Element* m_levelFillElement = nullptr;
     Rml::Element* m_levelXpElement = nullptr;
     Rml::Element* m_perkPromptElement = nullptr;
+    Rml::Element* m_companionPanelElement = nullptr;
+    Rml::Element* m_companionNameElement = nullptr;
+    Rml::Element* m_companionHealthElement = nullptr;
+    Rml::Element* m_companionHealthFillElement = nullptr;
+    Rml::Element* m_companionStatusElement = nullptr;
+    Rml::Element* m_companionTrustElement = nullptr;
+    Rml::Element* m_companionEquipmentElement = nullptr;
+    Rml::Element* m_companionBagElement = nullptr;
+    Rml::Element* m_companionQuestElement = nullptr;
+    Rml::Element* m_companionHintElement = nullptr;
+    Rml::Element* m_companionAlertElement = nullptr;
     Rml::Element* m_characterPanelElement = nullptr;
     Rml::Element* m_characterLevelElement = nullptr;
     Rml::Element* m_characterXpElement = nullptr;
@@ -259,10 +290,12 @@ private:
     std::array<Rml::Element*, 5> m_dialogueOptionElements{};
     Rml::Element* m_dialogueHintElement = nullptr;
     Rml::Element* m_actionHintElement = nullptr;
+    Rml::Element* m_stealthPromptElement = nullptr;
     Rml::Element* m_noticeElement = nullptr;
     std::array<Rml::Element*, 5> m_hotbarSlots{};
     std::array<Rml::Element*, 5> m_hotbarNames{};
     std::array<Rml::Element*, 5> m_hotbarCounts{};
+    std::array<Rml::Element*, 5> m_hotbarThrows{};
     struct ListenerBinding {
         Rml::Element* element = nullptr;
         std::string event;

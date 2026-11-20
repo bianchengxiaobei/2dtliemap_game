@@ -1,11 +1,15 @@
 #include <doctest/doctest.h>
 
 #include <string>
+#include <variant>
+#include <vector>
 
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
 #include "characters/systems/PainSystem.h"
 #include "characters/systems/WoundSystem.h"
+#include "core/EventBus.h"
+#include "core/GameEvents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
 #include "game/GroundItems.h"
@@ -125,6 +129,45 @@ TEST_CASE("M13-T7 服务器背包动作：拾取/使用/装备/丢弃") {
     CHECK_FALSE(service.Pickup(player, world.IdOf(far).id).ok);
 }
 
+TEST_CASE("M35-F2-T3 使用物品只在成功时派发 OnItemUsed") {
+    Fixture fixture;
+    ecs::EcsWorld world;
+    const ecs::Entity player = MakePlayer(world);
+    core::EventBus events;
+    std::vector<core::ItemUsedEvent> used;
+    const core::EventBus::SubscriptionId subscription = events.Subscribe(
+        core::kOnItemUsed, [&](const core::Event& event) {
+            if (const auto* payload =
+                    std::get_if<core::ItemUsedEvent>(&event.payload);
+                payload != nullptr) {
+                used.push_back(*payload);
+            }
+        });
+    game::PlayerInventoryService service(world, fixture.items, fixture.recipes,
+                                         nullptr, &events);
+    auto& bag = world.Registry().get<ecs::Container>(player);
+    bag.items.push_back(ecs::ItemInstance{"bandage", 2, 1.0f});
+
+    REQUIRE(service.UseBag(player, 0).ok);
+    events.FlushQueued();
+    REQUIRE(used.size() == 1u);
+    CHECK(used[0].playerId == world.IdOf(player).id);
+    CHECK(used[0].defId == "bandage");
+    CHECK_FALSE(used[0].spoiled);
+    CHECK(used[0].remaining == 1);
+
+    CHECK_FALSE(service.UseBag(player, 99).ok);
+    events.FlushQueued();
+    CHECK(used.size() == 1u);
+
+    REQUIRE(service.UseBag(player, 0).ok);
+    events.FlushQueued();
+    REQUIRE(used.size() == 2u);
+    CHECK(used[1].remaining == 0);
+    CHECK(bag.items.empty());
+    events.Unsubscribe(subscription);
+}
+
 TEST_CASE("M14-T4 食物/饮水通过服务器背包动作恢复 Needs") {
     Fixture fixture;
     ecs::EcsWorld world;
@@ -242,6 +285,111 @@ TEST_CASE("M13-T7 服务器制作：批量计时、队列与取消") {
     CHECK(service.Dispatch(player, cancel).ok);
     CHECK_FALSE(job.active);
     CHECK(items::CountOf(bag, "rag") == 2);
+}
+
+TEST_CASE("M35-F2-T4 制作事件覆盖开始、完成、中断与批量") {
+    Fixture fixture;
+    ecs::EcsWorld world;
+    const ecs::Entity player = MakePlayer(world);
+    core::EventBus events;
+    std::vector<core::CraftStartEvent> starts;
+    std::vector<core::CraftFinishedEvent> finishes;
+    const core::EventBus::SubscriptionId startSubscription = events.Subscribe(
+        core::kOnCraftStart, [&](const core::Event& event) {
+            if (const auto* payload =
+                    std::get_if<core::CraftStartEvent>(&event.payload);
+                payload != nullptr) {
+                starts.push_back(*payload);
+            }
+        });
+    const core::EventBus::SubscriptionId finishSubscription = events.Subscribe(
+        core::kOnCraftFinished, [&](const core::Event& event) {
+            if (const auto* payload =
+                    std::get_if<core::CraftFinishedEvent>(&event.payload);
+                payload != nullptr) {
+                finishes.push_back(*payload);
+            }
+        });
+    game::PlayerInventoryService service(world, fixture.items, fixture.recipes,
+                                         nullptr, &events);
+    auto& registry = world.Registry();
+    auto& bag = registry.get<ecs::Container>(player);
+    const auto& job = registry.get<ecs::CraftingJob>(player);
+    for (int i = 0; i < 8; ++i) {
+        bag.items.push_back(ecs::ItemInstance{"rag", 1, 1.0f});
+    }
+
+    ui::InventoryAction craft;
+    craft.type = ui::InventoryActionType::Craft;
+    craft.fromIndex = 0;
+    craft.count = 2;
+    ui::InventoryAction invalid = craft;
+    invalid.fromIndex = 999;
+    CHECK_FALSE(service.Dispatch(player, invalid).ok);
+    events.FlushQueued();
+    CHECK(starts.empty());
+    CHECK(finishes.empty());
+
+    REQUIRE(service.Dispatch(player, craft).ok);
+    events.FlushQueued();
+    REQUIRE(starts.size() == 1u);
+    CHECK(starts[0].playerId == world.IdOf(player).id);
+    CHECK(starts[0].recipeId == "field_bandage");
+    CHECK(starts[0].outputDefId == "bandage");
+    CHECK(starts[0].outputCount == 1);
+    CHECK(starts[0].batchCount == 2);
+    CHECK(finishes.empty());
+
+    game::InventoryResult result;
+    REQUIRE(service.TickCrafting(player, 0.6f, &result));
+    events.FlushQueued();
+    CHECK(starts.size() == 1u);
+    CHECK(finishes.empty());
+    CHECK(items::CountOf(bag, "bandage") == 1);
+
+    const int remainingRags = items::CountOf(bag, "rag");
+    REQUIRE(remainingRags > 0);
+    items::RemoveItem(bag, "rag", remainingRags);
+    REQUIRE(service.TickCrafting(player, 0.6f, &result));
+    events.FlushQueued();
+    REQUIRE(finishes.size() == 1u);
+    CHECK(finishes[0].playerId == world.IdOf(player).id);
+    CHECK(finishes[0].recipeId == "field_bandage");
+    CHECK(finishes[0].outputDefId == "bandage");
+    CHECK(finishes[0].outputCount == 1);
+    CHECK(finishes[0].batchCompleted == 1);
+    CHECK(finishes[0].failed);
+    CHECK_FALSE(job.active);
+
+    bag.items.push_back(ecs::ItemInstance{"rag", 4, 1.0f});
+    REQUIRE(service.Dispatch(player, craft).ok);
+    events.FlushQueued();
+    REQUIRE(starts.size() == 2u);
+    CHECK(starts[1].batchCount == 2);
+    REQUIRE(service.TickCrafting(player, 0.6f, &result));
+    events.FlushQueued();
+    CHECK(finishes.size() == 1u);
+    REQUIRE(service.TickCrafting(player, 0.6f, &result));
+    events.FlushQueued();
+    REQUIRE(finishes.size() == 2u);
+    CHECK(finishes[1].batchCompleted == 2);
+    CHECK_FALSE(finishes[1].failed);
+
+    bag.items.push_back(ecs::ItemInstance{"rag", 2, 1.0f});
+    ui::InventoryAction single = craft;
+    single.count = 1;
+    REQUIRE(service.Dispatch(player, single).ok);
+    events.FlushQueued();
+    REQUIRE(starts.size() == 3u);
+    ui::InventoryAction cancel;
+    cancel.type = ui::InventoryActionType::CancelCraft;
+    REQUIRE(service.Dispatch(player, cancel).ok);
+    events.FlushQueued();
+    REQUIRE(finishes.size() == 3u);
+    CHECK(finishes[2].batchCompleted == 0);
+    CHECK(finishes[2].failed);
+    events.Unsubscribe(startSubscription);
+    events.Unsubscribe(finishSubscription);
 }
 
 TEST_CASE("M15-T2 服务器背包使用绷带止血并降低伤口") {

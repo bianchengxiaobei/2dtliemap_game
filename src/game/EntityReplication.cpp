@@ -9,9 +9,12 @@
 
 #include "characters/systems/AnimationSystem.h"
 #include "core/Constants.h"
+#include "game/Companion.h"
 #include "game/HomesteadComponents.h"
 #include "game/SettlementNpc.h"
 #include "game/StructureComponents.h"
+#include "game/Traps.h"
+#include "game/VehicleMods.h"
 
 namespace zl::game {
 namespace {
@@ -396,8 +399,16 @@ bool CaptureComponents(entt::registry& registry, entt::entity entity,
         components->push_back(MakeComponent(kReplicationItem, std::move(bytes)));
     }
 
-    if (const auto* equipment = registry.try_get<ecs::Equipment>(entity);
-        equipment != nullptr) {
+    const ecs::Equipment* equipment =
+        registry.try_get<ecs::Equipment>(entity);
+    if (equipment == nullptr) {
+        if (const auto* companionState =
+                registry.try_get<CompanionState>(entity);
+            companionState != nullptr) {
+            equipment = &companionState->equipment;
+        }
+    }
+    if (equipment != nullptr) {
         std::vector<std::uint8_t> bytes;
         for (const auto& slot : equipment->slots) {
             if (!slot.has_value()) {
@@ -421,6 +432,59 @@ bool CaptureComponents(entt::registry& registry, entt::entity entity,
             MakeComponent(kReplicationEquipment, std::move(bytes)));
     }
 
+    if (const auto* companion = registry.try_get<Companion>(entity);
+        companion != nullptr) {
+        const auto* state = registry.try_get<CompanionState>(entity);
+        if (state == nullptr) {
+            SetError(error, "复制同伴缺少状态");
+            return false;
+        }
+        if (!IsValidCompanionToken(companion->defId) ||
+            companion->defId.size() > kMaxCompanionIdBytes ||
+            companion->ownerStableId == 0 ||
+            static_cast<std::uint8_t>(state->command) >
+                static_cast<std::uint8_t>(CompanionCommand::Retreat) ||
+            static_cast<std::uint8_t>(state->personalStatus) >
+                static_cast<std::uint8_t>(CompanionQuestStatus::Failed) ||
+            state->loyalty < 0 || state->loyalty > 100 ||
+            state->personalStage < 0 ||
+            state->personalStage >
+                static_cast<int>(kMaxCompanionQuestStages) ||
+            state->personalProgress < 0 || state->personalProgress > 1000000 ||
+            state->personalRewardMask >
+                (1u << kMaxCompanionQuestStages) - 1u ||
+            !Finite(state->downedRemaining) ||
+            state->downedRemaining < 0.0f ||
+            state->downedRemaining > 3600.0f) {
+            SetError(error, "复制同伴状态非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU16(bytes, static_cast<std::uint16_t>(companion->defId.size()));
+        bytes.insert(bytes.end(), companion->defId.begin(),
+                     companion->defId.end());
+        PutU8(bytes, static_cast<std::uint8_t>(state->command));
+        std::uint8_t flags = 0;
+        if (state->standby) {
+            flags |= 1u << 0;
+        }
+        if (state->downed) {
+            flags |= 1u << 1;
+        }
+        if (state->dead) {
+            flags |= 1u << 2;
+        }
+        PutU8(bytes, flags);
+        PutU8(bytes, static_cast<std::uint8_t>(state->loyalty));
+        PutU8(bytes, static_cast<std::uint8_t>(state->personalStatus));
+        PutU16(bytes, static_cast<std::uint16_t>(state->personalStage));
+        PutU32(bytes, static_cast<std::uint32_t>(state->personalProgress));
+        PutU32(bytes, state->personalRewardMask);
+        PutF32(bytes, state->downedRemaining);
+        components->push_back(
+            MakeComponent(kReplicationCompanion, std::move(bytes)));
+    }
+
     if (const auto* stance = registry.try_get<ecs::CombatStance>(entity);
         stance != nullptr && registry.all_of<ecs::PlayerTag>(entity)) {
         if (!ValidCombatStance(*stance)) {
@@ -437,6 +501,21 @@ bool CaptureComponents(entt::registry& registry, entt::entity entity,
         PutF32(bytes, stance->dodgeDirY);
         components->push_back(
             MakeComponent(kReplicationCombatStance, std::move(bytes)));
+    }
+
+    if (const auto* stealth = registry.try_get<ecs::StealthState>(entity);
+        stealth != nullptr && registry.all_of<ecs::PlayerTag>(entity)) {
+        std::uint8_t flags = stealth->crouched ? 1u : 0u;
+        if (const auto* velocity = registry.try_get<ecs::Velocity>(entity);
+            velocity != nullptr &&
+            std::sqrt(velocity->x * velocity->x + velocity->y * velocity->y) >
+                0.05f) {
+            flags |= 2u;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU8(bytes, flags);
+        components->push_back(
+            MakeComponent(kReplicationStealth, std::move(bytes)));
     }
 
     if (const auto* storage = registry.try_get<ecs::PlayerStorage>(entity);
@@ -513,6 +592,28 @@ bool CaptureComponents(entt::registry& registry, entt::entity entity,
                                      6.283185307179586f));
         components->push_back(
             MakeComponent(kReplicationVehicle, std::move(bytes)));
+
+        if (const auto* mods =
+                registry.try_get<ecs::VehicleMods>(entity);
+            mods != nullptr) {
+            std::vector<std::uint8_t> modBytes;
+            for (const std::string& defId : mods->defIds) {
+                if (defId.empty()) {
+                    PutU16(modBytes, 0);
+                    continue;
+                }
+                if (defId.size() > kMaxVehicleModIdBytes ||
+                    !IsValidVehicleModToken(defId)) {
+                    SetError(error, "复制 VehicleMods 组件非法");
+                    return false;
+                }
+                PutU16(modBytes,
+                       static_cast<std::uint16_t>(defId.size()));
+                modBytes.insert(modBytes.end(), defId.begin(), defId.end());
+            }
+            components->push_back(
+                MakeComponent(kReplicationVehicleMods, std::move(modBytes)));
+        }
     }
 
     if (const auto* plot = registry.try_get<ecs::FarmPlot>(entity);
@@ -603,6 +704,25 @@ bool CaptureComponents(entt::registry& registry, entt::entity entity,
         PutF32(bytes, trap->staggerSeconds);
         PutI32(bytes, trap->uses);
         components->push_back(MakeComponent(kReplicationTrap, std::move(bytes)));
+    }
+
+    if (const auto* placed = registry.try_get<ecs::PlacedTrap>(entity);
+        placed != nullptr) {
+        if (!IsValidTrapToken(placed->defId) || !Finite(placed->cooldown) ||
+            placed->cooldown < 0.0f || placed->uses < 0 ||
+            placed->uses > 999) {
+            SetError(error, "复制 PlacedTrap 负载非法");
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        PutU16(bytes, static_cast<std::uint16_t>(placed->defId.size()));
+        bytes.insert(bytes.end(), placed->defId.begin(), placed->defId.end());
+        PutU8(bytes, placed->armed ? 1u : 0u);
+        PutF32(bytes, placed->cooldown);
+        PutI32(bytes, placed->uses);
+        PutU64(bytes, placed->owner);
+        components->push_back(
+            MakeComponent(kReplicationPlacedTrap, std::move(bytes)));
     }
 
     if (const auto* merchant = registry.try_get<ecs::MerchantStock>(entity);
@@ -958,6 +1078,10 @@ bool RegisterEntityReplicationComponents(net::ReplicationRegistry& registry,
                            kReplicationComponentVersion, error)) {
         return false;
     }
+    if (!registry.Register(kReplicationStealth, "Stealth", 1,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
     if (!registry.Register(kReplicationVariant, "ZombieVariant", 13,
                            kReplicationComponentVersion, error)) {
         return false;
@@ -1006,6 +1130,10 @@ bool RegisterEntityReplicationComponents(net::ReplicationRegistry& registry,
                            kReplicationComponentVersion, error)) {
         return false;
     }
+    if (!registry.Register(kReplicationPlacedTrap, "PlacedTrap", 96,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
     if (!registry.Register(kReplicationMerchant, "MerchantStock", 24,
                            kReplicationComponentVersion, error)) {
         return false;
@@ -1027,6 +1155,14 @@ bool RegisterEntityReplicationComponents(net::ReplicationRegistry& registry,
         return false;
     }
     if (!registry.Register(kReplicationAnimalCorpse, "AnimalCorpse", 67,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationCompanion, "Companion", 96,
+                           kReplicationComponentVersion, error)) {
+        return false;
+    }
+    if (!registry.Register(kReplicationVehicleMods, "VehicleMods", 384,
                            kReplicationComponentVersion, error)) {
         return false;
     }
@@ -1106,6 +1242,7 @@ bool EntityReplicationProducer::Capture(
                 registry.all_of<ecs::ColdStorage>(entity) ||
                 registry.all_of<ecs::Floodlight>(entity) ||
                 registry.all_of<ecs::SpikeTrap>(entity) ||
+                registry.all_of<ecs::PlacedTrap>(entity) ||
                 registry.all_of<ecs::MerchantStock>(entity) ||
                 registry.all_of<ecs::LootContainer>(entity) ||
                 vehicle || animalCorpse || fire;
@@ -1146,6 +1283,14 @@ bool EntityReplicationProducer::Capture(
             if (const auto* owner = registry.try_get<ecs::StructureOwner>(entity);
                 owner != nullptr) {
                 replicated.ownerStableId = owner->ownerStableId;
+            }
+            if (const auto* placed = registry.try_get<ecs::PlacedTrap>(entity);
+                placed != nullptr && placed->owner != 0) {
+                replicated.ownerStableId = placed->owner;
+            }
+            if (const auto* companion = registry.try_get<Companion>(entity);
+                companion != nullptr) {
+                replicated.ownerStableId = companion->ownerStableId;
             }
             if (!CaptureComponents(registry, entity, m_options.viewerStableId,
                                    &replicated.components, &failure)) {
@@ -1473,6 +1618,16 @@ bool EntityReplicationClient::DecodePatch(const net::ReplicatedEntity& entity,
             stance.blocking = blocking != 0;
             decoded.combatStance = stance;
             decoded.hasCombatStance = true;
+        } else if (component.type == kReplicationStealth) {
+            std::uint8_t flags = 0;
+            if (!reader.U8(&flags) || (flags & ~0x03u) != 0 ||
+                !reader.AtEnd()) {
+                SetError(error, "复制 Stealth 负载非法");
+                return false;
+            }
+            decoded.stealthCrouched = (flags & 0x01u) != 0;
+            decoded.stealthMoving = (flags & 0x02u) != 0;
+            decoded.hasStealth = true;
         } else if (component.type == kReplicationVariant) {
             std::uint8_t kind = 0;
             if (!reader.U8(&kind) || !reader.F32(&decoded.variant.speedScale) ||
@@ -1642,6 +1797,23 @@ bool EntityReplicationClient::DecodePatch(const net::ReplicatedEntity& entity,
             decoded.vehicle.heading = std::remainder(
                 decoded.vehicle.heading, 6.283185307179586f);
             decoded.hasVehicle = true;
+        } else if (component.type == kReplicationVehicleMods) {
+            VehicleModsReplicationState mods;
+            for (std::size_t i = 0; i < mods.defIds.size(); ++i) {
+                if (!reader.String(&mods.defIds[i], kMaxVehicleModIdBytes,
+                                   true) ||
+                    (!mods.defIds[i].empty() &&
+                     !IsValidVehicleModToken(mods.defIds[i]))) {
+                    SetError(error, "复制 VehicleMods 组件非法");
+                    return false;
+                }
+            }
+            if (!reader.AtEnd()) {
+                SetError(error, "复制 VehicleMods 组件非法");
+                return false;
+            }
+            decoded.vehicleMods = std::move(mods);
+            decoded.hasVehicleMods = true;
         } else if (component.type == kReplicationFarmPlot) {
             ecs::FarmPlot loaded;
             std::uint8_t stage = 0;
@@ -1731,6 +1903,23 @@ bool EntityReplicationClient::DecodePatch(const net::ReplicatedEntity& entity,
             }
             decoded.trap.armed = armed != 0;
             decoded.hasTrap = true;
+        } else if (component.type == kReplicationPlacedTrap) {
+            std::uint8_t armed = 0;
+            if (!reader.String(&decoded.placedTrap.defId, 64, true) ||
+                !IsValidTrapToken(decoded.placedTrap.defId) ||
+                !reader.U8(&armed) || armed > 1 ||
+                !reader.F32(&decoded.placedTrap.cooldown) ||
+                !reader.I32(&decoded.placedTrap.uses) ||
+                !reader.U64(&decoded.placedTrap.owner) || !reader.AtEnd() ||
+                !Finite(decoded.placedTrap.cooldown) ||
+                decoded.placedTrap.cooldown < 0.0f ||
+                decoded.placedTrap.uses < 0 ||
+                decoded.placedTrap.uses > 999) {
+                SetError(error, "复制 PlacedTrap 负载非法");
+                return false;
+            }
+            decoded.placedTrap.armed = armed != 0;
+            decoded.hasPlacedTrap = true;
         } else if (component.type == kReplicationMerchant) {
             ecs::MerchantStock loaded;
             for (int& count : loaded.stock) {
@@ -1788,6 +1977,49 @@ bool EntityReplicationClient::DecodePatch(const net::ReplicatedEntity& entity,
             }
             decoded.animalCorpse.harvested = harvested != 0;
             decoded.hasAnimalCorpse = true;
+        } else if (component.type == kReplicationCompanion) {
+            CompanionReplicationState companion;
+            std::uint8_t command = 0;
+            std::uint8_t flags = 0;
+            std::uint8_t loyalty = 0;
+            std::uint8_t status = 0;
+            std::uint16_t stage = 0;
+            std::uint32_t progress = 0;
+            if (!reader.String(&companion.defId, kMaxCompanionIdBytes,
+                               false) ||
+                !IsValidCompanionToken(companion.defId) ||
+                !reader.U8(&command) ||
+                command > static_cast<std::uint8_t>(
+                              CompanionCommand::Retreat) ||
+                !reader.U8(&flags) || (flags & ~0x07u) != 0 ||
+                !reader.U8(&loyalty) || loyalty > 100 ||
+                !reader.U8(&status) ||
+                status > static_cast<std::uint8_t>(
+                             CompanionQuestStatus::Failed) ||
+                !reader.U16(&stage) ||
+                stage > kMaxCompanionQuestStages ||
+                !reader.U32(&progress) || progress > 1000000 ||
+                !reader.U32(&companion.rewardMask) ||
+                companion.rewardMask >
+                    (1u << kMaxCompanionQuestStages) - 1u ||
+                !reader.F32(&companion.downedRemaining) ||
+                !Finite(companion.downedRemaining) ||
+                companion.downedRemaining < 0.0f ||
+                companion.downedRemaining > 3600.0f || !reader.AtEnd()) {
+                SetError(error, "复制 Companion 负载非法");
+                return false;
+            }
+            companion.command = static_cast<CompanionCommand>(command);
+            companion.standby = (flags & 0x01u) != 0;
+            companion.downed = (flags & 0x02u) != 0;
+            companion.dead = (flags & 0x04u) != 0;
+            companion.loyalty = static_cast<int>(loyalty);
+            companion.questStatus =
+                static_cast<CompanionQuestStatus>(status);
+            companion.questStage = static_cast<int>(stage);
+            companion.questProgress = static_cast<int>(progress);
+            decoded.companion = std::move(companion);
+            decoded.hasCompanion = true;
         } else if (component.type == kReplicationLoot) {
             ecs::LootContainer loot;
             ecs::Container container;
@@ -1876,6 +2108,10 @@ bool EntityReplicationClient::DecodePatch(const net::ReplicatedEntity& entity,
             return false;
         }
     }
+    if (decoded.hasCompanion && decoded.ownerStableId == 0) {
+        SetError(error, "复制同伴缺少 owner");
+        return false;
+    }
     *patch = decoded;
     return true;
 }
@@ -1933,6 +2169,11 @@ void EntityReplicationClient::ApplyPatch(const ActorPatch& patch) {
         actor.combatStance = patch.combatStance;
         actor.hasCombatStance = true;
     }
+    if (patch.hasStealth) {
+        actor.stealthCrouched = patch.stealthCrouched;
+        actor.stealthMoving = patch.stealthMoving;
+        actor.hasStealth = true;
+    }
     if (patch.hasVariant) {
         actor.variant = patch.variant;
         actor.hasVariant = true;
@@ -1966,6 +2207,10 @@ void EntityReplicationClient::ApplyPatch(const ActorPatch& patch) {
             patch.vehicleSecondPassengerStableId;
         actor.hasVehicle = true;
     }
+    if (patch.hasVehicleMods) {
+        actor.vehicleMods = patch.vehicleMods;
+        actor.hasVehicleMods = true;
+    }
     if (patch.hasFarmPlot) {
         actor.farmPlot = patch.farmPlot;
         actor.hasFarmPlot = true;
@@ -1985,6 +2230,10 @@ void EntityReplicationClient::ApplyPatch(const ActorPatch& patch) {
     if (patch.hasTrap) {
         actor.trap = patch.trap;
         actor.hasTrap = true;
+    }
+    if (patch.hasPlacedTrap) {
+        actor.placedTrap = patch.placedTrap;
+        actor.hasPlacedTrap = true;
     }
     if (patch.hasMerchantStock) {
         actor.merchantStock = patch.merchantStock;
@@ -2015,6 +2264,10 @@ void EntityReplicationClient::ApplyPatch(const ActorPatch& patch) {
     if (patch.hasAnimalCorpse) {
         actor.animalCorpse = patch.animalCorpse;
         actor.hasAnimalCorpse = true;
+    }
+    if (patch.hasCompanion) {
+        actor.companion = patch.companion;
+        actor.hasCompanion = true;
     }
     if (actor.hasAnim) {
         // M14-T3：clip 不进入复制协议；远端用已复制的速度/动作/生命重新推导。

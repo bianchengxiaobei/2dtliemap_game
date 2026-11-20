@@ -1,6 +1,6 @@
-# ZomboidLike Mod 开发指南（Lua / Python 可选，API v1）
+﻿# ZomboidLike Mod 开发指南（Lua / Python 可选，API v2，兼容 v1）
 
-> 适用版本：M7/M8 脚本系统 v1 + X-F2a 内容文件 / X-F2b-1 内容指纹 / X-F2b-2a 图集资源 / X-F2b-2b 搜刮表与 POI / X-F2b-2c 任务与事件 / X-F2b-2d HUD 字段 / X-F2b-2e 动态内容（物品、配方、建造、POI、任务） / M23-F5 作物、烹饪、食物状态与存档联机 / M23-F2b 动物与狩猎 / M23-F4 聚落 / M33-F1-T6 四聚落任务池/口吻 / X-F3-T1~T6 内容文件监听、事务热重载、指纹/联机策略、仅单机动态内容边界、测试与文档收口 · 参考示例：`mods/example_hello`、`mods/example_reactive`、`mods/example_ui`、`mods/example_content`
+> 适用版本：M7/M8 脚本系统 v1 + X-F2a 内容文件 / X-F2b-1 内容指纹 / X-F2b-2a 图集资源 / X-F2b-2b 搜刮表与 POI / X-F2b-2c 任务与事件 / X-F2b-2d HUD 字段 / X-F2b-2e 动态内容（物品、配方、建造、POI、任务） / M23-F5 作物、烹饪、食物状态与存档联机 / M23-F2b 动物与狩猎 / M23-F4 聚落 / M33-F1-T6 四聚落任务池/口吻 / M33-F3-T1/T2/T3/T4/T5/T6 同伴数据、招募、待命、AI、装备背包、倒地、信任委托与联机持久化 / M33-F4-T1/T2/T3/T4/T5/T6 载具改装数据契约、组件、安装/拆除、效果、UI、服务器权威、联机复制、平衡与交付 / M33-F5-T1/T2/T3/T4/T5/T6/T7 多阶段 POI 数据契约、阶段运行时/存档、门禁/钥匙/供电/路线、精英/Boss 战斗、结构化 HUD/地图/叙事、内置内容与双客户端收口 / M34-F3-T1/T2/T3 陷阱数据、放置、布防与触发 / X-F3-T1~T6 内容文件监听、事务热重载、指纹/联机策略、仅单机动态内容边界、测试与文档收口 / M35-F1 只读查询、F2 行为事件、F3-T2 命令化物品动作、F3-T3 单机直接状态效果、F3-T4 制作动作、F3-T5 建造动作、F3-T6 僵尸变体/声音引怪、F3-T7 联机策略收口、F4-T1 ModData 存档组件、F4-T2 `Mod.Data` API、F4-T3 `Json`、F4-T4 Lua `require`、F4-T5 文档/旧档兼容、F5-T1/T2 示例挑战与脚本面板、F5-T3 Audio.Play2D/Play3D、F5-T4 查询统计/截断日志、F5-T5 示例验收与 UI 点击修复 · 参考示例：`mods/example_hello`、`mods/example_reactive`、`mods/example_ui`、`mods/example_content`、`mods/example_scripted_gameplay`
 > （示例目录都同时带 `scripts/main.lua` 与 `scripts/main.py`，用 `script.backend` 切换；`example_content` 另带物品/配方/建造/搜刮表/POI/任务数据与图集）
 > 设计稿（内部实现说明）：`docs/03-脚本系统设计.md`
 
@@ -17,7 +17,8 @@ mods/
 └─ my_first_mod/
    ├─ mod.json            ← 清单（必需）
    └─ scripts/
-      └─ main.lua         ← 入口脚本（路径由 mod.json 的 main 指定）
+      ├─ main.lua         ← 入口脚本（路径由 mod.json 的 main 指定）
+      └─ util.lua         ← 可选：Lua 用 require("util") 加载
 ```
 
 ### 1.2 清单 `mod.json`
@@ -27,7 +28,7 @@ mods/
   "id": "my_first_mod",
   "name": "My First Mod",
   "version": "1.0.0",
-  "api": 1,
+  "api": 2,
   "backend": "lua",
   "main": "scripts/main.lua",
   "loadOrder": 100
@@ -36,13 +37,17 @@ mods/
 
 ### 1.3 入口脚本 `scripts/main.lua`
 
+Lua 可以把逻辑拆到 `scripts/` 下的其他 `.lua`：
+`require("util")` → `scripts/util.lua`，`require("wave.director")` → `scripts/wave/director.lua`，
+`require("./local")` 相对当前脚本目录。模块返回 `return` 值（未返回时为 `true`）。
+
 ```lua
 Log.Info("my_first_mod loaded")
 
 local gaveStarter = false
 
 Events.On("OnTick", function(e)
-    -- OnGameStart 时玩家尚未生成：等 Game.GetPlayerId() 非 0 再操作玩家
+    -- OnGameStart 时玩家尚未生成：等 Game.GetPlayerId() 非 0，或改用 OnWorldStart
     if not gaveStarter and Game.GetPlayerId() ~= 0 then
         gaveStarter = true
         Player.AddItem("bandage", 3)
@@ -75,7 +80,7 @@ end)
 | `id` | 否 | 目录名 | 稳定标识（日志/热重载用）。与目录名不一致时以 `id` 为准（仅告警） |
 | `name` | 否 | = id | 展示名 |
 | `version` | 否 | `"0.0.0"` | 仅记录/日志 |
-| `api` | 否 | 当前版本（1） | **过新会被拒绝加载**（提示"需要更新的 API 版本"）；偏旧告警但尽力加载 |
+| `api` | 否 | 当前版本（2） | **过新会被拒绝加载**（提示"需要更新的 API 版本"）；偏旧告警但尽力加载 |
 | `backend` | 否 | `config/game.json` 的 `script.backend`（默认 `lua`） | `lua` / `python`（python 需启用该后端的构建：CMake 预设 `x64-debug-python`；未启用时该 mod 会被跳过并提示"本构建未启用 Python 后端"） |
 | `main` | 否 | 按后端：`scripts/main.lua` / `scripts/main.py` | 入口脚本（相对 mod 根目录） |
 | `loadOrder` | 否 | `100` | 越小越先加载/派发事件（同值按加载先后） |
@@ -84,7 +89,7 @@ end)
 
 ---
 
-## 3. Host API v1
+## 3. Host API（v2；v1 函数保持兼容）
 
 通用约定：
 
@@ -103,6 +108,9 @@ end)
 
 | 接口 | 返回 | 说明 |
 |---|---|---|
+| `Game.GetApiVersion()` | number | 当前 Host API 版本（M35 起为 2） |
+| `Game.IsMultiplayer()` | bool | 是否处于联机（主机/加入/loopback 均为 true） |
+| `Game.GetNetMode()` | string | `direct` / `loopback` / `client`；主机与加入统一为 `client` |
 | `Game.GetTick()` | number | 当前总 tick（定点 60/s，受游戏倍速影响） |
 | `Game.GetPlayerId()` | number | 玩家实体稳定 ID（`0` = 尚未生成） |
 | `Game.GetTime()` | table | `{year, month, day, hour, minute, totalMinutes}` |
@@ -117,7 +125,33 @@ end)
 | `Player.GetPosition()` | `{x, y, z}` 或 nil | 玩家位置（无玩家 → nil） |
 | `Player.Teleport(x, y, z)` | bool | 传送到格坐标（含物理体同步） |
 | `Player.GetHealth()` | number 或 nil | 当前 HP |
+| `Player.GetNeeds()` | table 或 nil | `{hunger,thirst,fatigue,nutrition,health,healthMax,moveScale,damageScale,warning}`；需求/营养为 0~1 |
+| `Player.GetStamina()` | table 或 nil | `{current,max,exhausted}`；无战斗体力组件 → nil |
+| `Player.GetWounds()` | table 或 nil | `{count,wounds=[{type,severity,bandaged,bleeding}]}`；`type` 为 `blunt/bite/claw/fire/debug` |
+| `Player.GetPain()` | table 或 nil | `{level,baseLevel,reliefRemaining}`；`level/baseLevel` 为 0~1 |
+| `Player.GetInfection()` | table 或 nil | `{stage,progress,slowRemaining,timeToNextStage}`；`stage` 为 `none/incubating/fever/severe` |
+| `Player.GetClimate()` | table 或 nil | `{bodyC,wetness,ambientC,effectiveC,insulation,waterproof,indoor,nearFire,warning}` |
+| `Player.GetProgression()` | table 或 nil | `{level,xp,xpNext,perkPoints,skills={melee={level,xp,xpNext},...},perks=[...]}`；无成长组件 → nil |
+| `Player.GetInventory(offset?,limit?)` | table 或 nil | `{weightKg,capacityKg,totalStacks,stacks=[...],truncated}`；直接读背包容器，不要求背包 UI 打开 |
+| `Player.GetEquipment()` | table 或 nil | `{primary=stack 或 nil,body=stack 或 nil}`；无装备槽时两个字段都缺省 |
+| `Player.CountItem(defId)` / `Player.HasItem(defId,count?)` | number / bool | 只统计背包，不含装备槽；`count` 缺省 1 |
 | `Player.AddItem(defId, count?)` | number | 入背包实际数量（`count` 缺省 1；容量不足/未注册 id → 0） |
+| `Player.UseItem(index?)` | result | 使用背包物品；`index` 缺省 -1 = 第一件可用消耗品 |
+| `Player.EquipItem(index, slot?)` | result | 装备背包物品；`slot` 为 `primary`/`body` 或 `0`/`1`，缺省 `primary` |
+| `Player.Unequip(slot)` | result | 卸下装备槽；`slot` 同上 |
+| `Player.DropItem(index?)` | result | 丢弃整堆；`index` 缺省 -1 = 第一堆 |
+| `Player.PickupNearest()` | result | 拾取最近地面物品 |
+| `Player.Pickup(entityId)` | result | 拾取指定地面物品/容器实体 |
+| `Player.Attack(targetId?, heavy?)` | result | 攻击；`targetId=0` 自动瞄准最近目标，`heavy=true` 重击 |
+| `Player.ApplyDamage(amount, damageType?)` | result | 单机直调；`damageType` 为 `blunt/bite/claw/fire/debug`，缺省 `blunt`；仍走战斗管线 |
+| `Player.AdjustNeeds(hunger?, thirst?, fatigue?)` | result | 单机增量修改需求，结果钳制 [0,1]；负值/NaN 拒绝 |
+| `Player.GiveXp(skill, amount)` | result | 单机发放经验；`skill` 为 `melee/building/crafting/survival`；额外返回奖励字段 |
+
+`Player.GetInventory` / `Player.GetEquipment` 的 `stack` 字段：`{index,defId,name,type,count,condition,loadedAmmo,weightKg,maxStack,usable,equippable,perishable,spoilDays}`。`index` 是容器内 0-based 下标（装备槽为 -1）；未知/已删除 mod 物品仍返回 `defId`，名称/类型为空、重量 0。`GetInventory` 的 `limit` 缺省 64、最大 128，超出用 `truncated` 标记。
+
+`Player.UseItem/EquipItem/Unequip/DropItem/PickupNearest/Pickup/Attack` 返回 `{ok,queued,error}`（`result`）：单机 direct 同步执行且 `queued=false`；loopback/KCP 提交成功返回 `queued=true`，结果由服务器执行后通过 HUD/事件体现。`ok=true` 只代表命令被接受；物品不可用、装备槽不匹配、背包满、目标超出范围等由实际命令逻辑拒绝。脚本侧明显非法的参数（负索引/越界索引、非法槽位、`Pickup(0)`、不存在/已死亡/尸体/无敌攻击目标）会直接返回 `ok=false` 和 `error`。
+
+`Player.ApplyDamage/AdjustNeeds/GiveXp` 仅 Direct 可用；loopback/KCP 全部 `ok=false`，不排队。`ApplyDamage` 不绕过护甲/格挡/闪避/伤口：没有方向参数，有 `Facing` 时按正面来袭处理，`Debug`/`Fire` 不可格挡；`ok=true` 只表示进入伤害管线，闪避/弹反/完全格挡时实际扣血可为 0，需用 `OnDamage` 或 `GetHealth()` 判断。`AdjustNeeds` 只改 `hunger/thirst/fatigue`，不触发营养/中毒/派生字段。`GiveXp` 返回 `{ok,queued,error,characterLevels,skillLevels,perkPoints,characterXp,skillXp}`，`perkPoints` 为本次新增；成长配置关闭/缺失、未知技能、`amount<=0`/NaN 均拒绝。`Game.IsMultiplayer()=true` 时，上述三个直接状态效果以及 `Craft.Learn/Build.CanPlace/World.EmitSound` 全部 fail-closed；命令化动作（Use/Equip/Pickup/Attack/Craft.Start/Build.Place 等）仍提交服务器。v1 的 `Player.Teleport/AddItem`、`World.SpawnItem`、`Zombies.Spawn` 为兼容例外，仍按本地行为执行。
 
 ### 3.4 `World`
 
@@ -126,16 +160,35 @@ end)
 | `World.IsPassable(x, y)` | bool | 格 (x, y) 是否可通行（未加载区域 = 不可通行） |
 | `World.GetSquare(x, y, z?)` | table 或 nil | 读取已加载格的只读分层快照；未加载返回 nil。字段见下 |
 | `World.SpawnItem(defId, x, y, z?)` | bool | 在格坐标生成地面物品（defId 必须先注册，见 `assets/items.json`） |
+| `World.EmitSound(x, y, radius, kind?, clip?)` | bool | Direct 发出本地世界声音，进入 `OnSound`/AI 听觉；`radius` 为 (0,256]，`kind` 缺省 `generic` |
+| `World.GetWeather()` | table | `{kind="clear/rain/fog/cold", ambientC, isNight}` |
+| `World.GetTimeOfDay()` | number | 当天进度 0~1（0 = 午夜起点，按 `GameTime::DayFraction`） |
+
+`World.EmitSound` 的 `kind` 支持 `generic/gunshot/impact/footstep/growl/zombie_growl/zombie/ui/vehicle`；`clip` 为空时由音频系统按类型选默认音效。仅 Direct 可用，非 direct 返回 `false`，不广播；Direct 下脚本和 AI 都通过同一个 `OnSound` 消费。
 
 `World.GetSquare` 返回 `{loaded, hasFloor, floor, wall, furniture, item}`：`floor` 为单个对象，`wall/furniture/item` 为数组。对象字段为 `{sprite, hp, playerBuilt, blocksMovement}`；无耐久对象的 `hp=-1`。
+
+### 3.4.1 `Entities`（M35 只读实体查询）
+
+| 接口 | 返回 | 说明 |
+|---|---|---|
+| `Entities.Get(id)` | table 或 nil | 单个实体摘要；不存在/已移除 → nil |
+| `Entities.Query(x, y, z?, radius?, kind?, limit?)` | table | `{count,truncated,entities=[...]}`；半径缺省 8、最大 32，`limit` 缺省 32、最大 128 |
+| `Entities.GetContainer(id)` | table 或 nil | 容器/仓库内容；未搜索的 `LootContainer` 返回 `searched=false,stacks=[]` |
+
+`Entities.Query` 的 `kind`：`any/player/zombie/animal/companion/npc/vehicle/container/storage/item/corpse/fire/other`。只返回 ECS 中存活且同楼层（`z` 相同）的实体，按距离升序、同距离按稳定 ID 升序；`limit` 截断时 `truncated=true`。实体字段：`{id,kind,x,y,z,hasHealth,health,healthMax,defId,subKind,ownerId,count,tableId,searched,downed,dead,command}`；与 `kind` 无关的字段保留默认值。容器字段：`{id,tableId,searched,isStorage,capacityKg,weightKg,totalStacks,truncated,stacks}`。
+
+查询会计入当前 mod 的 per-tick 统计；截断时每 mod 每 tick 首条写警告（含匹配数/limit/tick/半径/kind），tick 末写一条 `次数/截断` 汇总。统计只用于观测，不会额外拒绝查询；`OnTick` 中仍建议控制半径/limit 和查询频率，避免每 tick 扫描大地图。
 
 ### 3.5 `Zombies`
 
 | 接口 | 返回 | 说明 |
 |---|---|---|
-| `Zombies.Spawn(x, y, z?)` | number | 生成一只僵尸，返回其稳定 ID（0 = 失败） |
+| `Zombies.Spawn(x, y, z?, variant?)` | number | 生成一只僵尸，返回其稳定 ID（0 = 失败）；`variant` 缺省 `normal` |
 | `Zombies.Count()` | number | 当前实体僵尸数（不含离屏虚拟僵尸） |
 | `Zombies.GetPosition(handle)` | `{x, y, z}` 或 nil | 按 ID 查询（已死亡/不存在 → nil） |
+
+`variant` 支持 `normal/fast/strong/armored`：HP/速度倍率分别为 100/1.0、70/1.55、170/0.78、200/0.62，外观缩放、色调、重甲减伤/抗击退沿用现有变体配置。未知值返回 0 并记录警告；`z` 仍只支持地面层语义。`Entities.Get/Query` 的 `subKind` 会返回当前变体名。
 
 ### 3.6 `Items`
 
@@ -143,6 +196,7 @@ end)
 |---|---|---|
 | `Items.Exists(defId)` | bool | 物品定义是否已注册 |
 | `Items.GetName(defId)` | string | 显示名（未注册 → 空串） |
+| `Items.GetInfo(defId)` | table 或 nil | `{id,name,icon,weight,maxStack,type,spoilDays,repairEfficiency,usable,equippable,throwable,ranged}` |
 
 内置物品 id（`assets/items.json`）：`bandage` / `canned_beans` / `axe` / `kitchen_knife` / `machete` / `baseball_bat` / `crowbar` / `rag` / `jacket` / `leather_jacket` / `raincoat` / `tote_bag` / `water_bottle` / `painkillers` / `antibiotics` / `disinfectant` / `energy_bar` / `hammer` / `screwdriver` / `hiking_boots` / `backpack` / `makeshift_spear` / `padded_jacket` / `riot_vest` / `cooked_beans` / `magazine_cooking` / `repair_kit` / `dirty_water` / `empty_bottle` / `wood` / `radio_part` / `forage_stick` / `forage_stone` / `wild_berries` / `wild_mushroom` / `medicinal_herb` / `small_fish` / `cooked_small_fish` / `cooked_wild_berries` / `cooked_wild_mushroom` / `herbal_tea` / `fish_bait` / `fishing_rod` / `river_trash` / `fertilizer` / `fungicide` / `cabbage_seeds` / `fresh_cabbage` / `potato_seeds` / `fresh_potato` / `tomato_seeds` / `fresh_tomato` / `corn_seeds` / `fresh_corn`。
 
@@ -163,6 +217,10 @@ M30 战斗 2.0 配置（T7）：`config/game.json` 的 `combat.rules.*` 共 43 �
 
 M23-F1 远程武器数据：weapon 可新增 `ranged{damage,range,spreadDegrees,pellets,cooldownSeconds,magazine,reloadSeconds,ammoDefId,noiseRadius,wearPerShot,projectileSpeed,falloffStart,falloffEnd,falloffScale}`，14 个字段全部必填；`pellets`/`magazine` 为整数，`falloffStart <= falloffEnd <= range`，`ammoDefId` 必须指向已注册物品。远程武器可同时保留 `combat` 作为近战备用；当前 T1–T6 已接线单机射击/换弹/投射物/枪声引怪与服务器权威扣弹/换弹，`noiseRadius` 直接作为 Gunshot 世界声音半径；联机弹匣/换弹复制与 HUD 已由 T7/T8 接线；双客户端测试见 T10，实机验收留 T11。
 
+M34-F2 投掷数据：物品可新增可选 `throwable{range,damage,impactRadius,arcHeight,noiseRadius,returnable,breakChance,fire?}`；`range` 1–16、`damage` 0–80、`impactRadius` 0–3、`arcHeight` 0–3、`noiseRadius` 0–32、`breakChance` 0–1，`returnable` 必须为布尔值。`fire` 可选，格式 `{radius,minutes}`，半径 0–3 格、持续 0–240 游戏分钟；仅带该对象的投掷物在落地时接入火焰。未带 `throwable` 的旧物品/旧 mod 保持不可投掷；`forage_stone`、`makeshift_spear`、`bone_spear` 已带回收和损坏风险，`molotov` 为一次性火焰投掷物。`craft_molotov` 配方固定为空瓶 + 破布 + 燃料罐、`workbench`、1.5 秒；F2-T6 已固定数值：石块 7.5/8/0.6/1.0/6/回收 95%，简易长矛 9/28/0.45/1.2/5/回收 65%，骨矛 8.5/24/0.45/1.1/4.5/回收 55%，燃烧瓶 8/6/1.2/1.1/5/一次性/1.5 格 45 分钟。F2-T7 回归确认这些值、噪声和回收风险不再变动。非法字段/越界值/未知字段会使该物品文件或 mod 事务整体回退，不产生部分定义。`throwable` 全部字段进入内容指纹，M34-F2-T1 起整体指纹为 **v22**；F2 不新增存档 schema，F3 才升 v23。服务器命令 `ThrowItem=62` 用于联机投掷；不含该命令或内容哈希不一致的旧客户端在握手阶段拒绝。旧存档可加载，但飞行投掷物在保存/退出前结算、冷却不持久化，且不会获得 T6 之后新增的加油站燃烧瓶掉落。
+
+M34-F3-T1/T2/T3 陷阱数据：`config/game.json` 新增 `trapDefs.enabled`/`trapDefs.file`（默认文件 `assets/traps.json`，`traps-v1`）；定义字段为 `id/name/buildingId/damage/radius/cooldownSeconds/uses/staggerSeconds/noiseRadius/triggerMask/armSeconds/fire?`。`buildingId` 必须指向已加载的 `building.types`；`triggerMask` 只能包含 `zombie`/`animal`，缺省两者；`fire` 可选 `{radius,minutes}`（0.5–3 格、1–240 游戏分钟）；`damage` 0–100、`uses` 1–99，且必须至少提供伤害、噪声或火焰之一。内置 `bear_trap`（55 伤害/2.0s 硬直/4 次）、`tripwire_alarm`（18 格噪声/8 次）、`fuel_trap`（1.5 格 45 分钟火焰/1 次），三者 `armSeconds=1.0`。`mods/<id>/content/traps.json` 按加载顺序追加，非法条目逐条跳过，重复 id 不能覆盖基础定义；`config/game.json` 的 `building.types` 与 `DefaultBuildables` 已加入对应 3 个木材建造项。`traps.json` 全部字段进入内容指纹，M34-F3-T1 起整体指纹为 **v23**；`PlacedTrap` 使用 `TRP2 v1` 存档和 `ZLR1 TRAP2` 只读复制。T1 提供数据/组件/注册；T2 已接建造放置、owner、`armSeconds` 自动布防、`E` 布防/解除与 `X` 拆除返还，且 `PlacedTrap` 已进入 ZLR1 Prop 候选并在客户端还原到 ECS；T3 已接 `TrapSystem` 触发：按 `triggerMask` 只选僵尸/动物，排除玩家/友方/尸体/Raider/异层并取最近目标，捕兽夹结算伤害/硬直/冷却，绊线发噪声事件，燃油陷阱经 `FireSystem::IgniteForcedAt` 在 `fire.radius` 覆盖格强制创建 `trap_fuel` 火源（`fire.minutes` 换算为真实秒数），次数耗尽自动解除。mod 作者可复用 `fire.radius=0.5–3`、`minutes=1–240` 定义新燃油陷阱，但火焰伤害/蔓延/存档仍走 M23 `FireSystem`，T3 不额外保证结构燃尽掉落。`armRemaining` 是运行时布防计时，不写入 `TRP2 v1`；存档/重启和完整双客户端表现仍由 F3-T4/T5 接入。
+
 M20-F1 感染数据：`config/game.json` 的 `infection` 段控制暴露概率、病程总秒数、阶段阈值、未包扎伤口加速、发热疲劳和重症掉血；`clawChance`/`biteChance` 是基础概率，已有未包扎伤口按 `woundRiskBonus` 增加暴露概率，最终不超过 `maxChance`。感染阶段由 `progress` 与 `incubatingEnd`/`feverEnd` 派生：潜伏→发热/疲劳→重症→死亡。绷带战利品/制作、诊所/村庄储物柜保证产出的抗生素与随机消毒剂都通过现有 `use` 字段治疗；治疗道具只在感染激活时可使用。感染状态为 `INFC` v1 存档组件，同时经 `ZLR1` 复制和 `ZLP1 v4/v5` owner 镜像；HUD 字段为 `infectionStatus`/`infectionTone`。
 
 M20-F2 天气/温湿数据：`config/game.json` 的 `weather` 段控制天气块周期、过渡时长、四类天气权重、各天气环境温度、夜间降温、僵尸视距/移速缩放与潮湿强度；`climate` 段控制淋雨/烘干速率、室内与篝火增温、衣物保暖/湿冷、失温阈值、疲劳/移速惩罚与失温伤害。天气由累计游戏时间确定性生成，不需要额外随机游标；`ecs::Climate` 的 `bodyC/wetness` 写入 `CLMT` v1，`ZLP1` v5 只读镜像。HUD 字段为 `weatherStatus`/`weatherTone`/`weatherClass`，`weatherClass` 为 `clear|rain|fog|cold`，对应 `weather-overlay` 调色。
@@ -173,7 +231,7 @@ M20-F4 基地经营数据（单机）：`config/game.json` 的 `farming` 控制 
 
 ### 3.6.1 Mod 内容文件（X-F2）
 
-M7/M8 的脚本 API 负责行为，X-F2 起 mod 还可以在 `content/` 下声明**物品、配方、作物、建造项、搜刮表、觅食/钓鱼节点、POI、任务、事件和聚落**，启动时合并进基础注册表；X3-T2 起单机 content 文件变更为整批事务热重载，不需要改 C++。参考实现：`mods/example_content`。
+M7/M8 的脚本 API 负责行为，X-F2 起 mod 还可以在 `content/` 下声明**物品、配方、作物、建造项、搜刮表、觅食/钓鱼节点、POI、任务、事件、聚落、同伴和车辆改装**，启动时合并进基础注册表；X3-T2 起单机 content 文件变更为整批事务热重载，不需要改 C++。参考实现：`mods/example_content`。
 
 目录结构：
 
@@ -190,13 +248,16 @@ mods/my_content_mod/
 │  ├─ pois.json
 │  ├─ missions.json
 │  ├─ settlements.json
-│  └─ world_events.json
+│  ├─ world_events.json
+│  ├─ companions.json
+│  ├─ vehicle_mods.json
+│  └─ traps.json
 └─ assets/
    ├─ asset_manifest.json
    └─ atlas_example.atlas.json
 ```
 
-全部内容文件和 `assets/` 都可省略；`mod.json` 仍然必需，内容按 `loadOrder`（缺省 100，越小越先）和目录名排序合并。合并发生在脚本加载前，因此内容对 `OnGameStart`/`OnTick` 和核心 UI 都可见。
+全部内容文件和 `assets/` 都可省略；`mod.json` 仍然必需，内容按 `loadOrder`（缺省 100，越小越先）和目录名排序合并。合并发生在脚本加载前，因此内容对 `OnGameStart`/`OnWorldStart`/`OnTick` 和核心 UI 都可见。
 
 **items.json**：与 `assets/items.json` 相同，根为 `{"format":"items-v1","items":[...]}`；字段校验、`use`、`combat`、`ranged`、`armor`、`spoilDays`、`unlocksRecipes` 规则与内置物品一致。`use` 另支持 `nutrition`（0~1 营养）、`foodPoisonChance`（0~1 食物中毒概率）与 `infectionRisk`（0~1 使用感染风险）；`ranged.ammoDefId` 可引用同批或更早加载的弹药物品，不能引用更晚加载的 mod。
 
@@ -235,11 +296,13 @@ mods/my_content_mod/
 - `pois.json` 只追加新 POI id，重复 id 跳过；基础 `pois.enabled` 为 `false` 时不加载 mod POI，`guideRange` 仍由基础配置决定。mod POI 不创建地图房间/墙体，坐标和容器可达性由作者保证。
 - `missions.json` 只在基础 `missions.enabled=true` 时追加任务/事件；任务 id 重复、条目无效、前置缺失或成环时整份文件跳过，已有任务不变。前置可引用基础任务或同批次更早文件的任务；同一文件内可自由引用。格式见 3.6.5。
 - `settlements.json` 只在基础 `settlements.enabled=true` 时追加聚落；重复 id 跳过，条目无效跳过，格式错误/无有效定义时整份文件跳过。安全区/NPC 点位/库存/任务池格式见 3.6.3.4。
-- `world_events.json` 只在基础 `worldEvents.enabled=true` 时追加世界事件；重复 id/坏字段/坏链跳过，无有效定义时整份文件跳过。格式见 3.6.3.5；T3 已接生成/结算，T4/T5 再接 UI 与网络/存档。
-- X3-T2 起单机（`net.mode=direct`）且没有脚本动态内容时，修改 `content/*.json` 会在防抖后重新构建独立 `ContentBundle`；items/recipes/buildings/loot/forage/animals/crops/POI/missions/settlements/world_events 全部校验通过才一次性替换，失败保留旧内容并在日志输出 `mod 内容热重载失败，保留旧内容`。成功后记录旧→新内容指纹，`WorldDemoState` 下一次 tick 重建建造目录并复制新 POI/任务/聚落配置。`assets/*.json` 仍只通知、需重启；联机/主机只告警并提示重启服务器和所有客户端后重连；X3-T4 确认动态内容仅单机，联机热重载拒绝显示 5 秒 HUD 提示，均不替换注册表/不刷新指纹。X3-T5 已用 3 用例锁定失败原子性、未变指纹、五类动态内容联机拒绝与旧档未知物品；X3-T6 完成文档收口。脚本与 `mod.json` 的现有热重载继续生效。
+- `world_events.json` 只在基础 `worldEvents.enabled=true` 时追加世界事件；重复 id/坏字段/坏链跳过，无有效定义时整份文件跳过。格式见 3.6.3.5；T3 已接生成/结算，T4/T5 接 UI 与网络/存档。
+- `companions.json` 只在基础 `companions.enabled=true` 时追加同伴定义；重复 id/坏字段/未知物品引用跳过，无有效定义时整份文件跳过。格式见 3.6.3.6。
+- `traps.json` 只在基础 `trapDefs.enabled=true` 时追加陷阱定义；`buildingId` 必须引用基础或同批/更早 mod 建造项，重复 id、非法/越界字段和坏引用按单条跳过，不能覆盖基础定义。T2/T3 起 `traps.json` 绑定的建造项会走正常建造 UI 放置为 `PlacedTrap`，`armSeconds` 后自动布防，支持 E 布防/解除与 X 拆除；触发按 `triggerMask` 选最近僵尸/动物，燃油火焰和噪声已接入，但存档/双客户端表现留给 F3-T4/T5。
+- X3-T2 起单机（`net.mode=direct`）且没有脚本动态内容时，修改 `content/*.json` 会在防抖后重新构建独立 `ContentBundle`；items/recipes/buildings/loot/forage/animals/crops/POI/missions/settlements/world_events/companions/vehicle_mods/traps 全部校验通过才一次性替换，失败保留旧内容并在日志输出 `mod 内容热重载失败，保留旧内容`。成功后记录旧→新内容指纹，`WorldDemoState` 下一次 tick 重建建造目录并复制新 POI/任务/聚落配置。`assets/*.json` 仍只通知、需重启；联机/主机只告警并提示重启服务器和所有客户端后重连；X3-T4 确认动态内容仅单机，联机热重载拒绝显示 5 秒 HUD 提示，均不替换注册表/不刷新指纹。X3-T5 已用 3 用例锁定失败原子性、未变指纹、五类动态内容联机拒绝与旧档未知物品；X3-T6 完成文档收口。脚本与 `mod.json` 的现有热重载继续生效。
 - 示例 `mods/example_content` 新增 `mod_pumpkin`（南瓜作物，种子/产物）、`pumpkin_soup`（南瓜浓汤）、`cook_pumpkin_soup`（锅具+木材的南瓜汤配方）、`camp_stew`（营地炖豆）、`cook_camp_stew`（篝火配方）、`mod_supply_crate`（35kg/4 堆补给箱）、`mod_camp_cache`（补给箱搜刮表）、`mod_depot`（补给站 POI）、`mod_depot_supply`（补给站任务）和 `depot_status`（HUD 字段）；同时用 `mod.camp_stew`/`mod.supply_crate` 演示 mod 本地图集绑定，验证“无需改 C++ 新增作物→种子/产物→锅具燃料烹饪 + 可建造仓库 + 资源名 + 搜刮表/POI/任务 + HUD 字段”。
 
-当前限制：HUD 字段已支持（见 3.7），物品/配方/建造/POI/任务可用 `Content` API 在单机运行时追加（见 3.6.6）；X3-T2 的 content 事务热重载仅限单机且无脚本动态内容，X3-T3 起联机只拒绝并要求重启+重连，X3-T4 确认动态内容仅单机、联机注册/启动拒绝并显示 HUD 提示，assets 仍只通知并需重启；新增/删除整个 mod 目录仍需重启（监听器只跟踪启动时来源），已生成实体/容器/NPC 和旧档中已删除物品 id 不回溯迁移；X3-T5 锁定旧档未知 mod 物品仍保留 `defId`，但名称/重量/图标不可用，直到重新安装对应 mod 或手动清理。动态内容不写存档、禁 mod 不回滚，联机时客户端与服务器必须安装相同的物品/配方/作物/建造/搜刮表/觅食钓鱼数据/POI/任务/聚落/世界事件内容；启动时会自动校验内容指纹（见 3.6.3），热重载成功后重算，但脚本/图集/地图/M24 运行时随机事件内容尚未纳入。启动时 POI/任务定义同时进入客户端与服务器内容指纹；服务器按已加载 chunk 生成 POI 容器/守军，并由 `TickServerMissions` 权威推进任务日志、奖励与放弃命令，联机客户端跳过本地 `UpdateMissions`。`Content` API 动态追加仍是单机能力，联机连接/主机启动会被拒绝；Mod HUD 字段只显示在客户端。
+当前限制：HUD 字段已支持（见 3.7），物品/配方/建造/POI/任务可用 `Content` API 在单机运行时追加（见 3.6.6）；X3-T2 的 content 事务热重载仅限单机且无脚本动态内容，X3-T3 起联机只拒绝并要求重启+重连，X3-T4 确认动态内容仅单机、联机注册/启动拒绝并显示 HUD 提示，assets 仍只通知并需重启；新增/删除整个 mod 目录仍需重启（监听器只跟踪启动时来源），已生成实体/容器/NPC 和旧档中已删除物品 id 不回溯迁移；X3-T5 锁定旧档未知 mod 物品仍保留 `defId`，但名称/重量/图标不可用，直到重新安装对应 mod 或手动清理。动态内容不写存档、禁 mod 不回滚，联机时客户端与服务器必须安装相同的物品/配方/作物/建造/搜刮表/觅食钓鱼数据/POI/任务/聚落/世界事件/同伴内容；启动时会自动校验内容指纹（见 3.6.3），热重载成功后重算，但脚本/图集/地图/M24 运行时随机事件内容尚未纳入。启动时 POI/任务定义同时进入客户端与服务器内容指纹；服务器按已加载 chunk 生成 POI 容器/守军，并由 `TickServerMissions` 权威推进任务日志、奖励与放弃命令，联机客户端跳过本地 `UpdateMissions`。`Content` API 动态追加仍是单机能力，联机连接/主机启动会被拒绝；Mod HUD 字段只显示在客户端。
 
 ### 3.6.2 Mod 图集与资源绑定（X-F2b-2a）
 
@@ -282,7 +345,7 @@ mod 可以在 `mods/<id>/assets/asset_manifest.json` 声明新的逻辑资源名
 
 ### 3.6.3 内容指纹与联机握手（X-F2b-1）
 
-客户端与服务器启动时都会对**最终生效**的物品、配方、建造项、搜刮表、觅食/钓鱼数据、动物数据、作物数据、POI、任务、聚落与世界事件计算 64 位内容指纹（`game::ComputeContentHash`，v17），覆盖定义顺序和全部字段（含名称、图标、重量、战斗/护甲、配方分类/材料/工具/锅具/燃料/时间、建造成本/耐久/容量、战利品权重/min/max、觅食区域/钓点密度/刷新/工具/鱼饵、动物速度/警觉/逃跑/伤害/尸体搜索/掉落表/生成权重、作物阶段/水耗/病害/产量/种子、POI 容器/守军/任务奖励、任务类型/目标/前置/自动接取/时限/重试/最低声望/随机权重、聚落安全区/NPC 点位/库存/补货日/任务池/夜袭防御/区域与服务/初始声望/对话口吻、声望等级阈值/来源增量/价格倍率/每日上限、世界事件阶段/选项/奖励/压力/失败后果/冷却/预警/持续时间/nextEvent 等），并在 KCP 握手的 `Hello/Welcome` 中比较；不一致会拒绝连接。
+客户端与服务器启动时都会对**最终生效**的物品、配方、建造项、搜刮表、觅食/钓鱼数据、动物数据、作物数据、POI、任务、聚落、世界事件与同伴定义计算 64 位内容指纹（`game::ComputeContentHash`，v22），覆盖定义顺序和全部字段（含名称、图标、重量、战斗/护甲/投掷、配方分类/材料/工具/锅具/燃料/时间、建造成本/耐久/容量、战利品权重/min/max、觅食区域/钓点密度/刷新/工具/鱼饵、动物速度/警觉/逃跑/伤害/尸体搜索/掉落表/生成权重、作物阶段/水耗/病害/产量/种子、POI 容器/守军/任务奖励与多阶段 stages/entries/keys/branches/boss/narrative、任务类型/目标/前置/自动接取/时限/重试/最低声望/随机权重、聚落安全区/NPC 点位/库存/补货日/任务池/夜袭防御/区域与服务/初始声望/对话口吻、声望等级阈值/来源增量/价格倍率/每日上限、世界事件阶段/选项/奖励/压力/失败后果/冷却/预警/持续时间/nextEvent、同伴背景/生命/忠诚/装备/背包/特长/招募条件/对话 profile/个人委托阶段与奖励、车辆改装槽位/效果/材料/安装时间/重量/互斥等），并在 KCP 握手的 `Hello/Welcome` 中比较；不一致会拒绝连接。
 
 `net.contentHash` 默认 `0`，表示自动计算；仅在需要手动覆盖时填写非 0 值，此时客户端与服务器必须一致。该指纹用于避免玩法数据顺序或数值不同造成的联机错位；脚本、图集/贴图、地图与事件内容尚未纳入，仍需双方安装同一份游戏内容。
 
@@ -290,9 +353,9 @@ mod 可以在 `mods/<id>/assets/asset_manifest.json` 声明新的逻辑资源名
 
 `assets/animals.json` 使用 `format: "animals-v1"`，`animals` 数组定义物种。必填字段：`id/name/kind/sprite/maxHealth/wanderSpeed/fleeSpeed/alertRadius/fleeRadius/hearingRadius/fleeSeconds/damage/attackRange/attackCooldown/lootTableId`；可选 `corpseSprite`（默认 `corpse.placeholder`）、`corpseSearchSeconds`、`corpseTool/corpseToolWear` 与 `spawn`。`spawn` 为 `{forest, meadow, poi, maxPerChunk, poiIds}`：`forest/meadow/poi` 是该区块类别 0~1 的命中权重，`maxPerChunk` 为 0~8，`poiIds` 只能引用 `config/game.json` 的 POI id；权重全 0 时上限必须为 0，配置 `poiIds` 时 `poi` 必须大于 0。`kind` 为 `passive` 或 `dangerous`；被动动物的伤害/攻击距离/冷却必须为 0，危险动物必须为正。`lootTableId` 必须在 `assets/loot.json` 存在，`corpseTool` 必须在 `assets/items.json` 存在。
 
-当前基础物种：`deer`（鹿，被动，森林/草地）、`rabbit`（兔子，被动，森林/草地）、`boar`（野猪，危险，森林/草地/农场仓 POI）；对应尸体表 `animal_deer/animal_rabbit/animal_boar`。该数据在客户端和服务器启动时加载并参与内容指纹；暂不接受 mod `content/` 覆盖。生成全局参数在 `config/game.json` 的 `animals.spawn`（`enabled/maxLive/minPlayerDistance/poiRadius/seed`）：单机 `AnimalSystem` 只在室外草地/泥地生成，树旁算森林、无树算草地；T6 起正式服务器/内嵌服务器通过 `ServerHost::Options::spawnAnimals` 开启权威生成与战斗，客户端只接收 `Animal/AnimalCorpse` 复制，轻量服务器单测可显式关闭。动物实体游荡使用运行时 `AnimalWander`，远端按 `LodState` 降频；chunk 卸载保存到运行时快照并在重载恢复。T7 起 `AnimalWorldState`（`AWST` v1）把未加载 chunk 的动物快照（物种/位置/生命/Flee）与已播种 chunk 标记写入世界存档，单机快速存档和服务器 `SaveWorld` 都会写入稳定状态实体 `0x4D323342414E4D53`，`WorldSimulation::LoadSave` 与单机读档恢复；上限 4096 chunk / 单 chunk 16 条 / 全局 2048 条，超出部分下次加载按种子重新播种。T3 起 `alertRadius` 是视觉发现距离（需视线），`fleeRadius` 是近距离压迫半径（不要求视线），`hearingRadius` 与 `SoundEvent.radius` 取较小值作为有效听觉半径并受墙衰减，`fleeSeconds` 同时作为逃跑/野猪威胁记忆时长，危险动物的 `damage/attackRange/attackCooldown` 用于反击；`retaliating`/攻击冷却为运行时状态。T4 起动物死亡生成 `AnimalCorpse`，`corpseTool` 必须可用且 condition>0，按 `corpseSearchSeconds` 剥取并磨损 `corpseToolWear`，掉落按 `lootTableId`/尸体稳定 ID 确定性 roll 到尸体 `Container`；已剥取标记防重复。T6 起服务器权威结算动物受伤/死亡/尸体/剥取，按会话预约防止双人重复剥取；仍不做专用动画、玩家/动物碰撞；尸体掉落不自动入包，需打开尸体容器拿取。T7 已补未加载 chunk 快照与服务器保存/读档链路；真实服务器重启和长时间双客户端狩猎仍需按 `docs/07` P1-H 做人工烟测。T8 起补充本指南、README、devlog 与狩猎平衡说明；基础物种仍使用占位角色帧，不提供专用动物动画、玩家/动物推挤或独立潜行键。H2 野猪反击/剥取/1920 容器、H3 F12 存档重载与 H4 双客户端/服务器重启已用临时探针做自动构造烟测；自然流程/低伤害平衡仍需人工验收。
+当前基础物种：`deer`（鹿，被动，森林/草地）、`rabbit`（兔子，被动，森林/草地）、`boar`（野猪，危险，森林/草地/农场仓 POI）；对应尸体表 `animal_deer/animal_rabbit/animal_boar`。该数据在客户端和服务器启动时加载并参与内容指纹；暂不接受 mod `content/` 覆盖。生成全局参数在 `config/game.json` 的 `animals.spawn`（`enabled/maxLive/minPlayerDistance/poiRadius/seed`）：单机 `AnimalSystem` 只在室外草地/泥地生成，树旁算森林、无树算草地；T6 起正式服务器/内嵌服务器通过 `ServerHost::Options::spawnAnimals` 开启权威生成与战斗，客户端只接收 `Animal/AnimalCorpse` 复制，轻量服务器单测可显式关闭。动物实体游荡使用运行时 `AnimalWander`，远端按 `LodState` 降频；chunk 卸载保存到运行时快照并在重载恢复。T7 起 `AnimalWorldState`（`AWST` v1）把未加载 chunk 的动物快照（物种/位置/生命/Flee）与已播种 chunk 标记写入世界存档，单机快速存档和服务器 `SaveWorld` 都会写入稳定状态实体 `0x4D323342414E4D53`，`WorldSimulation::LoadSave` 与单机读档恢复；上限 4096 chunk / 单 chunk 16 条 / 全局 2048 条，超出部分下次加载按种子重新播种。T3 起 `alertRadius` 是视觉发现距离（需视线），`fleeRadius` 是近距离压迫半径（不要求视线），`hearingRadius` 与 `SoundEvent.radius` 取较小值作为有效听觉半径并受墙衰减，`fleeSeconds` 同时作为逃跑/野猪威胁记忆时长，危险动物的 `damage/attackRange/attackCooldown` 用于反击；`retaliating`/攻击冷却为运行时状态。T4 起动物死亡生成 `AnimalCorpse`，`corpseTool` 必须可用且 condition>0，按 `corpseSearchSeconds` 剥取并磨损 `corpseToolWear`，掉落按 `lootTableId`/尸体稳定 ID 确定性 roll 到尸体 `Container`；已剥取标记防重复。T6 起服务器权威结算动物受伤/死亡/尸体/剥取，按会话预约防止双人重复剥取；仍不做专用动画、玩家/动物碰撞；尸体掉落不自动入包，需打开尸体容器拿取。T7 已补未加载 chunk 快照与服务器保存/读档链路；真实服务器重启和长时间双客户端狩猎仍需按 `docs/07` P1-H 做人工烟测。T8 起补充本指南、README、devlog 与狩猎平衡说明；基础物种仍使用占位角色帧，不提供专用动物动画、玩家/动物推挤；M34-F1 已提供 `N` 潜行与降低脚步噪声，但动物视觉仍使用自身警觉半径，不叠加潜行视距倍率。H2 野猪反击/剥取/1920 容器、H3 F12 存档重载与 H4 双客户端/服务器重启已用临时探针做自动构造烟测；自然流程/低伤害平衡仍需人工验收。
 
-**狩猎操作与平衡（T8）**：`SPACE` 近战，`V` 远程（需装备枪械和弹匣），靠近尸体按 `E` 剥取（需物种指定工具；当前鹿/兔/野猪均为厨刀），剥取完成后按 `I` 打开尸体容器取物。动物视觉警觉、枪声和脚步都会触发逃跑；野猪受击会反击，接近时需保留退路。当前没有独立潜行键，利用树木阻挡视线接近，或直接远程射击。
+**狩猎操作与平衡（T8）**：`SPACE` 近战，`V` 远程（需装备枪械和弹匣），靠近尸体按 `E` 剥取（需物种指定工具；当前鹿/兔/野猪均为厨刀），剥取完成后按 `I` 打开尸体容器取物。动物视觉警觉、枪声和脚步都会触发逃跑；野猪受击会反击，接近时需保留退路。M34-F1 起可按 `N` 潜行降低脚步噪声，动物视觉仍按自身警觉半径判定；也可利用树木阻挡视线接近或远程射击。
 
 按当前 `assets/loot.json` 的 rolls/权重/min 计算期望下限（实际每具尸体随机浮动，不等于保底）：
 
@@ -414,11 +477,11 @@ mod 可以在 `mods/<id>/assets/asset_manifest.json` 声明新的逻辑资源名
 - `missionPool`：1~32 个唯一任务 id（每个 1~64 字节），按顺序选择第一个可接任务；同池同时只允许一条 Active。解析时不校验任务是否存在，运行时忽略缺失/不可激活项。推荐任务使用 `source: "npc"`、`autoActivate: false`、`kind: "once"`。
 - 可选 `defense`（M23-F4-T5，缺省关闭）：`enabled/minDay/nightStartHour/nightEndHour/activationRadius/spawnRadius/baseRaiders/raidersPerNight/maxRaiders/guardBehavior/guardHealth/guardDamage/guardRange/guardAttackSeconds/raiderHealth/raiderDamage/raiderRange/raiderAttackSeconds/raiderSpeed`。`minDay` 1~10000；小时 0~23 且起止不同，支持跨午夜；`guardBehavior` 为 `defend|retreat`；数量/血量/伤害/速度均有上限。夜袭数量为 `baseRaiders + max(0, nightKey-minDay) * raidersPerNight`，再夹紧 `maxRaiders`；守卫生命、失守与当晚标记由 `STLS` v1 保存，夜袭 active 不跨档恢复。
 
-mod 可在 `content/settlements.json` 追加同格式 `defs`，只允许新增 id；单条非法跳过，整份文件无有效定义时失败。M33-F1-T1 起可选 `regionId/services/startingReputation/dialogueProfile` 已进入数据契约与指纹；`services` 不得重复，`startingReputation` 为 -100~100。X3-T2 起单机 content 热重载会重读聚落数据，联机/主机或存在脚本动态内容时仍需重启；聚落字段与任务 `minSettlementReputation` 进入内容指纹 v15，M33-F2-T3 起整体指纹为 v17。`services` 同时控制交易/委托入口和实际夜袭/守卫防御；Hostile 只拒绝交易/委托/招募，防御仍可参与。`dialogueProfile` 只选择内置开场口吻，未知值回退通用文本。M33-F1-T6 起生成点若被挤到安全区外会跳过并下一帧重试。联机双方必须安装相同内容；服务器权威处理 `AcceptSettlementMission=39` 和 `TradeOffer=21`，失守/夜袭时拒绝接取与交易，客户端只读 `ZLR1` NPC 与 `PlayerState v21` 聚落状态/声望摘要。
+mod 可在 `content/settlements.json` 追加同格式 `defs`，只允许新增 id；单条非法跳过，整份文件无有效定义时失败。M33-F1-T1 起可选 `regionId/services/startingReputation/dialogueProfile` 已进入数据契约与指纹；`services` 不得重复，`startingReputation` 为 -100~100。X3-T2 起单机 content 热重载会重读聚落数据，联机/主机或存在脚本动态内容时仍需重启；聚落字段与任务 `minSettlementReputation` 进入内容指纹 v15，M33-F3-T5 起整体指纹为 v19，M33-F4-T1 起为 v20，M33-F5-T1 起为 v21。`services` 同时控制交易/委托入口和实际夜袭/守卫防御；Hostile 只拒绝交易/委托/招募，防御仍可参与。`dialogueProfile` 只选择内置开场口吻，未知值回退通用文本。M33-F1-T6 起生成点若被挤到安全区外会跳过并下一帧重试。联机双方必须安装相同内容；服务器权威处理 `AcceptSettlementMission=39` 和 `TradeOffer=21`，失守/夜袭时拒绝接取与交易，客户端只读 `ZLR1` NPC 与 `PlayerState v21`（M33-F5-T2 起整体 v22）聚落状态/声望摘要。
 
 扩展边界：
 
-- **M33-F1-T2/T3/T4/T5/T6 起所有聚落均接线**：单机/服务器按 `settlementId` 和点位生成独立商人/守卫/求助者，商人库存与补货周期按聚落隔离；旧存档未绑定商人迁移到最近聚落并保留库存。死亡/失守不补生，战略恢复后重建。交易面板按商人 StableId 绑定，服务器反查聚落；对话/任务/HUD/地图按 NPC 聚落路由。M33-F1-T4 新增玩家级 `SettlementReputation`（`settlementId -> score` + 幂等键）、任务来源 `MissionLog v2`、每日交易上限与 `PlayerState v21` 声望摘要；单机/服务器任务、交易、守城/事件结算已接声望。M33-F1-T5 已接价格倍率、任务最低声望、五档对话态度与 `services` 硬限制。M33-F1-T6 新增 `river_camp`、四聚落独立任务池/库存/口吻；自定义对话节点与按聚落商品表仍需改 C++。
+- **M33-F1-T2/T3/T4/T5/T6 起所有聚落均接线**：单机/服务器按 `settlementId` 和点位生成独立商人/守卫/求助者，商人库存与补货周期按聚落隔离；旧存档未绑定商人迁移到最近聚落并保留库存。死亡/失守不补生，战略恢复后重建。交易面板按商人 StableId 绑定，服务器反查聚落；对话/任务/HUD/地图按 NPC 聚落路由。M33-F1-T4 新增玩家级 `SettlementReputation`（`settlementId -> score` + 幂等键）、任务来源 `MissionLog v2`、每日交易上限与 `PlayerState v21`（M33-F5-T2 起整体 v22）声望摘要；单机/服务器任务、交易、守城/事件结算已接声望。M33-F1-T5 已接价格倍率、任务最低声望、五档对话态度与 `services` 硬限制。M33-F1-T6 新增 `river_camp`、四聚落独立任务池/库存/口吻；自定义对话节点与按聚落商品表仍需改 C++。
 - 对话树为代码内置，`settlement.name` 只进入说话人，`dialogueProfile` 只选择内置开场口吻；当前没有对话 JSON，不能通过内容文件新增 NPC 类型、对话节点/选项或结果。
 - 交易报价全局固定 5 档，不能按聚落改商品表；实际价格按声望买卖倍率调整。守卫策略只有 `defend/retreat`。新增类型/策略需改 C++。
 - 追加聚落不会创建地图房间、墙体、床或容器；坐标、地面和可达性由地图/POI 作者保证。
@@ -461,7 +524,115 @@ mod 可在 `content/settlements.json` 追加同格式 `defs`，只允许新增 i
 - 必填 `id/name/stages/choices`；`id` 为 1~64 字节小写 `[a-z0-9_.]` 且全局唯一，`name` 1~128 字节。可选字段默认 `kind="custom"`、`minDay=1`、`maxDay=100000`、`weight=1.0`、`cooldownDays=1`、`warningMinutes=60`、`durationMinutes=30`、`region="any"`、`failureReputation=-5`、`failurePressure=5`。
 - `stages` 1~8 项：`kind` 为 `reach|interact|kill|loot|defend|choice`；`interact/kill/loot` 必须有 `target`；`count` 1~999，`radius` 0.5~128，`description` 0~256 字节。`choices` 1~8 项：`id/label` 必填，`reputation` -100~100，`rewardXp` 0~1000000，`rewardItem` 必须是已注册物品，`rewardItemCount` 1~9999，`pressure` -100~100（正值增加区域压力，负值缓解）。失败/超时使用事件的 `failureReputation/failurePressure`（声望 -100~100，压力 0~100）。
 - `nextEvent` 只能引用已加载事件（基础、更早 mod 或同文件）；缺失引用、自环、循环链或超过 8 段深度的事件会被跳过。单条非法定义跳过并告警；mod 文件无有效定义时整份拒绝，基础文件全部非法时加载失败。空 `defs` 或 `worldEvents.enabled=false` 表示无事件。
-- `mods/<id>/content/world_events.json` 必须有 `format` 和非空 `defs`，按加载顺序追加；重复 id、坏字段/坏奖励引用/坏链跳过，不能覆盖基础事件。M33-F2-T3 起世界事件字段进入内容指纹 v17；单机 content 热重载会随 `ContentBundle` 事务重读，联机仍需重启服务器和全部客户端后重连。M33-F2-T2 起 `WorldSimulation::WorldEventSystem` 使用加载后的配置排期；T3 已接生成/结算，T4 已接单机事件 HUD/电台/地图与自动超时结算，T5 已接服务器快照/选择命令/manifest v6/重连恢复；T6 已填 5 类基础内容并使链目标不参与随机主排期；T7 已补实际内容双客户端 15 游戏分钟流程、服务器重启恢复与重复结算幂等，并修复网络模式 HUD 刷新；终态内容清理、鼠标选项、独立聊天频道和离线参与者补发仍未接入，且热重载后导演配置副本不会自动重建（联机需重启服务器和全部客户端）。
+- `mods/<id>/content/world_events.json` 必须有 `format` 和非空 `defs`，按加载顺序追加；重复 id、坏字段/坏奖励引用/坏链跳过，不能覆盖基础事件。M33-F2-T3 起世界事件字段进入内容指纹 v17，M33-F3-T5 起整体 v19，M33-F4-T1 起 v20，M33-F5-T1 起 v21；单机 content 热重载会随 `ContentBundle` 事务重读，联机仍需重启服务器和全部客户端后重连。M33-F2-T2 起 `WorldSimulation::WorldEventSystem` 使用加载后的配置排期；T3 已接生成/结算，T4 已接单机事件 HUD/电台/地图与自动超时结算，T5 已接服务器快照/选择命令/manifest v6/重连恢复；T6 已填 5 类基础内容并使链目标不参与随机主排期；T7 已补实际内容双客户端 15 游戏分钟流程、服务器重启恢复与重复结算幂等，并修复网络模式 HUD 刷新；终态内容清理、鼠标选项、独立聊天频道和离线参与者补发仍未接入，且热重载后导演配置副本不会自动重建（联机需重启服务器和全部客户端）。
+
+### 3.6.3.6 同伴数据、招募、AI、装备背包、倒地、信任与 UI（M33-F3-T1/T2/T3/T4/T5/T6/T7）
+
+`assets/companions.json` 使用 `format: "companions-v1"`，根节点 `defs` 数组定义同伴；`config/game.json` 的 `companions.enabled/file` 控制基础文件。M33-F3-T1 建立数据契约与组件，T2 已接聚落招募/归队/解散待命，T3 已接跟随/停留/撤退、威胁选择与低血撤退，T4 已接初始装备/背包、武器伤害/护甲、倒地救援/死亡结算与世界存档，T5 已接信任/个人委托/动态对话，T6 已接 `ZLR1 CMPN` 只读复制、断线待命、重连 owner 恢复与服务器重启，T7 已接同伴面板/HUD、指令、赠礼、个人委托与救援交互。
+
+```json
+{
+  "format": "companions-v1",
+  "defs": [
+    {
+      "id": "companion_medic_lin",
+      "name": "林医生",
+      "background": "村庄营地的战地医护。",
+      "baseHealth": 95,
+      "startingLoyalty": 55,
+      "equipment": { "primary": "kitchen_knife", "body": "jacket" },
+      "inventoryCapacityKg": 10,
+      "inventory": [{ "item": "bandage", "count": 2 }],
+      "traits": ["field_medic"],
+      "recruit": {
+        "minReputationTier": "friendly",
+        "requiredMission": "settlement_help",
+        "requiredItem": "bandage",
+        "requiredItemCount": 2
+      },
+      "dialogueProfile": "companion_lin"
+    }
+  ]
+}
+```
+
+- 完整内置内容、DPS 公式与 T8 验收见 [docs/19-M33同伴数据与平衡.md](19-M33同伴数据与平衡.md)。
+- 必填：`id/name`；`id` 为 1–64 位小写字母/数字/`_`/`.`，`name` 1–128 字节。可选字段缺省：`background=""`、`baseHealth=100`（1–1000）、`startingLoyalty=50`（0–100）、`inventoryCapacityKg=12`（1–200）、`equipment` 空、`inventory=[]`、`traits=[]`、`personalQuest=[]`、`recruit.minReputationTier="friendly"`、`dialogueProfile=id`。
+- `equipment` 只接受 `primary`/`body` 两个槽位，物品必须存在于物品注册表；`inventory[]` 为 `{item,count}`，物品必须存在、count 1–999、同条目物品不重复、最多 16 条。`traits[]` 最多 8 个 token 且不重复。
+- `recruit.minReputationTier` 取 `hostile|wary|neutral|friendly|trusted`；`requiredMission` 必须是 target 聚落 `missionPool` 中的任务，并在招募时已 `Completed`；空字符串表示无前置任务。`requiredItem` 和 `requiredItemCount` 必须成对，物品必须存在。
+- `Companion` 组件保存 `defId/ownerStableId/homeSettlementId`；`CompanionState` 保存 `loyalty/command/standby/downed/dead/downedRemaining/personalStatus/personalStage/personalProgress/personalRewardMask/extraTraits/inventory/equipment`。生命复用通用 `ecs::Health`，避免和伤害/死亡系统形成两个真值源；`ValidateCompanionComponents` 校验 id/owner/home、生命、忠诚、指令、倒地/死亡互斥、个人委托边界/额外特长、背包容量/条目和装备槽。
+- 招募归属：聚落 `services` 必须包含 `recruit`；`FindSettlementCompanion` 选择第一条 `requiredMission` 属于该聚落 `missionPool` 的同伴定义。`EvaluateCompanionRecruitment` 统一校验声望档位、已完成任务、消耗物资和已有同伴；物资扣除在生成前完成，失败不改背包。
+- 服务器权威：`RecruitCompanion=51`/`DismissCompanion=52` 的 `payload.entityId` 为求助者 StableId。服务器重新校验实体/类型/同层/`building.actionRange+1`/聚落失守或夜袭/归属/唯一性；同一 `ownerStableId` 最多一名活动或待命同伴，解散后同一 StableId 回聚落待命，客户端不本地生成、扣物或改状态。T7 新增 `SetCompanionCommand=53`（flags 低 2 位 0/1/2 = follow/stay/retreat）、`GiftToCompanion=54`（index=玩家背包索引）、`AcceptCompanionQuest=55`、`AbandonCompanionQuest=56`、`RescueCompanion=57`；服务器复核 owner、同层、距离、倒地/死亡/待命、背包物品和委托状态，单机走同一规则。
+- mod 的 `content/companions.json` 必须有 `format` 和非空 `defs`，按加载顺序追加；重复 id、坏字段、未知物品引用跳过，不能覆盖基础定义。基础 `companions.enabled=false` 或缺少配置时同伴数据保持禁用；空 `defs` 只告警，仍允许后续 mod 追加。同伴定义（含 `personalQuest` 全部阶段/奖励字段）进入内容指纹 v19（M33-F4-T1 起整体 v20，M33-F5-T1 起 v21），单机 content 热重载会随 `ContentBundle` 整批重读，联机仍需重启服务器和全部客户端后重连。
+- AI（T3）：`CompanionSystem` 消费 `CompanionState.command` 的 `follow/stay/retreat`。`follow` 以 owner `Facing` 背后 3 格为落点，1.8–4.5 格内停步；`stay` 以切换时位置为锚点；`retreat` 回 owner（owner 不存在时回家位置），生命 ≤30% 自动撤退、恢复到 50% 解除。威胁仅在 owner 被锁定/攻击中或进入 owner 3.5 格时获取，取离 owner 最近者，最多在 owner 12 格 leash 内追击；owner 距离超过 40 格或目标异层时冻结。攻击只选敌对 `AiState`/聚落夜袭/基地围攻目标，排除玩家、友方、聚落 NPC、动物、其他同伴和 `NoCombatTarget`，近战伤害走通用伤害管线；跟随/停留/脱离陷阱落点避开武装 `SpikeTrap`。T8 起 AI/战斗参数从 `config/game.json` 的 `companions.ai.*` 读取（跟随即停 1.8–4.5、leash 12、冻结 40、低血 30%、恢复 50%、倒地 60 秒、救援 35%/2.5 格等）；主手武器伤害/冷却分别乘 `attackDamageScale=0.38`/`attackCooldownScale=1.20`，空手回退 `attackDamage=24`/`attackCooldown=0.85`，使内置同伴同武器 DPS 约为玩家的 31.67%。`CompanionAiState` 不存档/不复制；门/墙/建筑边界沿用静态 A* 通行位图，异层楼梯只冻结、不跨层寻路。
+- 装备/背包与倒地（T4）：生成时按 `equipment.primary/body` 放入主手/躯干（槽位不匹配只告警并跳过），按 `inventory` 放入初始物品（容量不足可部分放入）；主手武器 `combat.damage/range/cooldown/wear` 覆盖同伴近战参数，躯干 `armor` 派生 `DamageResist`，受击磨损后重算。`CompanionInventory` 提供入包/出包/换装/卸装/使用药品/装填弹药，迁移先试算容量再提交，失败回滚；药品和弹药规则由单机/服务器共用，不自动使用、不自动制作。生命 ≤0 进入 60 秒倒地窗口，`TryRescue` 在 2.5 格内恢复 35% 最大生命；窗口结束死亡并把装备/背包移入 `companion_corpse` 尸体容器（`LootContainer.searched=true`），死亡同伴保留实体并阻止再次招募/解散。`Companion`/`CompanionState` 已进入世界存档，`CompanionAiState` 仍不存档；T6 起联机客户端只读显示同伴。敌对 AI 当前仍主要锁定玩家，同伴通过火焰/环境/范围伤害与脚本承伤；专用同伴仇恨留后续。
+- 信任/对话/个人委托（T5）：`loyalty` 作为 0~100 信任值，四档阈值 25/50/75；同伴击杀敌人 +2，`GiftToCompanion` 从玩家背包原子转移物品并 +2，阶段完成按 `rewardTrust` 增加，全部钳制。`personalQuest` 最多 8 段，阶段按 `minTrust` 与上一段完成解锁；`kill`（target=`any` 或筛选标记）或 `gift`（物品 id）目标达到 count 后自动完成，按 `personalRewardMask` 只发一次 `rewardTrust/rewardTrait/rewardItem/rewardEquipSlot`，`extraTraits` 最多 8 个；死亡或显式 `FailCompanionQuest` 会中止当前阶段，可重新接取。`MakeCompanionDialogue` 按信任档、正常/低血/倒地/死亡和委托 Available/Active/Failed/Completed 生成不同文本与选项；`AcceptCompanionQuest`/`AbandonCompanionQuest` 已接同伴对话与服务器命令。`CompanionState` 存档组件升 v3，旧 v2 默认无委托；48 个内置组件不变。
+- 联机复制与重连（T6）：`ZLR1` 新增 `CMPN` 只读组件（defId、命令态、待命/倒地/死亡、信任、个人委托状态/阶段/进度/奖励 mask、倒地剩余），实体 metadata 带 owner StableId；位置/生命/朝向/动画沿用通用复制，装备从 `CompanionState.equipment` 复用 `EQUIP`，客户端副本只加 `FriendlyNpc`/`NoCombatTarget`，不本地生成 `Companion`/`CompanionState` 真值。旧负载无 `CMPN` 时安全显示为普通角色。玩家断线、死亡或同身份接管时服务器让归属同伴回所属聚落待命（位置不可用则原地清路径/AI），保留 StableId/owner，不重复生成；世界存档恢复 owner、生命、装备、信任、个人委托、额外特长和倒地状态。完整背包不复制，重连后需重新召回。
+- UI/HUD/交互（T7）：`game/CompanionUi` 生成只读面板文本，原生 `assets/ui/hud.rml` 与 `mods/core_ui`（Lua/Python 共用 `ui/hud.rml`）同步；`P` 开关面板（`CompanionPanel` 普通绑定），显示生命/状态/信任/装备/背包/个人委托，`1/2/3` 发送跟随/停留/撤退、`4` 赠礼当前快捷栏物品、`E` 靠近交谈/救援、`P/ESC` 关闭。HUD `companion-status` 按死亡/倒地/低血/远离/路径受阻/待命优先显示；聚落求助者交互提示和对话 hint 追加招募声望档位/当前分数/前置委托/物资。联机面板从只读 `CMPN` + `EQUIP` 构造，不显示完整背包；`GiftToCompanion` 一次只转移 1 件，换装/服药/装填未提供 UI；不做 RTS 框选/编队。
+- T2/T4/T5/T6/T7/T8 限制：同伴实体、信任、个人委托、装备和倒地状态已写世界存档；复制只含装备摘要而非完整背包，`CompanionAiState` 不复制、读档重建；玩家断线/死亡时同伴回聚落待命，重连只恢复 owner 关系不自动召回；个人委托是同伴专属链，不写入全局 `MissionLog`；`traits`/`extraTraits` 当前是持久化内容标签，不直接修改伤害/护甲公式；数据字段变更不应依赖临时行为。
+
+### 3.6.3.7 载具改装数据、组件、安装/拆除、效果、UI、联机与平衡（M33-F4-T1/T2/T3/T4/T5/T6）
+
+`assets/vehicle_mods.json` 使用 `format: "vehicle_mods-v1"`，根节点 `defs` 数组定义改装；`config/game.json` 的 `vehicleMods.enabled/file` 控制基础文件，`vehicleMods.removeRefundRatio=0.5` 控制拆除返还比例，`vehicleMods.removeSecondsScale=0.5` 控制拆除耗时倍率，`vehicleMods.weightAccelerationKg=400`/`weightFuelKg=600` 控制重量对加速/油耗的折算。第一版槽位固定为 `armor/storage/plow/lights/engine`，每辆车每个槽位最多装 1 个改装。T1 建立数据、合并、校验和内容指纹；T2 已接单机安装/拆除、`ecs::VehicleMods` 存档与面板；T3 已接效果聚合与驾驶/碰撞/车况/容量/灯光/油耗；T4 已移除 `O` 调试入口，改由后备箱/HUD 正常入口打开，并补齐逐槽效果与总览；T5 已接服务器安装/拆除命令、ZLR1 `VMOD` 只读摘要、联机面板写操作与重启/重连恢复；T6 固定 5 个内置改装的收益/代价、材料来源与全套总账，补充平衡测试和 1280 交付烟测，详见 [docs/20-M33载具改装数据与平衡.md](20-M33载具改装数据与平衡.md)。
+
+```json
+{
+  "format": "vehicle_mods-v1",
+  "defs": [{
+    "id": "vehicle_armor_plate",
+    "name": "焊接装甲板",
+    "description": "撞墙和感染者抓挠时更耐撞，但更重、更费油。",
+    "slot": "armor",
+    "installSeconds": 30,
+    "weightKg": 28,
+    "effects": {
+      "crashConditionScale": 0.68,
+      "zombieConditionScale": 0.72,
+      "fuelUseScale": 1.07
+    },
+    "materials": [
+      { "item": "repair_kit", "count": 2 },
+      { "item": "wood", "count": 4 }
+    ],
+    "excludes": []
+  }]
+}
+```
+
+- 必填：`id/name/slot/materials`；`id` 为 1–64 位小写字母/数字/`_`/`.`，`name` 1–96 字节；`slot` 只接受 5 个槽位。`description` 最多 384 字节。
+- `materials` 必须 1–4 条 `{item,count}`，物品必须已注册、同条目不重复、count 1–99；材料是按安装消耗，不新增货币。
+- `installSeconds` 缺省 10（0.1–600），`weightKg` 缺省 0（0–250）；`excludes` 最多 4 个已存在改装 id，不得自引用或重复。
+- `effects` 缺省为中性值；已知字段与范围：`crashConditionScale/zombieConditionScale/ramConditionScale` 0.25–2.0（缺省 1）、`ramDamageScale` 0.25–3.0（1）、`trunkCapacityKg` -20–80（0）、`trunkStacks` -2–6（0）、`headlightRangeScale/headlightBrightnessScale` 0.5–3.0（1）、`maxSpeedScale/accelerationScale` 0.5–2.0（1）、`fuelUseScale` 0.5–3.0（1）、`conditionWearScale` 0.25–2.0（1）。未知效果字段拒绝该条定义。
+- 内置 5 条覆盖全部槽位：焊接装甲板（碰撞/抓挠车况 x0.68/0.72，重量 28）、车顶行李架（容量 +24 kg、堆数 +2）、撞尸犁（撞尸伤害 x1.45、撞尸车况损耗 x0.65）、车顶探照灯（灯光范围 x1.45/亮度 x1.25）、发动机调校（极速 x1.18/加速 x1.12、油耗 x1.15、磨损 x1.10）。
+- 效果应用（T3）：`VehicleModStatsFor` 按已安装槽位求积/求和并再次 clamp；单集合计重量 0–500kg，加速重量项 `1/(1+weight/weightAccelerationKg)`、油耗重量项 `1+weight/weightFuelKg`。`VehicleStep` 使用极速/加速/油耗/撞墙车况倍率；车辆间碰撞用 `crashConditionScale`；撞击用 `ramDamageScale/ramConditionScale`；僵尸/危险动物攻击用 `zombieConditionScale`；`conditionWearScale` 叠加到以上所有车况损耗；`trunkCapacityKg` 直接加到 `vehicle.trunkCapacityKg`，`headlightRangeScale/headlightBrightnessScale` 只缩放夜间车灯光束。`trunkStacks` 仍参与校验/聚合但因现有 6 格背包/Loot UI 上限未应用，T3 只应用容量。
+- 效果文案与 UI（T4）：`VehicleModEffectSummary` 把单条改装的非中性效果格式化为 `撞墙车况 -32%`、`后备箱 +24kg`、`车灯范围 +45%` 等短句；`VehicleModStatsSummary` 输出总重、当前后备箱容量、极速/加速/油耗/撞墙/撞尸/撞击/车灯总览。面板每槽显示当前/候选名称、效果、材料、安装时间、重量、拆除耗时和返还；总览与当前状态来自已安装 defId，不另存 UI 文本。`trunkStacks` 不显示，因为现有 6 格 UI 尚未应用。
+- mod 的 `content/vehicle_mods.json` 必须有 `format` 和非空 `defs`，按加载顺序追加；重复 id、非法字段、越界效果、未知/重复材料、自互斥或未知互斥目标按单条跳过，合法条目保留，不覆盖基础定义。没有 `vehicleMods` 配置时改装功能保持禁用，旧车辆加载/驾驶不变。
+- 改装定义全部字段进入内容指纹（M33-F4-T1 起整体 **v20**，M33-F5-T1 起 **v21**），单机 content 热重载会随 `ContentBundle` 整批重读，联机仍需服务器和全部客户端使用相同内容后重连。
+- 运行时状态（T2/T3）：`ecs::VehicleMods` 按 5 个槽位保存 defId，注册为 `VMOD v1` 存档组件；`Vehicle` 组件存档升 **v4**（载荷不变，旧 v1–v3 仍可读），旧档没有 `VehicleMods` 时按无改装运行。世界快照/服务器重启会恢复改装；单机拆除最后一个改装时移除空组件，服务器保留空组件以便客户端增量复制。效果不单独存档，始终由已安装 defId 和当前内容重新派生。服务器读档/单机换车/安装/拆除时按基础后备箱容量重算容量，拆除行李架不会删除已有超重物品，只阻止继续装入。
+- 安装规则（T2）：同槽已被占用、目标定义不存在、与任一已安装改装双向 `excludes`、材料不足都拒绝；安装按 `installSeconds` 计时，完成时才事务扣除 `materials`，离开车辆/死亡/关闭面板中止且不扣材料。
+- 拆除规则（T2）：按 `installSeconds × removeSecondsScale` 计时（0.1–600 秒），完成时清空槽位并按 `floor(count × removeRefundRatio)` 返还每种材料；背包放不下的返还物掉在玩家脚下。改装定义从内容中移除后仍可拆除该未知 id，但不返还材料。
+- 单机交互（T2/T4）：靠近车辆（未驾驶/乘坐）按 `I` 打开背包/后备箱，后备箱标题下显示“车辆改装 · 查看槽位与效果”按钮，点击打开面板；原生背包与 `mods/core_ui` Lua/Python 背包共用该入口，不再绑定 `O` 调试键。HUD 在车辆附近提示 `I 后备箱/改装`。面板显示 5 槽当前/候选、效果、材料、安装时间、重量、拆除返还、进度和失败原因；鼠标安装/拆除，`ESC`/X 关闭。入口按背包实体 StableId 精确绑定车辆，并校验玩家未驾驶/乘坐、车辆存活/同层/在交互距离内。
+- 联机权威（T5）：新增 `InstallVehicleMod=58`（`payload.entityId=载具 StableId`、`index=槽位`、`targetIndex=该槽位候选索引`）与 `RemoveVehicleMod=59`（`index=槽位`）。服务器复核玩家非驾驶/乘坐、载具存活/空载/停稳、同层、距离、候选属于目标槽位、同槽占用/双向 `excludes`、材料计数；材料事务扣除后写权威组件，拆除按返还比例把材料加入玩家背包，溢出掉在玩家脚下。客户端不本地改 `VehicleMods`，只显示服务器快照与 `PlayerState` 状态。网络面板不再只读，候选/材料/安装/拆除按钮恢复。
+- 联机复制与恢复（T5）：ZLR1 新增 `VMOD` 只读组件，按 5 槽编码 defId 摘要，注册字节上限 384；客户端镜像到本地车辆 ECS。没有 `VMOD` 的旧 ZLR1 负载按无改装回退，不改 `VHCL` 旧字段。服务器世界存档沿用 `ecs::VehicleMods`/`VMOD v1`，重启或客户端重连后从全量快照恢复；服务器拆除空槽时保留空组件，确保增量快照能清空客户端旧槽位。
+- 平衡与交付（T6）：5 个内置改装全部有收益和明确代价；全套总重 86kg，极速 +18%、加速 -8%、油耗 +55%、撞墙 -25%、撞尸 -21%、撞击 +45%、车灯 +45%、后备箱 64kg。材料总消耗为维修包×8、木材×14、无线电零件×2、螺丝刀×1，全部来自现有搜刮表，不新增货币。`M33-F4-T6*` 固定单件取舍、全套总账、材料总账与 UI 摘要，完整公式与验收见 [docs/20-M33载具改装数据与平衡.md](20-M33载具改装数据与平衡.md)。
+- 当前限制：联机安装/拆除即时结算，单机保留施工进度；面板不显示未应用的货架格位。重量只影响加速/油耗，不改悬挂/制动；装甲不减乘员碰撞伤害；探照灯不改世界光照或 AI 感知；`trunkStacks` 尚未扩到 8 格 UI。
+
+### 3.6.3.8 潜行配置、输入与 HUD（M34-F1）
+
+- `config/game.json` 的 `stealth` 段控制单机/服务器共用的潜行规则：`enabled`、`crouchSpeedScale`（0.1–1.0，默认 0.55）、`stepNoiseScale`（0–1，默认 0.45）、`visibilityScale`（0.05–1，默认 0.65）、`backstabMultiplier`（1–3，默认 1.6）、`backstabHalfAngleDegrees`（0–180，默认 60）和 `exposeOnAttack`（默认 true）。非法/非有限值逐项回退默认并记录 warning，不影响启动。
+- 输入绑定 `input.bindings.Stealth` 默认 `N`，可在设置菜单改键；单机直接切换，联机发送服务器权威 `SetStealth=61`。攻击、投掷、受伤、上车、倒地/死亡会退出潜行；驾驶中服务器拒绝进入潜行。
+- 基线派生值：玩家步行 4.0 格/s → 蹲行 2.2 格/s；脚步噪声 2.5 格 → 1.125 格；AI 基础视距 12 格 ×0.65 = 7.8 格；`closeRadius=2.5` 内仍全向感知；背刺只对未警觉 AI 的单次近战 1.6 倍，不改变硬直/击退/耐久，不秒杀。
+- `Hud.GetState()` 提供 `stealthValid/stealthCrouched/stealthMoveSpeed/stealthFootstepRadius/stealthStatus/stealthTone`，以及单机本地感知字段 `stealthAwarenessValid/stealthNearbyAlertCount/stealthBackstabAvailable/stealthPrompt`。联机客户端只同步姿态/速度/脚步，`stealthAwarenessValid=false`，不复制 AI `alertness` 或背刺结果。
+- 潜行状态只存在于运行时 `ecs::StealthState`，不写世界存档；服务器只向 owner 同步摘要。`N` 键目前只影响僵尸 `PerceptionSystem` 的视觉视距和玩家脚步噪声；动物仍使用自身 `alertRadius`，不读取 `stealth.visibilityScale`。PvP 背刺、完全隐身、潜行技能树均不在 M34-F1 范围。
+
+### 3.6.3.9 投掷配置、输入、飞行与回收（M34-F2-T2/T3）
+
+- `config/game.json` 的 `throwing` 段：`cooldownSeconds`（0.1–10，默认 0.7）、`maxRange`（1–64，默认 12）、`minRange`（0–16，默认 1）；非法/非有限值回退默认，`minRange >= maxRange` 时两者回退默认并记录 warning。有效射程取 `min(item.throwable.range, throwing.maxRange)`。
+- `V` 仍是 `input.bindings.DemoProjectile` 的默认键，不新增动作。主手/当前快捷栏 1–5 有 `throwable` 时进入瞄准；两者都有时主手优先，否则回退枪械。瞄准中光标移到 HUD、进入建造/背包/菜单/其他模态、倒地/死亡、载具、目标不在已加载区域或距离小于 `minRange` 会拒绝/取消。
+- 瞄准会退出潜行（`StealthExitReason::Throw`），每帧按鼠标世界格更新落点；先按射程夹取，再沿玩家→落点采样已加载格/`blocksMovement` 对象，遇到墙或未加载区域时把落点和预览夹到墙前。预览绘制最大射程圈、落点 `impactRadius` 圈和按 `arcHeight` 抬升的抛物线，HUD action hint 显示“松开 V 投掷”和“墙前落点”。
+- 松开 `V` 时再次校验存活/倒地/驾驶/UI/冷却和来源物品，成功则从主手或当前快捷栏扣除 1 件，生成本地 `ThrownProjectile`（飞行时间按距离 0.18–1.2s），并开始 `throwing.cooldownSeconds` 冷却。飞行表现只为本地影子+抬升方块，不写存档、不复制。
+- 落地时在 `impactRadius` 内选择最近、同层、存活、非玩家/友方/`NoCombatTarget` 目标，经 `CombatSystem::ApplyDamage` 结算 `throwable.damage`（当前类型 `Blunt`，无额外击退/硬直），并在落点发送 `noiseRadius` 的 `SoundEvent`。`returnable=true` 时按 `breakChance` 掷骰：未损坏在落点生成同 condition 的 `ItemInstance` 并派发 `OnItemDrop`；损坏或 `returnable=false` 不生成地面物品。M34-F2-T4 起 `fire` 为运行时字段：落地按格心收集 `radius` 内格子（中心优先），逐格调用 `FireSystem.IgniteAt`，传入天气潮湿度和玩家 owner；只对新点燃格覆盖 `burnDuration/burnRemaining` 为 `minutes` 按 `game.dayLengthMinutes` 换算的现实秒。无易燃格/过湿只告警，不生成回收物；火焰伤害/蔓延/存档/联机沿用 M23，不新增协议。
+- F12 快速存档和退出前会立即结算所有在飞投掷物到落点并清空运行时，不保存飞行实体；进入世界/读档清空冷却和在飞列表。纯逻辑在 `game/Throwing.{h,cpp}`；`Hud.GetState()` 自 F2-T6 暴露 `throwValid/throwName/throwRange/throwReturnable/throwFire/throwCooldownRemaining/throwCooldownDuration/throwLastResult/throwTone/throwStatus`，单机显示本地结算，联机只显示“请求已发送”并以复制状态为准。F2-T7 完成：`ThrowItem=62` 服务器权威、落地音效/复制、客户端快捷栏本地选中同步、双客户端 1280 回归和 `throwable` 契约均已收口；不做远端逐帧投掷物、PvP 投掷或服务器逐投掷 HUD 回包。
 
 ### 3.6.4 Mod 搜刮表、觅食/钓鱼节点与 POI（X-F2b-2b / M23-F2a-T1/T3/T6）
 
@@ -579,6 +750,13 @@ mod 可在 `content/settlements.json` 追加同格式 `defs`，只允许新增 i
 - 现有实现不生成地图房间/墙体；`markerX/Y`、容器坐标和守军生成点需要作者保证可达。加载后自动复用现有 POI HUD 指引、容器生成、守军、任务奖励与 `PoiTasks`。
 - `sprite` 可引用基础或 mod 图集逻辑名；`tableId` 可引用基础或 mod 搜刮表；服务器也会按已加载 chunk 生成容器/守军并同步 POI 进度；仅运行时 `Content` API 动态追加不支持联机。
 - 示例 `mods/example_content` 的 `mod_depot` 使用 `mod_camp_cache`、`mod.supply_crate` 和 `camp_stew`，演示物品/战利品/POI/图集四类内容联动。
+- M33-F5-T1 起 POI 可选追加 `stages[]/entries[]/keys[]/branches[]/boss/narrative`，用于 2–3 阶段探索；`stages` 按数组顺序推进，`next` 只能指向后续阶段，`choice` 需 2–4 个后继，分支最多 2 条。无 `stages` 时保持单段 `task` 行为；有有效阶段时 `task` 可省略。字段、默认值、钥匙来源顺序与逐条跳过规则见 [docs/21-M33多阶段POI数据格式.md](21-M33多阶段POI数据格式.md)。这些字段全部进入内容指纹 v21。
+- M33-F5-T2 起阶段进度为**世界级、服务器/单机权威**：`PoiWorldProgress`（`PWPR`）保存当前/完成阶段、分支、钥匙标记、供电、失败/重试；进入 marker 16 格内启动。`reach/kill/loot` 已由位置、守军存活数和玩家持有物品自动判定；`interact/power/choice` 由 T3 接门禁、钥匙物品消耗、发电机和路线选择。阶段奖励使用玩家级 `PoiTasks.rewardClaims`（`poiId.stageId`）幂等，服务器只发给阶段完成时 32 格内玩家；`PoiTasks` 存档 v2，旧 v1 仍可读。`PlayerState v22` 追加只读 `poiStageProgress` 镜像（当前阶段/完成数/分支/失败/供电），客户端不自行推进。服务器重启和单机读档恢复世界进度，已完成 staged POI 不再补生成守军。注意 T2 仍要求 `containers` 至少有一个合法条目；阶段专属刷怪、Boss 失败、完整阶段 HUD/地图标记留 T4/T5。
+- M33-F5-T3 起 `keys[].source` 阶段会发放实际钥匙物品，`consumed` 控制门禁/入口使用时是否消耗；`entries[]` 可按钥匙从非首阶段进入，`choice` 可用快捷栏 1/2 选择路线。`power` 阶段消耗 `homestead.power.fuelItem`（默认 `fuel_can`），启动阶段坐标附近已有的 `ecs::Generator` 并写入 `powered`；电力系统关闭时允许手动合闸。服务器新增权威命令 `PoiInteract=60`（`payload.index`=POI 定义索引，`payload.targetIndex`=路线索引），复核距离/阶段/钥匙/燃料；单机/服务器 HUD 会提示缺钥匙、缺燃料、E 交互与路线选择，完整 HUD/地图留 T5。门禁仍是阶段坐标上的逻辑交互，不绑定可开关建造成门实体；入口为靠近自动进入，暂无独立入口 UI。
+- M33-F5-T4 起 `boss` 只在绑定的 `kill` 阶段生效：`BuildPoiStageEnemyPlan` 按阶段 `count` 生成 `boss.count` 个 Boss（截断到 `count`）和剩余精英，精英变体由 `stage.target` 选择 `fast|strong|armored|normal`，未知值回退 `armored`。Boss/精英带 `PoiStageEnemy`（Boss/Elite）并计入阶段击杀；`summon` 召唤物角色为 `Summon`，不参与阶段 `count`，阶段完成后统一清除。`pois.boss.*` 提供 `healthScale/resetRange/resetSeconds/summonIntervalSeconds/summonCount/summonMax/summonTotal/chargeIntervalSeconds/chargeSpeedScale/chargeSeconds` 调参：Boss 脱战超过 `resetSeconds` 会失败，返回 POI marker 16 格或入口 6 格内自动重试；服务器团灭也会失败。`PoiStageEnemy` 使用内置存档段 `PSEN`（内置组件 51）随实体保存，旧档无该组件时按无阶段敌人；`PlayerState v22` 与内容指纹 v21 不变。`fortify` 复用现有 `ZombieSpecial::Breaker` 破坏工事，`charge` 是速度倍率冲锋而非新动画；T4 不新增内置 Boss/精英内容（T6），完整阶段 HUD/地图/1280 截图留 T5。
+- M33-F5-T5 起单机/服务器 HUD 增加 `poi-stage-panel`：显示当前阶段/目标/钥匙/供电/路线/Boss 机制与当前阶段 `narrative[]` 文本；完成或失败后显示约 10 秒 `poi-result-panel`，不阻塞战斗。`narrative[].item` 只作为“文件：id”提示，实际搜刮仍应把物品 id 配到 `loot` 阶段 `target`；地图 POI 标记显示阶段/完成度并优先落在当前阶段坐标。HUD 字段通过 native/core_ui 与 Lua/Python `Hud.GetState` 的 `poiStage*`/`poiResult*` 暴露。T5 不新增内置 staged 内容（T6），门禁/Boss 截图是构造状态。
+
+- M33-F5-T6 起默认 M31 内容把诊所/检查站/农场仓改为 3 阶段：诊所 `triage_choice` 分支（急诊 Boss/药房搜刮），检查站巡逻记录→门禁卡→指挥官，农场到达→入库单→农场主；新增医院/检查站/农场笔记和门禁卡，旧 `village_demo` 仍为单段。T7 已验证双客户端共享 world 阶段、每人 `rewardClaims` 幂等、服务器重启后不重刷 Boss 或重复发奖，以及商队余波→招募→车辆改装→诊所 3 阶段→存档/继续读档的 15.3 游戏分钟循环。
 
 ### 3.6.5 Mod 任务与事件（X-F2b-2c）
 
@@ -681,6 +859,9 @@ local added = Content.RegisterItems(items)
 | `threatRemaining` / `threatDuration` | number | 受击边缘提示剩余/总时长（秒，用于淡出） |
 | `objective` / `objectiveTone` / `objectiveHint` | string | 目标文本、色调与附近交互提示 |
 | `poiGuide` / `poiGuideTone` | string | 最近未完成 POI 的威胁/方向/距离/任务进度文案与 `info`/`warn`/`ok`（M19-F2） |
+| `poiStageVisible` / `poiStageTone` | bool/string | 是否显示多阶段 POI 详情卡与 `info`/`warn`/`fail`/`ok` 色调（M33-F5-T5） |
+| `poiStageTitle` / `poiStageObjective` / `poiStageMeta` / `poiStageNarrative` | string | 阶段标题、当前目标、钥匙/供电/路线/Boss 条件与当前阶段叙事；字段为空时隐藏对应行（M33-F5-T5） |
+| `poiResultVisible` / `poiResultTitle` / `poiResultBody` / `poiResultTone` | bool/string | POI 完成/失败结果卡是否显示、标题、奖励/重试说明与 `info`/`ok`/`fail`；自动收起（M33-F5-T5） |
 | `missionGuide` / `missionTone` | string | 当前焦点任务的来源/进度/奖励文案与 `info`/`warn`/`ok`（M19-F3；`L` 切换、`K` 放弃） |
 | `eventGuide` / `eventTone` | string | 最近进行中随机事件的事件名/目标进度/方向/奖励与 `info`/`warn`/`ok`（M24-T5；不参与任务焦点切换） |
 | `siegeStatus` / `siegeTone` | string | 夜间守夜预警/波次文本与 `info`/`warn`/`fail` |
@@ -756,6 +937,42 @@ Hud.ClearField("depot_status")
 | `UI.SetProperty(documentId, elementId, property, value)` | 设置内联样式（如 `width`、`display`、`opacity`） |
 | `UI.GetValue` / `UI.SetValue` | 读写表单控件值 |
 | `UI.Focus(documentId, elementId)` | 聚焦元素 |
+
+`path` 必须位于当前 mod 根目录内，拒绝绝对路径和 `..`，第一版只允许 `.rml`。
+RML 里的 RCSS/图片相对路径由 RmlUi `JoinPath` 解析。
+
+HUD 类非模态文档应把 `body` 设为 `pointer-events:none`，只给按钮/可点击子元素设 `pointer-events:auto`；否则全屏 body 会拦截其他脚本 UI 和世界点击。`mods/core_ui/ui/hud.rcss` 与 `example_scripted_gameplay/ui/challenge.rcss` 采用该写法；世界点击移动会跳过光标下方有可交互 UI 的点击。
+
+生命周期：
+
+```text
+OnUiReady
+  -> 脚本 Load/Open 当前界面
+OnModReload（modId）
+  -> C++ 已卸载该 mod 的旧文档
+  -> 脚本重新创建 UI
+```
+
+热重载前 C++ 会强制 `UnloadOwner(modId)`；脚本错误禁用 mod 时也会卸载其文档。
+脚本通过 `UI.IsInputCaptured()` 或 `SetModal` 配合游戏输入；文本框焦点沿用现有焦点阻断。
+
+内置 HUD 依赖 `core_ui` 脚本 owner：owner 存在时 C++ 不加载 native HUD；owner 不存在
+（脚本禁用/加载失败）时自动回退到 `assets/ui/hud.rml`。`hud` group 由引擎在菜单/背包
+打开时统一隐藏，脚本无需自行处理这两个状态。
+
+主菜单/暂停菜单同样由 `core_ui` 的 `ui/menu.rml` 控制。C++ 在 `ShowMainMenu` /
+`ShowPauseMenu` 时同步发送 `OnMenuChanged`（暂停时没有 tick，不能依赖 `OnTick`）；
+脚本据此加载/显示文档。`core_ui` 未加载、菜单文档加载失败或脚本被禁用时，C++ 自动回退
+到 `assets/ui/menu.rml` 的 native `MenuPanel`。
+
+### 3.8.1 `Audio`（M35-F5-T3）
+
+| 接口 | 返回 | 说明 |
+|---|---|---|
+| `Audio.Play2D(clip, volume?)` | bool | 播放 `assets/audio/<clip>.wav`；`clip` 只允许字母/数字/`_`/`-`，不含扩展名或路径 |
+| `Audio.Play3D(clip, x, y, radius?, volume?)` | bool | 世界空间播放；`radius` 默认 0（音频引擎默认距离），有效范围 0~256 |
+
+`volume` 缺省 1，非有限值返回 false，有限值钳制到 0~1；`x/y` 必须有限。只播放已有 clip，不注册新资源；文件不存在、设备关闭/引擎未就绪或参数非法返回 false。`Audio.Play3D` 直接调用音频引擎，不写 `OnSound`，因此不会进入 AI 听觉；要引怪请用 `World.EmitSound`。调用不等待播放完成，首次文件解码仍沿用现有 miniaudio 同步加载路径。
 
 ### 3.9 `Menu`（内置菜单控制器）
 
@@ -945,34 +1162,104 @@ Lua 数组从 1 开始，Python 从 0 开始；槽位索引 `fromIndex/toIndex` 
 `Save.QuickSave` 的最终结果通过 `OnSaveBegin/OnSaveEnd` 与 HUD 提示反馈，写入由 `zl-save` 线程完成。
 `core_ui` 读档页每页显示 8 条，底部“上一页/下一页”翻页；删除后自动收敛页码。
 
-`path` 必须位于当前 mod 根目录内，拒绝绝对路径和 `..`，第一版只允许 `.rml`。
-RML 里的 RCSS/图片相对路径由 RmlUi `JoinPath` 解析。
+### 3.11.1 `Mod.Data`（跨存档脚本状态）
+
+`Mod.Data` 保存当前 mod 自己的字符串 key/value，按 mod id 自动隔离。适合最高波次、最佳成绩、解锁进度等小状态；复杂结构先用 `Json.Encode`（F4-T3）。
+
+| 接口 | 返回 | 说明 |
+|---|---|---|
+| `Mod.Id()` | string | 当前 mod id，便于日志/命名空间 |
+| `Mod.Data.Get(key)` | string/nil/None | 不存在返回 nil/None |
+| `Mod.Data.Set(key,value)` | bool | value 必须是字符串；非法/超限 false 且不覆盖旧值 |
+| `Mod.Data.Remove(key)` | bool | 不存在返回 false |
+| `Mod.Data.Keys()` | table/list | 当前 mod 的 key，字典序 |
+| `Mod.Data.Clear()` | bool | 清空当前 mod；无数据时幂等 true |
+
+限制：最多 256 个 mod；每 mod 最多 64 个 key；mod id ≤ 128 字节；key ≤ 64 字节；value ≤ 4096 字节；全局 key+value ≤ 128 KB。mod id/key 不能为空或含控制字符。`Set` 在副本上校验后一次提交，超限不会留下部分写入。
+
+```lua
+Mod.Data.Set("best_wave", tostring(wave))
+local best = Mod.Data.Get("best_wave")
+for _, key in ipairs(Mod.Data.Keys()) do
+    Log.Info(key .. "=" .. tostring(Mod.Data.Get(key)))
+end
+```
+
+```python
+Mod.Data.Set("best_wave", str(wave))
+best = Mod.Data.Get("best_wave")
+for key in Mod.Data.Keys():
+    print(key, Mod.Data.Get(key))
+```
 
 生命周期：
 
-```text
-OnUiReady
-  -> 脚本 Load/Open 当前界面
-OnModReload（modId）
-  -> C++ 已卸载该 mod 的旧文档
-  -> 脚本重新创建 UI
+- 热重载脚本保留数据；新游戏/换存档清空，读档恢复当前存档的数据。
+- 数据随世界实体快照保存；`Set` 后下一次存档生效。
+- 联机（loopback/client）下 `Get/Keys` 为空、`Set/Remove/Clear` 返回 false；每个 mod 每次加载最多警告一次。
+- 不参与内容指纹；换 mod 不自动清理旧数据，重新安装同名 mod 可恢复。
+- 应用退出不保证 `OnWorldExit`；需要保存的状态应在游戏中定期写，或写后调用 `Save.QuickSave()`。
+
+### 3.11.2 `Json`（双后端 JSON 工具）
+
+Lua 没有内置 JSON；`Json` 提供与 Python 后端同名的编解码，适合把复杂结构存入 `Mod.Data` 或传给 UI。
+
+| 接口 | 返回 | 说明 |
+|---|---|---|
+| `Json.Encode(value)` | string/nil | 支持对象/数组/字符串/数字/bool/null；失败返回 nil/None |
+| `Json.Decode(text)` | value/nil | JSON → Lua table / Python dict/list；失败返回 nil/None |
+| `Json.Array()` | array | 空数组标记；`Json.Encode(Json.Array()) == "[]"` |
+| `Json.Null()` | null | null 标记；Lua 解码 JSON null 得到该标记，Python 得到 `None` |
+
+Lua 规则：
+
+- key 为连续整数 `1..N` 的 table 编码为数组；空 table 编码为 `{}`（对象），空数组用 `Json.Array()`。
+- 非数组 table 的 key 必须是字符串；数字/混合 key 会编码失败。
+- JSON `null` 在嵌套结构中用 `Json.Null()` 保留；`Json.Encode(nil)` 顶层按 null 输出。
+- 对象 key 会排序，双后端输出稳定。
+
+Python 规则：用 `dict`/`list`；dict key 必须是 `str`；`None` 为 null，`Json.Array()` 返回 `[]`，`Json.Null()` 返回 `None`。
+
+```lua
+local text = Json.Encode({ wave = 3, tags = { "night", "rain" } })
+local value = Json.Decode(text)
+Mod.Data.Set("best_run", Json.Encode({ score = 1200, wave = 3 }))
 ```
 
-热重载前 C++ 会强制 `UnloadOwner(modId)`；脚本错误禁用 mod 时也会卸载其文档。
-脚本通过 `UI.IsInputCaptured()` 或 `SetModal` 配合游戏输入；文本框焦点沿用现有焦点阻断。
+限制：容器深度 ≤ 16、单个字符串 ≤ 64 KB、数组/对象 ≤ 1024 项；数字必须有限；循环引用失败并 `ZL_WARN`。非法 JSON、非法类型、超限、非字符串 `Decode` 输入均返回 nil/None。
 
-内置 HUD 依赖 `core_ui` 脚本 owner：owner 存在时 C++ 不加载 native HUD；owner 不存在
-（脚本禁用/加载失败）时自动回退到 `assets/ui/hud.rml`。`hud` group 由引擎在菜单/背包
-打开时统一隐藏，脚本无需自行处理这两个状态。
+### 3.7 `Craft` / `Build` / `Mission`（M35 只读目录与制作/建造动作）
 
-主菜单/暂停菜单同样由 `core_ui` 的 `ui/menu.rml` 控制。C++ 在 `ShowMainMenu` /
-`ShowPauseMenu` 时同步发送 `OnMenuChanged`（暂停时没有 tick，不能依赖 `OnTick`）；
-脚本据此加载/显示文档。`core_ui` 未加载、菜单文档加载失败或脚本被禁用时，C++ 自动回退
-到 `assets/ui/menu.rml` 的 native `MenuPanel`。
+| 接口 | 返回 | 说明 |
+|---|---|---|
+| `Craft.List()` | table | `{count,truncated,recipes=[...]}`；`recipes` 字段见下 |
+| `Craft.GetState()` | table | `{active,recipeId,outputDefId,outputLabel,outputCount,elapsed,duration,progress,batchTotal,batchCompleted,queue=[{recipeId,count}]}` |
+| `Craft.IsKnown(recipeId)` | bool | 是否已学会（锁定配方读 `KnownRecipes`） |
+| `Craft.Start(recipeId,count?)` | result | 开始制作/入队；`count` 1~99，缺省 1；校验配方/学会/材料/站点 |
+| `Craft.Cancel()` | result | 取消失败/清空制作队列；没有活跃批次与队列时 `ok=false` |
+| `Craft.Learn(recipeId)` | result | 仅单机；未知/已会拒绝，成功追加 `KnownRecipes` |
+| `Build.List()` | table | `{count,truncated,items=[...]}`；`items` 字段见下 |
+| `Build.CanPlace(defId,x,y,vertical?)` | result | 仅单机；预检距离/地面/占用/任务/系统开关/木材，不扣物品 |
+| `Build.Place(defId,x,y,vertical?)` | result | 放置；单机扣木材/触发事件，联机提交 `PlaceStructure` |
+| `Build.Demolish(x,y)` | result | 拆除；单机立即执行，联机提交 `DemolishStructure` |
+| `Build.Repair(x,y)` | result | 维修；单机立即执行，联机提交 `RepairStructure` |
+| `Build.ToggleDoor(x,y)` | result | 开关门；单机立即执行，联机提交 `ToggleDoor` |
+| `Mission.List(filter?)` | table | `{count,truncated,missions=[...]}`；`filter` 为 `all/active/available/completed/failed/locked`，缺省 `all` |
+| `Mission.Get(id)` | table 或 nil | 单个任务定义 + 玩家进度 |
+
+配方字段：`{index,id,name,category,categoryLabel,outputDefId,outputLabel,outputCount,seconds,station,stationLabel,stationNearby,known,canCraft,ingredients=[{defId,label,required,have,wear}],tools=[...],cookware?,fuel?}`。`index` 与 `Craft.Start` 的配方索引一致；`canCraft` 已包含已知/材料/工具/站点判定。
+
+`Craft.Start/Cancel` 映射到 `InventoryActionType::Craft/CancelCraft`：单机立即执行，loopback/KCP 提交成功返回 `queued=true`，实际结果由服务器通过 HUD/事件体现。`Start` 在提交前预检数量 1~99、配方存在、已学会、制作站与 `CanCraft`（材料/工具/锅具/燃料/输出空间）；`Cancel` 在无活跃批次与队列时 `ok=false`。`Craft.Learn` 仅 Direct，联机拒绝；成功只追加 `KnownRecipes`，不消耗物品。
+
+建造字段：`{index,id,name,sprite,woodCost,maxHp,blocksMovement,storageKg,storageSlots,layer,category,door,requiresMission}`。`index` 与建造目录顺序一致。
+
+`Build.CanPlace` 仅 Direct，复用建造模式的距离/地面/占用/任务/系统开关/木材预检，不扣木材；联机返回 `ok=false`（由服务器校验 `Build.Place`）。`Build.Place` 拒绝不支持竖向的建造项；Direct 走 `WorldDemoState` 放置路径（扣木材/生成设施或地图结构/建筑 XP/`OnBuildPlaced`），loopback/KCP 提交 `PlaceStructure`（`index`=目录索引，`flags bit0`=竖向）。`Build.Demolish/Repair/ToggleDoor` Direct 按格坐标查找玩家结构并校验距离/所有权/耐久/门口占用；联机分别提交 `DemolishStructure`（flags=0 立即执行）、`RepairStructure`、`ToggleDoor`。所有动作返回 `{ok,queued,error}`。
+
+任务字段：`{index,id,name,chain,order,kind,source,task,status,day,progress=[int...],objectives=[{kind,target,count,progress,description}],reward={xp,skill,item,itemCount,extraItem,extraItemCount,blueprint,label}}`。`status` 为 `active/completed/failed/available/locked`。
 
 ---
 
-## 4. 事件表 v1（`Events.On`）
+## 4. 事件表 v2（`Events.On`，向后兼容 v1）
 
 ```lua
 Events.On("事件名", function(e) ... end)   -- e 为字段表
@@ -982,13 +1269,24 @@ Events.Off("事件名", 某个函数)              -- 只取消指定函数
 
 | 事件 | 触发时机 | `e` 的字段 |
 |---|---|---|
-| `OnGameStart` | 新游戏开始（世界初始化后） | - |
+| `OnGameStart` | 应用启动、脚本加载后（可能还在主菜单，玩家未生成） | - |
+| `OnWorldStart` | 世界加载/新游戏后、玩家已生成（同步一次） | `saveId, isNewGame, day, playerId` |
+| `OnWorldExit` | 离开世界、自动存档前（同步一次） | `saveId` |
 | `OnTick` | 每个模拟 tick 末 | `tick` |
 | `OnPlayerMove` | 玩家到达点击移动的目标格 | `playerId, x, y, z` |
-| `OnPlayerDeath` | 玩家死亡（转尸体时） | `playerId` |
+| `OnPlayerDeath` | 玩家死亡（转尸体时） | `playerId, sourceId, cause`（`sourceId` 为击杀者稳定 ID，环境伤害为 0；`cause` 见下） |
+| `OnDamage` | 伤害实际扣血后（SP；每次扣血一条） | `targetId, sourceId, amount, damageType, cause, remainingHp, lethal, blocked`；闪避/弹反/完全格挡/零伤害不发 |
 | `OnZombieSpawn` | 僵尸实体生成/实体化 | `zombieId, x, y, z` |
-| `OnZombieDead` | 僵尸死亡（转尸体时） | `zombieId, killer`（`killer` 当前恒 0，伤害来源追踪未实现） |
+| `OnZombieDead` | 僵尸死亡（转尸体时） | `zombieId, killer`（`killer` 为 `LastDamage.sourceId`，未知为 0） |
+| `OnAnimalKilled` | 动物死亡（转尸体时） | `animalId, speciesId, killerId, x, y, z` |
 | `OnItemPickup` / `OnItemDrop` | 玩家拾取/丢弃物品 | `itemId, defId, count` |
+| `OnItemUsed` | 玩家成功使用消耗品/工具后（SP） | `playerId, defId, spoiled, remaining`；`remaining` 为使用后槽位剩余数量（0 = 空） |
+| `OnLootSearched` | 容器首次搜刮成功（SP） | `playerId, containerId, tableId, itemCount`；空容器也发，`itemCount=0`；重复搜索/失败不发 |
+| `OnCraftStart` | 一个制作批次开始（SP） | `playerId, recipeId, outputDefId, outputCount, batchCount`；`batchCount` 为实际开始件数（可能被材料/空间截断） |
+| `OnCraftFinished` | 一个制作批次完成/失败/中断（SP） | `playerId, recipeId, outputDefId, outputCount, batchCompleted, failed`；成功时 `failed=false` |
+| `OnBuildPlaced` | 建造成功（SP） | `playerId, defId, x, y, z, vertical`；x/y 为世界格坐标，`vertical` 为实际朝向 |
+| `OnBuildDemolished` | 拆除成功（SP） | `playerId, defId, x, y, z`；x/y 为世界格坐标 |
+| `OnBuildRepaired` | 维修成功（SP） | `playerId, x, y, z`；批量维修每个结构各发一条 |
 | `OnSound` | 世界声音（脚步/枪声等） | `x, y, z, radius, soundType, clip`（`soundType`：`"Generic"/"Gunshot"/"Impact"/"Footstep"/"ZombieGrowl"/"Ui"`；`clip` 为可选逻辑音效名） |
 | `OnChunkLoaded` / `OnChunkUnloaded` | 地图 chunk 加载/卸载 | `cx, cy` |
 | `OnModReload` | 某 mod 热重载成功后 | `modId` |
@@ -1000,6 +1298,11 @@ Events.Off("事件名", 某个函数)              -- 只取消指定函数
 
 注意事项：
 
+- `OnPlayerDeath.cause` 为小写稳定标识：`unknown/blunt/bite/claw/debug/bleed/starvation/dehydration/infection/hypothermia/fire/poison`；不要用它做本地化显示。
+- `OnDamage.damageType` 为小写 `DamageType`：`blunt/bite/claw/debug/fire`；`amount` 是护甲/格挡减伤后的实际伤害，`remainingHp` 最低为 0。普通格挡的剩余伤害仍会发事件（`blocked=true`）；闪避、弹反、完全格挡和零伤害不发。该事件 M35 只在单机派发。
+- `OnItemUsed` / `OnLootSearched` M35 也只在单机派发；`OnItemUsed.remaining` 是使用后槽位剩余数量（0 = 空；水壶替换为空瓶时仍为 1），蓝图/杂志学会配方时 `spoiled=false`。`OnLootSearched` 只在容器首次搜索成功时发一次，空容器 `itemCount=0`，重复搜索和搜索失败不发。
+- `OnCraftStart` / `OnCraftFinished` M35 只在单机派发；一个批次开始发一次 Start，批末完成/失败/取消发一次 Finished（不是每件一条）。`outputCount` 是每次制作产物数量，成功总产量为 `outputCount * batchCompleted`；`batchCompleted` 是批内已完成件数；失败/取消时 `failed=true`，材料中断时保留已完成件数，取消时已完成件数照常返回。无效 Start（配方不存在/未学会/缺材料/站位不符）不发 Start，仅队列取消（没有活跃批次）不发 Finished。
+- `OnBuildPlaced` / `OnBuildDemolished` / `OnBuildRepaired` M35 只在单机派发，联机建造/拆除/维修走服务器权威，事件留给 M36；放置/拆除/维修成功后才发，距离/木材/占用/归属/任务门槛拒绝不发。`OnBuildPlaced.vertical` 是实际朝向（不支持竖向的建造项恒为 false）。拆除首次按 X 只进入确认窗口，不发 Demolished；`OnBuildRepaired` 对“维修全部”中的每个实际修复结构各发一条，不含车辆/工具维修。
 - 世界事件是**排队派发**：世界系统产生的事件在当前 tick 末统一派发；脚本回调里再
   产生事件（如 `Zombies.Spawn`）会留到**下一 tick**，天然不会自己触发自己形成风暴。
 - `OnUiEvent` / `OnMenuChanged` / `OnInventoryChanged` 是例外：它们同步派发（不进入下一
@@ -1008,8 +1311,8 @@ Events.Off("事件名", 某个函数)              -- 只取消指定函数
 - `OnUiEvent` 的拖拽类型为 `dragstart / dragover / dragout / dragdrop / dragend`；
   `mouseX/mouseY` 为 RmlUi 文档坐标。
 - `OnUiReady` 是加载脚本 UI 的推荐时机；不要在脚本入口顶层直接加载界面。
-- `OnGameStart` 时玩家**尚未生成**（世界刚初始化）：要操作玩家请用 `OnTick`/`SetTimer`，
-  或先判 `Game.GetPlayerId() ~= 0`。
+- `OnGameStart` 是**应用启动、脚本加载后**（可能还在主菜单），玩家**尚未生成**；要操作玩家请用 `OnWorldStart`，或在 `OnTick`/`SetTimer` 里先判 `Game.GetPlayerId() ~= 0`。
+- `OnWorldStart` 在玩家实体已生成/读档实体恢复后同步发一次；`OnWorldExit` 在离开世界、自动存档前同步发一次。单机暂停菜单里的“返回主菜单”只是覆盖层，不算离开世界；应用进程退出时 EventBridge 已先释放，不能保证收到 `OnWorldExit`。
 - `OnPlayerMove` 目前只在**点击移动到达目标**时触发（WASD 无路点概念）。
 - 回调里可以随时 `Events.On/Off`（本轮已在派发的函数列表不受影响）。
 
@@ -1065,8 +1368,13 @@ stack traceback:
 可用：`print`、`assert/error/pairs/ipairs/type/tostring/tonumber/select/pcall/xpcall` 等基础函数，
 以及 `string` / `table` / `math` / `coroutine` / `utf8` 标准库。
 
-**不可用**（一律为 `nil`）：`os`、`io`、`debug`、`package`、`require`、`dofile`、`loadfile`、`load`。
-mod 不能读写任意文件、不能起进程、不能加载额外的 lua 文件（v1 单入口）。
+**不可用**（一律为 `nil`）：`os`、`io`、`debug`、`package`、`dofile`、`loadfile`、`load`。
+mod 不能读写任意文件、不能起进程。
+
+**Lua `require` 受限可用**：只能加载当前 mod 的 `<modRoot>/scripts/**` 下的 `.lua`，支持
+`require("util")` / `require("wave.director")` / `require("./local")`；拒绝 `..`、绝对路径、
+盘符/冒号和 symlink 逃逸。单文件 ≤ 1 MB、嵌套 ≤ 32 层、循环依赖报错；每个 mod 独立缓存，
+热重载清空。Python 后端仍只执行单入口 `main.py`，不支持本地模块 import（`import` 仅白名单标准库）。
 
 ---
 
@@ -1119,7 +1427,8 @@ Game.SetTimer(5, lambda: Log.Info('五游戏秒后提示一次'))
 - `print(...)` 也接到游戏日志（`[script-py] [mod-id]`）；`import` 白名单：
   `math/random/string/json/re/itertools/functools/collections/time/datetime/...`，
   其余 `ImportError`；`open/eval/exec/compile` 等不可用（防手滑，非强安全边界）；
-- 入口默认 `scripts/main.py`（可在 `mod.json` 的 `main` 显式指定）。
+- 入口默认 `scripts/main.py`（可在 `mod.json` 的 `main` 显式指定）；M35 不支持 Python 本地模块
+  import（不能 `import` 自己 scripts/ 下的 .py），需要多文件请用 Lua 后端。
 
 ---
 
@@ -1132,14 +1441,25 @@ Game.SetTimer(5, lambda: Log.Info('五游戏秒后提示一次'))
 | 中文日志乱码 | 脚本文件保存为 UTF-8（BOM 兼容） |
 | 改了文件没重载 | 确认保存成功；重载轮询默认 1 秒（`config/game.json` → `script.hotReloadSeconds`）；也可在配置里关闭 `script.hotReload` 排查 |
 | 想关掉全部脚本 | `config/game.json` → `script.enabled: false` |
-| 能加载别的 .lua 文件吗 | v1 不支持 `require`，把逻辑写进入口文件即可 |
+| 能加载别的 .lua 文件吗 | Lua 可 `require("util")` / `require("wave.director")` / `require("./local")`，只能在当前 mod 的 `scripts/**` 内，单文件 ≤1 MB、嵌套 ≤32 层；Python 仍单文件 |
 
 ---
 
 ## 9. v1 已知限制
 
-- 单入口脚本（无 `require`/多文件拆分）；无资源（贴图/音效）注册 API。
-- `OnZombieDead.killer` 恒 0；`OnPlayerMove` 仅点击移动到达；`OnSaveBegin/End` 已接入后台存档。
+- Lua 支持 `require` 多文件（仅 `<modRoot>/scripts/**`）；Python 仍单入口 `main.py`，不支持本地模块 import。无资源（贴图/音效）注册 API。
+- `OnZombieDead.killer` 来自 `LastDamage.sourceId`（环境/未知伤害为 0）；`OnPlayerMove` 仅点击移动到达；`OnSaveBegin/End` 已接入后台存档。
 - `Zombies.Count` 只统计实体僵尸（离屏虚拟僵尸不计）。
 - 死循环防护边界见 §6.4。
 - Python 后端（M8）与 Lua 共用同一套 Host API / 事件表（差异见 §7.1）；默认构建仍只带 Lua。
+
+---
+
+## 10. API v1 → v2 兼容
+
+- `mod.json` 省略 `api` 或声明 `"api": 1` 时继续加载，初始化日志有一条“API 版本较旧”告警；`api` 大于当前版本（2）仍拒绝加载。
+- v1 的 `Game/Player/World/Zombies/Items/Hud/Events/...` 函数签名与返回值保持不变；M35 新增 API/事件均为可选。
+- v1 兼容写 API 例外仍按本地行为执行：`Player.Teleport/AddItem`、`World.SpawnItem`、`Zombies.Spawn`；新写 API 在联机下 fail-closed。
+- 旧存档没有 `MDAT` 时 `Mod.Data` 为空（`Get` nil/None、`Keys` 空），M35 不要求旧档新增组件或迁移；`OnWorldStart` 在读档实体恢复后派发。
+- Lua `require` 是可选的；Python 仍单入口 `main.py`，不支持本地模块 import。v1 Python mod 的旧函数照常工作。
+- 回归：`M35-F4-T5` 覆盖 `api:1` 告警加载与 v1 `Log/Events`，`M35-F4-T1` 覆盖旧档无 `MDAT`；全量 Debug/Release/Python 由交付回归执行。

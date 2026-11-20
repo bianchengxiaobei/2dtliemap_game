@@ -1,4 +1,4 @@
-﻿#include <cstdint>
+#include <cstdint>
 #include <set>
 #include <string>
 #include <utility>
@@ -7,6 +7,7 @@
 #include <doctest/doctest.h>
 
 #include "ecs/EcsWorld.h"
+#include "game/PoiComponents.h"
 #include "game/ZombieFactory.h"
 #include "game/ZombieVariants.h"
 #include "save/ComponentRegistry.h"
@@ -158,7 +159,7 @@ TEST_CASE("M14-T7 ZombieVariant save roundtrip") {
     zl::save::ComponentRegistry components;
     std::string error;
     REQUIRE(zl::save::RegisterBuiltinComponents(components, &error));
-    CHECK(components.Size() == 46u);
+    CHECK(components.Size() == 53u);
 
     zl::ecs::EcsWorld source;
     const zl::ecs::Entity zombie = source.Create();
@@ -185,6 +186,43 @@ TEST_CASE("M14-T7 ZombieVariant save roundtrip") {
     REQUIRE(variant != nullptr);
     CHECK(variant->kind == zl::ecs::ZombieVariantKind::Armored);
     CHECK(variant->visualScale > 1.0f);
+}
+
+TEST_CASE("M33-F5-T4 PoiStageEnemy save roundtrip") {
+    zl::save::ComponentRegistry components;
+    std::string error;
+    REQUIRE(zl::save::RegisterBuiltinComponents(components, &error));
+
+    zl::ecs::EcsWorld source;
+    const zl::ecs::Entity zombie = source.Create();
+    source.Registry().emplace<zl::ecs::Position>(
+        zombie, zl::ecs::Position{12.5f, 13.5f, 0});
+    source.Registry().emplace<zl::ecs::PoiGuard>(
+        zombie, zl::ecs::PoiGuard{"staged_boss"});
+    source.Registry().emplace<zl::ecs::PoiStageEnemy>(
+        zombie, zl::ecs::PoiStageEnemy{
+                    "staged_boss", "boss",
+                    zl::game::PoiStageEnemyRole::Boss});
+
+    zl::save::SavedEntity saved;
+    REQUIRE(zl::save::CaptureEntity(source, zombie, components, &saved, &error));
+    const std::vector<std::uint8_t> bytes =
+        zl::save::EncodeEntitySnapshot(zl::save::EntitySnapshot{{saved}}, &error);
+    REQUIRE_FALSE(bytes.empty());
+    zl::save::EntitySnapshot decoded;
+    REQUIRE(zl::save::DecodeEntitySnapshot(bytes, &decoded, &error));
+
+    zl::ecs::EcsWorld target;
+    const zl::ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(loaded != zl::ecs::EcsWorld::kNull);
+    REQUIRE(zl::save::ApplyEntity(decoded.entities[0], target, loaded,
+                                  components, &error));
+    const auto* enemy = target.Registry().try_get<zl::ecs::PoiStageEnemy>(loaded);
+    REQUIRE(enemy != nullptr);
+    CHECK(enemy->poiId == "staged_boss");
+    CHECK(enemy->stageId == "boss");
+    CHECK(enemy->role == zl::game::PoiStageEnemyRole::Boss);
 }
 
 TEST_CASE("M30-T7 custom poise maxima are applied on spawn") {

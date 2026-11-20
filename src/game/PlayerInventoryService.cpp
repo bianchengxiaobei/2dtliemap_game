@@ -212,6 +212,44 @@ bool PlayerInventoryService::ApplyUseInfectionRisk(ecs::Entity player,
     return characters::TryInfectWithRisk(infection, risk, seed, wounds);
 }
 
+void PlayerInventoryService::EmitItemUsed(ecs::Entity player,
+                                          std::string_view defId, bool spoiled,
+                                          int remaining) {
+    if (m_events == nullptr) {
+        return;
+    }
+    m_events->EmitQueued(
+        core::kOnItemUsed,
+        core::ItemUsedEvent{m_world.IdOf(player).id, std::string(defId),
+                            spoiled, remaining});
+}
+
+void PlayerInventoryService::EmitCraftStart(ecs::Entity player,
+                                            const items::RecipeDef& recipe,
+                                            int batchCount) {
+    if (m_events == nullptr) {
+        return;
+    }
+    m_events->EmitQueued(
+        core::kOnCraftStart,
+        core::CraftStartEvent{m_world.IdOf(player).id, recipe.id,
+                              recipe.outputDefId, recipe.outputCount,
+                              batchCount});
+}
+
+void PlayerInventoryService::EmitCraftFinished(
+    ecs::Entity player, std::string_view recipeId, std::string_view outputDefId,
+    int outputCount, int batchCompleted, bool failed) {
+    if (m_events == nullptr) {
+        return;
+    }
+    m_events->EmitQueued(
+        core::kOnCraftFinished,
+        core::CraftFinishedEvent{m_world.IdOf(player).id, std::string(recipeId),
+                                 std::string(outputDefId), outputCount,
+                                 batchCompleted, failed});
+}
+
 void PlayerInventoryService::ApplyFoodUse(ecs::Entity player,
                                           const items::ItemDef& def,
                                           const items::UseResult& use) {
@@ -303,6 +341,7 @@ InventoryResult PlayerInventoryService::UseBag(ecs::Entity player, int index) {
             painRelieved = characters::ApplyPainRelief(
                 pain, use.effect.painRelief, use.effect.painReliefSeconds);
         }
+        EmitItemUsed(player, use.defId, use.spoiled, use.remaining);
         const std::string name = ItemLabel(m_items, use.defId);
         if (treatment.wounds > 0) {
             std::string message = "使用了 " + name + "：止血 " +
@@ -387,6 +426,12 @@ InventoryResult PlayerInventoryService::UseBag(ecs::Entity player, int index) {
         known->recipeIds.erase(
             std::unique(known->recipeIds.begin(), known->recipeIds.end()),
             known->recipeIds.end());
+        int remaining = 0;
+        if (static_cast<std::size_t>(index) < container->items.size() &&
+            container->items[static_cast<std::size_t>(index)].defId == def->id) {
+            remaining = container->items[static_cast<std::size_t>(index)].count;
+        }
+        EmitItemUsed(player, def->id, false, remaining);
         return Ok("学会了配方：" + labels);
     }
 
@@ -444,6 +489,7 @@ InventoryResult PlayerInventoryService::UseBag(ecs::Entity player, int index) {
         painRelieved = characters::ApplyPainRelief(
             pain, use.effect.painRelief, use.effect.painReliefSeconds);
     }
+    EmitItemUsed(player, use.defId, use.spoiled, use.remaining);
     const std::string name = ItemLabel(m_items, use.defId);
     if (ApplyUseInfectionRisk(player, use.defId, use.effect.infectionRisk)) {
         return Ok("使用了 " + name + "：污染导致感染", InventoryTone::Fail);
@@ -747,6 +793,13 @@ InventoryResult PlayerInventoryService::SearchLoot(ecs::Entity player,
     if (!result.searchedNow) {
         return Ok("容器已搜索", InventoryTone::Info);
     }
+    if (m_events != nullptr) {
+        m_events->EmitQueued(
+            core::kOnLootSearched,
+            core::LootSearchedEvent{m_world.IdOf(player).id,
+                                    m_world.IdOf(source).id, result.tableId,
+                                    result.totalItems});
+    }
     if (m_options.lootSearched) {
         m_options.lootSearched(player, result.tableId);
     }
@@ -949,6 +1002,7 @@ InventoryResult PlayerInventoryService::StartCraft(ecs::Entity player,
     if (actual != nullptr) {
         *actual = possible;
     }
+    EmitCraftStart(player, recipe, possible);
     return Ok("开始制作：" + recipe.name);
 }
 
@@ -1032,7 +1086,12 @@ bool PlayerInventoryService::TickCrafting(ecs::Entity player, float dt,
     auto failCraft = [&](const std::string& reason) {
         const int completed = job->batchCompleted;
         const int total = std::max(job->batchTotal, 1);
+        const std::string failedOutputDefId =
+            recipe != nullptr ? recipe->outputDefId : std::string();
+        const int failedOutputCount = recipe != nullptr ? recipe->outputCount : 0;
         ClearCrafting(*job);
+        EmitCraftFinished(player, recipeId, failedOutputDefId,
+                          failedOutputCount, completed, true);
         if (result != nullptr) {
             *result = Fail(completed > 0
                                ? "批量制作中断：已完成 " + std::to_string(completed) +
@@ -1104,6 +1163,8 @@ bool PlayerInventoryService::TickCrafting(ecs::Entity player, float dt,
     job->toolEfficiency = 1.0f;
     job->batchTotal = 0;
     job->batchCompleted = 0;
+    EmitCraftFinished(player, recipe->id, crafted.outputDefId,
+                      crafted.outputCount, completed, false);
     if (!job->queue.empty()) {
         const InventoryResult next = StartNextQueued(player, completion + "；");
         if (result != nullptr) {
@@ -1492,7 +1553,19 @@ InventoryResult PlayerInventoryService::Dispatch(ecs::Entity player,
             const int completed = job->batchCompleted;
             const int total = job->batchTotal;
             const int queued = static_cast<int>(job->queue.size());
+            const bool wasActive = job->active;
+            const std::string cancelledRecipeId = job->recipeId;
+            const items::RecipeDef* cancelledRecipe =
+                m_recipes.Find(cancelledRecipeId);
             ClearCrafting(*job);
+            if (wasActive) {
+                EmitCraftFinished(
+                    player, cancelledRecipeId,
+                    cancelledRecipe != nullptr ? cancelledRecipe->outputDefId
+                                               : std::string(),
+                    cancelledRecipe != nullptr ? cancelledRecipe->outputCount : 0,
+                    completed, true);
+            }
             if (queued > 0) {
                 return Ok("已取消制作队列（当前已完成 " + std::to_string(completed) +
                               "/" + std::to_string(total) + "，队列 " +

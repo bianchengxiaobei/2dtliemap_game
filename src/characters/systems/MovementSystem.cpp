@@ -1,6 +1,7 @@
 #include "characters/systems/MovementSystem.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <btBulletDynamicsCommon.h>
 
@@ -41,6 +42,15 @@ void MovementSystem::Update(ecs::EcsWorld& world, float dt) {
                 if (const auto* climate = registry.try_get<ecs::Climate>(e);
                     climate != nullptr) {
                     const float scale = std::clamp(climate->moveScale, 0.05f, 1.0f);
+                    velocity.x *= scale;
+                    velocity.y *= scale;
+                }
+                if (const auto* stealth = registry.try_get<ecs::StealthState>(e);
+                    stealth != nullptr && stealth->crouched) {
+                    const float scale =
+                        std::isfinite(stealth->speedScale)
+                            ? std::clamp(stealth->speedScale, 0.1f, 1.0f)
+                            : 1.0f;
                     velocity.x *= scale;
                     velocity.y *= scale;
                 }

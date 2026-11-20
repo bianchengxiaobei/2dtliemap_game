@@ -4,12 +4,15 @@
 #include <string>
 
 #include "game/Animals.h"
+#include "game/Companion.h"
 #include "game/Crops.h"
 #include "game/Forage.h"
 #include "game/ModContent.h"
 #include "game/Missions.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/Traps.h"
+#include "game/VehicleMods.h"
 #include "game/WorldEvent.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
@@ -34,6 +37,9 @@ struct ContentBundle {
     std::string missionSourceJson;
     SettlementConfig settlements;
     WorldEventConfig worldEvents;
+    CompanionConfig companions;
+    VehicleModsConfig vehicleMods;
+    TrapDefsConfig traps;
 };
 
 struct ContentBundleResult {

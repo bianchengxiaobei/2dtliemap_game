@@ -7,13 +7,16 @@
 #include <variant>
 #include <vector>
 
+#include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
 #include "characters/systems/DeathSystem.h"
 #include "core/EventBus.h"
 #include "core/GameEvents.h"
 #include "core/ScriptEvent.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
+#include "game/WorldLifecycle.h"
 #include "game/ZombieFactory.h"
 #include "script/EventBridge.h"
 #include "script/ScriptManager.h"
@@ -48,6 +51,24 @@ TEST_CASE("M7-T4：事件表 v1 翻译（EventBus 载荷 → 脚本字段）") {
         CHECK(event->name == "OnGameStart");
         CHECK(event->fields.empty());
     }
+    // OnWorldStart：saveId + isNewGame + day + playerId
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnWorldStart),
+            core::WorldStartEvent{"slot1", false, 3, 7}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "saveId", std::string("slot1")));
+        CHECK(FieldIs(*event, "isNewGame", false));
+        CHECK(FieldIs(*event, "day", static_cast<std::int64_t>(3)));
+        CHECK(FieldIs(*event, "playerId", static_cast<std::int64_t>(7)));
+    }
+    // OnWorldExit：saveId
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnWorldExit), core::WorldExitEvent{"slot1"}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "saveId", std::string("slot1")));
+    }
     // OnTick：tick int64
     {
         const auto event = script::EventBridge::Translate(
@@ -65,13 +86,41 @@ TEST_CASE("M7-T4：事件表 v1 翻译（EventBus 载荷 → 脚本字段）") {
         CHECK(FieldIs(*event, "y", 2.5));
         CHECK(FieldIs(*event, "z", static_cast<std::int64_t>(0)));
     }
-    // OnPlayerDeath：仅 playerId
+    // OnPlayerDeath：playerId + sourceId + cause
     {
+        core::PlayerEvent death{9, 3.0f, 4.0f, 0};
+        death.sourceId = 42;
+        death.cause = "bite";
         const auto event = script::EventBridge::Translate(
-            core::Event{std::string(core::kOnPlayerDeath), core::PlayerEvent{9, 3.0f, 4.0f, 0}});
+            core::Event{std::string(core::kOnPlayerDeath), death});
         REQUIRE(event.has_value());
         CHECK(FieldIs(*event, "playerId", static_cast<std::int64_t>(9)));
-        CHECK(event->fields.size() == 1);
+        CHECK(FieldIs(*event, "sourceId", static_cast<std::int64_t>(42)));
+        CHECK(FieldIs(*event, "cause", std::string("bite")));
+    }
+    // OnDamage：实际扣血字段（格挡剩余伤害带 blocked）
+    {
+        core::DamageEvent damage;
+        damage.targetId = 7;
+        damage.sourceId = 3;
+        damage.amount = 7.5f;
+        damage.damageType = ecs::DamageTypeName(ecs::DamageType::Claw);
+        damage.cause =
+            ecs::DamageCauseName(ecs::DamageCauseFromType(ecs::DamageType::Claw));
+        damage.remainingHp = 92.5f;
+        damage.lethal = false;
+        damage.blocked = true;
+        const auto event = script::EventBridge::Translate(
+            core::Event{std::string(core::kOnDamage), damage});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "targetId", static_cast<std::int64_t>(7)));
+        CHECK(FieldIs(*event, "sourceId", static_cast<std::int64_t>(3)));
+        CHECK(FieldIs(*event, "amount", 7.5));
+        CHECK(FieldIs(*event, "damageType", std::string("claw")));
+        CHECK(FieldIs(*event, "cause", std::string("claw")));
+        CHECK(FieldIs(*event, "remainingHp", 92.5));
+        CHECK(FieldIs(*event, "lethal", false));
+        CHECK(FieldIs(*event, "blocked", true));
     }
     // OnZombieSpawn：zombieId + x/y/z
     {
@@ -90,6 +139,19 @@ TEST_CASE("M7-T4：事件表 v1 翻译（EventBus 载荷 → 脚本字段）") {
         CHECK(FieldIs(*event, "zombieId", static_cast<std::int64_t>(5)));
         CHECK(FieldIs(*event, "killer", static_cast<std::int64_t>(3)));
     }
+    // OnAnimalKilled：animalId + speciesId + killerId + x/y/z
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnAnimalKilled),
+            core::AnimalKilledEvent{7, "deer", 3, 11.0f, 12.0f, 1}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "animalId", static_cast<std::int64_t>(7)));
+        CHECK(FieldIs(*event, "speciesId", std::string("deer")));
+        CHECK(FieldIs(*event, "killerId", static_cast<std::int64_t>(3)));
+        CHECK(FieldIs(*event, "x", 11.0));
+        CHECK(FieldIs(*event, "y", 12.0));
+        CHECK(FieldIs(*event, "z", static_cast<std::int64_t>(1)));
+    }
     // OnItemPickup / OnItemDrop：itemId + defId + count
     for (const std::string_view key : {core::kOnItemPickup, core::kOnItemDrop}) {
         const auto event = script::EventBridge::Translate(core::Event{
@@ -98,6 +160,89 @@ TEST_CASE("M7-T4：事件表 v1 翻译（EventBus 载荷 → 脚本字段）") {
         CHECK(FieldIs(*event, "itemId", static_cast<std::int64_t>(11)));
         CHECK(FieldIs(*event, "defId", std::string("bandage")));
         CHECK(FieldIs(*event, "count", static_cast<std::int64_t>(2)));
+    }
+    // OnItemUsed：playerId + defId + spoiled + remaining
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnItemUsed),
+            core::ItemUsedEvent{7, "canned_beans", true, 1}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "playerId", static_cast<std::int64_t>(7)));
+        CHECK(FieldIs(*event, "defId", std::string("canned_beans")));
+        CHECK(FieldIs(*event, "spoiled", true));
+        CHECK(FieldIs(*event, "remaining", static_cast<std::int64_t>(1)));
+    }
+    // OnLootSearched：playerId + containerId + tableId + itemCount
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnLootSearched),
+            core::LootSearchedEvent{7, 11, "test_crate", 4}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "playerId", static_cast<std::int64_t>(7)));
+        CHECK(FieldIs(*event, "containerId", static_cast<std::int64_t>(11)));
+        CHECK(FieldIs(*event, "tableId", std::string("test_crate")));
+        CHECK(FieldIs(*event, "itemCount", static_cast<std::int64_t>(4)));
+    }
+    // OnCraftStart：playerId + recipeId + outputDefId + outputCount + batchCount
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnCraftStart),
+            core::CraftStartEvent{7, "field_bandage", "bandage", 1, 3}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "playerId", static_cast<std::int64_t>(7)));
+        CHECK(FieldIs(*event, "recipeId", std::string("field_bandage")));
+        CHECK(FieldIs(*event, "outputDefId", std::string("bandage")));
+        CHECK(FieldIs(*event, "outputCount", static_cast<std::int64_t>(1)));
+        CHECK(FieldIs(*event, "batchCount", static_cast<std::int64_t>(3)));
+    }
+    // OnCraftFinished：playerId + recipeId + outputDefId + outputCount + batchCompleted + failed
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnCraftFinished),
+            core::CraftFinishedEvent{7, "field_bandage", "bandage", 1, 2, true}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "playerId", static_cast<std::int64_t>(7)));
+        CHECK(FieldIs(*event, "recipeId", std::string("field_bandage")));
+        CHECK(FieldIs(*event, "outputDefId", std::string("bandage")));
+        CHECK(FieldIs(*event, "outputCount", static_cast<std::int64_t>(1)));
+        CHECK(FieldIs(*event, "batchCompleted", static_cast<std::int64_t>(2)));
+        CHECK(FieldIs(*event, "failed", true));
+    }
+    // OnBuildPlaced：playerId + defId + x/y/z + vertical
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnBuildPlaced),
+            core::BuildPlacedEvent{7, "wall", 10, 11, 0, true}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "playerId", static_cast<std::int64_t>(7)));
+        CHECK(FieldIs(*event, "defId", std::string("wall")));
+        CHECK(FieldIs(*event, "x", static_cast<std::int64_t>(10)));
+        CHECK(FieldIs(*event, "y", static_cast<std::int64_t>(11)));
+        CHECK(FieldIs(*event, "z", static_cast<std::int64_t>(0)));
+        CHECK(FieldIs(*event, "vertical", true));
+    }
+    // OnBuildDemolished：playerId + defId + x/y/z
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnBuildDemolished),
+            core::BuildDemolishedEvent{7, "wall", 10, 11, 0}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "playerId", static_cast<std::int64_t>(7)));
+        CHECK(FieldIs(*event, "defId", std::string("wall")));
+        CHECK(FieldIs(*event, "x", static_cast<std::int64_t>(10)));
+        CHECK(FieldIs(*event, "y", static_cast<std::int64_t>(11)));
+        CHECK(FieldIs(*event, "z", static_cast<std::int64_t>(0)));
+    }
+    // OnBuildRepaired：playerId + x/y/z
+    {
+        const auto event = script::EventBridge::Translate(core::Event{
+            std::string(core::kOnBuildRepaired),
+            core::BuildRepairedEvent{7, 10, 11, 0}});
+        REQUIRE(event.has_value());
+        CHECK(FieldIs(*event, "playerId", static_cast<std::int64_t>(7)));
+        CHECK(FieldIs(*event, "x", static_cast<std::int64_t>(10)));
+        CHECK(FieldIs(*event, "y", static_cast<std::int64_t>(11)));
+        CHECK(FieldIs(*event, "z", static_cast<std::int64_t>(0)));
     }
     // OnSound：x/y/z/radius/soundType
     {
@@ -199,6 +344,70 @@ TEST_CASE("M7-T4：事件表 v1 翻译（EventBus 载荷 → 脚本字段）") {
                     .has_value());
 }
 
+TEST_CASE("M35-F2-T6 世界生命周期事件只发一次") {
+    core::EventBus bus;
+    std::vector<core::Event> starts;
+    std::vector<core::Event> exits;
+    bus.Subscribe(core::kOnWorldStart,
+                  [&starts](const core::Event& event) { starts.push_back(event); });
+    bus.Subscribe(core::kOnWorldExit,
+                  [&exits](const core::Event& event) { exits.push_back(event); });
+
+    game::WorldLifecycle lifecycle;
+    CHECK_FALSE(lifecycle.Exit(&bus, "before-start"));
+    CHECK(exits.empty());
+    CHECK_FALSE(lifecycle.Start(
+        &bus, game::WorldStartInfo{"", true, 1, 0}));
+    CHECK(starts.empty());
+
+    CHECK(lifecycle.Start(
+        &bus, game::WorldStartInfo{"slot1", false, 3, 7}));
+    REQUIRE(starts.size() == 1u);  // 同步派发
+    const auto* startPayload =
+        std::get_if<core::WorldStartEvent>(&starts[0].payload);
+    REQUIRE(startPayload != nullptr);
+    CHECK(startPayload->saveId == "slot1");
+    CHECK_FALSE(startPayload->isNewGame);
+    CHECK(startPayload->day == 3);
+    CHECK(startPayload->playerId == 7u);
+
+    CHECK_FALSE(lifecycle.Start(
+        &bus, game::WorldStartInfo{"slot2", true, 4, 8}));
+    CHECK(starts.size() == 1u);
+
+    CHECK(lifecycle.Exit(&bus, "slot1"));
+    REQUIRE(exits.size() == 1u);  // 同步派发
+    const auto* exitPayload =
+        std::get_if<core::WorldExitEvent>(&exits[0].payload);
+    REQUIRE(exitPayload != nullptr);
+    CHECK(exitPayload->saveId == "slot1");
+    CHECK_FALSE(lifecycle.Exit(&bus, "slot1"));
+    CHECK(exits.size() == 1u);
+
+    lifecycle.Reset();
+    CHECK(lifecycle.Start(
+        &bus, game::WorldStartInfo{"", true, 1, 9}));
+    REQUIRE(starts.size() == 2u);
+    const auto* newGamePayload =
+        std::get_if<core::WorldStartEvent>(&starts[1].payload);
+    REQUIRE(newGamePayload != nullptr);
+    CHECK(newGamePayload->saveId.empty());
+    CHECK(newGamePayload->isNewGame);
+    CHECK(newGamePayload->day == 1);
+    CHECK(newGamePayload->playerId == 9u);
+
+    CHECK(lifecycle.Exit(&bus, ""));
+    REQUIRE(exits.size() == 2u);
+    bus.FlushQueued();
+    CHECK(starts.size() == 2u);
+    CHECK(exits.size() == 2u);
+
+    game::WorldLifecycle noBus;
+    CHECK_FALSE(noBus.Start(
+        nullptr, game::WorldStartInfo{"", true, 1, 7}));
+    CHECK_FALSE(noBus.Exit(&bus, ""));
+}
+
 TEST_CASE("M7-T4：僵尸工厂发 OnZombieSpawn（排队；Flush 后到达）") {
     core::EventBus bus;
     std::vector<core::Event> captured;
@@ -226,31 +435,49 @@ TEST_CASE("M7-T4：僵尸工厂发 OnZombieSpawn（排队；Flush 后到达）")
     CHECK(captured.size() == 1);
 }
 
-TEST_CASE("M7-T4：DeathSystem 发 OnZombieDead / OnPlayerDeath") {
+TEST_CASE("M7-T4：DeathSystem 发 OnZombieDead / OnPlayerDeath / OnAnimalKilled") {
     core::EventBus bus;
     std::vector<core::Event> zombieEvents;
     std::vector<core::Event> playerEvents;
+    std::vector<core::Event> animalEvents;
     bus.Subscribe(core::kOnZombieDead,
                   [&zombieEvents](const core::Event& event) { zombieEvents.push_back(event); });
     bus.Subscribe(core::kOnPlayerDeath,
                   [&playerEvents](const core::Event& event) { playerEvents.push_back(event); });
+    bus.Subscribe(core::kOnAnimalKilled,
+                  [&animalEvents](const core::Event& event) { animalEvents.push_back(event); });
 
     ecs::EcsWorld ecs;
     characters::DeathSystem death(nullptr, 0.5f, &bus);
     entt::registry& registry = ecs.Registry();
 
-    // 玩家（有 PlayerTag）→ OnPlayerDeath
+    // 玩家（有 PlayerTag）→ OnPlayerDeath；环境伤害无击杀者。
     const ecs::Entity player = ecs.Create();
+    const std::uint64_t playerId = ecs.IdOf(player).id;
     registry.emplace<ecs::PlayerTag>(player);
     registry.emplace<ecs::Health>(player, ecs::Health{0.0f, 100.0f});
     registry.emplace<ecs::Dying>(player, ecs::Dying{0.05f});  // 倒地窗口即将结束
     registry.emplace<ecs::Position>(player, ecs::Position{1.0f, 2.0f, 0});
+    registry.emplace<ecs::LastDamage>(
+        player, ecs::LastDamage{ecs::DamageCause::Dehydration, 3.0f, 0});
 
-    // 僵尸（无 PlayerTag）→ OnZombieDead（killer 暂未知 = 0）
+    // 僵尸（无 PlayerTag）→ OnZombieDead；killer 来自 LastDamage.sourceId。
     const ecs::Entity zombie = ecs.Create();
     registry.emplace<ecs::Health>(zombie, ecs::Health{0.0f, 100.0f});
     registry.emplace<ecs::Dying>(zombie, ecs::Dying{0.05f});
     registry.emplace<ecs::Position>(zombie, ecs::Position{8.0f, 9.0f, 0});
+    registry.emplace<ecs::LastDamage>(
+        zombie, ecs::LastDamage{ecs::DamageCause::Blunt, 15.0f, playerId});
+
+    // 动物 → OnAnimalKilled（不再错发 OnZombieDead）。
+    const ecs::Entity animal = ecs.Create();
+    registry.emplace<ecs::Health>(animal, ecs::Health{0.0f, 30.0f});
+    registry.emplace<ecs::Dying>(animal, ecs::Dying{0.05f});
+    registry.emplace<ecs::Position>(animal, ecs::Position{5.0f, 6.0f, 1});
+    registry.emplace<ecs::Animal>(
+        animal, ecs::Animal{"deer", ecs::AnimalKind::Passive});
+    registry.emplace<ecs::LastDamage>(
+        animal, ecs::LastDamage{ecs::DamageCause::Blunt, 10.0f, playerId});
 
     death.Update(ecs, 0.1f);
     CHECK(zombieEvents.empty());  // 排队
@@ -260,13 +487,26 @@ TEST_CASE("M7-T4：DeathSystem 发 OnZombieDead / OnPlayerDeath") {
     const auto* zombiePayload = std::get_if<core::ZombieEvent>(&zombieEvents[0].payload);
     REQUIRE(zombiePayload != nullptr);
     CHECK(zombiePayload->zombieId == ecs.IdOf(zombie).id);
-    CHECK(zombiePayload->killerId == 0);
+    CHECK(zombiePayload->killerId == playerId);
     CHECK(zombiePayload->x == doctest::Approx(8.0f));
 
     REQUIRE(playerEvents.size() == 1);
     const auto* playerPayload = std::get_if<core::PlayerEvent>(&playerEvents[0].payload);
     REQUIRE(playerPayload != nullptr);
-    CHECK(playerPayload->playerId == ecs.IdOf(player).id);
+    CHECK(playerPayload->playerId == playerId);
+    CHECK(playerPayload->sourceId == 0u);
+    CHECK(playerPayload->cause == "dehydration");
+
+    REQUIRE(animalEvents.size() == 1);
+    const auto* animalPayload =
+        std::get_if<core::AnimalKilledEvent>(&animalEvents[0].payload);
+    REQUIRE(animalPayload != nullptr);
+    CHECK(animalPayload->animalId == ecs.IdOf(animal).id);
+    CHECK(animalPayload->speciesId == "deer");
+    CHECK(animalPayload->killerId == playerId);
+    CHECK(animalPayload->x == doctest::Approx(5.0f));
+    CHECK(animalPayload->y == doctest::Approx(6.0f));
+    CHECK(animalPayload->z == 1);
 
     // 无总线（events=nullptr）：不发事件
     ecs::EcsWorld quietEcs;

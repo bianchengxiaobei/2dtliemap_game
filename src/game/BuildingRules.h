@@ -152,8 +152,8 @@ inline bool IsVerticalBuildSprite(const BuildableDef& def,
             sprite == def.openSpriteVertical);
 }
 
-inline const std::array<BuildableDef, 15>& DefaultBuildables() {
-    static const std::array<BuildableDef, 15> kDefaults{{
+inline const std::array<BuildableDef, 18>& DefaultBuildables() {
+    static const std::array<BuildableDef, 18> kDefaults{{
         BuildableDef{.id = "barricade",
                      .name = "木栅栏",
                      .sprite = "object.barricade",
@@ -259,11 +259,32 @@ inline const std::array<BuildableDef, 15>& DefaultBuildables() {
                      .blocksMovement = false,
                      .category = "facility"},
         BuildableDef{.id = "electric_fence",
-                     .name = "电网",
+                     .name = "鐢电綉",
                      .sprite = "object.electric_fence",
                      .woodCost = 3,
                      .maxHp = 100.0f,
                      .blocksMovement = true,
+                     .category = "defense"},
+        BuildableDef{.id = "bear_trap",
+                     .name = "捕兽夹",
+                     .sprite = "object.trap",
+                     .woodCost = 3,
+                     .maxHp = 0.0f,
+                     .blocksMovement = false,
+                     .category = "defense"},
+        BuildableDef{.id = "tripwire_alarm",
+                     .name = "绊线警报",
+                     .sprite = "object.trap",
+                     .woodCost = 1,
+                     .maxHp = 0.0f,
+                     .blocksMovement = false,
+                     .category = "defense"},
+        BuildableDef{.id = "fuel_trap",
+                     .name = "燃油陷阱",
+                     .sprite = "object.trap",
+                     .woodCost = 4,
+                     .maxHp = 0.0f,
+                     .blocksMovement = false,
                      .category = "defense"},
     }};
     return kDefaults;

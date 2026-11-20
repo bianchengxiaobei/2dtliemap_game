@@ -53,6 +53,8 @@
 #include "game/Missions.h"
 #include "game/Poi.h"
 #include "game/PoiComponents.h"
+#include "game/PoiStageCombat.h"
+#include "game/ZombieVariants.h"
 #include "game/RandomEvents.h"
 #include "game/RegionEventDirector.h"
 #include "game/Homestead.h"
@@ -60,16 +62,20 @@
 #include "game/Objectives.h"
 #include "game/PlayerInventoryService.h"
 #include "game/PlayerCombat.h"
+#include "game/StealthConfig.h"
 #include "game/SettlementNpc.h"
 #include "game/SettlementReputation.h"
 #include "game/StrategicDirector.h"
 #include "game/StrategicMap.h"
 #include "game/PlayerStorage.h"
 #include "game/StructureComponents.h"
+#include "game/TrapSystem.h"
+#include "game/Traps.h"
 #include "game/VehicleComponents.h"
 #include "game/WorldEventDirector.h"
 #include "game/WorldEventRuntime.h"
 #include "game/WorldQueries.h"
+#include "game/CompanionSystem.h"
 #include "game/WorldSimulation.h"
 #include "world/WorldGraph.h"
 #include "world/WorldSelection.h"
@@ -401,6 +407,7 @@ bool ServerHost::Init(const Options& options, std::string* error) {
     m_houseLootContainersSpawned = false;
     m_worldLoadedFromSave = false;
     m_poiRuntime.clear();
+    m_serverPoiBossResetTimers.clear();
     m_serverEventReady.clear();
     m_serverColdSnapEvents.clear();
     m_serverEventDay = 0;
@@ -464,6 +471,8 @@ bool ServerHost::Init(const Options& options, std::string* error) {
         static_cast<float>(m_config->Get<double>("combat.playerStaggerSeconds", 0.35));
     m_attackWear =
         static_cast<float>(m_config->Get<double>("combat.playerWearPerHit", 0.0));
+    m_stealthRules = game::LoadStealthRuleConfig(*m_config);
+    m_throwingConfig = game::LoadThrowingConfig(*m_config);
     m_pvpEnabled = m_config->Get<bool>("combat.pvp", false);
     m_gunshotRadius = static_cast<float>(
         m_config->Get<double>("sounds.gunshotRadius", 30.0));
@@ -763,6 +772,10 @@ bool ServerHost::Init(const Options& options, std::string* error) {
         std::max(0.0, m_config->Get<double>("net.projectileCooldownSeconds", 0.5));
     m_projectileCooldownTicks = static_cast<std::uint64_t>(std::llround(
         projectileCooldownSeconds * static_cast<double>(m_options.tickRate)));
+    m_throwCooldownTicks = std::max<std::uint64_t>(
+        1, static_cast<std::uint64_t>(std::llround(
+               m_throwingConfig.cooldownSeconds *
+               static_cast<double>(m_options.tickRate))));
     const double chatCooldownSeconds =
         std::max(0.0, m_config->Get<double>("net.chatCooldownSeconds", 1.0));
     m_chatCooldownTicks = static_cast<std::uint64_t>(std::llround(
@@ -895,7 +908,8 @@ bool ServerHost::Init(const Options& options, std::string* error) {
     const std::uint64_t computedContentHash = game::ComputeContentHash(
         *m_items, *m_recipes, m_buildables, *m_lootTables, *m_poiConfig,
         *m_missionConfig, modsHash, m_forage.get(), m_animals.get(),
-        m_crops.get(), m_settlements.get(), m_worldEvents.get());
+        m_crops.get(), m_settlements.get(), m_worldEvents.get(),
+        m_companions.get(), m_vehicleMods.get(), m_traps.get());
     if (m_options.contentHash == 0) {
         const std::int64_t configuredContentHash =
             m_config->Get<std::int64_t>("net.contentHash", 0);
@@ -925,6 +939,7 @@ bool ServerHost::Init(const Options& options, std::string* error) {
     simulationOptions.settlements = m_settlements.get();
     simulationOptions.worldEvents = m_worldEvents.get();
     simulationOptions.strategic = m_strategic.get();
+    simulationOptions.companions = m_companions.get();
     simulationOptions.spawnAnimals = m_options.spawnAnimals;
     simulationOptions.fire = m_fire.get();
     simulationOptions.tasks = m_tasks.get();
@@ -1119,6 +1134,7 @@ bool ServerHost::LoadContent(std::string* error) {
             *error = "服务器 M31 内容配置加载失败：" + m_selectedContentFile;
             return false;
         }
+        contentProfile.ApplyCommandLine(m_options.argc, m_options.argv);
         contentConfig = &contentProfile;
     }
     m_items = std::make_unique<items::ItemRegistry>();
@@ -1305,6 +1321,81 @@ bool ServerHost::LoadContent(std::string* error) {
     m_worldEventDetailRadius = static_cast<float>(std::clamp(
         m_config->Get<double>("worldEvents.detailRadius", 32.0), 0.0, 256.0));
 
+    m_companions = std::make_unique<game::CompanionConfig>();
+    std::string companionError;
+    if (!game::LoadCompanionConfig(*m_config, m_companions.get(),
+                                   &companionError, m_items.get())) {
+        ZL_ERROR("companions", "服务器同伴配置加载失败：{}", companionError);
+    } else {
+        game::CompanionMergeStats companionStats;
+        if (m_companions->enabled) {
+            for (const std::string& modCompanion :
+                 modContent.companionFiles) {
+                if (!game::MergeCompanionFile(
+                        modCompanion, m_companions.get(), &companionStats,
+                        &companionError, m_items.get())) {
+                    ZL_WARN("companions", "服务器跳过 mod 同伴文件 {}：{}",
+                            modCompanion, companionError);
+                }
+            }
+            ZL_INFO("companions", "服务器同伴配置：{} 个（mod 文件 {}，新增 {}）",
+                    m_companions->defs.size(), companionStats.filesLoaded,
+                    companionStats.defsAdded);
+        }
+    }
+
+    m_vehicleMods = std::make_unique<game::VehicleModsConfig>();
+    std::string vehicleModError;
+    if (!game::LoadVehicleModConfig(*m_config, m_vehicleMods.get(),
+                                    &vehicleModError, m_items.get())) {
+        ZL_ERROR("vehicle-mods", "服务器车辆改装配置加载失败：{}",
+                 vehicleModError);
+    } else {
+        game::VehicleModMergeStats vehicleModStats;
+        if (m_vehicleMods->enabled) {
+            for (const std::string& modVehicleMod :
+                 modContent.vehicleModFiles) {
+                if (!game::MergeVehicleModFile(
+                        modVehicleMod, m_vehicleMods.get(), &vehicleModStats,
+                        &vehicleModError, m_items.get())) {
+                    ZL_WARN("vehicle-mods", "服务器跳过 mod 车辆改装文件 {}：{}",
+                            modVehicleMod, vehicleModError);
+                }
+            }
+            ZL_INFO("vehicle-mods",
+                    "服务器车辆改装配置：{} 个（mod 文件 {}，新增 {}，跳过 {}）",
+                    m_vehicleMods->defs.size(), vehicleModStats.filesLoaded,
+                    vehicleModStats.defsAdded, vehicleModStats.defsSkipped);
+        }
+    }
+
+    m_traps = std::make_unique<game::TrapDefsConfig>();
+    std::vector<game::BuildableDef> trapBuildables =
+        game::LoadBuildableDefs(*m_config);
+    game::AppendBuildableDefs(trapBuildables, m_modBuildables);
+    std::string trapError;
+    if (!game::LoadTrapDefsConfig(*m_config, trapBuildables, m_traps.get(),
+                              &trapError)) {
+        ZL_ERROR("traps", "服务器陷阱配置加载失败：{}", trapError);
+        m_traps->enabled = false;
+        m_traps->defs.clear();
+    } else if (m_traps->enabled) {
+        game::TrapMergeStats trapStats;
+        for (const std::string& modTrap : modContent.trapFiles) {
+            if (!game::MergeTrapFile(modTrap, m_traps.get(), &trapStats,
+                                     trapBuildables, &trapError)) {
+                ZL_WARN("traps", "服务器跳过 mod 陷阱文件 {}：{}", modTrap,
+                        trapError);
+            }
+        }
+        ZL_INFO("traps", "服务器陷阱配置：{} 个（mod 文件 {}，新增 {}，跳过 {}）",
+                m_traps->defs.size(), trapStats.filesLoaded,
+                trapStats.defsAdded, trapStats.defsSkipped);
+    }
+    if (m_simulation != nullptr) {
+        m_simulation->SetTrapDefs(m_traps.get());
+    }
+
     m_strategic = std::make_unique<game::StrategicConfig>();
     const std::string strategicFile = m_config->Get<std::string>(
         "strategic.file", "assets/strategic.json");
@@ -1360,6 +1451,7 @@ void ServerHost::Shutdown() {
         return;
     }
     m_running = false;
+    SettleServerThrows("shutdown");
     if (m_serverBaseSiege.Active()) {
         m_serverBaseSiege.Abort("服务器关闭，守夜中止", false);
     }
@@ -1380,6 +1472,7 @@ void ServerHost::Shutdown() {
     m_sessions.clear();
     m_chatLog.clear();
     m_socialDirty = true;
+    m_serverThrows.clear();
     m_serverVehicles.clear();
     m_forageReservations.clear();
     m_animalHarvestReservations.clear();
@@ -1690,11 +1783,14 @@ void ServerHost::Tick(float dt) {
     TickServerSurvival(dt);
     TickServerAnimalHarvest(dt);
     UpdateProjectiles(dt);
+    UpdateServerThrows(dt);
     UpdateTransientEffects(dt);
 
     UpdatePlayerLifecycle();
+    UpdateServerStealth();
     m_simulation->Flush();
     m_events->FlushQueued();
+    TickServerPoiStages(dt);
     TickServerPoiTasks();
     TickServerMissions();
     TickServerObjectives();
@@ -1799,6 +1895,9 @@ void ServerHost::PollNetwork() {
                                                "同身份接管");
                     CaptureSessionProfile(existingSession->second,
                                           existingSession->second.dead);
+                    StandbyOwnedCompanion(
+                        existingSession->second.playerStableId,
+                        "同身份接管");
                     if (m_simulation != nullptr &&
                         existingSession->second.playerStableId != 0) {
                         const ecs::Entity oldPlayer = m_simulation->Ecs().FindById(
@@ -2027,6 +2126,7 @@ bool ServerHost::SpawnOrRestoreSessionPlayer(std::uint64_t sessionId,
 
     session.playerStableId = m_simulation->Ecs().IdOf(player).id;
     session.spawned = true;
+    ResetServerStealth(session, player, "生成/恢复");
     m_socialDirty = true;
     if (session.playerStableId == 0) {
         ZL_ERROR("net", "session={} 玩家实体缺少 StableId", session.identity);
@@ -2079,6 +2179,8 @@ bool ServerHost::SpawnOrRestoreSessionPlayer(std::uint64_t sessionId,
     session.attackUsed = false;
     session.lastProjectileTick = 0;
     session.projectileUsed = false;
+    session.throwUsed = false;
+    session.lastThrowTick = 0;
     session.rangedWeapon = {};
     session.rangedShotSerial = 0;
     if (profile != nullptr && !profile->hasSnapshot) {
@@ -3375,6 +3477,120 @@ void ServerHost::SetSessionStatus(SessionPlayer& session, std::string message,
     session.stateDirty = true;
 }
 
+bool ServerHost::SetServerStealth(SessionPlayer& session, ecs::Entity player,
+                                  bool crouched, std::string* error) {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (!m_stealthRules.enabled) {
+        return fail("服务器未启用潜行");
+    }
+    if (m_simulation == nullptr || player == entt::null ||
+        !m_simulation->Ecs().Alive(player)) {
+        return fail("权威玩家实体不存在");
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    const auto* health = registry.try_get<ecs::Health>(player);
+    if (health == nullptr || !std::isfinite(health->current) ||
+        health->current <= 0.0f || registry.all_of<ecs::Dying>(player)) {
+        return fail("倒地/死亡状态无法切换潜行");
+    }
+    if (session.drivingVehicleId != 0 ||
+        registry.all_of<ecs::VehicleOccupant>(player)) {
+        return fail("驾驶中无法切换潜行");
+    }
+    auto& state = registry.get_or_emplace<ecs::StealthState>(player);
+    const characters::StealthScales scales =
+        characters::StealthScalesFor(crouched, m_stealthRules);
+    state.crouched = crouched;
+    state.speedScale = scales.speedScale;
+    state.noiseScale = scales.noiseScale;
+    state.visibilityScale = scales.visibilityScale;
+    session.stealthHealth = crouched ? health->current : -1.0f;
+    session.stateDirty = true;
+    ZL_INFO("stealth", "服务器潜行切换：玩家 {} {}（速度 x{:.2f}，噪声 x{:.2f}，可视 x{:.2f}）",
+            session.playerStableId, crouched ? "进入" : "退出",
+            static_cast<double>(state.speedScale),
+            static_cast<double>(state.noiseScale),
+            static_cast<double>(state.visibilityScale));
+    return true;
+}
+
+void ServerHost::ResetServerStealth(SessionPlayer& session, ecs::Entity player,
+                                    const char* reason) {
+    session.stealthHealth = -1.0f;
+    if (m_simulation == nullptr || player == entt::null ||
+        !m_simulation->Ecs().Alive(player)) {
+        return;
+    }
+    auto* state =
+        m_simulation->Ecs().Registry().try_get<ecs::StealthState>(player);
+    if (state == nullptr) {
+        return;
+    }
+    const bool wasCrouched = state->crouched;
+    state->crouched = false;
+    state->speedScale = 1.0f;
+    state->noiseScale = 1.0f;
+    state->visibilityScale = 1.0f;
+    if (wasCrouched) {
+        session.stateDirty = true;
+        ZL_INFO("stealth", "服务器退出潜行：玩家 {}（{}）",
+                session.playerStableId,
+                reason != nullptr ? reason : "状态变化");
+    }
+}
+
+void ServerHost::UpdateServerStealth() {
+    if (m_simulation == nullptr) {
+        return;
+    }
+    for (auto& [sessionId, session] : m_sessions) {
+        static_cast<void>(sessionId);
+        if (session.playerStableId == 0 || !session.spawned) {
+            continue;
+        }
+        const ecs::Entity player =
+            m_simulation->Ecs().FindById(session.playerStableId);
+        if (player == entt::null) {
+            continue;
+        }
+        entt::registry& registry = m_simulation->Ecs().Registry();
+        auto* state = registry.try_get<ecs::StealthState>(player);
+        if (state == nullptr) {
+            session.stealthHealth = -1.0f;
+            continue;
+        }
+        const auto* health = registry.try_get<ecs::Health>(player);
+        const float healthNow =
+            health != nullptr && std::isfinite(health->current)
+                ? health->current
+                : -1.0f;
+        if (!state->crouched) {
+            session.stealthHealth = healthNow;
+            continue;
+        }
+        const char* reason = nullptr;
+        if (healthNow <= 0.0f || registry.all_of<ecs::Dying>(player)) {
+            reason = "倒地/死亡";
+        } else if (session.drivingVehicleId != 0 ||
+                   registry.all_of<ecs::VehicleOccupant>(player)) {
+            reason = "进入载具";
+        } else if (session.stealthHealth >= 0.0f &&
+                   healthNow >= 0.0f &&
+                   healthNow < session.stealthHealth - 0.01f) {
+            reason = "受到伤害";
+        }
+        session.stealthHealth = healthNow;
+        if (reason != nullptr) {
+            ResetServerStealth(session, player, reason);
+        }
+    }
+}
+
 void ServerHost::FillPlayerState(const SessionPlayer& session,
                                  net::PlayerState* state) {
     if (state == nullptr) {
@@ -3748,18 +3964,74 @@ void ServerHost::FillPlayerState(const SessionPlayer& session,
         state->food.poisonRemaining = food->poisonRemaining;
         state->food.poisonDamagePerSecond = food->poisonDamagePerSecond;
     }
+    state->stealth = {};
+    if (const auto* stealth = registry.try_get<ecs::StealthState>(player);
+        stealth != nullptr) {
+        state->stealth.valid = true;
+        state->stealth.crouched = stealth->crouched;
+        const float noiseScale =
+            std::isfinite(stealth->noiseScale)
+                ? std::clamp(stealth->noiseScale, 0.0f, 1.0f)
+                : 1.0f;
+        state->stealth.noiseRadius = 2.5f * noiseScale;
+        state->stealth.visibilityScale =
+            std::isfinite(stealth->visibilityScale)
+                ? std::clamp(stealth->visibilityScale, 0.1f, 1.0f)
+                : 1.0f;
+    }
     state->poiProgress.clear();
+    state->poiStageProgress.clear();
     if (m_poiConfig != nullptr && m_poiConfig->enabled) {
         const auto* tasks = registry.try_get<ecs::PoiTasks>(player);
+        const ecs::PoiWorldProgress* world = ServerPoiWorldProgress();
         for (const game::PoiDef& poi : m_poiConfig->defs) {
+            const game::PoiProgress* staged =
+                world != nullptr
+                    ? game::FindPoiProgress(world->pois, poi.id)
+                    : nullptr;
             net::PlayerPoiProgress progress;
             progress.id = poi.id;
             progress.completed =
-                tasks != nullptr &&
-                game::IsPoiCompleted(tasks->completed, poi.id);
+                staged != nullptr
+                    ? staged->completed
+                    : (tasks != nullptr &&
+                       game::IsPoiCompleted(tasks->completed, poi.id));
             progress.targetSearched = ServerPoiTargetSearched(poi);
             progress.liveGuards = CountServerPoiGuards(poi.id);
             state->poiProgress.push_back(std::move(progress));
+            if (poi.stages.empty()) {
+                continue;
+            }
+            net::PlayerPoiStageProgress stage;
+            stage.id = poi.id;
+            stage.stageCount =
+                static_cast<std::uint8_t>(poi.stages.size());
+            if (staged != nullptr) {
+                stage.stageIndex = static_cast<std::uint8_t>(
+                    std::max(0, staged->currentStage));
+                stage.completedStageCount = static_cast<std::uint8_t>(
+                    std::min<std::size_t>(staged->completedStages.size(),
+                                          8));
+                if (staged->awaitingChoice) {
+                    stage.flags |= net::kPlayerPoiStageAwaitingChoice;
+                }
+                if (staged->failed) {
+                    stage.flags |= net::kPlayerPoiStageFailed;
+                }
+                if (staged->powered) {
+                    stage.flags |= net::kPlayerPoiStagePowered;
+                }
+                if (staged->currentStage >= 0 &&
+                    staged->currentStage <
+                        static_cast<int>(poi.stages.size())) {
+                    stage.currentStage =
+                        poi.stages[static_cast<std::size_t>(
+                                       staged->currentStage)]
+                            .id;
+                }
+                stage.chosenBranch = staged->chosenBranch;
+            }
+            state->poiStageProgress.push_back(std::move(stage));
         }
     }
     state->missions.clear();
@@ -4052,12 +4324,17 @@ void ServerHost::EnsureServerPoiContent() {
             m_poiRuntime.emplace(poi.id, ServerPoiRuntime{});
         }
     }
+    ecs::PoiWorldProgress* world = ServerPoiWorldProgress();
     for (const game::PoiDef& poi : m_poiConfig->defs) {
         const int markerX = static_cast<int>(std::floor(poi.markerX));
         const int markerY = static_cast<int>(std::floor(poi.markerY));
         if (FindServerLoadedChunk(markerX, markerY) == nullptr) {
             continue;
         }
+        const game::PoiProgress* staged =
+            world != nullptr
+                ? game::FindPoiProgress(world->pois, poi.id)
+                : nullptr;
         ServerPoiRuntime& runtime = m_poiRuntime[poi.id];
         if (!runtime.containersSpawned) {
             int spawned = 0;
@@ -4081,6 +4358,10 @@ void ServerHost::EnsureServerPoiContent() {
             }
         }
         if (runtime.guardsSpawned) {
+            continue;
+        }
+        if (staged != nullptr && staged->completed) {
+            runtime.guardsSpawned = true;
             continue;
         }
         if (m_worldLoadedFromSave && m_networkEnabled && m_sessions.empty()) {
@@ -4195,6 +4476,437 @@ bool ServerHost::FindServerPoiGuardCell(const game::PoiDef& poi, int index,
     return false;
 }
 
+bool ServerHost::FindServerPoiStageEnemyCell(
+    const game::PoiDef& poi, const game::PoiStageDef& stage, int index,
+    float originX, float originY, int* wx, int* wy) const {
+    if (wx == nullptr || wy == nullptr || m_simulation == nullptr) {
+        return false;
+    }
+    const float baseX = std::isfinite(originX) ? originX : stage.x;
+    const float baseY = std::isfinite(originY) ? originY : stage.y;
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        const float angle = static_cast<float>(index) * 2.3999631f +
+                            static_cast<float>(attempt) * 0.6180339f;
+        const float radius =
+            1.5f + static_cast<float>((index + attempt) % 4) * 0.8f;
+        const int x =
+            static_cast<int>(std::floor(baseX + std::cos(angle) * radius));
+        const int y =
+            static_cast<int>(std::floor(baseY + std::sin(angle) * radius));
+        if (FindServerLoadedChunk(x, y) == nullptr ||
+            game::IsSquareBlocked(m_simulation->World(), x, y, 0)) {
+            continue;
+        }
+        *wx = x;
+        *wy = y;
+        return true;
+    }
+    static_cast<void>(poi);
+    return false;
+}
+
+ecs::Entity ServerHost::SpawnServerPoiStageEnemy(
+    const game::PoiDef& poi, const game::PoiStageDef& stage,
+    game::PoiStageEnemyRole role, game::PoiGuardKind kind, int index,
+    float originX, float originY) {
+    if (m_simulation == nullptr) {
+        return entt::null;
+    }
+    int wx = 0;
+    int wy = 0;
+    if (!FindServerPoiStageEnemyCell(poi, stage, index, originX, originY,
+                                     &wx, &wy)) {
+        return entt::null;
+    }
+    ecs::ZombieVariantKind variant = ecs::ZombieVariantKind::Normal;
+    switch (kind) {
+        case game::PoiGuardKind::Fast:
+            variant = ecs::ZombieVariantKind::Fast;
+            break;
+        case game::PoiGuardKind::Strong:
+            variant = ecs::ZombieVariantKind::Strong;
+            break;
+        case game::PoiGuardKind::Armored:
+            variant = ecs::ZombieVariantKind::Armored;
+            break;
+        case game::PoiGuardKind::Mixed:
+        case game::PoiGuardKind::Normal:
+        default:
+            variant = ecs::ZombieVariantKind::Normal;
+            break;
+    }
+    const ecs::Entity zombie = m_simulation->SpawnZombieAt(
+        static_cast<float>(wx) + 0.5f, static_cast<float>(wy) + 0.5f,
+        variant);
+    if (zombie == entt::null) {
+        return entt::null;
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    registry.emplace_or_replace<ecs::PoiGuard>(zombie,
+                                               ecs::PoiGuard{poi.id});
+    registry.emplace_or_replace<ecs::PoiStageEnemy>(
+        zombie, ecs::PoiStageEnemy{poi.id, stage.id, role});
+    if (role == game::PoiStageEnemyRole::Boss) {
+        if (auto* health = registry.try_get<ecs::Health>(zombie);
+            health != nullptr) {
+            health->max = std::max(
+                1.0f, health->max * m_poiConfig->boss.healthScale);
+            health->current = health->max;
+        }
+        const game::PoiBossMechanic mechanic =
+            game::PoiBossMechanicFor(poi.boss.mechanic);
+        if (mechanic == game::PoiBossMechanic::Fortify) {
+            ecs::ZombieSpecial special;
+            special.kind = ecs::ZombieSpecialKind::Breaker;
+            registry.emplace_or_replace<ecs::ZombieSpecial>(zombie, special);
+        } else if (mechanic == game::PoiBossMechanic::Summon ||
+                   mechanic == game::PoiBossMechanic::Charge) {
+            ecs::PoiBossRuntime runtime;
+            runtime.baseSpeedScale =
+                game::ZombieVariantProfileFor(variant).speedScale;
+            runtime.abilityCooldown =
+                mechanic == game::PoiBossMechanic::Summon
+                    ? m_poiConfig->boss.summonIntervalSeconds
+                    : m_poiConfig->boss.chargeIntervalSeconds;
+            registry.emplace_or_replace<ecs::PoiBossRuntime>(zombie,
+                                                             runtime);
+        }
+    }
+    return zombie;
+}
+
+void ServerHost::EnsureServerPoiStageEnemies(
+    const game::PoiDef& poi, game::PoiProgress* progress) {
+    if (progress == nullptr || m_simulation == nullptr) {
+        return;
+    }
+    const game::PoiStageDef* stage =
+        game::CurrentPoiStage(poi, *progress);
+    if (stage == nullptr || stage->kind != game::PoiStageKind::Kill) {
+        return;
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    if (game::HasPoiStageEnemyRecords(registry, poi.id, stage->id)) {
+        return;
+    }
+    const std::vector<game::PoiStageEnemySpec> plan =
+        game::BuildPoiStageEnemyPlan(poi, *stage);
+    if (plan.empty()) {
+        return;
+    }
+    int spawned = 0;
+    for (const game::PoiStageEnemySpec& spec : plan) {
+        if (SpawnServerPoiStageEnemy(poi, *stage, spec.role, spec.kind,
+                                     spec.index, stage->x, stage->y) !=
+            entt::null) {
+            ++spawned;
+        }
+    }
+    if (spawned <= 0) {
+        return;
+    }
+    if (game::PoiStageHasBoss(poi, *stage)) {
+        const std::string text =
+            "Boss 现身：" + poi.boss.name + "（" +
+            game::PoiBossMechanicText(
+                game::PoiBossMechanicFor(poi.boss.mechanic)) +
+            "）";
+        for (auto& [sessionId, session] : m_sessions) {
+            static_cast<void>(sessionId);
+            if (session.spawned && !session.dead) {
+                SetSessionStatus(session, text, 2);
+            }
+        }
+    }
+    ZL_INFO("poi", "服务器阶段敌人生成：{} · {}（{}/{}，boss={}）",
+            poi.name, stage->id, spawned, plan.size(),
+            game::PoiStageHasBoss(poi, *stage) ? "是" : "否");
+}
+
+void ServerHost::UpdateServerPoiBossMechanics(
+    const game::PoiDef& poi, const game::PoiProgress& progress, float dt) {
+    if (m_simulation == nullptr || dt <= 0.0f) {
+        return;
+    }
+    const game::PoiStageDef* stage =
+        game::CurrentPoiStage(poi, progress);
+    if (stage == nullptr || !game::PoiStageHasBoss(poi, *stage)) {
+        return;
+    }
+    const game::PoiBossMechanic mechanic =
+        game::PoiBossMechanicFor(poi.boss.mechanic);
+    if (mechanic == game::PoiBossMechanic::None) {
+        return;
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    std::vector<ecs::Entity> bosses;
+    registry.view<ecs::PoiStageEnemy, ecs::Health>().each(
+        [&](const ecs::Entity entity, const ecs::PoiStageEnemy& enemy,
+            const ecs::Health& health) {
+            if (enemy.poiId == poi.id && enemy.stageId == stage->id &&
+                enemy.role == game::PoiStageEnemyRole::Boss &&
+                health.current > 0.0f && registry.valid(entity)) {
+                bosses.push_back(entity);
+            }
+        });
+    if (bosses.empty()) {
+        return;
+    }
+
+    if (mechanic == game::PoiBossMechanic::Fortify) {
+        for (const ecs::Entity entity : bosses) {
+            if (registry.try_get<ecs::ZombieSpecial>(entity) == nullptr) {
+                ecs::ZombieSpecial special;
+                special.kind = ecs::ZombieSpecialKind::Breaker;
+                registry.emplace<ecs::ZombieSpecial>(entity, special);
+            }
+        }
+        return;
+    }
+
+    for (const ecs::Entity entity : bosses) {
+        auto* variant = registry.try_get<ecs::ZombieVariant>(entity);
+        bool createdRuntime = false;
+        auto* runtime = registry.try_get<ecs::PoiBossRuntime>(entity);
+        if (runtime == nullptr) {
+            ecs::PoiBossRuntime created;
+            created.baseSpeedScale =
+                variant != nullptr
+                    ? game::ZombieVariantProfileFor(variant->kind).speedScale
+                    : 1.0f;
+            created.abilityCooldown =
+                mechanic == game::PoiBossMechanic::Summon
+                    ? m_poiConfig->boss.summonIntervalSeconds
+                    : m_poiConfig->boss.chargeIntervalSeconds;
+            runtime =
+                &registry.emplace<ecs::PoiBossRuntime>(entity, created);
+            createdRuntime = true;
+        }
+        if (variant != nullptr && createdRuntime) {
+            variant->speedScale = runtime->baseSpeedScale;
+        }
+        const float baseSpeed =
+            runtime->baseSpeedScale > 0.0f
+                ? runtime->baseSpeedScale
+                : (variant != nullptr
+                       ? game::ZombieVariantProfileFor(variant->kind)
+                             .speedScale
+                       : 1.0f);
+        if (mechanic == game::PoiBossMechanic::Summon) {
+            runtime->abilityCooldown -= dt;
+            if (runtime->abilityCooldown > 0.0f) {
+                continue;
+            }
+            const int liveAdds =
+                game::CountPoiStageSummons(registry, poi.id, stage->id);
+            if (runtime->summoned < m_poiConfig->boss.summonTotal &&
+                liveAdds < m_poiConfig->boss.summonMax) {
+                const auto* position =
+                    registry.try_get<ecs::Position>(entity);
+                const float originX =
+                    position != nullptr ? position->x : stage->x;
+                const float originY =
+                    position != nullptr ? position->y : stage->y;
+                int added = 0;
+                for (int i = 0;
+                     i < m_poiConfig->boss.summonCount &&
+                     runtime->summoned < m_poiConfig->boss.summonTotal;
+                     ++i) {
+                    if (SpawnServerPoiStageEnemy(
+                            poi, *stage, game::PoiStageEnemyRole::Summon,
+                            game::PoiGuardKind::Fast,
+                            runtime->summoned + i, originX, originY) !=
+                        entt::null) {
+                        ++added;
+                        ++runtime->summoned;
+                    }
+                }
+                if (added > 0) {
+                    for (auto& [sessionId, session] : m_sessions) {
+                        static_cast<void>(sessionId);
+                        if (session.spawned && !session.dead) {
+                            SetSessionStatus(
+                                session,
+                                "Boss 召唤增援：" + poi.boss.name, 2);
+                        }
+                    }
+                }
+            }
+            runtime->abilityCooldown =
+                m_poiConfig->boss.summonIntervalSeconds;
+            continue;
+        }
+
+        if (runtime->chargeRemaining > 0.0f) {
+            runtime->chargeRemaining =
+                std::max(0.0f, runtime->chargeRemaining - dt);
+            if (variant != nullptr) {
+                variant->speedScale =
+                    runtime->chargeRemaining > 0.0f
+                        ? baseSpeed * m_poiConfig->boss.chargeSpeedScale
+                        : baseSpeed;
+            }
+            continue;
+        }
+        runtime->abilityCooldown -= dt;
+        if (runtime->abilityCooldown > 0.0f) {
+            continue;
+        }
+        const auto* position = registry.try_get<ecs::Position>(entity);
+        if (position == nullptr) {
+            continue;
+        }
+        SessionPlayer* nearest = nullptr;
+        float nearestDistance = 14.0f * 14.0f;
+        for (auto& [sessionId, session] : m_sessions) {
+            static_cast<void>(sessionId);
+            if (!session.spawned || session.dead ||
+                session.playerStableId == 0) {
+                continue;
+            }
+            const ecs::Entity player =
+                m_simulation->Ecs().FindById(session.playerStableId);
+            if (player == entt::null) {
+                continue;
+            }
+            const auto* playerPosition =
+                registry.try_get<ecs::Position>(player);
+            if (playerPosition == nullptr) {
+                continue;
+            }
+            const float dx = playerPosition->x - position->x;
+            const float dy = playerPosition->y - position->y;
+            const float distance = dx * dx + dy * dy;
+            if (distance <= nearestDistance) {
+                nearestDistance = distance;
+                nearest = &session;
+            }
+        }
+        if (nearest == nullptr) {
+            continue;
+        }
+        runtime->chargeRemaining = m_poiConfig->boss.chargeSeconds;
+        runtime->abilityCooldown =
+            m_poiConfig->boss.chargeIntervalSeconds;
+        if (variant != nullptr) {
+            variant->speedScale =
+                baseSpeed * m_poiConfig->boss.chargeSpeedScale;
+        }
+        SetSessionStatus(*nearest,
+                         "Boss 冲锋：" + poi.boss.name + "（走位/格挡）", 2);
+    }
+}
+
+void ServerHost::ClearServerPoiStageEnemies(std::string_view poiId,
+                                            std::string_view stageId) {
+    if (m_simulation == nullptr) {
+        return;
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    const std::vector<ecs::Entity> enemies =
+        game::CollectPoiStageEnemies(registry, poiId, stageId);
+    for (const ecs::Entity entity : enemies) {
+        if (entity != entt::null && registry.valid(entity)) {
+            m_simulation->DespawnEntity(entity);
+        }
+    }
+}
+
+bool ServerHost::ServerPoiPlayerNearStart(const game::PoiDef& poi, float x,
+                                          float y) const {
+    const float markerDx = poi.markerX - x;
+    const float markerDy = poi.markerY - y;
+    if (markerDx * markerDx + markerDy * markerDy <= 16.0f * 16.0f) {
+        return true;
+    }
+    for (const game::PoiEntryDef& entry : poi.entries) {
+        const float dx = entry.x - x;
+        const float dy = entry.y - y;
+        if (dx * dx + dy * dy <= 6.0f * 6.0f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ServerHost::FailServerPoiOnWipe() {
+    if (m_simulation == nullptr || m_poiConfig == nullptr ||
+        !m_poiConfig->enabled) {
+        return;
+    }
+    ecs::PoiWorldProgress* world = ServerPoiWorldProgress();
+    if (world == nullptr) {
+        return;
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    for (const game::PoiDef& poi : m_poiConfig->defs) {
+        if (poi.stages.empty()) {
+            continue;
+        }
+        game::PoiProgress* progress =
+            game::FindPoiProgress(&world->pois, poi.id);
+        if (progress == nullptr || progress->completed || progress->failed) {
+            continue;
+        }
+        const game::PoiStageDef* stage =
+            game::CurrentPoiStage(poi, *progress);
+        if (stage == nullptr || !game::PoiStageHasBoss(poi, *stage) ||
+            game::CountPoiStageTargets(registry, poi.id, stage->id) <= 0) {
+            continue;
+        }
+        bool aliveNear = false;
+        for (const auto& [sessionId, session] : m_sessions) {
+            static_cast<void>(sessionId);
+            if (!session.spawned || session.dead ||
+                session.playerStableId == 0) {
+                continue;
+            }
+            const ecs::Entity player =
+                m_simulation->Ecs().FindById(session.playerStableId);
+            if (player == entt::null) {
+                continue;
+            }
+            const auto* position = registry.try_get<ecs::Position>(player);
+            if (position == nullptr) {
+                continue;
+            }
+            const float dx = position->x - stage->x;
+            const float dy = position->y - stage->y;
+            if (dx * dx + dy * dy <=
+                m_poiConfig->boss.resetRange * m_poiConfig->boss.resetRange) {
+                aliveNear = true;
+                break;
+            }
+        }
+        if (aliveNear || !game::FailPoiProgress(progress)) {
+            continue;
+        }
+        ClearServerPoiStageEnemies(poi.id);
+        m_serverPoiBossResetTimers.erase(poi.id);
+        ZL_INFO("poi", "服务器 Boss 团灭失败：{}（{}）", poi.name, poi.id);
+    }
+}
+
+ecs::PoiWorldProgress* ServerHost::ServerPoiWorldProgress() {
+    if (m_simulation == nullptr) {
+        return nullptr;
+    }
+    ecs::EcsWorld& ecs = m_simulation->Ecs();
+    ecs::Entity entity = ecs.FindById(ecs::kPoiWorldProgressStableId);
+    if (entity == entt::null) {
+        entity = ecs.CreateWithStableId(ecs::kPoiWorldProgressStableId);
+    }
+    if (entity == entt::null) {
+        return nullptr;
+    }
+    entt::registry& registry = ecs.Registry();
+    auto* progress = registry.try_get<ecs::PoiWorldProgress>(entity);
+    if (progress == nullptr) {
+        progress = &registry.emplace<ecs::PoiWorldProgress>(entity);
+    }
+    return progress;
+}
+
 int ServerHost::CountServerPoiGuards(std::string_view poiId) const {
     if (m_simulation == nullptr) {
         return 0;
@@ -4227,6 +4939,738 @@ bool ServerHost::ServerPoiTargetSearched(const game::PoiDef& poi) const {
     return found;
 }
 
+void ServerHost::GrantServerPoiStageReward(SessionPlayer& session,
+                                           const game::PoiDef& poi,
+                                           const game::PoiStageDef& stage) {
+    if (m_simulation == nullptr || session.playerStableId == 0) {
+        return;
+    }
+    const ecs::Entity player =
+        m_simulation->Ecs().FindById(session.playerStableId);
+    if (player == entt::null || !m_simulation->Ecs().Alive(player)) {
+        return;
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    auto* tasks = registry.try_get<ecs::PoiTasks>(player);
+    if (tasks == nullptr) {
+        tasks = &registry.emplace<ecs::PoiTasks>(player);
+    }
+    if (!game::ClaimPoiStageReward(&tasks->rewardClaims, poi.id, stage.id)) {
+        return;
+    }
+    if (stage.reward.xp > 0.0f) {
+        AwardProgressionXp(player, ecs::SkillKind::Survival, stage.reward.xp,
+                           &session);
+    }
+    bool dropped = false;
+    if (!stage.reward.item.empty() && m_items != nullptr &&
+        m_items->Find(stage.reward.item) != nullptr) {
+        const auto* position = registry.try_get<ecs::Position>(player);
+        if (position != nullptr) {
+            dropped = ReturnServerItem(
+                player,
+                ecs::ItemInstance{stage.reward.item,
+                                  std::max(1, stage.reward.count), 1.0f},
+                position->x, position->y, position->z);
+        }
+    }
+    session.stateDirty = true;
+    SetSessionStatus(
+        session,
+        "POI 阶段完成：" + poi.name + " · " + stage.id +
+            (dropped ? "（背包已满，奖励掉落脚下）" : ""),
+        1);
+}
+
+bool ServerHost::ServerPlayerHasPoiKeyItem(ecs::Entity player,
+                                           const game::PoiKeyDef& key) const {
+    if (m_simulation == nullptr || player == entt::null ||
+        key.item.empty()) {
+        return false;
+    }
+    if (m_items == nullptr || m_items->Find(key.item) == nullptr) {
+        // 内容缺物品定义时不让玩家无提示卡死；门禁仍可用进度钥匙通过。
+        return true;
+    }
+    const auto* container =
+        m_simulation->Ecs().Registry().try_get<ecs::Container>(player);
+    return container != nullptr && items::CountOf(*container, key.item) > 0;
+}
+
+bool ServerHost::ServerConsumePoiKeyItem(ecs::Entity player,
+                                         const game::PoiKeyDef& key) {
+    if (m_simulation == nullptr || player == entt::null ||
+        key.item.empty()) {
+        return false;
+    }
+    if (m_items == nullptr || m_items->Find(key.item) == nullptr) {
+        ZL_WARN("poi", "钥匙物品未注册，跳过消耗：{}（{}）", key.item, key.id);
+        return true;
+    }
+    auto* container =
+        m_simulation->Ecs().Registry().try_get<ecs::Container>(player);
+    return container != nullptr &&
+           items::RemoveItem(*container, key.item, 1) == 1;
+}
+
+void ServerHost::GrantServerPoiStageKeys(SessionPlayer& session,
+                                         const game::PoiDef& poi,
+                                         const game::PoiStageDef& stage) {
+    if (m_simulation == nullptr || session.playerStableId == 0 ||
+        m_items == nullptr) {
+        return;
+    }
+    const ecs::Entity player =
+        m_simulation->Ecs().FindById(session.playerStableId);
+    if (player == entt::null || !m_simulation->Ecs().Alive(player)) {
+        return;
+    }
+    const auto* position =
+        m_simulation->Ecs().Registry().try_get<ecs::Position>(player);
+    if (position == nullptr) {
+        return;
+    }
+    const float dx = poi.markerX - position->x;
+    const float dy = poi.markerY - position->y;
+    constexpr float kRewardRange = 32.0f;
+    if (dx * dx + dy * dy > kRewardRange * kRewardRange) {
+        return;
+    }
+    std::string names;
+    bool dropped = false;
+    for (const game::PoiKeyDef* key :
+         game::PoiStageKeyAwards(poi, stage.id)) {
+        if (key == nullptr || key->item.empty()) {
+            continue;
+        }
+        if (m_items->Find(key->item) == nullptr) {
+            ZL_WARN("poi", "钥匙物品未注册，无法发放：{}（{}）", key->item,
+                    key->id);
+            continue;
+        }
+        if (!names.empty()) {
+            names += "、";
+        }
+        names += game::PoiKeyDisplayName(*key);
+        dropped = ReturnServerItem(
+                      player,
+                      ecs::ItemInstance{key->item, 1, 1.0f}, position->x,
+                      position->y, position->z) ||
+                  dropped;
+    }
+    if (names.empty()) {
+        return;
+    }
+    SetSessionStatus(session,
+                     "获得钥匙：" + names +
+                         (dropped ? "（背包已满，钥匙掉落脚下）" : ""),
+                     1);
+    ZL_INFO("poi", "服务器发放阶段钥匙：{} · {} → 玩家 {}", poi.id, stage.id,
+            session.playerStableId);
+}
+
+void ServerHost::ApplyServerPoiStageUpdate(
+    const game::PoiDef& poi, game::PoiProgress& progress,
+    const game::PoiStageUpdate& update) {
+    if (m_simulation == nullptr) {
+        return;
+    }
+    constexpr float kRewardRange = 32.0f;
+    if (update.stageCompleted && !update.stageId.empty()) {
+        const game::PoiStageDef* stage =
+            game::FindPoiStage(poi, update.stageId);
+        if (stage != nullptr) {
+            for (auto& [sessionId, session] : m_sessions) {
+                static_cast<void>(sessionId);
+                if (!session.spawned || session.dead ||
+                    session.playerStableId == 0) {
+                    continue;
+                }
+                const ecs::Entity player =
+                    m_simulation->Ecs().FindById(session.playerStableId);
+                if (player == entt::null) {
+                    continue;
+                }
+                const auto* position =
+                    m_simulation->Ecs().Registry().try_get<ecs::Position>(
+                        player);
+                if (position == nullptr) {
+                    continue;
+                }
+                const float dx = poi.markerX - position->x;
+                const float dy = poi.markerY - position->y;
+                if (dx * dx + dy * dy > kRewardRange * kRewardRange) {
+                    continue;
+                }
+                if (update.rewardAvailable) {
+                    GrantServerPoiStageReward(session, poi, *stage);
+                }
+                GrantServerPoiStageKeys(session, poi, *stage);
+            }
+        }
+    }
+    for (auto& [sessionId, session] : m_sessions) {
+        static_cast<void>(sessionId);
+        if (!session.spawned || session.dead ||
+            session.playerStableId == 0) {
+            continue;
+        }
+        session.stateDirty = true;
+        if (!update.poiCompleted) {
+            continue;
+        }
+        const ecs::Entity player =
+            m_simulation->Ecs().FindById(session.playerStableId);
+        if (player == entt::null) {
+            continue;
+        }
+        auto* tasks =
+            m_simulation->Ecs().Registry().try_get<ecs::PoiTasks>(player);
+        if (tasks == nullptr) {
+            tasks = &m_simulation->Ecs().Registry().emplace<ecs::PoiTasks>(
+                player);
+        }
+        game::MarkPoiCompleted(&tasks->completed, poi.id);
+    }
+    if (update.stageCompleted && !update.stageId.empty()) {
+        ClearServerPoiStageEnemies(poi.id, update.stageId);
+        m_serverPoiBossResetTimers.erase(poi.id);
+    }
+    if (update.poiCompleted) {
+        ClearServerPoiStageEnemies(poi.id);
+        m_serverPoiBossResetTimers.erase(poi.id);
+        ZL_INFO("poi", "服务器阶段探索完成：{}（{}），尝试 {}", poi.name,
+                poi.id, progress.attempts);
+    } else if (update.awaitingChoice) {
+        ZL_INFO("poi", "服务器阶段路线选择：{}（{}）", poi.name, poi.id);
+    } else if (update.stageCompleted) {
+        ZL_INFO("poi", "服务器阶段完成：{} · {}", poi.name, update.stageId);
+    }
+}
+
+void ServerHost::TickServerPoiStages(float dt) {
+    if (m_simulation == nullptr || m_poiConfig == nullptr ||
+        !m_poiConfig->enabled) {
+        return;
+    }
+    ecs::PoiWorldProgress* world = ServerPoiWorldProgress();
+    if (world == nullptr) {
+        return;
+    }
+    constexpr float kActivateRange = 16.0f;
+    constexpr float kEntryRange = 3.5f;
+    for (const game::PoiDef& poi : m_poiConfig->defs) {
+        if (poi.stages.empty()) {
+            continue;
+        }
+        game::PoiProgress* progress =
+            game::FindPoiProgress(&world->pois, poi.id);
+        if (progress != nullptr && progress->completed) {
+            continue;
+        }
+        if (progress != nullptr && progress->failed) {
+            bool retry = false;
+            for (const auto& [sessionId, session] : m_sessions) {
+                static_cast<void>(sessionId);
+                if (!session.spawned || session.dead ||
+                    session.playerStableId == 0) {
+                    continue;
+                }
+                const ecs::Entity player =
+                    m_simulation->Ecs().FindById(session.playerStableId);
+                if (player == entt::null || !m_simulation->Ecs().Alive(player)) {
+                    continue;
+                }
+                const auto* position =
+                    m_simulation->Ecs().Registry().try_get<ecs::Position>(
+                        player);
+                if (position != nullptr &&
+                    ServerPoiPlayerNearStart(poi, position->x, position->y)) {
+                    retry = true;
+                    break;
+                }
+            }
+            if (!retry || !game::RetryPoiProgress(poi, progress)) {
+                continue;
+            }
+            ClearServerPoiStageEnemies(poi.id);
+            m_serverPoiBossResetTimers.erase(poi.id);
+            ZL_INFO("poi", "服务器阶段重试：{}（{}），第 {} 次", poi.name,
+                    poi.id, progress->attempts);
+            if (progress->completed || progress->currentStage < 0) {
+                continue;
+            }
+        }
+        if (progress == nullptr || progress->currentStage < 0) {
+            bool markerStart = false;
+            const game::PoiEntryDef* entry = nullptr;
+            ecs::Entity starter = entt::null;
+            float bestDistance = std::numeric_limits<float>::max();
+            for (const auto& [sessionId, session] : m_sessions) {
+                static_cast<void>(sessionId);
+                if (!session.spawned || session.dead ||
+                    session.playerStableId == 0) {
+                    continue;
+                }
+                const ecs::Entity player =
+                    m_simulation->Ecs().FindById(session.playerStableId);
+                if (player == entt::null ||
+                    !m_simulation->Ecs().Alive(player)) {
+                    continue;
+                }
+                const auto* position =
+                    m_simulation->Ecs().Registry().try_get<ecs::Position>(
+                        player);
+                if (position == nullptr) {
+                    continue;
+                }
+                const float dx = poi.markerX - position->x;
+                const float dy = poi.markerY - position->y;
+                if (dx * dx + dy * dy <= kActivateRange * kActivateRange) {
+                    markerStart = true;
+                    starter = player;
+                    break;
+                }
+            }
+            if (!markerStart) {
+                for (const auto& [sessionId, session] : m_sessions) {
+                    static_cast<void>(sessionId);
+                    if (!session.spawned || session.dead ||
+                        session.playerStableId == 0) {
+                        continue;
+                    }
+                    const ecs::Entity player =
+                        m_simulation->Ecs().FindById(
+                            session.playerStableId);
+                    if (player == entt::null ||
+                        !m_simulation->Ecs().Alive(player)) {
+                        continue;
+                    }
+                    const auto* position =
+                        m_simulation->Ecs().Registry()
+                            .try_get<ecs::Position>(player);
+                    if (position == nullptr) {
+                        continue;
+                    }
+                    for (const game::PoiEntryDef& candidate :
+                         poi.entries) {
+                        const float dx = candidate.x - position->x;
+                        const float dy = candidate.y - position->y;
+                        const float distance = dx * dx + dy * dy;
+                        if (distance > kEntryRange * kEntryRange ||
+                            distance >= bestDistance) {
+                            continue;
+                        }
+                        if (!candidate.requiredKey.empty()) {
+                            const game::PoiKeyDef* key =
+                                game::FindPoiKey(poi,
+                                                 candidate.requiredKey);
+                            if (key == nullptr ||
+                                !ServerPlayerHasPoiKeyItem(player, *key)) {
+                                continue;
+                            }
+                        }
+                        bestDistance = distance;
+                        entry = &candidate;
+                        starter = player;
+                    }
+                }
+            }
+            if (!markerStart && entry == nullptr) {
+                continue;
+            }
+            progress = &game::EnsurePoiProgress(&world->pois, poi.id);
+            const bool entered = !markerStart && entry != nullptr;
+            if (entered && !entry->stage.empty()) {
+                if (!game::StartPoiProgressAtStage(poi, progress,
+                                                   entry->stage)) {
+                    continue;
+                }
+            } else if (!game::StartPoiProgress(poi, progress)) {
+                continue;
+            }
+            if (entered && !entry->requiredKey.empty()) {
+                const game::PoiKeyDef* key =
+                    game::FindPoiKey(poi, entry->requiredKey);
+                if (key != nullptr) {
+                    if (key->consumed &&
+                        !ServerConsumePoiKeyItem(starter, *key)) {
+                        ZL_WARN("poi", "服务器入口钥匙消耗失败：{}（{}）",
+                                poi.id, key->id);
+                    }
+                    game::MarkPoiKeyAcquired(&progress->acquiredKeys,
+                                             key->id);
+                }
+            }
+            ClearServerPoiStageEnemies(poi.id);
+            m_serverPoiBossResetTimers.erase(poi.id);
+            progress->lastLiveGuards = 0;
+            ZL_INFO("poi", "服务器开始阶段探索：{}（{} 阶段，入口 {}）",
+                    poi.name, poi.stages.size(),
+                    entered ? entry->id : "主入口");
+        }
+
+        const game::PoiStageDef* current =
+            game::CurrentPoiStage(poi, *progress);
+        game::PoiStageUpdate update;
+        if (current != nullptr &&
+            current->kind == game::PoiStageKind::Kill) {
+            EnsureServerPoiStageEnemies(poi, progress);
+            UpdateServerPoiBossMechanics(poi, *progress, dt);
+            entt::registry& registry = m_simulation->Ecs().Registry();
+            const int liveTargets =
+                game::CountPoiStageTargets(registry, poi.id, current->id);
+            if (game::PoiStageHasBoss(poi, *current) && liveTargets > 0) {
+                bool bossNear = false;
+                for (const auto& [sessionId, session] : m_sessions) {
+                    static_cast<void>(sessionId);
+                    if (!session.spawned || session.dead ||
+                        session.playerStableId == 0) {
+                        continue;
+                    }
+                    const ecs::Entity player =
+                        m_simulation->Ecs().FindById(session.playerStableId);
+                    if (player == entt::null ||
+                        !m_simulation->Ecs().Alive(player)) {
+                        continue;
+                    }
+                    const auto* position =
+                        m_simulation->Ecs().Registry().try_get<ecs::Position>(
+                            player);
+                    if (position == nullptr) {
+                        continue;
+                    }
+                    const float dx = position->x - current->x;
+                    const float dy = position->y - current->y;
+                    if (dx * dx + dy * dy <=
+                        m_poiConfig->boss.resetRange *
+                            m_poiConfig->boss.resetRange) {
+                        bossNear = true;
+                        break;
+                    }
+                }
+                float& timer = m_serverPoiBossResetTimers[poi.id];
+                if (!bossNear) {
+                    timer += std::max(0.0f, dt);
+                    if (timer >= m_poiConfig->boss.resetSeconds) {
+                        if (game::FailPoiProgress(progress)) {
+                            ClearServerPoiStageEnemies(poi.id);
+                            m_serverPoiBossResetTimers.erase(poi.id);
+                            for (auto& [sessionId, session] : m_sessions) {
+                                static_cast<void>(sessionId);
+                                if (session.spawned && !session.dead) {
+                                    SetSessionStatus(
+                                        session,
+                                        "Boss 战失败：离开区域过久，返回可重试",
+                                        2);
+                                }
+                            }
+                            ZL_INFO("poi", "服务器 Boss 战失败：{}（{}），玩家脱战",
+                                    poi.name, poi.id);
+                        }
+                        continue;
+                    }
+                } else {
+                    timer = 0.0f;
+                }
+            }
+            if (progress->lastLiveGuards > 0 &&
+                liveTargets < progress->lastLiveGuards) {
+                update = game::SignalPoiStage(
+                    poi, progress, game::PoiStageSignal::Kill,
+                    progress->lastLiveGuards - liveTargets);
+            }
+            progress->lastLiveGuards = liveTargets;
+        } else if (current != nullptr) {
+            progress->lastLiveGuards = 0;
+        }
+        if (!update.stageCompleted && !update.awaitingChoice) {
+            for (const auto& [sessionId, session] : m_sessions) {
+                static_cast<void>(sessionId);
+                if (!session.spawned || session.dead ||
+                    session.playerStableId == 0) {
+                    continue;
+                }
+                const ecs::Entity player =
+                    m_simulation->Ecs().FindById(session.playerStableId);
+                if (player == entt::null) {
+                    continue;
+                }
+                const auto* position =
+                    m_simulation->Ecs().Registry().try_get<ecs::Position>(
+                        player);
+                if (position == nullptr) {
+                    continue;
+                }
+                update =
+                    game::TickPoiStage(poi, progress, position->x, position->y);
+                if (update.stageCompleted || update.awaitingChoice) {
+                    break;
+                }
+            }
+        }
+        current = game::CurrentPoiStage(poi, *progress);
+        if (!update.stageCompleted && current != nullptr &&
+            current->kind == game::PoiStageKind::Loot) {
+            for (const auto& [sessionId, session] : m_sessions) {
+                static_cast<void>(sessionId);
+                if (!session.spawned || session.dead ||
+                    session.playerStableId == 0) {
+                    continue;
+                }
+                const ecs::Entity player =
+                    m_simulation->Ecs().FindById(session.playerStableId);
+                if (player == entt::null) {
+                    continue;
+                }
+                int owned = 0;
+                const auto& registry = m_simulation->Ecs().Registry();
+                if (const auto* container =
+                        registry.try_get<ecs::Container>(player);
+                    container != nullptr) {
+                    for (const ecs::ItemInstance& item : container->items) {
+                        if (item.defId == current->target) {
+                            owned += std::max(1, item.count);
+                        }
+                    }
+                }
+                if (const auto* equipment =
+                        registry.try_get<ecs::Equipment>(player);
+                    equipment != nullptr) {
+                    for (const auto& slot : equipment->slots) {
+                        if (slot.has_value() &&
+                            slot->defId == current->target) {
+                            owned += std::max(1, slot->count);
+                        }
+                    }
+                }
+                if (owned >= current->count) {
+                    update = game::SignalPoiStage(
+                        poi, progress, game::PoiStageSignal::Loot, owned);
+                    break;
+                }
+            }
+        }
+        if (!update.stageCompleted && !update.poiCompleted &&
+            !update.awaitingChoice) {
+            continue;
+        }
+        ApplyServerPoiStageUpdate(poi, *progress, update);
+    }
+}
+
+bool ServerHost::InteractPoi(ecs::Entity player, SessionPlayer& session,
+                             const net::Command& command,
+                             std::string* error) {
+    const auto fail = [&](std::string message) {
+        if (error != nullptr) {
+            *error = std::move(message);
+        }
+        return false;
+    };
+    if (m_simulation == nullptr || m_poiConfig == nullptr ||
+        !m_poiConfig->enabled) {
+        return fail("POI 系统不可用");
+    }
+    if (m_items == nullptr) {
+        return fail("物品注册表不可用");
+    }
+    const int poiIndex = command.payload.index;
+    if (poiIndex < 0 ||
+        poiIndex >= static_cast<int>(m_poiConfig->defs.size())) {
+        return fail("POI 索引非法");
+    }
+    const game::PoiDef& poi =
+        m_poiConfig->defs[static_cast<std::size_t>(poiIndex)];
+    if (poi.stages.empty()) {
+        return fail("该 POI 没有阶段探索");
+    }
+    const auto* position =
+        m_simulation->Ecs().Registry().try_get<ecs::Position>(player);
+    if (position == nullptr) {
+        return fail("玩家缺少位置");
+    }
+    ecs::PoiWorldProgress* world = ServerPoiWorldProgress();
+    game::PoiProgress* progress =
+        world != nullptr ? game::FindPoiProgress(&world->pois, poi.id)
+                         : nullptr;
+    if (progress == nullptr) {
+        return fail("阶段探索尚未开始");
+    }
+    if (progress->completed || progress->failed) {
+        return fail("当前 POI 阶段不可交互");
+    }
+    const game::PoiStageDef* stage =
+        game::CurrentPoiStage(poi, *progress);
+    if (stage == nullptr) {
+        return fail("当前阶段不存在");
+    }
+
+    const auto checkKeys = [&](const game::PoiStageDef& current,
+                               std::string* message) {
+        std::unordered_map<std::string, int> consumed;
+        for (const std::string& keyId : current.requiredKeys) {
+            const game::PoiKeyDef* key = game::FindPoiKey(poi, keyId);
+            if (key == nullptr) {
+                *message = "阶段钥匙配置无效：" + keyId;
+                return false;
+            }
+            if (!ServerPlayerHasPoiKeyItem(player, *key)) {
+                *message = "缺少钥匙：" + game::PoiKeyDisplayName(*key);
+                return false;
+            }
+            if (key->consumed) {
+                ++consumed[key->item];
+            }
+        }
+        const auto* container =
+            m_simulation->Ecs().Registry().try_get<ecs::Container>(player);
+        for (const auto& [item, count] : consumed) {
+            if (m_items->Find(item) != nullptr &&
+                (container == nullptr ||
+                 items::CountOf(*container, item) < count)) {
+                *message = "钥匙数量不足";
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto consumeKeys = [&](const game::PoiStageDef& current) {
+        for (const std::string& keyId : current.requiredKeys) {
+            const game::PoiKeyDef* key = game::FindPoiKey(poi, keyId);
+            if (key == nullptr) {
+                return false;
+            }
+            if (key->consumed &&
+                !ServerConsumePoiKeyItem(player, *key)) {
+                return false;
+            }
+            game::MarkPoiKeyAcquired(&progress->acquiredKeys, key->id);
+        }
+        return true;
+    };
+
+    const float dx = stage->x - position->x;
+    const float dy = stage->y - position->y;
+    const bool choosing =
+        progress->awaitingChoice ||
+        stage->kind == game::PoiStageKind::Choice;
+    if (choosing) {
+        constexpr float kChoiceRange = 16.0f;
+        if (dx * dx + dy * dy > kChoiceRange * kChoiceRange) {
+            return fail("路线选择距离过远");
+        }
+        const auto branches =
+            game::PoiAvailableBranches(poi, *progress);
+        const int branchIndex = command.payload.targetIndex;
+        if (branchIndex < 0) {
+            return fail("需要选择路线：1/2");
+        }
+        if (branchIndex >= static_cast<int>(branches.size())) {
+            return fail("路线索引非法");
+        }
+        std::string keyError;
+        if (!checkKeys(*stage, &keyError)) {
+            return fail(std::move(keyError));
+        }
+        if (!consumeKeys(*stage)) {
+            return fail("钥匙扣除失败");
+        }
+        const std::string branchId =
+            branches[static_cast<std::size_t>(branchIndex)]->id;
+        const game::PoiStageUpdate update =
+            game::ChoosePoiBranch(poi, progress, branchId);
+        if (!update.advanced && !update.stageCompleted) {
+            return fail("路线选择无效");
+        }
+        SetSessionStatus(
+            session,
+            "路线选择：" +
+                std::string(
+                    branches[static_cast<std::size_t>(branchIndex)]->name
+                        .empty()
+                        ? branchId
+                        : branches[static_cast<std::size_t>(branchIndex)]
+                              ->name),
+            1);
+        ApplyServerPoiStageUpdate(poi, *progress, update);
+        session.stateDirty = true;
+        ZL_INFO("poi", "服务器路线选择：{}（{}）→ {}，玩家 {}", poi.name,
+                poi.id, branchId, session.playerStableId);
+        return true;
+    }
+
+    if (stage->kind != game::PoiStageKind::Interact &&
+        stage->kind != game::PoiStageKind::Power) {
+        return fail("当前阶段无需交互");
+    }
+    const float range = std::max(2.5f, stage->radius + 1.5f);
+    if (dx * dx + dy * dy > range * range) {
+        return fail("交互距离过远");
+    }
+    std::string keyError;
+    if (!checkKeys(*stage, &keyError)) {
+        return fail(std::move(keyError));
+    }
+    const bool needsFuel =
+        stage->kind == game::PoiStageKind::Power &&
+        m_homesteadConfig.power.enabled;
+    const std::string fuelItem = m_homesteadConfig.power.fuelItem;
+    auto* container =
+        m_simulation->Ecs().Registry().try_get<ecs::Container>(player);
+    if (needsFuel &&
+        (container == nullptr ||
+         items::CountOf(*container, fuelItem) < 1)) {
+        return fail("发电机需要 " + fuelItem);
+    }
+    if (needsFuel &&
+        items::RemoveItem(*container, fuelItem, 1) != 1) {
+        return fail("燃料扣除失败");
+    }
+    if (!consumeKeys(*stage)) {
+        return fail("钥匙扣除失败");
+    }
+    if (stage->kind == game::PoiStageKind::Power &&
+        m_homesteadConfig.power.enabled) {
+        const float radius = std::max(8.0f, stage->radius + 4.0f);
+        m_simulation->Ecs().Registry()
+            .view<ecs::Generator, ecs::Position>()
+            .each([&](const ecs::Entity, ecs::Generator& generator,
+                      const ecs::Position& generatorPosition) {
+                const float gx = generatorPosition.x - stage->x;
+                const float gy = generatorPosition.y - stage->y;
+                if (gx * gx + gy * gy > radius * radius) {
+                    return;
+                }
+                generator.fuelMinutes +=
+                    m_homesteadConfig.power.fuelMinutesPerCan;
+                generator.running = true;
+            });
+    }
+    const game::PoiStageUpdate update = game::SignalPoiStage(
+        poi, progress,
+        stage->kind == game::PoiStageKind::Power
+            ? game::PoiStageSignal::Power
+            : game::PoiStageSignal::Interact);
+    if (update.blocked) {
+        return fail("阶段条件未满足");
+    }
+    if (!update.stageCompleted && !update.poiCompleted) {
+        return fail("阶段交互未完成");
+    }
+    SetSessionStatus(
+        session,
+        stage->kind == game::PoiStageKind::Power
+            ? "发电机已启动：" + poi.name
+            : "门禁已打开：" + poi.name,
+        1);
+    ApplyServerPoiStageUpdate(poi, *progress, update);
+    session.stateDirty = true;
+    ZL_INFO("poi", "服务器阶段交互：{} · {}，玩家 {}", poi.name, stage->id,
+            session.playerStableId);
+    return true;
+}
+
 void ServerHost::TickServerPoiTasks() {
     if (m_simulation == nullptr || m_poiConfig == nullptr ||
         !m_poiConfig->enabled) {
@@ -4248,7 +5692,8 @@ void ServerHost::TickServerPoiTasks() {
             tasks = &registry.emplace<ecs::PoiTasks>(player);
         }
         for (const game::PoiDef& poi : m_poiConfig->defs) {
-            if (game::IsPoiCompleted(tasks->completed, poi.id)) {
+            if (!poi.stages.empty() ||
+                game::IsPoiCompleted(tasks->completed, poi.id)) {
                 continue;
             }
             const bool searched = ServerPoiTargetSearched(poi);
@@ -5236,6 +6681,7 @@ bool ServerHost::FireProjectile(SessionPlayer& session, const net::Command& comm
     action.elapsed = 0.0f;
     action.duration = 0.28f;
     ++m_networkStats.projectilesFired;
+    ResetServerStealth(session, player, "远程攻击");
     return true;
 }
 
@@ -5366,6 +6812,7 @@ bool ServerHost::FireRanged(SessionPlayer& session, const net::Command& command)
     action.elapsed = 0.0f;
     action.duration = 0.22f;
     session.stateDirty = true;
+    ResetServerStealth(session, player, "远程攻击");
     SetSessionStatus(session,
                      "fire: " + def->name + " " +
                          std::to_string(slot->loadedAmmo) + "/" +
@@ -5415,6 +6862,398 @@ bool ServerHost::ReloadRanged(SessionPlayer& session) {
                          " rounds)",
                      0);
     return true;
+}
+
+bool ServerHost::ThrowItemAction(SessionPlayer& session,
+                                 const net::Command& command,
+                                 std::string* error) {
+    auto fail = [&](const std::string& message) {
+        ++m_networkStats.throwsRejected;
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (m_simulation == nullptr || m_items == nullptr) {
+        return fail("投掷系统未启用");
+    }
+    if (command.payload.index < -1 ||
+        command.payload.index > 1000000 ||
+        command.payload.targetIndex != -1 ||
+        command.payload.flags != 0 || command.payload.area != 0 ||
+        command.payload.targetArea != 0 ||
+        command.payload.entityId != net::kNoEntity ||
+        command.payload.targetEntityId != net::kNoEntity) {
+        return fail("投掷命令字段非法");
+    }
+    if (command.payload.x < -1000000.0f ||
+        command.payload.x > 1000000.0f ||
+        command.payload.y < -1000000.0f ||
+        command.payload.y > 1000000.0f) {
+        return fail("投掷落点非法");
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    const ecs::Entity player =
+        m_simulation->Ecs().FindById(session.playerStableId);
+    const auto* position =
+        player != entt::null ? registry.try_get<ecs::Position>(player) : nullptr;
+    if (player == entt::null || position == nullptr || session.dead ||
+        position->z < 0 || position->z >= core::kMaxZ) {
+        return fail("玩家不可投掷");
+    }
+    if (const auto* health = registry.try_get<ecs::Health>(player);
+        health == nullptr || !std::isfinite(health->current) ||
+        health->current <= 0.0f ||
+        registry.all_of<ecs::Dying>(player)) {
+        return fail("倒地/死亡状态无法投掷");
+    }
+    if (session.drivingVehicleId != 0 ||
+        registry.all_of<ecs::VehicleOccupant>(player)) {
+        return fail("载具中无法投掷");
+    }
+
+    auto* equipment = registry.try_get<ecs::Equipment>(player);
+    auto* container = registry.try_get<ecs::Container>(player);
+    const items::ItemDef* def = nullptr;
+    ecs::ItemInstance sourceItem;
+    if (command.payload.index == -1) {
+        if (equipment == nullptr) {
+            return fail("主手没有可投掷物");
+        }
+        auto& slot = equipment->slots[static_cast<std::size_t>(
+            ecs::EquipSlot::PrimaryHand)];
+        if (!slot.has_value() || !slot->Valid()) {
+            return fail("主手没有可投掷物");
+        }
+        sourceItem = *slot;
+    } else {
+        if (container == nullptr ||
+            static_cast<std::size_t>(command.payload.index) >=
+                container->items.size()) {
+            return fail("投掷物来源无效");
+        }
+        sourceItem =
+            container->items[static_cast<std::size_t>(command.payload.index)];
+    }
+    def = m_items->Find(sourceItem.defId);
+    if (def == nullptr || !def->throwable.has_value() ||
+        !sourceItem.Valid()) {
+        return fail("该物品不可投掷");
+    }
+
+    const float dx = command.payload.x - position->x;
+    const float dy = command.payload.y - position->y;
+    const float distance = std::sqrt(dx * dx + dy * dy);
+    const float range =
+        std::min(std::clamp(def->throwable->range, 1.0f, 64.0f),
+                 m_throwingConfig.maxRange);
+    if (!std::isfinite(distance) || distance < m_throwingConfig.minRange ||
+        distance > range + 0.001f) {
+        ++m_networkStats.rangeRejected;
+        return fail("投掷落点超出射程");
+    }
+
+    const game::ThrowPathResult path = game::ClipThrowPath(
+        position->x, position->y, command.payload.x, command.payload.y,
+        [this, z = position->z](int wx, int wy) {
+            return FindServerLoadedChunk(wx, wy) == nullptr ||
+                   game::IsSquareBlocked(m_simulation->World(), wx, wy, z);
+        });
+    if (!path.valid || !(path.distance > 0.0001f)) {
+        return fail("投掷落点不可达");
+    }
+    const int targetX = static_cast<int>(std::floor(path.x));
+    const int targetY = static_cast<int>(std::floor(path.y));
+    if (FindServerLoadedChunk(targetX, targetY) == nullptr) {
+        return fail("投掷落点未加载");
+    }
+
+    if (session.throwUsed &&
+        m_ticks < session.lastThrowTick + m_throwCooldownTicks) {
+        ++m_networkStats.cooldownRejected;
+        return fail("投掷冷却中");
+    }
+
+    ecs::ItemInstance thrown;
+    if (!game::ConsumeThrowableSource(equipment, container, command.payload.index,
+                                def->id, &thrown)) {
+        return fail("投掷物已变化或数量不足");
+    }
+
+    session.throwUsed = true;
+    session.lastThrowTick = m_ticks;
+    session.stateDirty = true;
+    ResetServerStealth(session, player, "投掷");
+
+    ServerThrow pending;
+    pending.ownerStableId = session.playerStableId;
+    pending.defId = def->id;
+    pending.name = def->name;
+    pending.z = position->z;
+    pending.targetX = path.x;
+    pending.targetY = path.y;
+    const float pathDx = path.x - position->x;
+    const float pathDy = path.y - position->y;
+    const float pathLength = std::sqrt(pathDx * pathDx + pathDy * pathDy);
+    if (pathLength > 0.0001f) {
+        pending.directionX = pathDx / pathLength;
+        pending.directionY = pathDy / pathLength;
+    }
+    pending.remainingSeconds = game::ThrowFlightSeconds(path.distance);
+    pending.damage = def->throwable->damage;
+    pending.impactRadius = def->throwable->impactRadius;
+    pending.noiseRadius = def->throwable->noiseRadius;
+    if (def->throwable->fire.has_value()) {
+        pending.fireRadius = def->throwable->fire->radius;
+        pending.fireMinutes = def->throwable->fire->minutes;
+    }
+    pending.returnable = def->throwable->returnable;
+    pending.breakChance = def->throwable->breakChance;
+    pending.itemCondition = thrown.condition;
+    pending.wallClipped = path.hitWall;
+    m_serverThrows.push_back(std::move(pending));
+    ++m_networkStats.throwsStarted;
+
+    char text[192];
+    std::snprintf(text, sizeof(text),
+                  "投掷：%s → (%.1f, %.1f)，%.1f 格%s",
+                  def->name.c_str(), static_cast<double>(path.x),
+                  static_cast<double>(path.y),
+                  static_cast<double>(path.distance),
+                  path.hitWall ? "，墙前落点" : "");
+    SetSessionStatus(session, text, 0);
+    ZL_INFO("throwing",
+            "服务器投掷开始：{}（{}），玩家 {}，来源 {}，落点 ({:.2f},{:.2f})，距离 {:.2f}，飞行 {:.2f}s，墙前={}，扣除 1 件",
+            def->name, def->id, session.playerStableId,
+            command.payload.index < 0
+                ? "主手"
+                : "背包 " + std::to_string(command.payload.index),
+            static_cast<double>(path.x), static_cast<double>(path.y),
+            static_cast<double>(path.distance),
+            static_cast<double>(game::ThrowFlightSeconds(path.distance)),
+            path.hitWall);
+    return true;
+}
+
+void ServerHost::UpdateServerThrows(float dt) {
+    if (m_simulation == nullptr || m_serverThrows.empty() || !(dt > 0.0f)) {
+        return;
+    }
+    std::vector<ServerThrow> ready;
+    for (auto it = m_serverThrows.begin(); it != m_serverThrows.end();) {
+        it->remainingSeconds -= dt;
+        if (it->remainingSeconds <= 0.0f) {
+            ready.push_back(std::move(*it));
+            it = m_serverThrows.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (ServerThrow& pending : ready) {
+        ResolveServerThrow(pending);
+    }
+}
+
+void ServerHost::SettleServerThrows(const char* reason,
+                                    std::uint64_t ownerStableId) {
+    if (m_serverThrows.empty()) {
+        return;
+    }
+    std::vector<ServerThrow> settled;
+    for (auto it = m_serverThrows.begin(); it != m_serverThrows.end();) {
+        if (ownerStableId == 0 || it->ownerStableId == ownerStableId) {
+            settled.push_back(std::move(*it));
+            it = m_serverThrows.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (ServerThrow& pending : settled) {
+        ResolveServerThrow(pending);
+    }
+    if (!settled.empty()) {
+        ZL_INFO("throwing", "服务器结算在飞投掷物：{} 件（{}）",
+                settled.size(), reason != nullptr ? reason : "manual");
+    }
+}
+
+void ServerHost::ResolveServerThrow(ServerThrow& pending) {
+    if (m_simulation == nullptr) {
+        return;
+    }
+    ++m_networkStats.throwsResolved;
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    std::vector<game::ThrowTargetCandidate> candidates;
+    registry.view<ecs::Health, ecs::Position>().each(
+        [&](const ecs::Entity entity, const ecs::Health& health,
+            const ecs::Position& position) {
+            if (!m_simulation->Ecs().Alive(entity) ||
+                entity == m_simulation->Ecs().FindById(pending.ownerStableId) ||
+                health.current <= 0.0f || position.z != pending.z ||
+                registry.any_of<ecs::PlayerTag, ecs::NoCombatTarget,
+                                ecs::FriendlyNpc>(entity)) {
+                return;
+            }
+            candidates.push_back(game::ThrowTargetCandidate{
+                m_simulation->Ecs().IdOf(entity).id, position.x, position.y,
+                position.z});
+        });
+    const std::uint64_t targetId =
+        game::SelectThrowTarget(candidates, pending.targetX, pending.targetY,
+                          pending.z, pending.impactRadius,
+                          pending.ownerStableId);
+
+    bool damaged = false;
+    if (targetId != 0 && m_simulation->Combat() != nullptr) {
+        const ecs::Entity target = m_simulation->Ecs().FindById(targetId);
+        if (m_simulation->Ecs().Alive(target)) {
+            ecs::DamageEvent event;
+            event.sourceId = pending.ownerStableId;
+            event.type = ecs::DamageType::Blunt;
+            event.amount = pending.damage;
+            event.dirX = pending.directionX;
+            event.dirY = pending.directionY;
+            event.knockback = 0.0f;
+            event.staggerSeconds = 0.0f;
+            damaged = m_simulation->Combat()->ApplyDamage(
+                m_simulation->Ecs(), target, event);
+            if (damaged) {
+                RecordSiegeDefenseDamage(pending.ownerStableId, target,
+                                         std::max(0.0f, pending.damage));
+            }
+        }
+    }
+
+    if (pending.noiseRadius > 0.0f) {
+        core::SoundEvent noise;
+        noise.x = pending.targetX;
+        noise.y = pending.targetY;
+        noise.radius = pending.noiseRadius;
+        noise.type = core::SoundType::Impact;
+        noise.clip = audio::kImpact;
+        if (m_events != nullptr) {
+            m_events->EmitQueued(core::kOnSound, noise);
+        }
+        net::WorldSoundEvent remote;
+        remote.sourcePlayerStableId = pending.ownerStableId;
+        remote.x = pending.targetX;
+        remote.y = pending.targetY;
+        remote.z = pending.z;
+        remote.radius = pending.noiseRadius;
+        remote.type = static_cast<std::uint8_t>(core::SoundType::Impact);
+        remote.clip = audio::kImpact;
+        BroadcastWorldSound(remote);
+    }
+    SpawnImpactEffect(pending.targetX, pending.targetY, pending.z);
+
+    std::size_t fireIgnited = 0;
+    std::size_t fireExisting = 0;
+    std::size_t fireCells = 0;
+    std::string fireError;
+    if (pending.fireRadius > 0.0f && pending.fireMinutes > 0.0f &&
+        m_simulation->Fire() != nullptr) {
+        double dayLengthMinutes = 60.0;
+        if (m_config != nullptr) {
+            dayLengthMinutes = m_config->Get<double>(
+                "game.dayLengthMinutes", dayLengthMinutes);
+        }
+        const float gameMinutesPerRealSecond =
+            std::isfinite(dayLengthMinutes) && dayLengthMinutes > 0.0
+                ? static_cast<float>(1440.0 / (dayLengthMinutes * 60.0))
+                : 0.4f;
+        const float burnSeconds = game::ThrowFireBurnSeconds(
+            pending.fireMinutes, gameMinutesPerRealSecond);
+        const std::vector<game::ThrowFireCell> cells = game::ThrowFireAreaCells(
+            pending.targetX, pending.targetY, pending.fireRadius);
+        fireCells = cells.size();
+        for (const game::ThrowFireCell& cell : cells) {
+            std::string cellError;
+            const game::FireIgnitionResult result = m_simulation->Fire()->IgniteAt(
+                m_simulation->Ecs(), m_simulation->World(), cell.cellX,
+                cell.cellY, pending.z,
+                m_simulation->CurrentWeather().wetnessIntensity, &cellError,
+                pending.ownerStableId);
+            if (result == game::FireIgnitionResult::Ignited) {
+                ++fireIgnited;
+                ecs::FireSource* source = m_simulation->Fire()->FindAt(
+                    m_simulation->Ecs(), cell.cellX, cell.cellY, pending.z);
+                if (source != nullptr && burnSeconds > 0.0f) {
+                    source->burnDuration = burnSeconds;
+                    source->burnRemaining = burnSeconds;
+                }
+            } else if (result == game::FireIgnitionResult::AlreadyActive) {
+                ++fireExisting;
+            } else if (!cellError.empty()) {
+                fireError = std::move(cellError);
+            }
+        }
+        if (fireError.empty() && fireIgnited == 0 && fireExisting == 0) {
+            fireError = "落点没有可燃物";
+        }
+        ZL_INFO("throwing",
+                "服务器投掷火焰：范围 {:.1f} 格，持续 {:.1f} 游戏分钟（{:.1f}s），点燃 {}/{} 格，已存在 {}{}",
+                static_cast<double>(pending.fireRadius),
+                static_cast<double>(pending.fireMinutes),
+                static_cast<double>(burnSeconds), fireIgnited, cells.size(),
+                fireExisting,
+                fireError.empty() ? std::string() : "，失败：" + fireError);
+    }
+
+    const float roll =
+        std::uniform_real_distribution<float>(0.0f, 1.0f)(m_throwRng);
+    const game::ThrowLandingOutcome outcome = game::ResolveThrowLanding(
+        pending.returnable, pending.breakChance, roll);
+    ecs::Entity ground = entt::null;
+    if (outcome == game::ThrowLandingOutcome::Recovered && m_items != nullptr) {
+        const ecs::ItemInstance landed{pending.defId, 1,
+                                       pending.itemCondition, 0};
+        ground = game::SpawnGroundItem(m_simulation->Ecs(), *m_items, landed,
+                                 pending.targetX, pending.targetY, pending.z);
+        if (ground != entt::null && m_events != nullptr) {
+            m_events->EmitQueued(
+                core::kOnItemDrop,
+                core::ItemEvent{m_simulation->Ecs().IdOf(ground).id,
+                                pending.defId, 1});
+        }
+    }
+    if (outcome == game::ThrowLandingOutcome::Recovered) {
+        ++m_networkStats.throwsRecovered;
+    } else if (outcome == game::ThrowLandingOutcome::Broken) {
+        ++m_networkStats.throwsBroken;
+    }
+
+    SessionPlayer* session =
+        FindSessionByPlayerStableId(pending.ownerStableId);
+    const char* outcomeLabel = outcome == game::ThrowLandingOutcome::Recovered
+                                   ? "回收"
+                                   : outcome == game::ThrowLandingOutcome::Broken
+                                         ? "损坏"
+                                         : "消耗";
+    if (session != nullptr) {
+        std::string text =
+            targetId != 0 ? "投掷命中：" : "投掷落空：";
+        text += pending.name;
+        text += " · ";
+        text += outcomeLabel;
+        if (pending.fireRadius > 0.0f && pending.fireMinutes > 0.0f) {
+            text += (fireIgnited > 0 || fireExisting > 0) ? " · 已点燃"
+                                                          : " · 未点燃";
+        }
+        SetSessionStatus(*session, std::move(text),
+                         outcome == game::ThrowLandingOutcome::Broken ? 2
+                         : targetId != 0 ? 1
+                                         : 0);
+    }
+    ZL_INFO("throwing",
+            "服务器投掷落地：{}（{}），玩家 {}，落点 ({:.2f},{:.2f})，z={}，墙前={}，目标 {}，伤害 {:.0f}，结算={}，地面物品 {}，火焰 {}/{}，roll={:.3f}",
+            pending.name, pending.defId, pending.ownerStableId,
+            static_cast<double>(pending.targetX),
+            static_cast<double>(pending.targetY), pending.z,
+            pending.wallClipped, targetId,
+            static_cast<double>(pending.damage), outcomeLabel,
+            ground != entt::null ? m_simulation->Ecs().IdOf(ground).id : 0,
+            fireIgnited + fireExisting, fireCells,
+            static_cast<double>(roll));
 }
 
 bool ServerHost::IgniteFireAction(SessionPlayer& session,
@@ -6895,6 +8734,7 @@ void ServerHost::CaptureSessionProfile(SessionPlayer& session, bool markDead) {
     state.status.clear();
     state.statusSequence = 0;
     state.statusTone = 0;
+    state.stealth = {};  // M34-F1-T5：潜行只运行时，不写玩家档案/存档。
     if (session.dead) {
         state.health = 0.0f;
     }
@@ -7402,6 +9242,38 @@ bool ServerHost::FindServerVehicleExitCell(
         x, y, 3);
 }
 
+game::VehicleModStats ServerHost::ServerVehicleModStats(
+    const ServerVehicleRuntime& vehicle) const {
+    if (m_simulation == nullptr || m_vehicleMods == nullptr ||
+        !m_vehicleMods->enabled || vehicle.entity == entt::null) {
+        return {};
+    }
+    const auto* mods = m_simulation->Ecs().Registry().try_get<ecs::VehicleMods>(
+        vehicle.entity);
+    return mods != nullptr ? game::VehicleModStatsFor(*m_vehicleMods, *mods)
+                           : game::VehicleModStats{};
+}
+
+void ServerHost::SyncServerVehicleModStorage(
+    ServerVehicleRuntime& vehicle) {
+    if (m_simulation == nullptr || vehicle.entity == entt::null) {
+        return;
+    }
+    auto* container = m_simulation->Ecs().Registry().try_get<ecs::Container>(
+        vehicle.entity);
+    if (container == nullptr) {
+        return;
+    }
+    const float before = container->capacityKg;
+    if (game::ApplyVehicleModTrunkCapacity(
+            ServerVehicleModStats(vehicle), m_vehicleTuning.trunkCapacityKg,
+            container)) {
+        ZL_INFO("vehicle",
+                "服务器载具改装后备箱容量：stableId={}，{:.1f}kg → {:.1f}kg",
+                vehicle.stableId, before, container->capacityKg);
+    }
+}
+
 void ServerHost::AdoptServerVehicle(ecs::Entity entity, bool restored) {
     if (m_simulation == nullptr || entity == entt::null ||
         !m_simulation->Ecs().Alive(entity)) {
@@ -7476,6 +9348,7 @@ void ServerHost::AdoptServerVehicle(ecs::Entity entity, bool restored) {
         registry.emplace<ecs::PlayerStorage>(
             entity, ecs::PlayerStorage{m_vehicleTuning.trunkStacks});
     }
+    SyncServerVehicleModStorage(vehicle);
     registry.emplace_or_replace<ecs::VehicleDriver>(
         entity, ecs::VehicleDriver{0});
     if (registry.all_of<ecs::VehiclePassenger>(entity)) {
@@ -7672,7 +9545,8 @@ void ServerHost::EnsureServerVehicles() {
 bool ServerHost::ApplyServerVehicleVehicleCollisions(
     ServerVehicleRuntime& vehicle,
     const std::vector<std::uint64_t>& targets,
-    const game::VehicleMotion& previousMotion) {
+    const game::VehicleMotion& previousMotion,
+    const game::VehicleModStats& modStats) {
     if (m_simulation == nullptr || targets.empty()) {
         return false;
     }
@@ -7692,12 +9566,16 @@ bool ServerHost::ApplyServerVehicleVehicleCollisions(
         }
         const float impactSpeed = game::VehicleCollisionImpactSpeed(
             previousMotion, other->motion);
+        const game::VehicleModStats otherModStats =
+            ServerVehicleModStats(*other);
         const float vehicleWear =
             game::VehicleApplyCollisionConditionDamageForType(
-                &vehicle.motion, impactSpeed, m_vehicleTuning);
+                &vehicle.motion, impactSpeed, m_vehicleTuning,
+                game::VehicleModCrashWearScale(modStats));
         const float otherWear =
             game::VehicleApplyCollisionConditionDamageForType(
-                &other->motion, impactSpeed, m_vehicleTuning);
+                &other->motion, impactSpeed, m_vehicleTuning,
+                game::VehicleModCrashWearScale(otherModStats));
         const bool hasDamage = vehicleWear > 0.0f || otherWear > 0.0f;
         const bool collisionSpeed =
             std::isfinite(impactSpeed) &&
@@ -7961,7 +9839,8 @@ bool ServerHost::ApplyServerVehicleVehicleCollisions(
 
 bool ServerHost::ApplyServerVehicleRam(
     ServerVehicleRuntime& vehicle,
-    const game::VehicleMotion* previousMotion) {
+    const game::VehicleMotion* previousMotion,
+    const game::VehicleModStats& modStats) {
     if (m_simulation == nullptr || m_simulation->Combat() == nullptr ||
         vehicle.entity == entt::null) {
         return false;
@@ -7973,7 +9852,9 @@ bool ServerHost::ApplyServerVehicleRam(
             ? *previousMotion
             : vehicle.motion;
     const float speed = game::VehicleSpeed(ramMotion);
-    if (game::VehicleRamDamage(speed, m_vehicleTuning) <= 0.0f) {
+    const float ramDamageScale = game::VehicleModRamDamageScale(modStats);
+    if (game::VehicleRamDamage(speed, m_vehicleTuning, ramDamageScale) <=
+        0.0f) {
         return false;
     }
     auto& registry = m_simulation->Ecs().Registry();
@@ -8024,7 +9905,8 @@ bool ServerHost::ApplyServerVehicleRam(
                 ? vehicle.driverStableId
                 : vehicle.stableId;
         event.type = ecs::DamageType::Blunt;
-        event.amount = game::VehicleRamDamage(speed, m_vehicleTuning);
+        event.amount =
+            game::VehicleRamDamage(speed, m_vehicleTuning, ramDamageScale);
         event.dirX = dirX;
         event.dirY = dirY;
         event.knockback = game::VehicleRamKnockback(speed, m_vehicleTuning);
@@ -8145,7 +10027,8 @@ bool ServerHost::ApplyServerVehicleRam(
     if (rammed) {
         if (vehicle.ramWearCooldown <= 0.0f) {
             const float wear = game::VehicleApplyRamConditionDamage(
-                &vehicle.motion, speed, m_vehicleTuning);
+                &vehicle.motion, speed, m_vehicleTuning,
+                game::VehicleModRamWearScale(modStats));
             if (wear > 0.0f) {
                 vehicle.ramWearCooldown =
                     m_vehicleTuning.ramCooldownSeconds;
@@ -8169,8 +10052,9 @@ bool ServerHost::ApplyServerVehicleRam(
     return rammed;
 }
 
-bool ServerHost::ApplyServerVehicleAttacks(ServerVehicleRuntime& vehicle,
-                                           SessionPlayer& session) {
+bool ServerHost::ApplyServerVehicleAttacks(
+    ServerVehicleRuntime& vehicle, SessionPlayer& session,
+    const game::VehicleModStats& modStats) {
     if (m_simulation == nullptr || m_simulation->Combat() == nullptr ||
         vehicle.driverStableId == 0 || vehicle.zombieAttackCooldown > 0.0f) {
         return false;
@@ -8242,7 +10126,8 @@ bool ServerHost::ApplyServerVehicleAttacks(ServerVehicleRuntime& vehicle,
         return false;
     }
     const float wear = game::VehicleApplyZombieAttackConditionDamage(
-        &vehicle.motion, m_vehicleTuning);
+        &vehicle.motion, m_vehicleTuning,
+        game::VehicleModZombieWearScale(modStats));
     if (wear <= 0.0f) {
         return false;
     }
@@ -8346,6 +10231,7 @@ void ServerHost::TickServerVehicle(ServerVehicleRuntime& vehicle, float dt) {
     };
     const game::VehicleTuning vehicleTuning =
         game::VehicleTuningForType(vehicle.motion.type, m_vehicleTuning);
+    const game::VehicleModStats modStats = ServerVehicleModStats(vehicle);
     if (vehicle.driverStableId == 0) {
         const float coastSpeed = game::VehicleSpeed(vehicle.motion);
         if (vehicle.motion.condition <= 0.0f ||
@@ -8392,7 +10278,7 @@ void ServerHost::TickServerVehicle(ServerVehicleRuntime& vehicle, float dt) {
                 }
                 return !IsServerVehicleCellWalkable(wx, wy, wz);
             },
-            coastTuning, coastSurface, coastBodyBlocked);
+            coastTuning, coastSurface, coastBodyBlocked, modStats);
         if (game::VehicleSpeed(vehicle.motion) <=
             game::kVehicleCoastStopSpeed) {
             vehicle.motion.vx = 0.0f;
@@ -8492,7 +10378,7 @@ void ServerHost::TickServerVehicle(ServerVehicleRuntime& vehicle, float dt) {
             }
             return !IsServerVehicleCellWalkable(wx, wy, wz);
         },
-        vehicleTuning, surface, bodyBlocked);
+        vehicleTuning, surface, bodyBlocked, modStats);
     std::sort(vehicleCollisionTargets.begin(), vehicleCollisionTargets.end());
     vehicleCollisionTargets.erase(
         std::unique(vehicleCollisionTargets.begin(),
@@ -8501,10 +10387,11 @@ void ServerHost::TickServerVehicle(ServerVehicleRuntime& vehicle, float dt) {
     if ((result.bodyCollision || result.bodyContact) &&
         !vehicleCollisionTargets.empty()) {
         ApplyServerVehicleVehicleCollisions(vehicle, vehicleCollisionTargets,
-                                            previousMotion);
+                                            previousMotion, modStats);
     }
-    const bool vehicleRammed = ApplyServerVehicleRam(vehicle, &previousMotion);
-    ApplyServerVehicleAttacks(vehicle, *session);
+    const bool vehicleRammed =
+        ApplyServerVehicleRam(vehicle, &previousMotion, modStats);
+    ApplyServerVehicleAttacks(vehicle, *session, modStats);
     EmitServerVehicleNoise(vehicle, *session);
     SyncServerVehicleToEcs(vehicle);
     SyncVehicleDriver(vehicle, player);
@@ -9080,6 +10967,193 @@ bool ServerHost::ServiceServerVehicle(SessionPlayer& session,
     return true;
 }
 
+bool ServerHost::ModifyServerVehicleMod(SessionPlayer& session,
+                                        const net::Command& command,
+                                        bool install, std::string* error) {
+    auto fail = [&](const std::string& message) {
+        SetSessionStatus(session, message, 2);
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (m_simulation == nullptr || m_items == nullptr ||
+        m_vehicleMods == nullptr || !m_vehicleMods->enabled) {
+        return fail("车辆改装未启用");
+    }
+    if (command.payload.flags != 0) {
+        return fail("车辆改装命令字段非法");
+    }
+    const int slotIndex = command.payload.index;
+    if (slotIndex < 0 ||
+        slotIndex >= static_cast<int>(ecs::kVehicleModSlotCount)) {
+        return fail("车辆改装槽位非法");
+    }
+    if (session.drivingVehicleId != 0) {
+        return fail("驾驶或乘坐载具时无法改装");
+    }
+    ServerVehicleRuntime* target =
+        FindServerVehicle(command.payload.entityId);
+    if (target == nullptr || target->entity == entt::null ||
+        !m_simulation->Ecs().Alive(target->entity)) {
+        ++m_networkStats.rangeRejected;
+        return fail("改装目标不是服务器载具");
+    }
+    if (target->driverStableId != 0 || target->passengerStableId != 0 ||
+        target->secondPassengerStableId != 0) {
+        return fail("载具正在使用，无法改装");
+    }
+    if (game::VehicleSpeed(target->motion) > 0.1f) {
+        return fail("载具未停稳，无法改装");
+    }
+
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    const ecs::Entity player =
+        m_simulation->Ecs().FindById(session.playerStableId);
+    const auto* playerPosition =
+        player != entt::null ? registry.try_get<ecs::Position>(player)
+                             : nullptr;
+    auto* bag = player != entt::null
+                    ? registry.try_get<ecs::Container>(player)
+                    : nullptr;
+    if (player == entt::null || !m_simulation->Ecs().Alive(player) ||
+        playerPosition == nullptr || bag == nullptr) {
+        return fail("玩家背包或位置不可用");
+    }
+    if (playerPosition->z != target->motion.z) {
+        return fail("玩家与载具不在同一层");
+    }
+    if (!game::VehicleCanEnter(target->motion, playerPosition->x,
+                               playerPosition->y,
+                               m_vehicleTuning.enterRange + 0.75f)) {
+        ++m_networkStats.rangeRejected;
+        return fail("距离载具太远");
+    }
+
+    auto* mods = registry.try_get<ecs::VehicleMods>(target->entity);
+    const game::VehicleModSlot slot =
+        static_cast<game::VehicleModSlot>(slotIndex);
+    if (install) {
+        if (command.payload.targetIndex < 0) {
+            return fail("改装候选索引非法");
+        }
+        const auto candidates =
+            game::VehicleModCandidatesForSlot(*m_vehicleMods, slot);
+        if (command.payload.targetIndex >=
+            static_cast<std::int32_t>(candidates.size())) {
+            return fail("改装候选索引非法");
+        }
+        const game::VehicleModDef* def =
+            candidates[static_cast<std::size_t>(
+                command.payload.targetIndex)];
+        if (def == nullptr) {
+            return fail("改装定义不可用");
+        }
+        ecs::VehicleMods empty;
+        const ecs::VehicleMods& current =
+            mods != nullptr ? *mods : empty;
+        std::string validationError;
+        if (!game::CanInstallVehicleMod(*m_vehicleMods, current, def->id,
+                                        &validationError)) {
+            return fail(validationError);
+        }
+        std::string materialSummary;
+        if (!game::VehicleModMaterialCountsMet(*bag, *m_items, *def,
+                                               &materialSummary)) {
+            return fail("材料不足：" + materialSummary);
+        }
+        if (!game::ConsumeVehicleModMaterials(*bag, *m_items, *def,
+                                              &validationError)) {
+            return fail("材料扣除失败：" + validationError);
+        }
+        if (mods == nullptr) {
+            mods = &registry.emplace<ecs::VehicleMods>(target->entity);
+        }
+        if (!game::InstallVehicleMod(*m_vehicleMods, mods, def->id,
+                                     &validationError)) {
+            for (const game::VehicleModMaterial& material :
+                 def->materials) {
+                (void)ReturnServerItem(
+                    player,
+                    ecs::ItemInstance{material.item, material.count, 1.0f},
+                    playerPosition->x, playerPosition->y,
+                    playerPosition->z);
+            }
+            return fail("安装失败：" + validationError);
+        }
+        SyncServerVehicleModStorage(*target);
+        session.stateDirty = true;
+        SetSessionStatus(session, "已安装车辆改装：" + def->name, 1);
+        ZL_INFO("vehicle",
+                "服务器安装车辆改装：playerStableId={}，载具 stableId={}，"
+                "槽位 {}，定义 {}",
+                session.playerStableId, target->stableId,
+                game::VehicleModSlotName(slot), def->id);
+        return true;
+    }
+
+    if (command.payload.targetIndex != -1) {
+        return fail("拆除改装命令字段非法");
+    }
+    if (mods == nullptr) {
+        return fail("槽位没有可拆除的改装");
+    }
+    const std::string currentId =
+        game::InstalledVehicleModId(*mods, slot);
+    if (currentId.empty()) {
+        return fail("槽位没有可拆除的改装");
+    }
+    const game::VehicleModDef* def =
+        m_vehicleMods->Find(currentId);
+    const std::string removedId = game::RemoveVehicleMod(mods, slot);
+    if (removedId.empty()) {
+        return fail("槽位没有可拆除的改装");
+    }
+
+    std::string refundText;
+    bool refundDropped = false;
+    if (def != nullptr) {
+        for (const game::VehicleModMaterial& material :
+             game::VehicleModRefundMaterials(
+                 *def, m_vehicleMods->removeRefundRatio)) {
+            if (!refundText.empty()) {
+                refundText += "、";
+            }
+            const items::ItemDef* itemDef = m_items->Find(material.item);
+            refundText +=
+                (itemDef != nullptr ? itemDef->name : material.item) +
+                " x" + std::to_string(material.count);
+            if (ReturnServerItem(
+                    player,
+                    ecs::ItemInstance{material.item, material.count, 1.0f},
+                    playerPosition->x, playerPosition->y,
+                    playerPosition->z)) {
+                refundDropped = true;
+            }
+        }
+    }
+    SyncServerVehicleModStorage(*target);
+    session.stateDirty = true;
+    std::string message =
+        "已拆除车辆改装：" +
+        (def != nullptr ? def->name : removedId);
+    if (!refundText.empty()) {
+        message += "（返还 " + refundText;
+        if (refundDropped) {
+            message += "，部分掉地";
+        }
+        message += "）";
+    }
+    SetSessionStatus(session, message, 1);
+    ZL_INFO("vehicle",
+            "服务器拆除车辆改装：playerStableId={}，载具 stableId={}，"
+            "槽位 {}，定义 {}，返还 {}",
+            session.playerStableId, target->stableId,
+            game::VehicleModSlotName(slot), removedId,
+            refundText.empty() ? "无" : refundText);
+    return true;
+}
+
 void ServerHost::ReleaseServerVehicleSeat(SessionPlayer& session,
                                           bool placeAtExit,
                                           std::string_view reason) {
@@ -9174,11 +11248,84 @@ void ServerHost::ReleaseServerVehicleSeat(SessionPlayer& session,
             session.playerStableId, vehicle.stableId, reason);
 }
 
+void ServerHost::StandbyOwnedCompanion(std::uint64_t ownerStableId,
+                                       const char* reason) {
+    if (m_simulation == nullptr || ownerStableId == 0) {
+        return;
+    }
+    ecs::EcsWorld& world = m_simulation->Ecs();
+    const ecs::Entity companion =
+        game::FindOwnedCompanion(world, ownerStableId);
+    if (companion == entt::null || !world.Alive(companion)) {
+        return;
+    }
+    entt::registry& registry = world.Registry();
+    const auto* identity = registry.try_get<game::Companion>(companion);
+    auto* state = registry.try_get<game::CompanionState>(companion);
+    if (identity == nullptr || state == nullptr || state->dead ||
+        state->standby) {
+        return;
+    }
+    const game::SettlementDef* home =
+        m_settlements != nullptr
+            ? m_settlements->Find(identity->homeSettlementId)
+            : nullptr;
+    bool teleported = false;
+    if (!state->downed && home != nullptr) {
+        teleported = m_simulation->TeleportCompanion(
+            companion, home->centerX, home->centerY);
+    }
+    state->standby = true;
+    state->command = game::CompanionCommand::Stay;
+    if (!teleported) {
+        const auto* position = registry.try_get<ecs::Position>(companion);
+        if (auto* intent = registry.try_get<ecs::MoveIntent>(companion);
+            intent != nullptr) {
+            intent->x = 0.0f;
+            intent->y = 0.0f;
+        }
+        if (auto* request = registry.try_get<ecs::PathRequest>(companion);
+            request != nullptr) {
+            request->newRequest = false;
+            request->queryId = 0;
+            request->state = ecs::PathStatus::None;
+        }
+        if (auto* follow = registry.try_get<ecs::PathFollow>(companion);
+            follow != nullptr) {
+            follow->waypoints.clear();
+            follow->index = 0;
+            follow->status = ecs::PathStatus::None;
+            if (position != nullptr) {
+                follow->anchorX = position->x;
+                follow->anchorY = position->y;
+            }
+        }
+        if (auto* ai = registry.try_get<game::CompanionAiState>(companion);
+            ai != nullptr) {
+            ai->targetId = 0;
+            ai->engaged = false;
+            ai->autoRetreat = false;
+            ai->frozen = false;
+            ai->hasAnchor = true;
+            ai->repathTimer = 0.0f;
+            if (position != nullptr) {
+                ai->anchorX = position->x;
+                ai->anchorY = position->y;
+            }
+        }
+    }
+    ZL_INFO("companions", "同伴断线待命：{}，owner={}，{}，位置{}",
+            identity->defId, ownerStableId,
+            reason != nullptr ? reason : "manual",
+            teleported ? "已回聚落" : "原地");
+}
+
 bool ServerHost::SaveWorld(const char* reason) {
     if (m_simulation == nullptr || m_saveManager == nullptr ||
         m_saveComponents == nullptr || m_activeSaveId.empty()) {
         return false;
     }
+    SettleServerThrows(reason != nullptr ? reason : "save");
     if (m_activeSaveUseBackup) {
         ZL_WARN("save", "服务器当前从备份读档，跳过世界回写（{}）",
                 reason != nullptr ? reason : "manual");
@@ -9358,6 +11505,7 @@ void ServerHost::UpdatePlayerLifecycle() {
         session.stateDirty = true;
         ++m_networkStats.playerDeaths;
         CaptureSessionProfile(session, true);
+        StandbyOwnedCompanion(session.playerStableId, "玩家死亡");
         const double seconds = static_cast<double>(m_respawnDelayTicks) /
                                std::max(1.0f, m_options.tickRate);
         SetSessionStatus(session,
@@ -9370,6 +11518,7 @@ void ServerHost::UpdatePlayerLifecycle() {
                 session.identity, session.playerStableId, seconds);
     }
     if (changed) {
+        FailServerPoiOnWipe();
         SavePlayerProfiles("death");
     }
 }
@@ -9400,11 +11549,14 @@ bool ServerHost::RespawnSessionPlayer(SessionPlayer& session) {
     session.dead = false;
     session.respawnAtTick = 0;
     session.drivingVehicleId = 0;
+    ResetServerStealth(session, player, "复活");
     session.needsFullSnapshot = true;
     session.stateDirty = true;
     session.lastStateTick = 0;
     session.attackUsed = false;
     session.projectileUsed = false;
+    session.throwUsed = false;
+    session.lastThrowTick = 0;
     session.rangedWeapon = {};
     session.rangedShotSerial = 0;
     ReleaseServerForageReservation(session);
@@ -9591,26 +11743,45 @@ ecs::Entity ServerHost::FindServerBuildEntityAt(
             const auto* container = registry.try_get<ecs::Container>(entity);
             const auto* storage = registry.try_get<ecs::PlayerStorage>(entity);
             const game::BuildableDef* candidate = nullptr;
-            for (const game::BuildableDef& buildable : m_buildables) {
-                if (ecs::HashName(buildable.sprite) != sprite.sprite &&
-                    (buildable.spriteVertical.empty() ||
-                     ecs::HashName(buildable.spriteVertical) != sprite.sprite) &&
-                    (buildable.openSprite.empty() ||
-                     ecs::HashName(buildable.openSprite) != sprite.sprite) &&
-                    (buildable.openSpriteVertical.empty() ||
-                     ecs::HashName(buildable.openSpriteVertical) !=
-                         sprite.sprite)) {
-                    continue;
+            if (const auto* placed = registry.try_get<ecs::PlacedTrap>(entity);
+                placed != nullptr) {
+                const game::TrapDef* trapDef =
+                    m_traps != nullptr ? m_traps->Find(placed->defId) : nullptr;
+                if (trapDef == nullptr) {
+                    return;
                 }
-                if (game::IsStorageBuildable(buildable) &&
-                    (container == nullptr || storage == nullptr ||
-                     buildable.storageSlots != storage->maxStacks ||
-                     std::abs(buildable.storageKg - container->capacityKg) >
-                         0.01f)) {
-                    continue;
+                for (const game::BuildableDef& buildable : m_buildables) {
+                    if (buildable.id == trapDef->buildingId) {
+                        candidate = &buildable;
+                        break;
+                    }
                 }
-                candidate = &buildable;
-                break;
+                if (candidate == nullptr) {
+                    return;
+                }
+            } else {
+                for (const game::BuildableDef& buildable : m_buildables) {
+                    if (ecs::HashName(buildable.sprite) != sprite.sprite &&
+                        (buildable.spriteVertical.empty() ||
+                         ecs::HashName(buildable.spriteVertical) !=
+                             sprite.sprite) &&
+                        (buildable.openSprite.empty() ||
+                         ecs::HashName(buildable.openSprite) != sprite.sprite) &&
+                        (buildable.openSpriteVertical.empty() ||
+                         ecs::HashName(buildable.openSpriteVertical) !=
+                             sprite.sprite)) {
+                        continue;
+                    }
+                    if (game::IsStorageBuildable(buildable) &&
+                        (container == nullptr || storage == nullptr ||
+                         buildable.storageSlots != storage->maxStacks ||
+                         std::abs(buildable.storageKg - container->capacityKg) >
+                             0.01f)) {
+                        continue;
+                    }
+                    candidate = &buildable;
+                    break;
+                }
             }
             if (candidate == nullptr) {
                 return;
@@ -9860,6 +12031,18 @@ bool ServerHost::PlaceStructure(ecs::Entity player, SessionPlayer& session,
         }
         return false;
     }
+    const game::TrapDef* trapDef =
+        m_traps != nullptr ? m_traps->FindByBuilding(def.id) : nullptr;
+    const bool trapBuilding =
+        trapDef != nullptr || def.id == "bear_trap" ||
+        def.id == "tripwire_alarm" || def.id == "fuel_trap";
+    if (trapBuilding &&
+        (m_traps == nullptr || !m_traps->enabled || trapDef == nullptr)) {
+        if (error != nullptr) {
+            *error = "陷阱数据不可用";
+        }
+        return false;
+    }
     world::Chunk* chunk = FindServerLoadedChunk(wx, wy);
     if (chunk == nullptr) {
         if (error != nullptr) {
@@ -9925,6 +12108,11 @@ bool ServerHost::PlaceStructure(ecs::Entity player, SessionPlayer& session,
         placedEntity = game::SpawnSpikeTrap(
             m_simulation->Ecs(), static_cast<float>(wx) + 0.5f,
             static_cast<float>(wy) + 0.5f, 0, m_homesteadConfig.trap);
+    } else if (trapDef != nullptr) {
+        placedEntity = game::SpawnPlacedTrap(
+            m_simulation->Ecs(), static_cast<float>(wx) + 0.5f,
+            static_cast<float>(wy) + 0.5f, 0, *trapDef, def,
+            session.playerStableId);
     } else if (game::IsStorageBuildable(def)) {
         placedEntity = game::SpawnPlayerStorage(
             m_simulation->Ecs(), static_cast<float>(wx) + 0.5f,
@@ -11730,6 +13918,16 @@ void ServerHost::TickHomestead(float dt) {
                 game::AdvanceTrap(trap, dt);
             });
     }
+    if (m_traps != nullptr && m_traps->enabled && dt > 0.0f) {
+        registry.view<ecs::PlacedTrap>().each(
+            [&](const ecs::Entity entity, ecs::PlacedTrap& trap) {
+                (void)game::AdvancePlacedTrapCooldown(trap, dt);
+                if (game::AdvancePlacedTrapArming(trap, dt)) {
+                    ZL_INFO("traps", "服务器陷阱布防完成：{}（{}）", trap.defId,
+                            m_simulation->Ecs().IdOf(entity).id);
+                }
+            });
+    }
 
     if (m_homesteadConfig.trade.enabled) {
         const int day = 1 + static_cast<int>(now / (24.0 * 60.0));
@@ -12124,101 +14322,321 @@ void ServerHost::TickElectricFences() {
 }
 
 void ServerHost::TickTrapTriggers() {
-    if (m_simulation == nullptr || !m_homesteadConfig.trap.enabled) {
+    if (m_simulation == nullptr) {
+        return;
+    }
+    const bool legacyEnabled = m_homesteadConfig.trap.enabled;
+    const bool placedEnabled = m_traps != nullptr && m_traps->enabled;
+    if (!legacyEnabled && !placedEnabled) {
         return;
     }
     entt::registry& registry = m_simulation->Ecs().Registry();
-    struct PendingHit {
+    if (legacyEnabled) {
+        struct PendingHit {
+            ecs::Entity trap = entt::null;
+            ecs::Entity target = entt::null;
+        };
+        std::vector<PendingHit> pending;
+        registry.view<ecs::SpikeTrap, ecs::Position>().each(
+            [&](const ecs::Entity trapEntity, ecs::SpikeTrap& trap,
+                const ecs::Position& trapPosition) {
+                if (!game::TrapCanTrigger(trap)) {
+                    return;
+                }
+                ecs::Entity target = entt::null;
+                float bestDistance = trap.radius * trap.radius;
+                registry.view<ecs::AiState, ecs::Health, ecs::Position>()
+                    .each([&](const ecs::Entity entity, const ecs::AiState& ai,
+                              const ecs::Health& health,
+                              const ecs::Position& position) {
+                        if (!registry.any_of<ecs::BaseSiegeZombie,
+                                              game::SettlementRaidZombie>(
+                                entity) ||
+                            health.current <= 0.0f ||
+                            ai.status == ecs::AiStatus::Dead ||
+                            registry.any_of<ecs::Dying>(entity) ||
+                            registry.any_of<ecs::PlayerTag>(entity) ||
+                            position.z != trapPosition.z) {
+                            return;
+                        }
+                        const float dx = position.x - trapPosition.x;
+                        const float dy = position.y - trapPosition.y;
+                        const float distance = dx * dx + dy * dy;
+                        if (distance > bestDistance) {
+                            return;
+                        }
+                        bestDistance = distance;
+                        target = entity;
+                    });
+                if (target != entt::null) {
+                    pending.push_back(PendingHit{trapEntity, target});
+                }
+            });
+
+        for (const PendingHit& hit : pending) {
+            auto* trap = registry.try_get<ecs::SpikeTrap>(hit.trap);
+            const auto* trapPosition =
+                registry.try_get<ecs::Position>(hit.trap);
+            const auto* targetPosition =
+                registry.try_get<ecs::Position>(hit.target);
+            if (trap == nullptr || trapPosition == nullptr ||
+                targetPosition == nullptr || !game::TrapCanTrigger(*trap)) {
+                continue;
+            }
+            ecs::DamageEvent event;
+            event.type = ecs::DamageType::Blunt;
+            event.amount = trap->damage;
+            event.knockback = 0.8f;
+            event.staggerSeconds = trap->staggerSeconds;
+            if (const auto* owner =
+                    registry.try_get<ecs::StructureOwner>(hit.trap);
+                owner != nullptr) {
+                event.sourceId = owner->ownerStableId;
+            }
+            const float dx = targetPosition->x - trapPosition->x;
+            const float dy = targetPosition->y - trapPosition->y;
+            const float length = std::sqrt(dx * dx + dy * dy);
+            if (length > 0.0001f) {
+                event.dirX = dx / length;
+                event.dirY = dy / length;
+            }
+            characters::CombatSystem* combat = m_simulation->Combat();
+            const auto* targetHealth =
+                registry.try_get<ecs::Health>(hit.target);
+            const float healthBefore =
+                targetHealth != nullptr ? targetHealth->current : 0.0f;
+            if (combat == nullptr ||
+                !combat->ApplyDamage(m_simulation->Ecs(), hit.target, event)) {
+                continue;
+            }
+            const auto* healthAfter =
+                registry.try_get<ecs::Health>(hit.target);
+            if (event.sourceId != 0 && healthAfter != nullptr) {
+                RecordSiegeDefenseDamage(
+                    event.sourceId, hit.target,
+                    std::max(0.0f, healthBefore - healthAfter->current));
+            }
+            if (!game::ConsumeTrapUse(*trap)) {
+                continue;
+            }
+            const float impactX = trapPosition->x;
+            const float impactY = trapPosition->y;
+            const int impactZ = trapPosition->z;
+            SpawnImpactEffect(impactX, impactY, impactZ);
+            NotifyTrapTrigger(impactX, impactY, impactZ, trap->uses);
+            ZL_INFO("homestead", "服务器陷阱 {} 命中目标 {}，剩余 {} 次",
+                    m_simulation->Ecs().IdOf(hit.trap).id,
+                    m_simulation->Ecs().IdOf(hit.target).id, trap->uses);
+        }
+    }
+
+    if (!placedEnabled) {
+        return;
+    }
+    bool anyReady = false;
+    registry.view<ecs::PlacedTrap>().each(
+        [&](const ecs::Entity, const ecs::PlacedTrap& trap) {
+            const game::TrapDef* def = m_traps->Find(trap.defId);
+            if (def != nullptr && game::TrapCanActivate(trap, *def)) {
+                anyReady = true;
+            }
+        });
+    if (!anyReady) {
+        return;
+    }
+    struct PendingPlacedHit {
         ecs::Entity trap = entt::null;
         ecs::Entity target = entt::null;
+        game::TrapTargetKind kind = game::TrapTargetKind::None;
+        const game::TrapDef* def = nullptr;
     };
-    std::vector<PendingHit> pending;
-    registry.view<ecs::SpikeTrap, ecs::Position>().each(
-        [&](const ecs::Entity trapEntity, ecs::SpikeTrap& trap,
-            const ecs::Position& trapPosition) {
-            if (!game::TrapCanTrigger(trap)) {
+    std::vector<PendingPlacedHit> pendingPlaced;
+    const std::vector<game::TrapTargetCandidate> targets =
+        game::CollectTrapTargets(m_simulation->Ecs());
+    registry.view<ecs::PlacedTrap, ecs::Position>().each(
+        [&](const ecs::Entity entity, const ecs::PlacedTrap& trap,
+            const ecs::Position& position) {
+            const game::TrapDef* def = m_traps->Find(trap.defId);
+            if (def == nullptr || !game::TrapCanActivate(trap, *def)) {
                 return;
             }
-            ecs::Entity target = entt::null;
-            float bestDistance = trap.radius * trap.radius;
-            registry.view<ecs::AiState, ecs::Health, ecs::Position>()
-                .each([&](const ecs::Entity entity, const ecs::AiState& ai,
-                          const ecs::Health& health,
-                          const ecs::Position& position) {
-                    if (!registry.any_of<ecs::BaseSiegeZombie,
-                                          game::SettlementRaidZombie>(
-                            entity) ||
-                        health.current <= 0.0f ||
-                        ai.status == ecs::AiStatus::Dead ||
-                        registry.any_of<ecs::Dying>(entity) ||
-                        registry.any_of<ecs::PlayerTag>(entity) ||
-                        position.z != trapPosition.z) {
-                        return;
-                    }
-                    const float dx = position.x - trapPosition.x;
-                    const float dy = position.y - trapPosition.y;
-                    const float distance = dx * dx + dy * dy;
-                    if (distance > bestDistance) {
-                        return;
-                    }
-                    bestDistance = distance;
-                    target = entity;
-                });
+            game::TrapTargetKind kind = game::TrapTargetKind::None;
+            const ecs::Entity target =
+                game::FindTrapTarget(targets, position, *def, &kind);
             if (target != entt::null) {
-                pending.push_back(PendingHit{trapEntity, target});
+                pendingPlaced.push_back(
+                    PendingPlacedHit{entity, target, kind, def});
             }
         });
 
-    for (const PendingHit& hit : pending) {
-        auto* trap = registry.try_get<ecs::SpikeTrap>(hit.trap);
+    const auto notifyPlaced = [&](const game::TrapDef& def,
+                                  game::TrapTargetKind kind,
+                                  const ecs::Position& position,
+                                  int usesLeft, std::size_t fireCells) {
+        constexpr float kNoticeRadiusSq = 12.0f * 12.0f;
+        std::string message = def.name + "触发";
+        if (def.damage > 0.0f) {
+            message += "：造成 " +
+                       std::to_string(static_cast<int>(
+                           std::lround(def.damage))) +
+                       " 伤害";
+        } else if (def.noiseRadius > 0.0f) {
+            message += "：发出 " +
+                       std::to_string(static_cast<int>(
+                           std::lround(def.noiseRadius))) +
+                       " 格噪声";
+        } else if (def.fire.has_value()) {
+            message += "：点燃 " + std::to_string(fireCells) + " 格火焰";
+        }
+        static_cast<void>(kind);
+        message += "（剩余 " + std::to_string(usesLeft) + " 次）";
+        for (auto& [sessionId, session] : m_sessions) {
+            static_cast<void>(sessionId);
+            if (session.dead || session.playerStableId == 0) {
+                continue;
+            }
+            const ecs::Entity player =
+                m_simulation->Ecs().FindById(session.playerStableId);
+            const auto* playerPosition =
+                player != entt::null
+                    ? registry.try_get<ecs::Position>(player)
+                    : nullptr;
+            if (playerPosition == nullptr ||
+                playerPosition->z != position.z) {
+                continue;
+            }
+            const float dx = playerPosition->x - position.x;
+            const float dy = playerPosition->y - position.y;
+            if (dx * dx + dy * dy <= kNoticeRadiusSq) {
+                SetSessionStatus(session, message, 1);
+            }
+        }
+    };
+
+    for (const PendingPlacedHit& hit : pendingPlaced) {
+        auto* trap = registry.try_get<ecs::PlacedTrap>(hit.trap);
         const auto* trapPosition = registry.try_get<ecs::Position>(hit.trap);
-        const auto* targetPosition = registry.try_get<ecs::Position>(hit.target);
-        if (trap == nullptr || trapPosition == nullptr ||
-            targetPosition == nullptr || !game::TrapCanTrigger(*trap)) {
-            continue;
-        }
-        ecs::DamageEvent event;
-        event.type = ecs::DamageType::Blunt;
-        event.amount = trap->damage;
-        event.knockback = 0.8f;
-        event.staggerSeconds = trap->staggerSeconds;
-        if (const auto* owner = registry.try_get<ecs::StructureOwner>(hit.trap);
-            owner != nullptr) {
-            event.sourceId = owner->ownerStableId;
-        }
-        const float dx = targetPosition->x - trapPosition->x;
-        const float dy = targetPosition->y - trapPosition->y;
-        const float length = std::sqrt(dx * dx + dy * dy);
-        if (length > 0.0001f) {
-            event.dirX = dx / length;
-            event.dirY = dy / length;
-        }
-        characters::CombatSystem* combat = m_simulation->Combat();
+        const auto* targetPosition =
+            registry.try_get<ecs::Position>(hit.target);
         const auto* targetHealth =
             registry.try_get<ecs::Health>(hit.target);
-        const float healthBefore =
-            targetHealth != nullptr ? targetHealth->current : 0.0f;
-        if (combat == nullptr ||
-            !combat->ApplyDamage(m_simulation->Ecs(), hit.target, event)) {
+        if (trap == nullptr || trapPosition == nullptr ||
+            targetPosition == nullptr || targetHealth == nullptr ||
+            targetHealth->current <= 0.0f || hit.def == nullptr ||
+            !game::TrapCanActivate(*trap, *hit.def)) {
             continue;
         }
-        const auto* healthAfter = registry.try_get<ecs::Health>(hit.target);
-        if (event.sourceId != 0 && healthAfter != nullptr) {
-            RecordSiegeDefenseDamage(
-                event.sourceId, hit.target,
-                std::max(0.0f, healthBefore - healthAfter->current));
+        bool applied = false;
+        if (hit.def->damage > 0.0f) {
+            characters::CombatSystem* combat = m_simulation->Combat();
+            if (combat != nullptr) {
+                ecs::DamageEvent event;
+                event.type = ecs::DamageType::Blunt;
+                event.amount = hit.def->damage;
+                event.knockback = 0.0f;
+                event.staggerSeconds = hit.def->staggerSeconds;
+                event.sourceId = trap->owner;
+                const float dx = targetPosition->x - trapPosition->x;
+                const float dy = targetPosition->y - trapPosition->y;
+                const float length = std::sqrt(dx * dx + dy * dy);
+                if (length > 0.0001f) {
+                    event.dirX = dx / length;
+                    event.dirY = dy / length;
+                }
+                const float healthBefore = targetHealth->current;
+                if (combat->ApplyDamage(m_simulation->Ecs(), hit.target,
+                                        event)) {
+                    applied = true;
+                    const auto* healthAfter =
+                        registry.try_get<ecs::Health>(hit.target);
+                    if (event.sourceId != 0 && healthAfter != nullptr) {
+                        RecordSiegeDefenseDamage(
+                            event.sourceId, hit.target,
+                            std::max(0.0f,
+                                     healthBefore - healthAfter->current));
+                    }
+                }
+            }
         }
-        if (!game::ConsumeTrapUse(*trap)) {
+        if (hit.def->noiseRadius > 0.0f) {
+            core::SoundEvent noise;
+            noise.x = trapPosition->x;
+            noise.y = trapPosition->y;
+            noise.radius = hit.def->noiseRadius;
+            noise.type = core::SoundType::Impact;
+            noise.clip = audio::kImpact;
+            if (m_events != nullptr) {
+                m_events->EmitQueued(core::kOnSound, noise);
+            }
+            net::WorldSoundEvent remote;
+            remote.sourcePlayerStableId = trap->owner;
+            remote.x = trapPosition->x;
+            remote.y = trapPosition->y;
+            remote.z = trapPosition->z;
+            remote.radius = hit.def->noiseRadius;
+            remote.type =
+                static_cast<std::uint8_t>(core::SoundType::Impact);
+            remote.clip = audio::kImpact;
+            BroadcastWorldSound(remote);
+            applied = true;
+        }
+        std::size_t fireCells = 0;
+        if (hit.def->fire.has_value()) {
+            game::FireSystem* fire = m_simulation->Fire();
+            if (fire != nullptr) {
+                double dayLengthMinutes = 60.0;
+                if (m_config != nullptr) {
+                    dayLengthMinutes = m_config->Get<double>(
+                        "game.dayLengthMinutes", dayLengthMinutes);
+                }
+                const float gameMinutesPerRealSecond =
+                    std::isfinite(dayLengthMinutes) &&
+                            dayLengthMinutes > 0.0
+                        ? static_cast<float>(1440.0 /
+                                             (dayLengthMinutes * 60.0))
+                        : 0.4f;
+                const float burnSeconds = game::TrapFireDurationSeconds(
+                    hit.def->fire->minutes, gameMinutesPerRealSecond);
+                const std::vector<game::TrapFireCell> cells =
+                    game::TrapFireAreaCells(trapPosition->x,
+                                            trapPosition->y,
+                                            hit.def->fire->radius);
+                for (const game::TrapFireCell& cell : cells) {
+                    if (fire->IgniteForcedAt(
+                            m_simulation->Ecs(), m_simulation->World(),
+                            cell.cellX, cell.cellY, trapPosition->z,
+                            burnSeconds, hit.def->fire->radius,
+                            trap->owner)) {
+                        ++fireCells;
+                    }
+                }
+                if (fireCells > 0) {
+                    applied = true;
+                }
+            }
+        }
+        if (!applied) {
             continue;
         }
-        const float impactX = trapPosition->x;
-        const float impactY = trapPosition->y;
-        const int impactZ = trapPosition->z;
-        SpawnImpactEffect(impactX, impactY, impactZ);
-        NotifyTrapTrigger(impactX, impactY, impactZ, trap->uses);
-        ZL_INFO("homestead", "服务器陷阱 {} 命中目标 {}，剩余 {} 次",
+        (void)game::ConsumePlacedTrapUse(*trap, *hit.def);
+        if (hit.def->damage > 0.0f || hit.def->fire.has_value()) {
+            SpawnImpactEffect(trapPosition->x, trapPosition->y,
+                              trapPosition->z);
+        }
+        notifyPlaced(*hit.def, hit.kind, *trapPosition, trap->uses,
+                     fireCells);
+        ZL_INFO("traps",
+                "服务器陷阱 {} 触发 {}（{}），剩余 {} 次，冷却 {:.1f}s，火焰 {}/{} 格",
                 m_simulation->Ecs().IdOf(hit.trap).id,
-                m_simulation->Ecs().IdOf(hit.target).id, trap->uses);
+                game::TrapTargetKindName(hit.kind),
+                m_simulation->Ecs().IdOf(hit.target).id, trap->uses,
+                static_cast<double>(trap->cooldown), fireCells,
+                hit.def->fire.has_value()
+                    ? game::TrapFireAreaCells(trapPosition->x,
+                                              trapPosition->y,
+                                              hit.def->fire->radius)
+                          .size()
+                    : 0u);
     }
 }
 
@@ -12605,6 +15023,35 @@ bool ServerHost::InteractFacility(ecs::Entity player, SessionPlayer& session,
         return true;
     }
 
+    if (auto* trap = registry.try_get<ecs::PlacedTrap>(facility);
+        trap != nullptr && m_traps != nullptr && m_traps->enabled) {
+        const game::TrapDef* trapDef = m_traps->Find(trap->defId);
+        if (trapDef == nullptr) {
+            if (error != nullptr) {
+                *error = "陷阱数据不可用";
+            }
+            return false;
+        }
+        if (!game::TrapCanToggle(*trap)) {
+            if (error != nullptr) {
+                *error = "陷阱已耗尽，需要拆除重建";
+            }
+            return false;
+        }
+        const bool arm = !trap->armed;
+        if (!game::SetPlacedTrapArmed(*trap, arm)) {
+            if (error != nullptr) {
+                *error = "陷阱无法布防";
+            }
+            return false;
+        }
+        SetSessionStatus(session, arm ? "陷阱已布防" : "陷阱已解除",
+                         arm ? 1 : 0);
+        ZL_INFO("traps", "服务器{}陷阱：{}（{}）玩家 {}", arm ? "布防" : "解除",
+                trap->defId, command.payload.entityId, session.playerStableId);
+        return true;
+    }
+
     if (error != nullptr) {
         *error = "该设施当前不可交互";
     }
@@ -12910,6 +15357,522 @@ bool ServerHost::AcceptSettlementMission(ecs::Entity player,
     return true;
 }
 
+bool ServerHost::RecruitCompanion(ecs::Entity player, SessionPlayer& session,
+                                  const net::Command& command,
+                                  std::string* error) {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (m_simulation == nullptr || m_companions == nullptr ||
+        !m_companions->enabled || m_settlements == nullptr) {
+        return fail("服务器同伴系统不可用");
+    }
+    if (command.payload.entityId == 0 || command.payload.flags != 0) {
+        return fail("同伴招募命令字段非法");
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    const ecs::Entity npc =
+        m_simulation->Ecs().FindById(command.payload.entityId);
+    const auto* component =
+        npc != entt::null ? registry.try_get<game::SettlementNpc>(npc)
+                          : nullptr;
+    const auto* npcPosition =
+        npc != entt::null ? registry.try_get<ecs::Position>(npc) : nullptr;
+    const auto* playerPosition = registry.try_get<ecs::Position>(player);
+    if (npc == entt::null || !m_simulation->Ecs().Alive(npc) ||
+        component == nullptr ||
+        component->kind != game::SettlementNpcKind::Requester ||
+        npcPosition == nullptr || playerPosition == nullptr ||
+        playerPosition->z != npcPosition->z) {
+        return fail("求助者不存在");
+    }
+    const float dx = npcPosition->x - playerPosition->x;
+    const float dy = npcPosition->y - playerPosition->y;
+    const float range = m_buildActionRange + 1.0f;
+    if (dx * dx + dy * dy > range * range) {
+        ++m_networkStats.rangeRejected;
+        return fail("求助者超出招募范围");
+    }
+    const game::SettlementDef* settlement =
+        m_settlements->Find(component->settlementId);
+    if (settlement == nullptr) {
+        return fail("聚落数据不存在");
+    }
+    if (game::SettlementNpcSystem* system = m_simulation->SettlementNpcs();
+        system != nullptr &&
+        (system->IsFallen(settlement->id) ||
+         system->RaidActive(settlement->id))) {
+        return fail("聚落当前无法招募");
+    }
+
+    const std::uint64_t ownerStableId = session.playerStableId;
+    const ecs::Entity existing =
+        game::FindOwnedCompanion(m_simulation->Ecs(), ownerStableId);
+    if (existing != entt::null) {
+        auto* companion = registry.try_get<game::Companion>(existing);
+        auto* state = registry.try_get<game::CompanionState>(existing);
+        if (companion == nullptr || state == nullptr ||
+            !m_simulation->Ecs().Alive(existing)) {
+            return fail("同伴状态无效");
+        }
+        if (state->dead) {
+            return fail("同伴已死亡，无法再次招募");
+        }
+        if (!state->standby) {
+            return fail("你已经有一名活动同伴");
+        }
+        if (companion->homeSettlementId != settlement->id) {
+            return fail("同伴在其他聚落待命");
+        }
+        if (game::SettlementNpcSystem* system =
+                m_simulation->SettlementNpcs();
+            system != nullptr &&
+            (system->IsFallen(settlement->id) ||
+             system->RaidActive(settlement->id))) {
+            return fail("聚落当前无法召回同伴");
+        }
+        const int score = game::SettlementReputationScoreFor(
+            m_simulation->Ecs(), player, settlement->id,
+            settlement->startingReputation);
+        if (!game::SettlementCanUseService(
+                *settlement, m_settlements->reputation,
+                game::SettlementService::Recruit, score)) {
+            return fail("当前声望不允许召回同伴");
+        }
+        if (!m_simulation->TeleportCompanion(existing,
+                                             playerPosition->x + 0.8f,
+                                             playerPosition->y)) {
+            return fail("同伴归队位置不可用");
+        }
+        state->standby = false;
+        state->command = game::CompanionCommand::Follow;
+        const game::CompanionDef* def =
+            m_companions->Find(companion->defId);
+        const std::string name = def != nullptr ? def->name : companion->defId;
+        SetSessionStatus(session, "同伴已归队：" + name, 1);
+        ZL_INFO("companions", "服务器同伴归队：{}，玩家 {}", companion->defId,
+                ownerStableId);
+        return true;
+    }
+
+    const int score = game::SettlementReputationScoreFor(
+        m_simulation->Ecs(), player, settlement->id,
+        settlement->startingReputation);
+    const auto* log = registry.try_get<ecs::MissionLog>(player);
+    const auto* container = registry.try_get<ecs::Container>(player);
+    const game::CompanionRecruitCheck check =
+        game::EvaluateCompanionRecruitment(
+            *m_companions, *settlement, m_settlements->reputation, score, log,
+            container, false);
+    if (check.status != game::CompanionRecruitStatus::Ready ||
+        check.def == nullptr) {
+        std::string message = game::CompanionRecruitStatusText(check.status);
+        if (check.status == game::CompanionRecruitStatus::MissionRequired &&
+            !check.def->recruit.requiredMission.empty()) {
+            message += "：" + check.def->recruit.requiredMission;
+        } else if (check.status ==
+                       game::CompanionRecruitStatus::ItemRequired &&
+                   !check.def->recruit.requiredItem.empty()) {
+            message += "：" + check.def->recruit.requiredItem + " ×" +
+                       std::to_string(check.def->recruit.requiredItemCount) +
+                       "（当前 " + std::to_string(check.itemCount) + "）";
+        }
+        return fail(message);
+    }
+    if (container == nullptr) {
+        return fail("同伴招募需要玩家背包");
+    }
+    ecs::Container next = *container;
+    if (!game::ConsumeCompanionRecruitItems(&next, *check.def)) {
+        return fail("招募物资扣除失败");
+    }
+    const ecs::Entity companion = m_simulation->SpawnCompanionAt(
+        *check.def, ownerStableId, settlement->id, npcPosition->x + 1.0f,
+        npcPosition->y);
+    if (companion == entt::null) {
+        return fail("同伴生成位置不可用");
+    }
+    auto* inventory = registry.try_get<ecs::Container>(player);
+    if (inventory == nullptr) {
+        return fail("同伴招募需要玩家背包");
+    }
+    *inventory = std::move(next);
+    SetSessionStatus(session, "已招募同伴：" + check.def->name, 1);
+    ZL_INFO("companions", "服务器同伴招募：{}，玩家 {}", check.def->id,
+            ownerStableId);
+    return true;
+}
+
+bool ServerHost::DismissCompanion(ecs::Entity player, SessionPlayer& session,
+                                  const net::Command& command,
+                                  std::string* error) {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (m_simulation == nullptr || m_companions == nullptr ||
+        !m_companions->enabled || m_settlements == nullptr) {
+        return fail("服务器同伴系统不可用");
+    }
+    if (command.payload.entityId == 0 || command.payload.flags != 0) {
+        return fail("同伴解散命令字段非法");
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    const ecs::Entity npc =
+        m_simulation->Ecs().FindById(command.payload.entityId);
+    const auto* component =
+        npc != entt::null ? registry.try_get<game::SettlementNpc>(npc)
+                          : nullptr;
+    const auto* npcPosition =
+        npc != entt::null ? registry.try_get<ecs::Position>(npc) : nullptr;
+    const auto* playerPosition = registry.try_get<ecs::Position>(player);
+    if (npc == entt::null || !m_simulation->Ecs().Alive(npc) ||
+        component == nullptr ||
+        component->kind != game::SettlementNpcKind::Requester ||
+        npcPosition == nullptr || playerPosition == nullptr ||
+        playerPosition->z != npcPosition->z) {
+        return fail("求助者不存在");
+    }
+    const float dx = npcPosition->x - playerPosition->x;
+    const float dy = npcPosition->y - playerPosition->y;
+    const float range = m_buildActionRange + 1.0f;
+    if (dx * dx + dy * dy > range * range) {
+        ++m_networkStats.rangeRejected;
+        return fail("求助者超出解散范围");
+    }
+    const game::SettlementDef* settlement =
+        m_settlements->Find(component->settlementId);
+    if (settlement == nullptr) {
+        return fail("聚落数据不存在");
+    }
+    const ecs::Entity companion =
+        game::FindOwnedCompanion(m_simulation->Ecs(),
+                                 session.playerStableId);
+    auto* identity =
+        companion != entt::null
+            ? registry.try_get<game::Companion>(companion)
+            : nullptr;
+    auto* state =
+        companion != entt::null
+            ? registry.try_get<game::CompanionState>(companion)
+            : nullptr;
+    if (companion == entt::null || identity == nullptr || state == nullptr) {
+        return fail("当前没有可解散的同伴");
+    }
+    if (identity->homeSettlementId != settlement->id) {
+        return fail("只能让同伴回到所属聚落待命");
+    }
+    if (state->dead) {
+        return fail("同伴已死亡");
+    }
+    if (state->downed) {
+        return fail("同伴已倒地，需先救援");
+    }
+    if (state->standby) {
+        return fail("同伴已经在聚落待命");
+    }
+    if (!m_simulation->TeleportCompanion(companion, settlement->centerX,
+                                           settlement->centerY)) {
+        return fail("聚落待命位置不可用");
+    }
+    state->standby = true;
+    state->command = game::CompanionCommand::Stay;
+    const game::CompanionDef* def = m_companions->Find(identity->defId);
+    const std::string name = def != nullptr ? def->name : identity->defId;
+    SetSessionStatus(session, "同伴已回聚落待命：" + name, 1);
+    ZL_INFO("companions", "服务器同伴解散：{}，玩家 {}", identity->defId,
+            session.playerStableId);
+    return true;
+}
+
+bool ServerHost::SetCompanionCommandAction(ecs::Entity player,
+                                           SessionPlayer& session,
+                                           const net::Command& command,
+                                           std::string* error) {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (m_simulation == nullptr || m_companions == nullptr ||
+        !m_companions->enabled) {
+        return fail("服务器同伴系统不可用");
+    }
+    if (command.payload.flags > static_cast<std::uint16_t>(
+                                      game::CompanionCommand::Retreat) ||
+        command.payload.entityId != 0 || command.payload.index != -1 ||
+        command.payload.targetEntityId != 0) {
+        return fail("同伴指令字段非法");
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    const ecs::Entity companion = game::FindOwnedCompanion(
+        m_simulation->Ecs(), session.playerStableId);
+    auto* identity = companion != entt::null
+                         ? registry.try_get<game::Companion>(companion)
+                         : nullptr;
+    auto* state = companion != entt::null
+                      ? registry.try_get<game::CompanionState>(companion)
+                      : nullptr;
+    if (companion == entt::null || identity == nullptr || state == nullptr ||
+        !m_simulation->Ecs().Alive(companion)) {
+        return fail("当前没有同伴");
+    }
+    if (state->dead) {
+        return fail("同伴已死亡");
+    }
+    if (state->downed) {
+        return fail("同伴已倒地，需先救援");
+    }
+    if (state->standby) {
+        return fail("同伴在聚落待命，需先召回");
+    }
+    const auto* playerPosition = registry.try_get<ecs::Position>(player);
+    const auto* companionPosition = registry.try_get<ecs::Position>(companion);
+    if (playerPosition == nullptr || companionPosition == nullptr ||
+        playerPosition->z != companionPosition->z) {
+        return fail("同伴不在同一层");
+    }
+    const float dx = playerPosition->x - companionPosition->x;
+    const float dy = playerPosition->y - companionPosition->y;
+    constexpr float kCommandRange = 40.0f;
+    if (dx * dx + dy * dy > kCommandRange * kCommandRange) {
+        return fail("同伴超出指令范围");
+    }
+    const auto next = static_cast<game::CompanionCommand>(command.payload.flags);
+    state->command = next;
+    const game::CompanionDef* def = m_companions->Find(identity->defId);
+    const std::string name = def != nullptr ? def->name : identity->defId;
+    SetSessionStatus(session,
+                     "同伴指令：" + name + " · " +
+                         game::CompanionCommandName(next),
+                     1);
+    ZL_INFO("companions", "服务器同伴指令：{} {}，玩家 {}", identity->defId,
+            game::CompanionCommandName(next), session.playerStableId);
+    return true;
+}
+
+bool ServerHost::GiftToCompanionAction(ecs::Entity player,
+                                       SessionPlayer& session,
+                                       const net::Command& command,
+                                       std::string* error) {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (m_simulation == nullptr || m_companions == nullptr ||
+        !m_companions->enabled || m_items == nullptr) {
+        return fail("服务器同伴系统不可用");
+    }
+    if (command.payload.flags != 0 || command.payload.entityId != 0 ||
+        command.payload.index < 0 || command.payload.targetEntityId != 0) {
+        return fail("同伴赠礼字段非法");
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    const ecs::Entity companion = game::FindOwnedCompanion(
+        m_simulation->Ecs(), session.playerStableId);
+    auto* identity = companion != entt::null
+                         ? registry.try_get<game::Companion>(companion)
+                         : nullptr;
+    auto* state = companion != entt::null
+                      ? registry.try_get<game::CompanionState>(companion)
+                      : nullptr;
+    auto* donor = registry.try_get<ecs::Container>(player);
+    if (companion == entt::null || identity == nullptr || state == nullptr ||
+        donor == nullptr || !m_simulation->Ecs().Alive(companion)) {
+        return fail("当前没有同伴");
+    }
+    const auto* playerPosition = registry.try_get<ecs::Position>(player);
+    const auto* companionPosition = registry.try_get<ecs::Position>(companion);
+    if (playerPosition == nullptr || companionPosition == nullptr ||
+        playerPosition->z != companionPosition->z) {
+        return fail("同伴不在同一层");
+    }
+    const float dx = playerPosition->x - companionPosition->x;
+    const float dy = playerPosition->y - companionPosition->y;
+    constexpr float kGiftRange = 3.0f;
+    if (dx * dx + dy * dy > kGiftRange * kGiftRange) {
+        ++m_networkStats.rangeRejected;
+        return fail("需要靠近同伴才能赠礼");
+    }
+    if (static_cast<std::size_t>(command.payload.index) >= donor->items.size()) {
+        return fail("快捷栏物品不存在");
+    }
+    const game::CompanionDef* def = m_companions->Find(identity->defId);
+    if (def == nullptr) {
+        return fail("同伴定义不存在");
+    }
+    std::string giftError;
+    if (!game::GiftToCompanion(
+            m_simulation->Ecs(), companion, *def, *m_items, donor,
+            static_cast<std::size_t>(command.payload.index), 1, &giftError)) {
+        return fail(giftError.empty() ? "赠礼失败" : giftError);
+    }
+    SetSessionStatus(session, "已赠礼：" + def->name, 1);
+    ZL_INFO("companions", "服务器同伴赠礼：{}，玩家 {}", identity->defId,
+            session.playerStableId);
+    return true;
+}
+
+bool ServerHost::AcceptCompanionQuestAction(ecs::Entity player,
+                                            SessionPlayer& session,
+                                            const net::Command& command,
+                                            std::string* error) {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (m_simulation == nullptr || m_companions == nullptr ||
+        !m_companions->enabled) {
+        return fail("服务器同伴系统不可用");
+    }
+    if (command.payload.flags != 0 || command.payload.entityId != 0 ||
+        command.payload.index != -1 || command.payload.targetEntityId != 0) {
+        return fail("同伴委托字段非法");
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    const ecs::Entity companion = game::FindOwnedCompanion(
+        m_simulation->Ecs(), session.playerStableId);
+    auto* identity = companion != entt::null
+                         ? registry.try_get<game::Companion>(companion)
+                         : nullptr;
+    auto* state = companion != entt::null
+                      ? registry.try_get<game::CompanionState>(companion)
+                      : nullptr;
+    if (companion == entt::null || identity == nullptr || state == nullptr ||
+        !m_simulation->Ecs().Alive(companion)) {
+        return fail("当前没有同伴");
+    }
+    if (state->dead) {
+        return fail("同伴已死亡");
+    }
+    if (state->downed) {
+        return fail("同伴已倒地，需先救援");
+    }
+    const auto* playerPosition = registry.try_get<ecs::Position>(player);
+    const auto* companionPosition = registry.try_get<ecs::Position>(companion);
+    if (playerPosition == nullptr || companionPosition == nullptr ||
+        playerPosition->z != companionPosition->z) {
+        return fail("同伴不在同一层");
+    }
+    const float dx = playerPosition->x - companionPosition->x;
+    const float dy = playerPosition->y - companionPosition->y;
+    constexpr float kQuestRange = 4.0f;
+    if (dx * dx + dy * dy > kQuestRange * kQuestRange) {
+        return fail("需要靠近同伴才能接取个人委托");
+    }
+    const game::CompanionDef* def = m_companions->Find(identity->defId);
+    if (def == nullptr) {
+        return fail("同伴定义不存在");
+    }
+    std::string questError;
+    if (!game::StartCompanionQuest(*def, state, &questError)) {
+        return fail(questError.empty() ? "当前无法接取个人委托" : questError);
+    }
+    SetSessionStatus(session, "已接取同伴个人委托", 1);
+    ZL_INFO("companions", "服务器同伴委托接取：{}，玩家 {}", identity->defId,
+            session.playerStableId);
+    return true;
+}
+
+bool ServerHost::AbandonCompanionQuestAction(ecs::Entity player,
+                                             SessionPlayer& session,
+                                             const net::Command& command,
+                                             std::string* error) {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (m_simulation == nullptr || m_companions == nullptr ||
+        !m_companions->enabled) {
+        return fail("服务器同伴系统不可用");
+    }
+    if (command.payload.flags != 0 || command.payload.entityId != 0 ||
+        command.payload.index != -1 || command.payload.targetEntityId != 0) {
+        return fail("同伴委托字段非法");
+    }
+    entt::registry& registry = m_simulation->Ecs().Registry();
+    const ecs::Entity companion = game::FindOwnedCompanion(
+        m_simulation->Ecs(), session.playerStableId);
+    auto* identity = companion != entt::null
+                         ? registry.try_get<game::Companion>(companion)
+                         : nullptr;
+    auto* state = companion != entt::null
+                      ? registry.try_get<game::CompanionState>(companion)
+                      : nullptr;
+    if (companion == entt::null || identity == nullptr || state == nullptr ||
+        !m_simulation->Ecs().Alive(companion)) {
+        return fail("当前没有同伴");
+    }
+    const auto* playerPosition = registry.try_get<ecs::Position>(player);
+    const auto* companionPosition = registry.try_get<ecs::Position>(companion);
+    if (playerPosition == nullptr || companionPosition == nullptr ||
+        playerPosition->z != companionPosition->z) {
+        return fail("同伴不在同一层");
+    }
+    const float dx = playerPosition->x - companionPosition->x;
+    const float dy = playerPosition->y - companionPosition->y;
+    constexpr float kQuestRange = 4.0f;
+    if (dx * dx + dy * dy > kQuestRange * kQuestRange) {
+        return fail("需要靠近同伴才能放弃个人委托");
+    }
+    const game::CompanionDef* def = m_companions->Find(identity->defId);
+    if (def == nullptr) {
+        return fail("同伴定义不存在");
+    }
+    std::string questError;
+    if (!game::FailCompanionQuest(*def, state, &questError)) {
+        return fail(questError.empty() ? "当前没有可放弃的个人委托"
+                                       : questError);
+    }
+    SetSessionStatus(session, "已放一放同伴个人委托", 0);
+    ZL_INFO("companions", "服务器同伴委托放弃：{}，玩家 {}", identity->defId,
+            session.playerStableId);
+    return true;
+}
+
+bool ServerHost::RescueCompanionAction(ecs::Entity player,
+                                       SessionPlayer& session,
+                                       const net::Command& command,
+                                       std::string* error) {
+    auto fail = [&](const std::string& message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+    if (m_simulation == nullptr) {
+        return fail("服务器同伴系统不可用");
+    }
+    if (command.payload.flags != 0 || command.payload.entityId != 0 ||
+        command.payload.index != -1 || command.payload.targetEntityId != 0) {
+        return fail("同伴救援字段非法");
+    }
+    const ecs::Entity companion = game::FindOwnedCompanion(
+        m_simulation->Ecs(), session.playerStableId);
+    if (companion == entt::null || !m_simulation->Ecs().Alive(companion)) {
+        return fail("当前没有同伴");
+    }
+    std::string rescueError;
+    if (!m_simulation->RescueCompanion(companion, player, &rescueError)) {
+        return fail(rescueError.empty() ? "救援失败" : rescueError);
+    }
+    SetSessionStatus(session, "已救起同伴", 1);
+    ZL_INFO("companions", "服务器同伴救援：玩家 {}", session.playerStableId);
+    return true;
+}
+
 bool ServerHost::ExecuteSessionCommand(std::uint64_t sessionId, SessionPlayer& session,
                                        const net::Command& command,
                                        std::string* error) {
@@ -13130,6 +16093,10 @@ bool ServerHost::ExecuteSessionCommand(std::uint64_t sessionId, SessionPlayer& s
         }
         case net::CommandType::ServiceVehicle:
             return ServiceServerVehicle(session, command, error);
+        case net::CommandType::InstallVehicleMod:
+            return ModifyServerVehicleMod(session, command, true, error);
+        case net::CommandType::RemoveVehicleMod:
+            return ModifyServerVehicleMod(session, command, false, error);
         case net::CommandType::ToggleHeadlights:
             return ToggleServerVehicleHeadlights(session, error);
         case net::CommandType::HonkHorn:
@@ -13339,7 +16306,14 @@ bool ServerHost::ExecuteSessionCommand(std::uint64_t sessionId, SessionPlayer& s
             attack->windupLeft = attack->windupSeconds;
             attack->poiseDamage = std::max(0.0f, params.poiseDamage);
             attack->staminaCost = std::max(0.0f, params.staminaCost);
+            const characters::StealthRuleConfig stealthRules =
+                characters::SanitizeStealthRuleConfig(m_stealthRules);
+            attack->backstabMultiplier =
+                stealthRules.enabled ? stealthRules.backstabMultiplier : 1.0f;
+            attack->backstabHalfAngleDegrees =
+                stealthRules.backstabHalfAngleDegrees;
             attack->pending = true;
+            ResetServerStealth(session, player, "攻击");
             session.attackUsed = true;
             session.lastAttackTick = m_ticks;
             session.lastAttackCooldownTicks = std::max<std::uint64_t>(
@@ -13627,12 +16601,36 @@ bool ServerHost::ExecuteSessionCommand(std::uint64_t sessionId, SessionPlayer& s
         case net::CommandType::InteractFacility:
             return applyBuild(
                 InteractFacility(player, session, command, error));
+        case net::CommandType::PoiInteract:
+            return applyBuild(
+                InteractPoi(player, session, command, error));
         case net::CommandType::TradeOffer:
             return applyBuild(
                 PurchaseMerchantOffer(player, session, command, error));
         case net::CommandType::AcceptSettlementMission:
             return applyBuild(
                 AcceptSettlementMission(player, session, command, error));
+        case net::CommandType::RecruitCompanion:
+            return applyBuild(
+                RecruitCompanion(player, session, command, error));
+        case net::CommandType::DismissCompanion:
+            return applyBuild(
+                DismissCompanion(player, session, command, error));
+        case net::CommandType::SetCompanionCommand:
+            return applyBuild(SetCompanionCommandAction(player, session,
+                                                        command, error));
+        case net::CommandType::GiftToCompanion:
+            return applyBuild(GiftToCompanionAction(player, session, command,
+                                                    error));
+        case net::CommandType::AcceptCompanionQuest:
+            return applyBuild(AcceptCompanionQuestAction(player, session,
+                                                         command, error));
+        case net::CommandType::AbandonCompanionQuest:
+            return applyBuild(AbandonCompanionQuestAction(player, session,
+                                                          command, error));
+        case net::CommandType::RescueCompanion:
+            return applyBuild(RescueCompanionAction(player, session, command,
+                                                    error));
         case net::CommandType::ChooseWorldEvent:
             return ChooseServerWorldEvent(session, command, error);
         case net::CommandType::SearchLootContainer: {
@@ -13842,6 +16840,40 @@ bool ServerHost::ExecuteSessionCommand(std::uint64_t sessionId, SessionPlayer& s
             }
             CancelServerAnimalHarvest(session, "已取消剥取", 0);
             return true;
+        case net::CommandType::ThrowItem: {
+            if (!ThrowItemAction(session, command, error)) {
+                SetSessionStatus(session,
+                                 error != nullptr && !error->empty()
+                                     ? *error
+                                     : "投掷命令被拒绝",
+                                 2);
+                return false;
+            }
+            return true;
+        }
+        case net::CommandType::SetStealth: {
+            if ((command.payload.flags & ~net::kStealthCrouchFlag) != 0 ||
+                command.payload.x != 0.0f || command.payload.y != 0.0f ||
+                command.payload.index != -1 ||
+                command.payload.targetIndex != -1 ||
+                command.payload.area != 0 || command.payload.targetArea != 0 ||
+                command.payload.entityId != 0 ||
+                command.payload.targetEntityId != 0) {
+                return fail("潜行命令字段非法");
+            }
+            const bool crouched =
+                (command.payload.flags & net::kStealthCrouchFlag) != 0;
+            std::string stealthError;
+            if (!SetServerStealth(session, player, crouched, &stealthError)) {
+                SetSessionStatus(session,
+                                 stealthError.empty() ? "潜行切换被拒绝"
+                                                      : stealthError,
+                                 2);
+                return fail(stealthError.empty() ? "潜行切换被拒绝"
+                                                  : stealthError);
+            }
+            return true;
+        }
         default:
             ++m_networkStats.unsupportedCommands;
             return fail("服务器暂未实现该命令");
@@ -13854,6 +16886,7 @@ void ServerHost::RemoveSession(std::uint64_t sessionId, std::uint8_t reason,
     if (it == m_sessions.end()) {
         return;
     }
+    SettleServerThrows("disconnect", it->second.playerStableId);
     ReleaseServerVehicleSeat(it->second, true, "断线");
     ReleaseServerForageReservation(it->second);
     ReleaseServerAnimalHarvest(it->second);
@@ -13862,6 +16895,7 @@ void ServerHost::RemoveSession(std::uint64_t sessionId, std::uint8_t reason,
     OnServerSessionRemovedForSleep(it->second.playerStableId);
     if (m_simulation != nullptr && it->second.playerStableId != 0) {
         CaptureSessionProfile(it->second, it->second.dead);
+        StandbyOwnedCompanion(it->second.playerStableId, "断线");
         const ecs::Entity player =
             m_simulation->Ecs().FindById(it->second.playerStableId);
         if (player != entt::null) {

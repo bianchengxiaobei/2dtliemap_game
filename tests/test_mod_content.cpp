@@ -8,11 +8,13 @@
 
 #include "core/Config.h"
 #include "game/BuildingRules.h"
+#include "game/Companion.h"
 #include "game/Crops.h"
 #include "game/Missions.h"
 #include "game/ModContent.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/VehicleMods.h"
 #include "game/WorldEvent.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
@@ -51,7 +53,9 @@ void MakeMod(const std::filesystem::path& root, const std::string& id,
              const std::string& missions = {},
              const std::string& forage = {},
              const std::string& settlements = {},
-             const std::string& worldEvents = {}) {
+             const std::string& worldEvents = {},
+             const std::string& companions = {},
+             const std::string& vehicleMods = {}) {
     const std::filesystem::path dir = root / id;
     WriteText(dir / "mod.json",
               "{\"id\":\"" + id + "\",\"loadOrder\":" +
@@ -82,6 +86,12 @@ void MakeMod(const std::filesystem::path& root, const std::string& id,
     }
     if (!worldEvents.empty()) {
         WriteText(dir / "content" / "world_events.json", worldEvents);
+    }
+    if (!companions.empty()) {
+        WriteText(dir / "content" / "companions.json", companions);
+    }
+    if (!vehicleMods.empty()) {
+        WriteText(dir / "content" / "vehicle_mods.json", vehicleMods);
     }
 }
 
@@ -464,9 +474,9 @@ TEST_CASE("X-F2：示例 mod 内容文件可被合并") {
           "mod_depot");
     CHECK(baseMissions.defs.size() == 36u);
     std::vector<game::BuildableDef> defs = game::LoadBuildableDefs(gameConfig);
-    CHECK(defs.size() == 15);
+    CHECK(defs.size() == 18);
     CHECK(game::AppendBuildableDefs(defs, result.buildables) >= 1);
-    CHECK(defs.size() >= 16);
+    CHECK(defs.size() >= 19);
     bool foundInCatalog = false;
     for (const game::BuildableDef& def : defs) {
         if (def.id == "mod_supply_crate") {
@@ -597,6 +607,46 @@ TEST_CASE("M33-F2-T1 mod world_events.json enters content result") {
     CHECK(events.Find("mod_event") != nullptr);
 }
 
+TEST_CASE("M33-F3-T1 mod companions.json enters content result") {
+    TempRoot root("companions");
+    const std::filesystem::path baseItems = root.path / "base_items.json";
+    const std::filesystem::path baseRecipes = root.path / "base_recipes.json";
+    WriteText(baseItems, kBaseItems);
+    WriteText(baseRecipes, kBaseRecipes);
+    MakeMod(root.path / "mods", "companion_mod", 20, "", "", "", "", "", "",
+            "", "", "", R"({
+      "format": "companions-v1",
+      "defs": [{
+        "id": "mod_companion",
+        "name": "模组同伴",
+        "baseHealth": 80,
+        "traits": ["mod_trait"],
+        "recruit": { "minReputationTier": "neutral" }
+      }]
+    })");
+
+    core::Config config;
+    config.Set("items.file", baseItems.generic_string());
+    config.Set("recipes.file", baseRecipes.generic_string());
+    config.Set("script.modsDir", (root.path / "mods").generic_string());
+    items::ItemRegistry items;
+    items::RecipeRegistry recipes;
+    REQUIRE(items.LoadFile(baseItems));
+    REQUIRE(recipes.LoadFile(baseRecipes, items));
+    const game::ModContentResult result =
+        game::LoadModContent(config, items, recipes);
+    REQUIRE(result.companionFiles.size() == 1u);
+
+    game::CompanionConfig companions;
+    companions.enabled = true;
+    std::string error;
+    REQUIRE(game::MergeCompanionFile(result.companionFiles.front(),
+                                     &companions, nullptr, &error, &items));
+    REQUIRE(companions.Find("mod_companion") != nullptr);
+    CHECK(companions.Find("mod_companion")->baseHealth ==
+          doctest::Approx(80.0f));
+}
+
 TEST_CASE("X3-T1：ModContentResult 暴露所有有效 mod 根目录供监听") {
     TempRoot root("watch_sources");
     const std::filesystem::path baseItems = root.path / "base_items.json";
@@ -631,4 +681,45 @@ TEST_CASE("X3-T1：ModContentResult 暴露所有有效 mod 根目录供监听") 
     CHECK(std::filesystem::is_directory(result.sources[0].root));
     CHECK(std::filesystem::is_directory(result.sources[1].root));
     CHECK(std::filesystem::is_directory(result.sources[2].root));
+}
+
+TEST_CASE("M33-F4-T1 mod vehicle_mods.json enters content result") {
+    TempRoot root("vehicle_mods");
+    const std::filesystem::path baseItems = root.path / "base_items.json";
+    const std::filesystem::path baseRecipes = root.path / "base_recipes.json";
+    WriteText(baseItems, kBaseItems);
+    WriteText(baseRecipes, kBaseRecipes);
+    MakeMod(root.path / "mods", "vehicle_mod_mod", 20, "", "", "", "", "", "",
+            "", "", "", "", R"({
+      "format": "vehicle_mods-v1",
+      "defs": [{
+        "id": "mod_vehicle_light",
+        "name": "模组车灯",
+        "slot": "lights",
+        "materials": [{ "item": "base_item", "count": 1 }],
+        "effects": { "headlightRangeScale": 1.3 }
+      }]
+    })");
+
+    core::Config config;
+    config.Set("items.file", baseItems.generic_string());
+    config.Set("recipes.file", baseRecipes.generic_string());
+    config.Set("script.modsDir", (root.path / "mods").generic_string());
+    items::ItemRegistry items;
+    items::RecipeRegistry recipes;
+    REQUIRE(items.LoadFile(baseItems));
+    REQUIRE(recipes.LoadFile(baseRecipes, items));
+    const game::ModContentResult result =
+        game::LoadModContent(config, items, recipes);
+    CHECK(result.applied == 1);
+    REQUIRE(result.vehicleModFiles.size() == 1u);
+
+    game::VehicleModsConfig mods;
+    mods.enabled = true;
+    std::string error;
+    REQUIRE(game::MergeVehicleModFile(result.vehicleModFiles.front(), &mods,
+                                     nullptr, &error, &items));
+    REQUIRE(mods.Find("mod_vehicle_light") != nullptr);
+    CHECK(mods.Find("mod_vehicle_light")->slot ==
+          game::VehicleModSlot::Lights);
 }

@@ -574,7 +574,7 @@ TEST_CASE("M6-T1：文件不存在与仓库内置物品文件") {
     const std::string path = std::string(ZL_SOURCE_DIR) + "/assets/items.json";
     REQUIRE(registry.LoadFile(path, &error));
     CHECK(error.empty());
-    CHECK(registry.Size() == 94);
+    CHECK(registry.Size() == 99);
     const items::ItemDef* bandage = registry.Find("bandage");
     REQUIRE(bandage != nullptr);
     CHECK(bandage->type == items::ItemType::Consumable);
@@ -703,7 +703,7 @@ TEST_CASE("M24-T1：内容密度包物品加载与数值契约") {
     const std::string path = std::string(ZL_SOURCE_DIR) + "/assets/items.json";
     std::string error;
     REQUIRE_MESSAGE(registry.LoadFile(path, &error), error);
-    CHECK(registry.Size() == 94);
+    CHECK(registry.Size() == 99);
 
     const items::ItemDef* baton = registry.Find("police_baton");
     const items::ItemDef* sledge = registry.Find("sledgehammer");

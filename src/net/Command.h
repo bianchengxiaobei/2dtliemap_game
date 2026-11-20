@@ -63,6 +63,18 @@ enum class CommandType : std::uint16_t {
     Block = 48,                    // M30-T6：flags bit0 1=按下 0=松开
     Dodge = 49,                    // M30-T6：payload.x/y = 世界闪避方向
     ChooseWorldEvent = 50,         // M33-F2-T5：payload.index = 当前事件选项索引
+    RecruitCompanion = 51,         // M33-F3-T2：payload.entityId = 求助者 StableId
+    DismissCompanion = 52,         // M33-F3-T2：payload.entityId = 求助者 StableId
+    SetCompanionCommand = 53,      // M33-F3-T7：flags 低 2 位 = CompanionCommand
+    GiftToCompanion = 54,          // M33-F3-T7：payload.index = 玩家背包索引
+    AcceptCompanionQuest = 55,     // M33-F3-T7：接取当前个人委托阶段
+    AbandonCompanionQuest = 56,    // M33-F3-T7：放弃当前个人委托阶段
+    RescueCompanion = 57,          // M33-F3-T7：救援倒地同伴
+    InstallVehicleMod = 58,        // M33-F4-T5：payload.entityId=载具；index=槽位；targetIndex=候选索引
+    RemoveVehicleMod = 59,         // M33-F4-T5：payload.entityId=载具；index=槽位
+    PoiInteract = 60,
+    SetStealth = 61,  // M34-F1-T5：flags bit0 1=进入潜行 0=退出
+    ThrowItem = 62,   // M34-F2-T5：index=-1 主手/>=0 背包；x/y=世界落点
 };
 
 inline constexpr std::uint64_t kNoEntity = 0;
@@ -72,6 +84,7 @@ inline constexpr std::uint16_t kSleepUntilDawnFlag = 1u << 0;
 inline constexpr std::uint16_t kSleepVoteYesFlag = 1u << 0;
 inline constexpr std::uint16_t kAttackHeavyFlag = 1u << 0;  // M30-T3：Attack 重击标记
 inline constexpr std::uint16_t kBlockDownFlag = 1u << 0;    // M30-T6：Block 按下/松开
+inline constexpr std::uint16_t kStealthCrouchFlag = 1u << 0;  // M34-F1-T5：SetStealth 进入/退出
 
 // 固定字段 payload：网络编码不需要 variant/JSON；未使用字段保持默认值。
 // flags 低 8 位保存 InventoryActionType，高 8 位保存批量制作件数（0 兼容旧命令，视为 1）。
@@ -95,7 +108,7 @@ struct Command {
 };
 
 constexpr bool IsValidCommandType(CommandType type) {
-    return type >= CommandType::Move && type <= CommandType::ChooseWorldEvent;
+    return type >= CommandType::Move && type <= CommandType::ThrowItem;
 }
 
 const char* CommandTypeName(CommandType type);

@@ -110,6 +110,8 @@ TEST_CASE("NeedsSystem：阈值降低移速/伤害，危险阈值产生持续伤
     needs.hunger = 0.95f;
     needs.thirst = 0.95f;
     needs.fatigue = 0.95f;
+    registry.emplace_or_replace<ecs::LastDamage>(
+        player, ecs::LastDamage{ecs::DamageCause::Bite, 1.0f, 77});
     system.Update(world, 1.0f);
     CHECK(needs.warning == 2);
     CHECK(needs.healthDrainPerSecond > 0.0f);
@@ -117,6 +119,7 @@ TEST_CASE("NeedsSystem：阈值降低移速/伤害，危险阈值产生持续伤
     REQUIRE(registry.try_get<ecs::LastDamage>(player) != nullptr);
     CHECK(registry.get<ecs::LastDamage>(player).cause ==
           ecs::DamageCause::Dehydration);
+    CHECK(registry.get<ecs::LastDamage>(player).sourceId == 0u);
 }
 
 TEST_CASE("NeedsSystem：食物/饮水恢复后派生警告与倍率回落") {

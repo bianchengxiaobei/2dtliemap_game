@@ -40,13 +40,21 @@ if (ZL_ENABLE_PYTHON)
     # 位于 <vcpkg_installed>/<triplet>/tools/python3）。
     find_package(Python3 COMPONENTS Development.Embed REQUIRED)
     find_package(pybind11 CONFIG REQUIRED)
-    set_target_properties(Python3::Python PROPERTIES MAP_IMPORTED_CONFIG_DEBUG RELEASE)
+    add_library(ZL_PYTHON_EMBED INTERFACE)
+    set(ZL_PYTHON_EMBED_LIBRARY "${Python3_LIBRARY_RELEASE}")
+    if (NOT ZL_PYTHON_EMBED_LIBRARY)
+        set(ZL_PYTHON_EMBED_LIBRARY "${Python3_LIBRARIES}")
+    endif()
+    target_link_libraries(ZL_PYTHON_EMBED INTERFACE
+        pybind11::headers
+        ${ZL_PYTHON_EMBED_LIBRARY}
+    )
+    target_include_directories(ZL_PYTHON_EMBED INTERFACE ${Python3_INCLUDE_DIRS})
     set(ZL_PYTHON_HOME_DEFAULT "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/python3")
     message(STATUS "ZL Python home: ${ZL_PYTHON_HOME_DEFAULT}")
 endif()
 
-add_executable(ZomboidLike
-    src/main.cpp
+set(ZL_CORE_SOURCES
     src/ai/AStar.cpp
     src/ai/Passability.cpp
     src/ai/PathfindingService.cpp
@@ -64,6 +72,7 @@ add_executable(ZomboidLike
     src/characters/systems/AnimationSystem.cpp
     src/characters/systems/CombatSystem.cpp
     src/characters/systems/CombatRules.cpp
+    src/characters/systems/StealthRules.cpp
     src/characters/systems/WoundSystem.cpp
     src/characters/systems/PainSystem.cpp
     src/characters/systems/InfectionSystem.cpp
@@ -71,7 +80,6 @@ add_executable(ZomboidLike
     src/characters/systems/InputSystem.cpp
     src/characters/systems/MovementSystem.cpp
     src/characters/systems/NeedsSystem.cpp
-    src/core/AppState.cpp
     src/core/Config.cpp
     src/core/EventBus.cpp
     src/core/GameLoop.cpp
@@ -90,6 +98,11 @@ add_executable(ZomboidLike
     src/game/AssetManifest.cpp
     src/game/BuildingRules.cpp
     src/game/Climate.cpp
+    src/game/Companion.cpp
+    src/game/CompanionInventory.cpp
+    src/game/CompanionSystem.cpp
+    src/game/CompanionTrust.cpp
+    src/game/CompanionUi.cpp
     src/game/ContentHash.cpp
     src/game/ContentReload.cpp
     src/game/Dialogue.cpp
@@ -97,25 +110,27 @@ add_executable(ZomboidLike
     src/game/Fire.cpp
     src/game/FireSystem.cpp
     src/game/ModContent.cpp
-    src/game/AssetProvider.cpp
     src/game/EmbeddedServer.cpp
-    src/game/EventProbe.cpp
     src/game/Forage.cpp
     src/game/ForageRuntime.cpp
     src/game/FishingRuntime.cpp
     src/game/FoodSafety.cpp
     src/game/EntityReplication.cpp
-    src/game/GameApp.cpp
     src/game/GroundItems.cpp
     src/game/LootContainers.cpp
     src/game/Missions.cpp
     src/game/Homestead.cpp
+    src/game/PlayerCommand.cpp
     src/game/PlayerStorage.cpp
     src/game/Poi.cpp
     src/game/Sleeping.cpp
     src/game/Settlement.cpp
     src/game/SettlementNpc.cpp
     src/game/SettlementReputation.cpp
+    src/game/StealthConfig.cpp
+    src/game/Throwing.cpp
+    src/game/TrapSystem.cpp
+    src/game/Traps.cpp
     src/game/StrategicState.cpp
     src/game/StrategicPersistence.cpp
     src/game/StrategicDirector.cpp
@@ -130,16 +145,12 @@ add_executable(ZomboidLike
     src/game/WorldMap.cpp
     src/game/ServerList.cpp
     src/game/Weather.cpp
-    src/game/RenderCollectSystem.cpp
+    src/game/VehicleMods.cpp
     src/game/WorldEvent.cpp
     src/game/WorldEventDirector.cpp
     src/game/WorldEventRuntime.cpp
     src/game/WorldSimulation.cpp
     src/game/ZombieFactory.cpp
-    src/game/states/MainMenuState.cpp
-    src/game/states/RenderDemoState.cpp
-    src/game/states/SandboxState.cpp
-    src/game/states/WorldDemoState.cpp
     src/items/Crafting.cpp
     src/items/ItemDef.cpp
     src/items/ItemRegistry.cpp
@@ -166,18 +177,13 @@ add_executable(ZomboidLike
     src/net/WorldSound.cpp
     src/net/Replication.cpp
     src/platform/KeyNames.cpp
-    src/platform/Window.cpp
     src/server/PlayerProfile.cpp
     src/server/ServerHost.cpp
     src/physics/PhysicsSyncSystem.cpp
     src/physics/PhysicsWorld.cpp
-    src/render/Atlas.cpp
     src/render/Camera.cpp
     src/render/IsoMath.cpp
-    src/render/Renderer.cpp
     src/render/Screenshot.cpp
-    src/render/SpriteBatch.cpp
-    src/render/Texture2D.cpp
     src/save/AtomicFile.cpp
     src/save/BinaryReader.cpp
     src/save/BinaryWriter.cpp
@@ -195,13 +201,11 @@ add_executable(ZomboidLike
     src/ui/MenuPanel.cpp
     src/ui/MultiplayerPanel.cpp
     src/ui/SocialPanel.cpp
-    src/ui/RmlBgfxRenderInterface.cpp
-    src/ui/RmlSystemInterface.cpp
+    src/ui/VehicleModsPanel.cpp
     src/ui/ScriptUiHost.cpp
     src/ui/UiInput.cpp
     src/ui/WorldEventUi.cpp
     src/ui/WorldMapPanel.cpp
-    src/ui/UiSystem.cpp
     src/script/EventBridge.cpp
     src/script/LuaRuntime.cpp
     src/script/ModLoader.cpp
@@ -224,13 +228,20 @@ add_executable(ZomboidLike
     src/world/World.cpp
 )
 
-target_include_directories(ZomboidLike PRIVATE src ${BULLET_INCLUDE_DIRS} ${MINIAUDIO_INCLUDE_DIR})
+add_library(ZomboidLikeCore STATIC ${ZL_CORE_SOURCES})
 
-target_compile_definitions(ZomboidLike PRIVATE
+target_include_directories(ZomboidLikeCore PUBLIC
+    src
+    ${BULLET_INCLUDE_DIRS}
+    ${Stb_INCLUDE_DIR}
+    ${MINIAUDIO_INCLUDE_DIR}
+)
+
+target_compile_definitions(ZomboidLikeCore PRIVATE
     SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
 )
 
-target_link_libraries(ZomboidLike PRIVATE
+target_link_libraries(ZomboidLikeCore PUBLIC
     glfw
     bgfx::bgfx
     spdlog::spdlog
@@ -247,16 +258,49 @@ target_link_libraries(ZomboidLike PRIVATE
 )
 
 if (WIN32)
-    target_link_libraries(ZomboidLike PRIVATE psapi)  # 工作集内存采样（M3-T7 压测）
+    target_link_libraries(ZomboidLikeCore PUBLIC psapi)
 endif()
 
 if (ZL_ENABLE_PYTHON)
-    target_compile_definitions(ZomboidLike PRIVATE ZL_ENABLE_PYTHON=1
+    target_compile_definitions(ZomboidLikeCore PUBLIC ZL_ENABLE_PYTHON=1
         ZL_PYTHON_HOME_DEFAULT="${ZL_PYTHON_HOME_DEFAULT}")
-    target_link_libraries(ZomboidLike PRIVATE pybind11::embed)
+    target_link_libraries(ZomboidLikeCore PUBLIC ZL_PYTHON_EMBED)
 endif()
 
-target_include_directories(ZomboidLike PRIVATE ${Stb_INCLUDE_DIR})
+target_precompile_headers(ZomboidLikeCore PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ZomboidLikePch.h
+)
+
+add_executable(ZomboidLike
+    src/main.cpp
+    src/core/AppState.cpp
+    src/game/AssetProvider.cpp
+    src/game/EventProbe.cpp
+    src/game/GameApp.cpp
+    src/game/RenderCollectSystem.cpp
+    src/game/states/MainMenuState.cpp
+    src/game/states/RenderDemoState.cpp
+    src/game/states/SandboxState.cpp
+    src/game/states/WorldDemoState.cpp
+    src/platform/Window.cpp
+    src/render/Atlas.cpp
+    src/render/Renderer.cpp
+    src/render/SpriteBatch.cpp
+    src/render/Texture2D.cpp
+    src/ui/RmlBgfxRenderInterface.cpp
+    src/ui/RmlSystemInterface.cpp
+    src/ui/UiSystem.cpp
+)
+
+target_compile_definitions(ZomboidLike PRIVATE
+    SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
+)
+
+target_link_libraries(ZomboidLike PRIVATE ZomboidLikeCore)
+
+target_precompile_headers(ZomboidLike PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ZomboidLikePch.h
+)
 
 # ---- 单元测试（docs/02 §8：坐标换算等必须先有测试） ----
 enable_testing()
@@ -275,6 +319,11 @@ add_executable(ZomboidLikeTests
     tests/test_animation_v2.cpp
     tests/test_camera_follow.cpp
     tests/test_vehicle.cpp
+    tests/test_vehicle_mods.cpp
+    tests/test_vehicle_mods_persistence.cpp
+    tests/test_vehicle_mod_effects.cpp
+    tests/test_vehicle_mod_balance.cpp
+    tests/test_vehicle_mod_network.cpp
     tests/test_pathfinding.cpp
     tests/test_death.cpp
     tests/test_zombie_ai.cpp
@@ -282,6 +331,7 @@ add_executable(ZomboidLikeTests
     tests/test_boids.cpp
     tests/test_combat.cpp
     tests/test_combat_rules.cpp
+    tests/test_stealth_rules.cpp
     tests/test_combat_m30.cpp
     tests/test_combat_presentation.cpp
     tests/test_player_combat.cpp
@@ -290,6 +340,13 @@ add_executable(ZomboidLikeTests
     tests/test_animal_harvest.cpp
     tests/test_spawn_lod.cpp
     tests/test_items.cpp
+    tests/test_traps.cpp
+    tests/test_throwing.cpp
+    tests/test_throw_aim.cpp
+    tests/test_throw_flight.cpp
+    tests/test_throw_fire.cpp
+    tests/test_throw_network.cpp
+    tests/test_throw_regression.cpp
     tests/test_inventory.cpp
     tests/test_ranged_weapon.cpp
     tests/test_recipes.cpp
@@ -313,6 +370,7 @@ add_executable(ZomboidLikeTests
     tests/test_python_api.cpp
     tests/test_ui.cpp
     tests/test_script_ui.cpp
+    tests/test_example_gameplay.cpp
     tests/test_config.cpp
     tests/test_serialization.cpp
     tests/test_chunk_diff.cpp
@@ -336,8 +394,10 @@ add_executable(ZomboidLikeTests
     tests/test_server_social.cpp
     tests/test_inventory_service.cpp
     tests/test_network_inventory.cpp
+    tests/test_trap_network.cpp
     tests/test_network_persistence.cpp
     tests/test_network_world_persistence.cpp
+    tests/test_m33_f5_t7.cpp
     tests/test_embedded_server.cpp
     tests/test_special_zombies.cpp
     tests/test_armor.cpp
@@ -350,6 +410,14 @@ add_executable(ZomboidLikeTests
     tests/test_settlement_defense.cpp
     tests/test_settlement_network.cpp
     tests/test_settlement_integration.cpp
+    tests/test_companions.cpp
+    tests/test_companion_ai.cpp
+    tests/test_companion_state.cpp
+    tests/test_companion_trust.cpp
+    tests/test_companion_balance.cpp
+    tests/test_companion_ui.cpp
+    tests/test_companion_network.cpp
+    tests/test_companion_persistence.cpp
     tests/test_world_events.cpp
     tests/test_world_event_director.cpp
     tests/test_world_event_runtime.cpp
@@ -381,192 +449,45 @@ add_executable(ZomboidLikeTests
     tests/test_regional_siege_integration.cpp
     tests/test_m31_stress.cpp
     tests/test_m31_vertical_slice.cpp
-    src/core/Config.cpp
-    src/ai/AStar.cpp
-    src/ai/Passability.cpp
-    src/ai/PathfindingService.cpp
-    src/ai/VirtualHorde.cpp
-    src/ai/systems/AiSystem.cpp
-    src/ai/systems/BoidsSystem.cpp
-    src/ai/systems/LodSystem.cpp
-    src/ai/systems/PathFollowSystem.cpp
-    src/ai/systems/PerceptionSystem.cpp
-    src/ai/systems/SpawnLodSystem.cpp
-    src/ai/systems/ZombieSpecialSystem.cpp
-    src/audio/AudioEngine.cpp
-    src/audio/SoundManager.cpp
-    src/characters/systems/ActionPresentationSystem.cpp
-    src/characters/systems/AnimationSystem.cpp
-    src/characters/systems/CombatSystem.cpp
-    src/characters/systems/CombatRules.cpp
-    src/characters/systems/WoundSystem.cpp
-    src/characters/systems/PainSystem.cpp
-    src/characters/systems/InfectionSystem.cpp
-    src/characters/systems/DeathSystem.cpp
-    src/characters/systems/InputSystem.cpp
-    src/characters/systems/MovementSystem.cpp
-    src/characters/systems/NeedsSystem.cpp
-    src/core/EventBus.cpp
-    src/core/GameLoop.cpp
-    src/core/GameTime.cpp
-    src/core/Input.cpp
-    src/core/Log.cpp
-    src/core/SoundPropagation.cpp
-    src/core/TaskScheduler.cpp
-    src/ecs/EcsWorld.cpp
-    src/ecs/SpatialIndex.cpp
-    src/ecs/SystemScheduler.cpp
-    src/game/AnimationManifest.cpp
-    src/game/Animals.cpp
-    src/game/AnimalSystem.cpp
-    src/game/AnimalHarvest.cpp
-    src/game/AssetManifest.cpp
-    src/game/BuildingRules.cpp
-    src/game/Climate.cpp
-    src/game/ContentHash.cpp
-    src/game/ContentReload.cpp
-    src/game/Crops.cpp
-    src/game/Fire.cpp
-    src/game/FireSystem.cpp
-    src/game/Forage.cpp
-    src/game/ForageRuntime.cpp
-    src/game/FishingRuntime.cpp
-    src/game/FoodSafety.cpp
-    src/game/ModContent.cpp
-    src/game/EntityReplication.cpp
-    src/game/GroundItems.cpp
-    src/game/LootContainers.cpp
-    src/game/Missions.cpp
-    src/game/Homestead.cpp
-    src/game/PlayerStorage.cpp
-    src/game/Poi.cpp
-    src/game/Sleeping.cpp
-    src/game/Settlement.cpp
-    src/game/SettlementNpc.cpp
-    src/game/SettlementReputation.cpp
-    src/game/StrategicState.cpp
-    src/game/StrategicPersistence.cpp
-    src/game/StrategicDirector.cpp
-    src/game/StrategicMap.cpp
-    src/game/RegionalSiege.cpp
-    src/game/Dialogue.cpp
-    src/game/EmbeddedServer.cpp
-    src/game/NetworkClient.cpp
-    src/game/PlayerCombat.cpp
-    src/game/PlayerInventoryService.cpp
-    src/game/ProgressionRules.cpp
-    src/game/RandomEvents.cpp
-    src/game/RegionEventDirector.cpp
-    src/game/WorldMap.cpp
-    src/game/ServerList.cpp
-    src/game/Weather.cpp
-    src/game/WorldEvent.cpp
-    src/game/WorldEventDirector.cpp
-    src/game/WorldEventRuntime.cpp
-    src/game/WorldSimulation.cpp
-    src/game/ZombieFactory.cpp
-    src/items/Crafting.cpp
-    src/items/ItemDef.cpp
-    src/items/ItemRegistry.cpp
-    src/items/InventoryOps.cpp
-    src/items/LootTable.cpp
-    src/items/RecipeRegistry.cpp
-    src/items/Repair.cpp
-    src/items/RangedWeapon.cpp
-    src/items/Spoilage.cpp
-    src/net/Command.cpp
-    src/net/CommandCodec.cpp
-    src/net/CommandPipeline.cpp
-    src/net/Loopback.cpp
-    src/net/FrameCodec.cpp
-    src/net/Kcp.cpp
-    src/net/SessionProtocol.cpp
-    src/net/KcpSession.cpp
-    src/net/PlayerAssignment.cpp
-    src/net/PlayerIdentity.cpp
-    src/net/PlayerState.cpp
-    src/net/SocialProtocol.cpp
-    src/net/StrategicProtocol.cpp
-    src/net/WorldEventProtocol.cpp
-    src/net/WorldSound.cpp
-    src/net/Replication.cpp
-    src/platform/KeyNames.cpp
-    src/physics/PhysicsSyncSystem.cpp
-    src/server/PlayerProfile.cpp
-    src/server/ServerHost.cpp
-    src/physics/PhysicsWorld.cpp
-    src/render/Camera.cpp
-    src/render/IsoMath.cpp
-    src/render/Screenshot.cpp
-    src/save/AtomicFile.cpp
-    src/save/BinaryReader.cpp
-    src/save/BinaryWriter.cpp
-    src/save/ChunkDiff.cpp
-    src/save/ChunkDiffStore.cpp
-    src/save/ComponentRegistry.cpp
-    src/save/EntityStore.cpp
-    src/save/RegionEntityBuckets.cpp
-    src/save/SaveManager.cpp
-    src/save/WorldManifest.cpp
-    src/save/SaveService.cpp
-    src/save/SqliteMeta.cpp
-    src/save/Thumbnail.cpp
-    src/ui/InventoryPanel.cpp
-    src/ui/MenuPanel.cpp
-    src/ui/MultiplayerPanel.cpp
-    src/ui/SocialPanel.cpp
-    src/ui/ScriptUiHost.cpp
-    src/ui/UiInput.cpp
-    src/ui/WorldEventUi.cpp
-    src/ui/WorldMapPanel.cpp
-    src/script/EventBridge.cpp
-    src/script/LuaRuntime.cpp
-    src/script/ModLoader.cpp
-    src/script/ModWatcher.cpp
-    src/script/PythonRuntime.cpp
-    src/script/PythonSupport.cpp
-    src/script/ScriptApi.cpp
-    src/script/ScriptManager.cpp
-    src/script/ScriptUiApi.cpp
-    src/world/Cell.cpp
-    src/world/Chunk.cpp
-    src/world/ChunkData.cpp
-    src/world/ChunkManager.cpp
-    src/world/GridSquare.cpp
-    src/world/MapLoader.cpp
-    src/world/WorldDefinition.cpp
-    src/world/WorldGraph.cpp
-    src/world/WorldSelection.cpp
-    src/world/RegionStreaming.cpp
-    src/world/World.cpp
 )
 
-target_include_directories(ZomboidLikeTests PRIVATE src ${BULLET_INCLUDE_DIRS} ${Stb_INCLUDE_DIR} ${MINIAUDIO_INCLUDE_DIR})
-
-# 测试需要访问仓库内资源（如 assets/maps/village_demo）
-target_compile_definitions(ZomboidLikeTests PRIVATE ZL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_compile_definitions(ZomboidLikeTests PRIVATE
+    ZL_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
 
 target_link_libraries(ZomboidLikeTests PRIVATE
+    ZomboidLikeCore
     doctest::doctest
-    glm::glm
-    spdlog::spdlog
-    nlohmann_json::nlohmann_json
-    EnTT::EnTT
-    sol2::sol2
-    ${LUA_LIBRARIES}
-    ${BULLET_LIBRARIES}
-    RmlUi::RmlUi
-    unofficial::sqlite3::sqlite3
-    kcp::kcp
-    ws2_32
-    glfw
 )
 
-if (ZL_ENABLE_PYTHON)
-    target_compile_definitions(ZomboidLikeTests PRIVATE ZL_ENABLE_PYTHON=1
-        ZL_PYTHON_HOME_DEFAULT="${ZL_PYTHON_HOME_DEFAULT}")
-    target_link_libraries(ZomboidLikeTests PRIVATE pybind11::embed)
-endif()
+target_precompile_headers(ZomboidLikeTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ZomboidLikePch.h
+)
+
+set(ZL_FAST_TEST_SOURCES
+    tests/test_main.cpp
+    tests/test_throwing.cpp
+    tests/test_throw_aim.cpp
+    tests/test_throw_flight.cpp
+    tests/test_throw_fire.cpp
+    tests/test_throw_network.cpp
+    tests/test_throw_regression.cpp
+)
+
+add_executable(ZomboidLikeTestsFast EXCLUDE_FROM_ALL ${ZL_FAST_TEST_SOURCES})
+
+target_compile_definitions(ZomboidLikeTestsFast PRIVATE
+    ZL_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+target_link_libraries(ZomboidLikeTestsFast PRIVATE
+    ZomboidLikeCore
+    doctest::doctest
+)
+
+target_precompile_headers(ZomboidLikeTestsFast PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ZomboidLikePch.h
+)
 
 if (ZL_ENABLE_PYTHON)
     # vcpkg 的 python3 运行时 DLL 只放在 tools/python3（不在 bin 目录，applocal 不会拷）；
@@ -575,7 +496,7 @@ if (ZL_ENABLE_PYTHON)
     if (EXISTS "${ZL_PYTHON_HOME_DEFAULT}/z.dll")  # python314.dll 的 zlib 依赖（vcpkg 自带）
         list(APPEND ZL_PYTHON_RUNTIME_DLLS "${ZL_PYTHON_HOME_DEFAULT}/z.dll")
     endif()
-    foreach(zl_target ZomboidLike ZomboidLikeTests)
+    foreach(zl_target ZomboidLike ZomboidLikeTests ZomboidLikeTestsFast)
         add_custom_command(TARGET ${zl_target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ZL_PYTHON_RUNTIME_DLLS}
                     $<TARGET_FILE_DIR:${zl_target}>)

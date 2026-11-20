@@ -23,6 +23,8 @@
 #include "ui/SocialPanel.h"
 #include "ui/SocialUi.h"
 #include "ui/UiInput.h"
+#include "ui/VehicleModsPanel.h"
+#include "ui/VehicleModsUi.h"
 #include "ui/WorldMapUi.h"
 
 namespace {
@@ -364,6 +366,8 @@ TEST_CASE("M9-T4 HUD 文档与游戏输入阻断") {
     CHECK(document->GetElementById("hp-fill") != nullptr);
     CHECK(document->GetElementById("stamina-fill") != nullptr);
     CHECK(document->GetElementById("combat-status") != nullptr);
+    CHECK(document->GetElementById("stealth-status") != nullptr);
+    CHECK(document->GetElementById("stealth-prompt") != nullptr);
     CHECK(document->GetElementById("ranged-status") != nullptr);
     CHECK(document->GetElementById("forage-status") != nullptr);
     CHECK(document->GetElementById("fishing-status") != nullptr);
@@ -393,6 +397,8 @@ TEST_CASE("M9-T4 HUD 文档与游戏输入阻断") {
         std::string(ZL_SOURCE_DIR) + "/mods/core_ui/ui/hud.rml");
     REQUIRE(scriptDocument != nullptr);
     CHECK(scriptDocument->GetElementById("combat-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("stealth-status") != nullptr);
+    CHECK(scriptDocument->GetElementById("stealth-prompt") != nullptr);
     CHECK(scriptDocument->GetElementById("ranged-status") != nullptr);
     CHECK(scriptDocument->GetElementById("forage-status") != nullptr);
     CHECK(scriptDocument->GetElementById("fishing-status") != nullptr);
@@ -445,6 +451,14 @@ TEST_CASE("M9-T4 HUD 文档与游戏输入阻断") {
             CHECK(hud->GetElementById("siege-report-line-" +
                                       std::to_string(i)) != nullptr);
         }
+        CHECK(hud->GetElementById("poi-stage-panel") != nullptr);
+        CHECK(hud->GetElementById("poi-stage-title") != nullptr);
+        CHECK(hud->GetElementById("poi-stage-objective") != nullptr);
+        CHECK(hud->GetElementById("poi-stage-meta") != nullptr);
+        CHECK(hud->GetElementById("poi-stage-narrative") != nullptr);
+        CHECK(hud->GetElementById("poi-result-panel") != nullptr);
+        CHECK(hud->GetElementById("poi-result-title") != nullptr);
+        CHECK(hud->GetElementById("poi-result-body") != nullptr);
         CHECK(hud->GetElementById("world-event-panel") != nullptr);
         CHECK(hud->GetElementById("world-event-title") != nullptr);
         CHECK(hud->GetElementById("world-event-meta") != nullptr);
@@ -468,6 +482,49 @@ TEST_CASE("M9-T4 HUD 文档与游戏输入阻断") {
     CHECK(worldEventPanel->GetClientWidth() >= 380.0f);
     CHECK(worldEventPanel->GetClientHeight() > 0.0f);
     worldEventPanel->SetProperty("display", "none");
+    Rml::Element* stagePanel = document->GetElementById("poi-stage-panel");
+    Rml::Element* stageTitle = document->GetElementById("poi-stage-title");
+    Rml::Element* stageObjective =
+        document->GetElementById("poi-stage-objective");
+    Rml::Element* stageMeta = document->GetElementById("poi-stage-meta");
+    Rml::Element* stageNarrative =
+        document->GetElementById("poi-stage-narrative");
+    Rml::Element* resultPanel = document->GetElementById("poi-result-panel");
+    Rml::Element* resultTitle = document->GetElementById("poi-result-title");
+    Rml::Element* resultBody = document->GetElementById("poi-result-body");
+    REQUIRE(stagePanel != nullptr);
+    REQUIRE(stageTitle != nullptr);
+    REQUIRE(stageObjective != nullptr);
+    REQUIRE(stageMeta != nullptr);
+    REQUIRE(stageNarrative != nullptr);
+    REQUIRE(resultPanel != nullptr);
+    REQUIRE(resultTitle != nullptr);
+    REQUIRE(resultBody != nullptr);
+    stageTitle->SetInnerRML("阶段医院 · 阶段 2/3");
+    stageObjective->SetInnerRML("在药房找到门禁卡并打开前门");
+    stageMeta->SetInnerRML("钥匙：前门钥匙 · 供电：需要发电机燃料 · 路线：1 正门 / 2 后门");
+    stageNarrative->SetInnerRML("医院封锁记录：不要相信广播里的声音");
+    stageNarrative->SetProperty("display", "block");
+    stagePanel->SetProperty("display", "block");
+    resultTitle->SetInnerRML("阶段医院 · 阶段探索完成");
+    resultBody->SetInnerRML("全部 3 阶段完成 · 奖励已结算 · 按 M 查看地图");
+    resultPanel->SetProperty("display", "block");
+    context->Update();
+    const LayoutRect stageRect = BorderRect(stagePanel);
+    const LayoutRect objectiveRect =
+        BorderRect(document->GetElementById("hud-objective"));
+    const LayoutRect resultRect = BorderRect(resultPanel);
+    CHECK(stageRect.right <= 1280.0f - 15.0f);
+    CHECK(stageRect.bottom <= 720.0f);
+    CHECK(objectiveRect.right <= 1280.0f - 15.0f);
+    CHECK(objectiveRect.bottom <= 720.0f);
+    CHECK(resultRect.right <= 1280.0f - 15.0f);
+    CHECK(resultRect.bottom <= 720.0f);
+    CHECK(!Overlaps(objectiveRect, resultRect));
+    CHECK(stagePanel->GetClientHeight() > 0.0f);
+    CHECK(resultPanel->GetClientHeight() > 0.0f);
+    stagePanel->SetProperty("display", "none");
+    resultPanel->SetProperty("display", "none");
     Rml::Element* reportPanel = document->GetElementById("siege-report");
     REQUIRE(reportPanel != nullptr);
     reportPanel->SetProperty("display", "block");
@@ -827,11 +884,14 @@ TEST_CASE("P1 HUD 左侧状态堆叠与底部提示布局") {
             Rml::Element* hotbar = document->GetElementById("hotbar");
             Rml::Element* actionHint =
                 document->GetElementById("action-hint");
+            Rml::Element* stealthPrompt =
+                document->GetElementById("stealth-prompt");
             Rml::Element* notice = document->GetElementById("notice");
             REQUIRE(level != nullptr);
             REQUIRE(vitals != nullptr);
             REQUIRE(hotbar != nullptr);
             REQUIRE(actionHint != nullptr);
+            REQUIRE(stealthPrompt != nullptr);
             REQUIRE(notice != nullptr);
 
             for (std::size_t i = 0; i < 9; ++i) {
@@ -844,6 +904,8 @@ TEST_CASE("P1 HUD 左侧状态堆叠与底部提示布局") {
                 "流血中：按 I 打开背包使用绷带；附近木箱按 I 搜刮；受损木墙按 H "
                 "维修；靠近泛光灯按 E 开关；背包已满时奖励掉在脚下");
             actionHint->SetProperty("display", "block");
+            stealthPrompt->SetInnerRML("背刺可用 · SPACE");
+            stealthPrompt->SetProperty("display", "block");
             notice->SetInnerRML(
                 "背包已满，奖励掉落在脚下：燃料罐×1、维修包×1、木材×4、罐装食物×2");
             notice->SetProperty("display", "block");
@@ -853,6 +915,7 @@ TEST_CASE("P1 HUD 左侧状态堆叠与底部提示布局") {
             const LayoutRect vitalsRect = BorderRect(vitals);
             const LayoutRect hotbarRect = BorderRect(hotbar);
             const LayoutRect actionRect = BorderRect(actionHint);
+            const LayoutRect promptRect = BorderRect(stealthPrompt);
             const LayoutRect noticeRect = BorderRect(notice);
             CHECK(vitalsRect.left >= 15.0f);
             CHECK(vitalsRect.right <= static_cast<float>(sizes[sizeIndex].x));
@@ -863,6 +926,11 @@ TEST_CASE("P1 HUD 左侧状态堆叠与底部提示布局") {
             CHECK(actionRect.bottom <= hotbarRect.top - 4.0f);
             CHECK(!Overlaps(actionRect, hotbarRect));
             CHECK(!Overlaps(noticeRect, actionRect));
+            CHECK(!Overlaps(promptRect, actionRect));
+            CHECK(!Overlaps(promptRect, noticeRect));
+            CHECK(!Overlaps(promptRect, hotbarRect));
+            CHECK(promptRect.top >= 0.0f);
+            CHECK(promptRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
             CHECK(noticeRect.top >= 0.0f);
             CHECK(noticeRect.bottom <= static_cast<float>(sizes[sizeIndex].y));
 
@@ -879,6 +947,7 @@ TEST_CASE("P1 HUD 左侧状态堆叠与底部提示布局") {
             REQUIRE(dialogueText != nullptr);
             REQUIRE(dialogueHint != nullptr);
             actionHint->SetProperty("display", "none");
+            stealthPrompt->SetProperty("display", "none");
             notice->SetProperty("display", "none");
             dialoguePanel->SetProperty("display", "block");
             dialogueSpeaker->SetInnerRML("求助者 · 村庄营地");
@@ -1339,7 +1408,7 @@ TEST_CASE("M9-T6/M14-T8 主菜单、暂停菜单、设置页与结算页") {
         {"MoveRight", "D"},   {"Attack", "SPACE"}, {"HeavyAttack", "LSHIFT"},
         {"Block", "LCTRL"},   {"Dodge", "Z"},    {"Pickup", "F"},
         {"Use", "E"},         {"Equip", "R"},    {"Drop", "G"},
-        {"Pause", "F1"},
+        {"Pause", "F1"},      {"Stealth", "N"},
     };
     for (const auto& binding : bindings) {
         settings.bindings.push_back(
@@ -1408,12 +1477,14 @@ TEST_CASE("M9-T6/M14-T8 主菜单、暂停菜单、设置页与结算页") {
     CHECK(applied.musicVolume == 30);
     CHECK(applied.sfxVolume == 60);
     CHECK(applied.ambientVolume == 20);
-    REQUIRE(applied.bindings.size() == 13);
+    REQUIRE(applied.bindings.size() == 14);
     CHECK(applied.bindings[0].key == "Q");
     CHECK(applied.bindings[6].action == "Block");
     CHECK(applied.bindings[6].key == "LCTRL");
     CHECK(applied.bindings[7].action == "Dodge");
     CHECK(applied.bindings[7].key == "Z");
+    CHECK(applied.bindings[13].action == "Stealth");
+    CHECK(applied.bindings[13].key == "N");
 
     clickElement("settings-back");
     CHECK(!panel.IsSettingsOpen());
@@ -2264,5 +2335,179 @@ TEST_CASE("M32-T8 战略地图行动面板：选择/支援/反攻回调与禁用
 
     panel.Shutdown();
     Rml::RemoveContext("strategic-actions");
+    Rml::Shutdown();
+}
+TEST_CASE("M33-F4-T4 改装面板效果、失败提示与只读操作") {
+    NullRenderInterface renderInterface;
+    NullSystemInterface systemInterface;
+    Rml::SetRenderInterface(&renderInterface);
+    Rml::SetSystemInterface(&systemInterface);
+    REQUIRE(Rml::Initialise());
+    const std::string fontDir = std::string(ZL_SOURCE_DIR) + "/assets/fonts/";
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Regular.otf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Normal));
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Bold.ttf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Bold));
+
+    Rml::Context* context =
+        Rml::CreateContext("vehicle-mods", Rml::Vector2i(1280, 720));
+    REQUIRE(context != nullptr);
+    zl::ui::VehicleModsPanel panel;
+    REQUIRE(panel.Init(*context, std::string(ZL_SOURCE_DIR) +
+                                    "/assets/ui/vehiclemods.rml"));
+    std::vector<zl::ui::VehicleModPanelAction> actions;
+    panel.SetActionHandler(
+        [&actions](const zl::ui::VehicleModPanelAction& action) {
+            actions.push_back(action);
+        });
+
+    zl::ui::VehicleModsUiState state;
+    state.open = true;
+    state.valid = true;
+    state.subtitle = "皮卡 · 车况 92%";
+    state.summary = "总重 86kg · 后备箱 64kg（+24kg） · 极速 +18%";
+    state.status = "选择改装安装或拆除；材料来自背包";
+    state.slots[0].slotName = "装甲";
+    state.slots[0].occupied = true;
+    state.slots[0].currentName = "装甲板";
+    state.slots[0].currentEffect = "撞墙车况 -32%，撞尸车况 -28%";
+    state.slots[0].currentDetail =
+        "已安装 · 重量 28 kg · 拆除 15 秒 · 返还 50%";
+    state.slots[0].canRemove = true;
+    state.slots[1].slotName = "载重";
+    state.slots[1].hasCandidate = true;
+    state.slots[1].canInstall = true;
+    state.slots[1].candidateIndex = 0;
+    state.slots[1].candidateCount = 2;
+    state.slots[1].candidateName = "行李架";
+    state.slots[1].candidateEffect = "后备箱 +24kg";
+    state.slots[1].materials = "材料：木材 4/4";
+    state.slots[1].duration = "安装 20 秒 · 重量 18 kg";
+    panel.SetState(state);
+    context->Update();
+
+    auto text = [&](const char* id) {
+        Rml::Element* element = panel.Document()->GetElementById(id);
+        REQUIRE(element != nullptr);
+        return element->GetInnerRML();
+    };
+    CHECK(text("vm-current-0").find("撞墙车况 -32%") != std::string::npos);
+    CHECK(text("vm-candidate-1").find("行李架") != std::string::npos);
+    CHECK(text("vm-candidate-1").find("后备箱 +24kg") != std::string::npos);
+    CHECK(text("vehicle-mods-summary").find("后备箱 64kg") !=
+          std::string::npos);
+
+    auto click = [&](const char* id) {
+        Rml::Element* element = panel.Document()->GetElementById(id);
+        REQUIRE(element != nullptr);
+        const Rml::Vector2f offset =
+            element->GetAbsoluteOffset(Rml::BoxArea::Border);
+        context->ProcessMouseMove(static_cast<int>(offset.x) + 4,
+                                  static_cast<int>(offset.y) + 4, 0);
+        context->ProcessMouseButtonDown(0, 0);
+        context->ProcessMouseButtonUp(0, 0);
+        context->Update();
+    };
+    click("vm-install-1");
+    REQUIRE(actions.size() == 1u);
+    CHECK(actions[0].type == zl::ui::VehicleModPanelActionType::Install);
+    CHECK(actions[0].slot == 1);
+    click("vm-remove-0");
+    REQUIRE(actions.size() == 2u);
+    CHECK(actions[1].type == zl::ui::VehicleModPanelActionType::Remove);
+    CHECK(actions[1].slot == 0);
+
+    state.status = "材料不足：木材 0/4";
+    state.statusTone = "fail";
+    state.readOnly = true;
+    panel.SetState(state);
+    context->Update();
+    CHECK(text("vehicle-mods-status").find("材料不足") != std::string::npos);
+    Rml::Element* status = panel.Document()->GetElementById(
+        "vehicle-mods-status");
+    REQUIRE(status != nullptr);
+    CHECK(status->GetComputedValues().color() == Rml::Colourb(0xef, 0x53, 0x50));
+    Rml::Element* install = panel.Document()->GetElementById("vm-install-1");
+    Rml::Element* remove = panel.Document()->GetElementById("vm-remove-0");
+    REQUIRE(install != nullptr);
+    REQUIRE(remove != nullptr);
+    CHECK(install->GetComputedValues().display() == Rml::Style::Display::None);
+    CHECK(remove->GetComputedValues().display() == Rml::Style::Display::None);
+    click("vm-install-1");
+    CHECK(actions.size() == 2u);
+
+    click("vehicle-mods-close");
+    REQUIRE(actions.size() == 3u);
+    CHECK(actions[2].type == zl::ui::VehicleModPanelActionType::Close);
+
+    panel.Shutdown();
+    Rml::RemoveContext("vehicle-mods");
+    Rml::Shutdown();
+}
+TEST_CASE("M33-F4-T4 后备箱改装入口与车辆校验") {
+    NullRenderInterface renderInterface;
+    NullSystemInterface systemInterface;
+    Rml::SetRenderInterface(&renderInterface);
+    Rml::SetSystemInterface(&systemInterface);
+    REQUIRE(Rml::Initialise());
+    const std::string fontDir = std::string(ZL_SOURCE_DIR) + "/assets/fonts/";
+    REQUIRE(Rml::LoadFontFace(fontDir + "NotoSansSC-Regular.otf", "zl_ui",
+                              Rml::Style::FontStyle::Normal,
+                              Rml::Style::FontWeight::Normal));
+
+    Rml::Context* context =
+        Rml::CreateContext("vehicle-mod-entry", Rml::Vector2i(1280, 720));
+    REQUIRE(context != nullptr);
+    zl::ui::InventoryPanel panel;
+    REQUIRE(panel.Init(*context, std::string(ZL_SOURCE_DIR) +
+                                    "/assets/ui/inventory.rml"));
+    std::vector<zl::ui::InventoryAction> actions;
+    panel.SetActionHandler(
+        [&actions](const zl::ui::InventoryAction& action) {
+            actions.push_back(action);
+        });
+
+    zl::ui::InventoryState state;
+    state.playerValid = true;
+    state.lootIsStorage = true;
+    state.lootIsVehicle = true;
+    state.vehicleModsEnabled = true;
+    state.lootEntityId = 9001;
+    state.lootTitle = "后备箱：皮卡（0/64 kg）";
+    panel.SetState(state);
+    panel.Show();
+    context->Update();
+
+    Rml::Element* entry = panel.Document()->GetElementById(
+        "storage-vehicle-mods");
+    REQUIRE(entry != nullptr);
+    CHECK(entry->GetComputedValues().display() != Rml::Style::Display::None);
+    CHECK(entry->GetInnerRML().find("车辆改装") != std::string::npos);
+    const Rml::Vector2f offset = entry->GetAbsoluteOffset(Rml::BoxArea::Border);
+    context->ProcessMouseMove(static_cast<int>(offset.x) + 4,
+                              static_cast<int>(offset.y) + 4, 0);
+    context->ProcessMouseButtonDown(0, 0);
+    context->ProcessMouseButtonUp(0, 0);
+    context->Update();
+    REQUIRE(actions.size() == 1u);
+    CHECK(actions[0].type == zl::ui::InventoryActionType::OpenVehicleMods);
+    CHECK(actions[0].fromEntityId == 9001);
+
+    state.lootIsVehicle = false;
+    state.lootTitle = "仓库：木箱";
+    panel.SetState(state);
+    context->Update();
+    CHECK(entry->GetComputedValues().display() == Rml::Style::Display::None);
+
+    state.lootIsVehicle = true;
+    state.vehicleModsEnabled = false;
+    panel.SetState(state);
+    context->Update();
+    CHECK(entry->GetComputedValues().display() == Rml::Style::Display::None);
+
+    panel.Shutdown();
+    Rml::RemoveContext("vehicle-mod-entry");
     Rml::Shutdown();
 }

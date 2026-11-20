@@ -190,7 +190,7 @@ TEST_CASE("M18-F1 storage sort groups by item type") {
 
 TEST_CASE("M18-F1 default buildables include storage") {
     const auto& defs = game::DefaultBuildables();
-    REQUIRE(defs.size() == 15u);
+    REQUIRE(defs.size() == 18u);
     CHECK(defs[8].id == "storage");
     CHECK(defs[8].sprite == "object.crate");
     CHECK(defs[8].storageKg == doctest::Approx(50.0f));

@@ -14,7 +14,7 @@ namespace zl::net {
 // 只发给拥有该玩家的会话，不进入全体可见的 ZLR1 实体快照；客户端用它在网络模式
 // 构造只读 UI 镜像，所有修改仍必须通过 ZLC1 命令回服务器执行。
 inline constexpr std::uint32_t kPlayerStateMagic = 0x31504C5Au;  // "ZLP1"
-inline constexpr std::uint16_t kPlayerStateVersion = 21;
+inline constexpr std::uint16_t kPlayerStateVersion = 23;
 inline constexpr std::size_t kPlayerStateHeaderSize = 24;
 inline constexpr std::size_t kMaxPlayerStateBytes = 32 * 1024;
 inline constexpr std::size_t kMaxPlayerStateBagItems = 64;
@@ -25,6 +25,10 @@ inline constexpr std::size_t kMaxPlayerStateStatusBytes = 512;
 inline constexpr std::size_t kMaxPlayerStateSiegeBytes = 512;
 inline constexpr std::size_t kMaxPlayerStatePerks = 64;
 inline constexpr std::size_t kMaxPlayerStatePoiProgress = 32;
+inline constexpr std::size_t kMaxPlayerStatePoiStages = 32;
+inline constexpr std::uint8_t kPlayerPoiStageAwaitingChoice = 1u << 0;
+inline constexpr std::uint8_t kPlayerPoiStageFailed = 1u << 1;
+inline constexpr std::uint8_t kPlayerPoiStagePowered = 1u << 2;
 inline constexpr std::size_t kMaxPlayerStateMissions = 64;
 inline constexpr std::size_t kMaxPlayerStateMissionObjectives = 16;
 inline constexpr std::size_t kMaxPlayerStateSleepStatusBytes = 512;
@@ -196,6 +200,17 @@ struct PlayerPoiProgress {
     int liveGuards = 0;
 };
 
+// M33-F5-T2：服务器权威多阶段 POI 只读镜像。
+struct PlayerPoiStageProgress {
+    std::string id;
+    std::uint8_t stageIndex = 0;
+    std::uint8_t stageCount = 0;
+    std::uint8_t completedStageCount = 0;
+    std::uint8_t flags = 0;
+    std::string currentStage;
+    std::string chosenBranch;
+};
+
 // M19-F3：服务器权威任务日志镜像；客户端只读用于 HUD/焦点切换。
 struct PlayerMissionProgress {
     std::string id;
@@ -248,6 +263,15 @@ struct PlayerCombatState {
 
 // M22-F1：服务器权威联机睡眠/时间投票镜像；phase 0=无，1=投票，2=睡眠中。
 // status 是服务器生成的 HUD 操作提示，客户端只读展示并发 SleepVote/SleepCancel。
+// M34-F1-T5：owner-only 服务器权威潜行摘要。客户端只读展示；旧 v22 负载
+// 默认站立（noiseRadius=2.5、visibilityScale=1）。
+struct PlayerStealthState {
+    bool valid = false;
+    bool crouched = false;
+    float noiseRadius = 2.5f;
+    float visibilityScale = 1.0f;
+};
+
 struct PlayerSleepState {
     std::uint8_t phase = 0;
     std::uint8_t tone = 0;
@@ -327,6 +351,8 @@ struct PlayerState {
 
     // M19-F2/F3：服务器权威 POI/任务日志；旧 v8 缺失时保持空。
     std::vector<PlayerPoiProgress> poiProgress;
+    // M33-F5-T2：旧 v21 缺失时保持空。
+    std::vector<PlayerPoiStageProgress> poiStageProgress;
     std::vector<PlayerMissionProgress> missions;
     int missionLastDay = 1;
     int missionRandomDay = 0;
@@ -339,6 +365,8 @@ struct PlayerState {
     PlayerVehicleState vehicle;
     // M30-T6：服务器权威战斗体力/姿态（owner-only）。
     PlayerCombatState combat;
+    // M34-F1-T5：服务器权威潜行摘要（owner-only）。
+    PlayerStealthState stealth;
     // M23-F4-T6：聚落权威状态与服务器提示（owner-only）。
     std::vector<PlayerSettlementProgress> settlements;
     std::vector<PlayerSettlementReputation> settlementReputation;

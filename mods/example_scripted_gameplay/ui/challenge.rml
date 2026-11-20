@@ -1,0 +1,40 @@
+<rml>
+<head>
+  <link type="text/rcss" href="challenge.rcss" />
+</head>
+<body>
+  <div id="challenge-panel" class="challenge-panel">
+    <div class="challenge-header">
+      <span class="challenge-kicker">限时挑战</span>
+      <div id="challenge-hide" class="challenge-hide">隐藏</div>
+    </div>
+    <div id="challenge-state" class="challenge-state">等待世界</div>
+    <div class="challenge-row">
+      <div class="challenge-cell">
+        <div class="challenge-label">波次</div>
+        <div id="challenge-wave" class="challenge-value">1/3</div>
+      </div>
+      <div class="challenge-cell">
+        <div class="challenge-label">倒计时</div>
+        <div id="challenge-timer" class="challenge-value">--</div>
+      </div>
+    </div>
+    <div class="challenge-row">
+      <div class="challenge-cell">
+        <div class="challenge-label">本局得分</div>
+        <div id="challenge-score" class="challenge-value">0</div>
+      </div>
+      <div class="challenge-cell">
+        <div class="challenge-label">最佳</div>
+        <div id="challenge-best" class="challenge-value challenge-best">0</div>
+      </div>
+    </div>
+    <div class="challenge-bar">
+      <div id="challenge-fill" class="challenge-fill"></div>
+    </div>
+    <div class="challenge-objective-label">目标</div>
+    <div id="challenge-objective" class="challenge-objective">进入世界后自动开始</div>
+    <div id="challenge-hint" class="challenge-hint">点击隐藏后挑战继续</div>
+  </div>
+</body>
+</rml>

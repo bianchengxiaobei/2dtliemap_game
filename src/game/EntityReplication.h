@@ -13,6 +13,7 @@
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
 #include "ecs/EcsWorld.h"
+#include "game/Companion.h"
 #include "game/FireComponents.h"
 #include "game/HomesteadComponents.h"
 #include "game/SettlementNpc.h"
@@ -55,6 +56,8 @@ inline constexpr std::uint32_t kReplicationAction =
     net::MakeReplicationComponentId('A', 'C', 'T', 'N');
 inline constexpr std::uint32_t kReplicationCombatStance =
     net::MakeReplicationComponentId('C', 'B', 'S', 'T');
+inline constexpr std::uint32_t kReplicationStealth =
+    net::MakeReplicationComponentId('S', 'T', 'L', 'H');
 inline constexpr std::uint32_t kReplicationVariant =
     net::MakeReplicationComponentId('Z', 'V', 'A', 'R');
 inline constexpr std::uint32_t kReplicationSpecial =
@@ -93,10 +96,38 @@ inline constexpr std::uint32_t kReplicationAnimal =
     net::MakeReplicationComponentId('A', 'N', 'M', 'L');
 inline constexpr std::uint32_t kReplicationAnimalCorpse =
     net::MakeReplicationComponentId('A', 'C', 'R', 'P');
+inline constexpr std::uint32_t kReplicationCompanion =
+    net::MakeReplicationComponentId('C', 'M', 'P', 'N');
+inline constexpr std::uint32_t kReplicationVehicleMods =
+    net::MakeReplicationComponentId('V', 'M', 'O', 'D');
+inline constexpr std::uint32_t kReplicationPlacedTrap =
+    net::MakeReplicationComponentId('T', 'R', 'A', '2');
 inline constexpr std::size_t kMaxReplicationAnimalSpeciesBytes = 64;
 
 bool RegisterEntityReplicationComponents(net::ReplicationRegistry& registry,
                                          std::string* error = nullptr);
+
+// M33-F3-T6：同伴只读状态摘要。位置/生命/装备仍走通用复制组件；
+// 这里补 defId、指令、待命/倒地/死亡和信任/个人委托进度。
+struct CompanionReplicationState {
+    std::string defId;
+    CompanionCommand command = CompanionCommand::Follow;
+    int loyalty = 50;
+    bool standby = false;
+    bool downed = false;
+    bool dead = false;
+    float downedRemaining = 0.0f;
+    CompanionQuestStatus questStatus = CompanionQuestStatus::Locked;
+    int questStage = 0;
+    int questProgress = 0;
+    std::uint32_t rewardMask = 0;
+};
+
+// M33-F4-T5：车辆改装只读摘要。客户端只按槽位显示服务器结果，
+// 安装/拆除仍由服务器命令校验材料与槽位后修改权威组件。
+struct VehicleModsReplicationState {
+    std::array<std::string, ecs::kVehicleModSlotCount> defIds{};
+};
 
 struct ReplicatedActor {
     std::uint64_t stableId = 0;
@@ -115,6 +146,8 @@ struct ReplicatedActor {
     std::array<std::optional<ecs::ItemInstance>, ecs::kEquipSlotCount> equipment;
     ecs::ActionState action;
     ecs::CombatStance combatStance;
+    bool stealthCrouched = false;
+    bool stealthMoving = false;
     ecs::ZombieVariant variant;
     ecs::ZombieSpecial special;
     ecs::Wounds wounds;
@@ -131,6 +164,7 @@ struct ReplicatedActor {
     ecs::ColdStorage coldStorage;
     ecs::Floodlight floodlight;
     ecs::SpikeTrap trap;
+    ecs::PlacedTrap placedTrap;
     ecs::MerchantStock merchantStock;
     SettlementNpc settlementNpc;
     ecs::LootContainer lootContainer;
@@ -140,6 +174,8 @@ struct ReplicatedActor {
     ecs::BurningZombie burning;
     ecs::Animal animal;
     ecs::AnimalCorpse animalCorpse;
+    CompanionReplicationState companion;
+    VehicleModsReplicationState vehicleMods;
 
     bool hasPosition = false;
     bool hasVelocity = false;
@@ -151,6 +187,7 @@ struct ReplicatedActor {
     bool hasEquipment = false;
     bool hasAction = false;
     bool hasCombatStance = false;
+    bool hasStealth = false;
     bool hasVariant = false;
     bool hasSpecial = false;
     bool hasWounds = false;
@@ -163,6 +200,7 @@ struct ReplicatedActor {
     bool hasColdStorage = false;
     bool hasFloodlight = false;
     bool hasTrap = false;
+    bool hasPlacedTrap = false;
     bool hasMerchantStock = false;
     bool hasSettlementNpc = false;
     bool hasLoot = false;
@@ -170,6 +208,8 @@ struct ReplicatedActor {
     bool hasBurning = false;
     bool hasAnimal = false;
     bool hasAnimalCorpse = false;
+    bool hasCompanion = false;
+    bool hasVehicleMods = false;
 };
 
 class EntityReplicationProducer {
@@ -289,6 +329,8 @@ private:
         std::array<std::optional<ecs::ItemInstance>, ecs::kEquipSlotCount> equipment;
         ecs::ActionState action;
         ecs::CombatStance combatStance;
+        bool stealthCrouched = false;
+        bool stealthMoving = false;
         ecs::ZombieVariant variant;
         ecs::ZombieSpecial special;
         ecs::Wounds wounds;
@@ -305,6 +347,7 @@ private:
         ecs::ColdStorage coldStorage;
         ecs::Floodlight floodlight;
         ecs::SpikeTrap trap;
+        ecs::PlacedTrap placedTrap;
         ecs::MerchantStock merchantStock;
         SettlementNpc settlementNpc;
         ecs::LootContainer lootContainer;
@@ -314,6 +357,8 @@ private:
         ecs::BurningZombie burning;
         ecs::Animal animal;
         ecs::AnimalCorpse animalCorpse;
+        CompanionReplicationState companion;
+        VehicleModsReplicationState vehicleMods;
         bool hasPosition = false;
         bool hasVelocity = false;
         bool hasHealth = false;
@@ -324,6 +369,7 @@ private:
         bool hasEquipment = false;
         bool hasAction = false;
         bool hasCombatStance = false;
+        bool hasStealth = false;
         bool hasVariant = false;
         bool hasSpecial = false;
         bool hasWounds = false;
@@ -336,6 +382,7 @@ private:
         bool hasColdStorage = false;
         bool hasFloodlight = false;
         bool hasTrap = false;
+        bool hasPlacedTrap = false;
         bool hasMerchantStock = false;
         bool hasSettlementNpc = false;
         bool hasLoot = false;
@@ -343,6 +390,8 @@ private:
         bool hasBurning = false;
         bool hasAnimal = false;
         bool hasAnimalCorpse = false;
+        bool hasCompanion = false;
+        bool hasVehicleMods = false;
     };
 
     bool DecodePatch(const net::ReplicatedEntity& entity, ActorPatch* patch,

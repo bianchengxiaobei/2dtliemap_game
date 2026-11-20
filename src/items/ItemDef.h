@@ -125,6 +125,28 @@ struct WeaponAttackParams {
 WeaponAttackParams ResolveWeaponAttack(const WeaponCombatFields& combat,
                                        const WeaponAttackParams& fallback);
 
+// M34-F2：投掷落地火焰参数（items.json 的 throwable.fire）。
+// 仅描述数据；实际点燃由 FireSystem 在投掷落地时执行。
+struct ThrowableFire {
+    float radius = 0.0f;   // 火焰半径（格，0~3）
+    float minutes = 0.0f;  // 持续时间（游戏分钟，0~240）
+
+    bool Any() const { return radius > 0.0f && minutes > 0.0f; }
+};
+
+// M34-F2：投掷物参数（items.json 可选 "throwable" 对象）。
+// 未带该字段的物品保持旧行为，不能投掷。
+struct ThrowableDef {
+    float range = 0.0f;        // 最大射程（格，1~16）
+    float damage = 0.0f;       // 落点伤害（0~80）
+    float impactRadius = 0.0f; // 落点影响半径（格，0~3）
+    float arcHeight = 0.0f;    // 表现弧高（格，0~3）
+    float noiseRadius = 0.0f;  // 落地噪声半径（格，0~32）
+    bool returnable = false;   // 未损坏时是否生成地面物品
+    float breakChance = 0.0f;  // 落地损坏概率（0~1）
+    std::optional<ThrowableFire> fire;  // 可选落地火焰
+};
+
 // M19-F4：衣物护甲参数（items.json 可选 "armor" 对象）。
 // 减伤值为 0~1 的比例；condition 会按比例削弱实际减伤。insulation/waterproof
 // 先作为数据契约保留，温度/潮湿结算由 M20-F2 接入。
@@ -171,6 +193,7 @@ struct ItemDef {
     WeaponCombat combat;  // 战斗参数（M15-T1；weapon 专用）
     std::optional<WeaponHeavyCombat> heavy;  // 重击覆盖（M30-T1；weapon 专用）
     std::optional<RangedCombat> ranged;  // 远程武器参数（M23-F1；weapon 专用）
+    std::optional<ThrowableDef> throwable;  // 投掷参数（M34-F2；显式标记才可投掷）
     ArmorStats armor;     // 护甲/保温参数（M19-F4；clothing 专用）
     float repairEfficiency = 1.0f;  // 维修包恢复量倍率（M19-F4）
     float spoilDays = 0.0f;  // >0 = 可腐败食物；ItemInstance.condition 当新鲜度

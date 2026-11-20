@@ -57,6 +57,13 @@ struct ActionHintState {
     bool hasRangedWeapon = false;
     bool rangedEmpty = false;
     bool rangedReloading = false;
+    // M34-F2-T2：投掷物优先于枪械；瞄准时显示落点信息。
+    bool hasThrowable = false;
+    std::string throwableName;
+    bool throwAiming = false;
+    bool throwClamped = false;
+    bool throwWallClipped = false;
+    float throwDistance = 0.0f;
 };
 
 inline std::string ActionHintText(const ActionHintState& state,
@@ -81,6 +88,21 @@ inline std::string ActionHintText(const ActionHintState& state,
         }
         return state.hasPainkiller ? "疼痛中：按 I 打开背包使用止痛药"
                                    : "疼痛中：寻找止痛药";
+    }
+    if (state.throwAiming && state.hasThrowable) {
+        if (tone != nullptr) {
+            *tone = "info";
+        }
+        char distance[32];
+        std::snprintf(distance, sizeof(distance), "%.1f",
+                      static_cast<double>(std::max(0.0f, state.throwDistance)));
+        return "松开 V 投掷：" +
+               (state.throwableName.empty() ? std::string("投掷物")
+                                            : state.throwableName) +
+               " · 落点 " + distance + " 格" +
+               (state.throwClamped ? "（已夹到最大射程）" : "") +
+               (state.throwWallClipped ? "（墙前落点）" : "") +
+               " · ESC 取消";
     }
     if (!state.nearbyDoor.empty()) {
         if (tone != nullptr) {
@@ -266,6 +288,12 @@ inline std::string ActionHintText(const ActionHintState& state,
     }
     if (tone != nullptr) {
         *tone = "info";
+    }
+    if (state.hasThrowable) {
+        return "V 投掷：" +
+               (state.throwableName.empty() ? std::string("投掷物")
+                                            : state.throwableName) +
+               " · WASD 移动 · B 建造 · I 背包";
     }
     if (state.hasRangedWeapon) {
         if (state.rangedReloading) {

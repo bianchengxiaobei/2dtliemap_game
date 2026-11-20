@@ -1,0 +1,9 @@
+{
+  "id": "example_scripted_gameplay",
+  "name": "Example Scripted Gameplay",
+  "version": "1.0.0",
+  "api": 2,
+  "backend": "lua",
+  "main": "scripts/main.lua",
+  "loadOrder": 130
+}

@@ -258,6 +258,59 @@ bool ValidateSettlementDoc(const nlohmann::json& doc, std::string& error) {
     return true;
 }
 
+bool ValidateCompanionDoc(const nlohmann::json& doc, std::string& error) {
+    if (!doc.is_object()) {
+        error = "root must be an object";
+        return false;
+    }
+    if (!doc.contains("format") || !doc["format"].is_string() ||
+        doc["format"].get<std::string>() != "companions-v1") {
+        error = "format must be companions-v1";
+        return false;
+    }
+    if (!doc.contains("defs") || !doc["defs"].is_array() || doc["defs"].empty()) {
+        error = "defs must be a non-empty array";
+        return false;
+    }
+    return true;
+}
+
+bool ValidateVehicleModDoc(const nlohmann::json& doc, std::string& error) {
+    if (!doc.is_object()) {
+        error = "root must be an object";
+        return false;
+    }
+    if (!doc.contains("format") || !doc["format"].is_string() ||
+        doc["format"].get<std::string>() != "vehicle_mods-v1") {
+        error = "format must be vehicle_mods-v1";
+        return false;
+    }
+    if (!doc.contains("defs") || !doc["defs"].is_array() ||
+        doc["defs"].empty()) {
+        error = "defs must be a non-empty array";
+        return false;
+    }
+    return true;
+}
+
+bool ValidateTrapDoc(const nlohmann::json& doc, std::string& error) {
+    if (!doc.is_object()) {
+        error = "root must be an object";
+        return false;
+    }
+    if (!doc.contains("format") || !doc["format"].is_string() ||
+        doc["format"].get<std::string>() != "traps-v1") {
+        error = "format must be traps-v1";
+        return false;
+    }
+    if (!doc.contains("defs") || !doc["defs"].is_array() ||
+        doc["defs"].empty()) {
+        error = "defs must be a non-empty array";
+        return false;
+    }
+    return true;
+}
+
 bool ValidateWorldEventDoc(const nlohmann::json& doc, std::string& error) {
     if (!doc.is_object()) {
         error = "root must be an object";
@@ -415,6 +468,9 @@ ModContentResult LoadModContent(const core::Config& config,
         nlohmann::json modCrops;
         nlohmann::json modSettlements;
         nlohmann::json modWorldEvents;
+        nlohmann::json modCompanions;
+        nlohmann::json modVehicleMods;
+        nlohmann::json modTraps;
         const ContentReadStatus itemsStatus =
             ReadJson(contentDir / "items.json", modItems, error);
         if (itemsStatus == ContentReadStatus::Error) {
@@ -495,6 +551,30 @@ ModContentResult LoadModContent(const core::Config& config,
             ++result.skipped;
             continue;
         }
+        const ContentReadStatus companionStatus =
+            ReadJson(contentDir / "companions.json", modCompanions, error);
+        if (companionStatus == ContentReadStatus::Error) {
+            ZL_WARN(kLogModule, "跳过 mod 内容 [{}]：{}", manifest.id, error);
+            result.skippedIds.push_back(manifest.id);
+            ++result.skipped;
+            continue;
+        }
+        const ContentReadStatus vehicleModStatus =
+            ReadJson(contentDir / "vehicle_mods.json", modVehicleMods, error);
+        if (vehicleModStatus == ContentReadStatus::Error) {
+            ZL_WARN(kLogModule, "跳过 mod 内容 [{}]：{}", manifest.id, error);
+            result.skippedIds.push_back(manifest.id);
+            ++result.skipped;
+            continue;
+        }
+        const ContentReadStatus trapStatus =
+            ReadJson(contentDir / "traps.json", modTraps, error);
+        if (trapStatus == ContentReadStatus::Error) {
+            ZL_WARN(kLogModule, "跳过 mod 内容 [{}]：{}", manifest.id, error);
+            result.skippedIds.push_back(manifest.id);
+            ++result.skipped;
+            continue;
+        }
         if (itemsStatus == ContentReadStatus::Missing &&
             recipesStatus == ContentReadStatus::Missing &&
             buildingsStatus == ContentReadStatus::Missing &&
@@ -504,7 +584,10 @@ ModContentResult LoadModContent(const core::Config& config,
             missionStatus == ContentReadStatus::Missing &&
             cropsStatus == ContentReadStatus::Missing &&
             settlementStatus == ContentReadStatus::Missing &&
-            worldEventStatus == ContentReadStatus::Missing) {
+            worldEventStatus == ContentReadStatus::Missing &&
+            companionStatus == ContentReadStatus::Missing &&
+            vehicleModStatus == ContentReadStatus::Missing &&
+            trapStatus == ContentReadStatus::Missing) {
             if (hasAssetManifest) {
                 ++result.applied;
                 result.assetManifests.push_back(
@@ -593,6 +676,30 @@ ModContentResult LoadModContent(const core::Config& config,
             ++result.skipped;
             continue;
         }
+        if (companionStatus == ContentReadStatus::Ok &&
+            !ValidateCompanionDoc(modCompanions, error)) {
+            ZL_WARN(kLogModule, "跳过 mod 内容 [{}]：companions.json {}",
+                    manifest.id, error);
+            result.skippedIds.push_back(manifest.id);
+            ++result.skipped;
+            continue;
+        }
+        if (vehicleModStatus == ContentReadStatus::Ok &&
+            !ValidateVehicleModDoc(modVehicleMods, error)) {
+            ZL_WARN(kLogModule, "跳过 mod 内容 [{}]：vehicle_mods.json {}", manifest.id,
+                    error);
+            result.skippedIds.push_back(manifest.id);
+            ++result.skipped;
+            continue;
+        }
+        if (trapStatus == ContentReadStatus::Ok &&
+            !ValidateTrapDoc(modTraps, error)) {
+            ZL_WARN(kLogModule, "跳过 mod 内容 [{}]：traps.json {}", manifest.id,
+                    error);
+            result.skippedIds.push_back(manifest.id);
+            ++result.skipped;
+            continue;
+        }
 
         std::vector<BuildableDef> modBuildableDefs;
         if (buildingsStatus == ContentReadStatus::Ok) {
@@ -677,6 +784,18 @@ ModContentResult LoadModContent(const core::Config& config,
             result.worldEventFiles.push_back(
                 (contentDir / "world_events.json").generic_string());
         }
+        if (companionStatus == ContentReadStatus::Ok) {
+            result.companionFiles.push_back(
+                (contentDir / "companions.json").generic_string());
+        }
+        if (vehicleModStatus == ContentReadStatus::Ok) {
+            result.vehicleModFiles.push_back(
+                (contentDir / "vehicle_mods.json").generic_string());
+        }
+        if (trapStatus == ContentReadStatus::Ok) {
+            result.trapFiles.push_back(
+                (contentDir / "traps.json").generic_string());
+        }
         for (const BuildableDef& def : modBuildableDefs) {
             const std::vector<BuildableDef> one{def};
             if (AppendBuildableDefs(knownBuildings, one) == 1) {
@@ -696,7 +815,7 @@ ModContentResult LoadModContent(const core::Config& config,
     ZL_INFO(kLogModule,
             "mod 内容合并完成：{} 个目录，应用 {}，跳过 {}；物品 +{}，配方 +{}，"
             "建造 +{}（跳过 {}），战利品表 {}，觅食 {}，POI {}，任务 {}，作物 {}，"
-            "聚落 {}，世界事件 {}，资源清单 {}",
+            "聚落 {}，世界事件 {}，同伴 {}，车辆改装 {}，陷阱 {}，资源清单 {}",
             result.found, result.applied, result.skipped, result.itemsAdded,
             result.recipesAdded,
             static_cast<int>(result.buildables.size()),
@@ -708,6 +827,9 @@ ModContentResult LoadModContent(const core::Config& config,
             static_cast<int>(result.cropFiles.size()),
             static_cast<int>(result.settlementFiles.size()),
             static_cast<int>(result.worldEventFiles.size()),
+            static_cast<int>(result.companionFiles.size()),
+            static_cast<int>(result.vehicleModFiles.size()),
+            static_cast<int>(result.trapFiles.size()),
             static_cast<int>(result.assetManifests.size()));
     return result;
 }

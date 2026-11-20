@@ -312,6 +312,7 @@ void InfectionSystem::Update(ecs::EcsWorld& world, float dt) {
                         registry.get_or_emplace<ecs::LastDamage>(entity);
                     last.cause = ecs::DamageCause::Infection;
                     last.amount = damage;
+                    last.sourceId = 0;  // 病程伤害：无击杀者
                 }
             }
 
@@ -328,6 +329,7 @@ void InfectionSystem::Update(ecs::EcsWorld& world, float dt) {
                     registry.get_or_emplace<ecs::LastDamage>(entity);
                 last.cause = ecs::DamageCause::Infection;
                 last.amount = 1.0f;
+                last.sourceId = 0;  // 病程致死：无击杀者
                 infection.timeToNextStage = 0.0f;
                 ZL_INFO("infection", "玩家感染死亡：稳定 ID {}，病程 100%",
                         world.IdOf(entity).id);

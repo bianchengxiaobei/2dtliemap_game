@@ -348,3 +348,112 @@ TEST_CASE("M13-T8 联机持久化：死亡后定时复活并保留 StableId/背�
     std::error_code cleanupError;
     std::filesystem::remove_all(dir, cleanupError);
 }
+
+
+TEST_CASE("M34-F1-T5 重启/重连/复活默认站立且潜行不写档") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    REQUIRE(std::filesystem::exists(root / "config" / "game.json"));
+    ScopedWorkingDirectory cwd(root);
+    const std::filesystem::path dir = TempProfileDir("stealth");
+    const std::string profilePath = (dir / "players.bin").string();
+    const std::uint64_t contentHash = 0x4D33344631545354ull;
+    const float respawnSeconds = 0.2f;
+
+    std::string error;
+    zl::server::ServerHost host;
+    REQUIRE_MESSAGE(host.Init(MakeHostOptions(profilePath, contentHash,
+                                              respawnSeconds),
+                              &error),
+                    error);
+
+    zl::game::NetworkClient::Options clientOptions;
+    clientOptions.host = "127.0.0.1";
+    clientOptions.port = host.NetworkPort();
+    clientOptions.contentHash = contentHash;
+    clientOptions.autoReconnect = false;
+    clientOptions.playerIdentity = "stealth-persist";
+    clientOptions.playerName = "Stealth";
+
+    zl::game::NetworkClient first(clientOptions);
+    REQUIRE(first.Connect(&error));
+    REQUIRE(PumpUntil(host, first, 6000, [&] {
+        return first.IsConnected() && first.HasPlayerState() &&
+               first.PlayerState().stealth.valid;
+    }));
+    const std::uint64_t stableId = first.PlayerStableId();
+    REQUIRE(stableId != 0);
+    const zl::ecs::Entity player = host.Simulation().Ecs().FindById(stableId);
+    REQUIRE(static_cast<bool>(player != entt::null));
+    auto* stealth =
+        host.Simulation().Ecs().Registry().try_get<zl::ecs::StealthState>(player);
+    REQUIRE(stealth != nullptr);
+
+    zl::net::Command down;
+    down.type = zl::net::CommandType::SetStealth;
+    down.playerStableId = stableId;
+    down.payload.flags = zl::net::kStealthCrouchFlag;
+    REQUIRE(first.SendCommand(down, &error));
+    REQUIRE(PumpUntil(host, first, 4000, [&] {
+        return stealth->crouched && first.PlayerState().stealth.crouched;
+    }));
+
+    first.Close();
+    REQUIRE(PumpUntil(host, first, 4000, [&] { return host.SessionCount() == 0; }));
+    host.Shutdown();
+
+    zl::server::ServerHost restarted;
+    REQUIRE_MESSAGE(restarted.Init(MakeHostOptions(profilePath, contentHash,
+                                                   respawnSeconds),
+                                   &error),
+                    error);
+    zl::game::NetworkClient::Options restartedOptions = clientOptions;
+    restartedOptions.port = restarted.NetworkPort();
+    zl::game::NetworkClient second(restartedOptions);
+    REQUIRE(second.Connect(&error));
+    REQUIRE(PumpUntil(restarted, second, 6000, [&] {
+        return second.IsConnected() && second.HasPlayerState() &&
+               second.PlayerState().stealth.valid;
+    }));
+    CHECK(second.PlayerStableId() == stableId);
+    CHECK_FALSE(second.PlayerState().stealth.crouched);
+    CHECK(second.PlayerState().stealth.noiseRadius == doctest::Approx(2.5f));
+    CHECK(second.PlayerState().stealth.visibilityScale == doctest::Approx(1.0f));
+
+    const zl::ecs::Entity restored =
+        restarted.Simulation().Ecs().FindById(stableId);
+    REQUIRE(static_cast<bool>(restored != entt::null));
+    auto& restoredRegistry = restarted.Simulation().Ecs().Registry();
+    auto* restoredStealth =
+        restoredRegistry.try_get<zl::ecs::StealthState>(restored);
+    REQUIRE(restoredStealth != nullptr);
+    CHECK_FALSE(restoredStealth->crouched);
+    CHECK(restoredStealth->speedScale == doctest::Approx(1.0f));
+
+    zl::net::Command downAgain = down;
+    downAgain.playerStableId = stableId;
+    REQUIRE(second.SendCommand(downAgain, &error));
+    REQUIRE(PumpUntil(restarted, second, 4000, [&] {
+        return restoredStealth->crouched &&
+               second.PlayerState().stealth.crouched;
+    }));
+    restoredRegistry.get<zl::ecs::Health>(restored).current = 0.0f;
+    REQUIRE(PumpUntil(restarted, second, 8000, [&] {
+        return second.PlayerState().alive &&
+               second.PlayerState().health > 0.0f &&
+               !second.PlayerState().stealth.crouched;
+    }));
+    CHECK(restarted.GetNetworkStats().playerDeaths >= 1);
+    const zl::ecs::Entity respawned =
+        restarted.Simulation().Ecs().FindById(stableId);
+    REQUIRE(static_cast<bool>(respawned != entt::null));
+    auto* respawnedStealth =
+        restarted.Simulation().Ecs().Registry().try_get<zl::ecs::StealthState>(
+            respawned);
+    REQUIRE(respawnedStealth != nullptr);
+    CHECK_FALSE(respawnedStealth->crouched);
+
+    second.Close();
+    restarted.Shutdown();
+    std::error_code cleanupError;
+    std::filesystem::remove_all(dir, cleanupError);
+}

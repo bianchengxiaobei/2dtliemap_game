@@ -8,6 +8,7 @@
 #include "ai/systems/AiSystem.h"
 #include "ai/systems/PerceptionSystem.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/systems/StealthRules.h"
 #include "core/EventBus.h"
 #include "core/SoundEvent.h"
 #include "ecs/EcsWorld.h"
@@ -71,6 +72,13 @@ struct PercRig {
         return e;
     }
 
+    void SetPlayerStealth(ecs::Entity e, bool crouched, float visibilityScale) {
+        ecs::StealthState state;
+        state.crouched = crouched;
+        state.visibilityScale = visibilityScale;
+        world.Registry().emplace_or_replace<ecs::StealthState>(e, state);
+    }
+
     void Tick() {
         perception.Update(world, kDt);
         aiSystem.Update(world, kDt);
@@ -124,6 +132,151 @@ TEST_CASE("Perception：视觉 = 距离 × 视锥（近距全向）——背后�
     rig.Pos(p).y = 8.5f;
     rig.Tick();
     CHECK(rig.Ai(z).targetId == playerId);
+}
+
+TEST_CASE("M34-F1-T3 潜行缩放有效视距：远距难发现、近距仍可见、警觉衰减不清零") {
+    PercRig rig;
+    const ecs::Entity z = rig.AddZombie(5.5f, 5.5f, ecs::Direction::Down);
+    const ecs::Entity p = rig.AddPlayer(5.5f, 15.5f);  // 正前方 10 格
+    const std::uint64_t playerId = rig.world.IdOf(p).id;
+
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == playerId);  // 站立 10 格：可见
+
+    // 潜行 visibility x0.65：有效视距 12×0.65=7.8，10 格不可见
+    rig.SetPlayerStealth(p, true, 0.65f);
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == 0u);
+    CHECK(rig.Ai(z).status == ecs::AiStatus::SearchLastKnown);  // 既有搜索行为不变
+    CHECK(rig.Percep(z).lastKnownY == doctest::Approx(15.5f));  // 可疑点保留
+    CHECK(rig.Percep(z).alertness > 0.5f);                      // 警觉仍高，不等同清零
+
+    rig.Run(60);  // 1 秒：警觉衰减但不清零，lastKnown 不被擦除
+    CHECK(rig.Percep(z).alertness > 0.5f);
+    CHECK(rig.Percep(z).lastKnownY == doctest::Approx(15.5f));
+
+    // 潜行但进入有效视距 7 格：仍会被发现（不是隐身）
+    rig.Pos(p).y = 12.5f;
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == playerId);
+    CHECK(rig.Ai(z).status == ecs::AiStatus::Chase);
+
+    // 近距 2 格且在背后：closeRadius 仍全向感知
+    rig.Pos(p).y = 3.5f;
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == playerId);
+
+    // 站起恢复 1.0 → 10 格重新可见
+    rig.SetPlayerStealth(p, false, 1.0f);
+    rig.Pos(p).y = 15.5f;
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == playerId);
+}
+
+TEST_CASE("M34-F1-T7 8格外站立可见蹲下不可见，3格内蹲下仍可见") {
+    PercRig rig;
+    const ecs::Entity z = rig.AddZombie(5.5f, 5.5f, ecs::Direction::Down);
+    const ecs::Entity p = rig.AddPlayer(5.5f, 13.7f);
+    const std::uint64_t playerId = rig.world.IdOf(p).id;
+
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == playerId);
+
+    rig.SetPlayerStealth(p, true, 0.65f);
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == 0u);
+    CHECK(rig.Ai(z).status == ecs::AiStatus::SearchLastKnown);
+    CHECK(rig.Percep(z).alertness > 0.5f);
+
+    rig.Pos(p).y = 8.5f;
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == playerId);
+    CHECK(rig.Ai(z).status == ecs::AiStatus::Chase);
+}
+
+TEST_CASE("M34-F1-T3 潜行不取消视线遮挡：树木挡住蹲下玩家，移除后可见") {
+    PercRig rig;
+    const ecs::Entity z = rig.AddZombie(5.5f, 5.5f, ecs::Direction::Down);
+    const ecs::Entity p = rig.AddPlayer(5.5f, 10.5f);  // 正前方 5 格 < 有效视距 7.8
+    const std::uint64_t playerId = rig.world.IdOf(p).id;
+    rig.SetPlayerStealth(p, true, 0.65f);
+
+    rig.blocked.insert(PercRig::Key(5, 7));  // 视线上的一棵树/障碍
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == 0u);
+
+    rig.blocked.clear();
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == playerId);
+}
+
+TEST_CASE("M34-F1-T3 天气视距与潜行倍率叠乘，不回归 M20-F2") {
+    PercRig rig;
+    const ecs::Entity z = rig.AddZombie(5.5f, 5.5f, ecs::Direction::Down);
+    const ecs::Entity p = rig.AddPlayer(5.5f, 10.5f);  // 正前方 5 格
+    const std::uint64_t playerId = rig.world.IdOf(p).id;
+
+    rig.perception.SetEnvironmentSightScale(0.5f);  // 12×0.5=6
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == playerId);
+
+    // 6×0.65=3.9：5 格不可见；3 格可见（> closeRadius 2.5，仍走有效视距）
+    rig.SetPlayerStealth(p, true, 0.65f);
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == 0u);
+    rig.Pos(p).y = 8.5f;
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == playerId);
+
+    // 天气恢复 1：5 格重新进入 12×0.65=7.8
+    rig.perception.SetEnvironmentSightScale(1.0f);
+    rig.Pos(p).y = 10.5f;
+    rig.Tick();
+    CHECK(rig.Ai(z).targetId == playerId);
+}
+
+TEST_CASE("M34-F1-T3 潜行脚步半径继续走既有听觉：半径内听见、半径外无感") {
+    characters::StealthRuleConfig rules;
+    const float stepRadius = characters::StealthFootstepRadius(2.5f, true, rules);
+    REQUIRE(stepRadius == doctest::Approx(1.125f));
+
+    {
+        PercRig rig;
+        const ecs::Entity z = rig.AddZombie(5.5f, 5.5f);
+        rig.Ai(z).idleSeconds = 100.0f;
+        rig.Percep(z).sinceHeard = 100.0f;
+
+        core::SoundEvent footstep;
+        footstep.x = 6.5f;  // 距离 1.0 < 1.125
+        footstep.y = 5.5f;
+        footstep.radius = stepRadius;
+        footstep.type = core::SoundType::Footstep;
+        rig.perception.PushSound(footstep);
+        rig.perception.Update(rig.world, kDt);
+
+        CHECK(rig.Percep(z).sinceHeard == 0.0f);
+        CHECK(rig.Percep(z).alertness == doctest::Approx(0.6f));
+        CHECK(rig.Percep(z).lastKnownX == doctest::Approx(6.5f));
+    }
+
+    {
+        PercRig rig;
+        const ecs::Entity z = rig.AddZombie(5.5f, 5.5f);
+        rig.Ai(z).idleSeconds = 100.0f;
+        rig.Percep(z).sinceHeard = 100.0f;
+
+        core::SoundEvent footstep;
+        footstep.x = 6.8f;  // 距离 1.3 > 1.125
+        footstep.y = 5.5f;
+        footstep.radius = stepRadius;
+        footstep.type = core::SoundType::Footstep;
+        rig.perception.PushSound(footstep);
+        rig.perception.Update(rig.world, kDt);
+
+        CHECK(rig.Percep(z).sinceHeard > 100.0f);
+        CHECK(rig.Percep(z).alertness == 0.0f);
+        CHECK(rig.Percep(z).lastKnownX == doctest::Approx(5.5f));
+    }
 }
 
 TEST_CASE("Perception：近距全向（closeRadius 内无视朝向）") {

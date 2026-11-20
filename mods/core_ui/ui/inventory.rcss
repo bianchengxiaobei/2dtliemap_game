@@ -300,9 +300,9 @@ body {
     position: absolute;
     left: 4px;
     right: 4px;
-    top: 18px;
-    height: 34px;
-    line-height: 16px;
+    top: 16px;
+    height: 26px;
+    line-height: 13px;
     font-size: 11px;
     text-align: center;
     color: #d7e2ec;
@@ -314,10 +314,33 @@ body {
     color: #ffffff;
 }
 
+.inv-slot.throwable {
+    border-color: #b88a3d;
+    background-color: #241f13;
+}
+
+.inv-slot.throwable .inv-name {
+    color: #ffe7b0;
+}
+
+.inv-throw {
+    position: absolute;
+    left: 3px;
+    right: 3px;
+    bottom: 12px;
+    height: 11px;
+    line-height: 10px;
+    font-size: 8px;
+    text-align: center;
+    color: #ffd479;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
 .inv-count {
     position: absolute;
     right: 5px;
-    bottom: 2px;
+    bottom: 1px;
     font-size: 11px;
     color: #ffd479;
 }
@@ -604,6 +627,28 @@ body {
     color: #637585;
     background-color: #121c25;
     border-color: #263440;
+}
+
+.storage-vehicle-mods {
+    display: none;
+    width: 286px;
+    height: 28px;
+    margin-top: 8px;
+    line-height: 28px;
+    text-align: center;
+    font-size: 13px;
+    color: #ffd479;
+    background-color: #2a2b1b;
+    border-width: 1px;
+    border-color: #8a7a3a;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.storage-vehicle-mods:hover {
+    color: #fff0b3;
+    border-color: #ffd479;
+    background-color: #3a3820;
 }
 
 .storage-actions {

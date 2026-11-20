@@ -19,54 +19,56 @@
                         <div id="equip-slot-0" class="inv-slot equip-slot" data-area="equipment" data-index="0">
                             <div class="inv-kind">主手</div>
                             <div id="equip-name-0" class="inv-name">空</div>
+                            <div id="equip-throw-0" class="inv-throw"></div>
                             <div id="equip-count-0" class="inv-count"></div>
                         </div>
                         <div id="equip-slot-1" class="inv-slot equip-slot" data-area="equipment" data-index="1">
                             <div class="inv-kind">躯干</div>
                             <div id="equip-name-1" class="inv-name">空</div>
+                            <div id="equip-throw-1" class="inv-throw"></div>
                             <div id="equip-count-1" class="inv-count"></div>
                         </div>
                     </div>
                     <div class="inv-section-title">背包 <span id="bag-stack-count" class="inv-count-label">0 堆</span></div>
                     <div id="bag-grid" class="inv-grid">
-                        <div id="bag-slot-0" class="inv-slot" data-area="bag" data-index="0"><div id="bag-name-0" class="inv-name">空</div><div id="bag-count-0" class="inv-count"></div></div>
-                        <div id="bag-slot-1" class="inv-slot" data-area="bag" data-index="1"><div id="bag-name-1" class="inv-name">空</div><div id="bag-count-1" class="inv-count"></div></div>
-                        <div id="bag-slot-2" class="inv-slot" data-area="bag" data-index="2"><div id="bag-name-2" class="inv-name">空</div><div id="bag-count-2" class="inv-count"></div></div>
-                        <div id="bag-slot-3" class="inv-slot" data-area="bag" data-index="3"><div id="bag-name-3" class="inv-name">空</div><div id="bag-count-3" class="inv-count"></div></div>
-                        <div id="bag-slot-4" class="inv-slot" data-area="bag" data-index="4"><div id="bag-name-4" class="inv-name">空</div><div id="bag-count-4" class="inv-count"></div></div>
-                        <div id="bag-slot-5" class="inv-slot" data-area="bag" data-index="5"><div id="bag-name-5" class="inv-name">空</div><div id="bag-count-5" class="inv-count"></div></div>
-                        <div id="bag-slot-6" class="inv-slot" data-area="bag" data-index="6"><div id="bag-name-6" class="inv-name">空</div><div id="bag-count-6" class="inv-count"></div></div>
-                        <div id="bag-slot-7" class="inv-slot" data-area="bag" data-index="7"><div id="bag-name-7" class="inv-name">空</div><div id="bag-count-7" class="inv-count"></div></div>
-                        <div id="bag-slot-8" class="inv-slot" data-area="bag" data-index="8"><div id="bag-name-8" class="inv-name">空</div><div id="bag-count-8" class="inv-count"></div></div>
-                        <div id="bag-slot-9" class="inv-slot" data-area="bag" data-index="9"><div id="bag-name-9" class="inv-name">空</div><div id="bag-count-9" class="inv-count"></div></div>
-                        <div id="bag-slot-10" class="inv-slot" data-area="bag" data-index="10"><div id="bag-name-10" class="inv-name">空</div><div id="bag-count-10" class="inv-count"></div></div>
-                        <div id="bag-slot-11" class="inv-slot" data-area="bag" data-index="11"><div id="bag-name-11" class="inv-name">空</div><div id="bag-count-11" class="inv-count"></div></div>
-                        <div id="bag-slot-12" class="inv-slot" data-area="bag" data-index="12"><div id="bag-name-12" class="inv-name">空</div><div id="bag-count-12" class="inv-count"></div></div>
-                        <div id="bag-slot-13" class="inv-slot" data-area="bag" data-index="13"><div id="bag-name-13" class="inv-name">空</div><div id="bag-count-13" class="inv-count"></div></div>
-                        <div id="bag-slot-14" class="inv-slot" data-area="bag" data-index="14"><div id="bag-name-14" class="inv-name">空</div><div id="bag-count-14" class="inv-count"></div></div>
-                        <div id="bag-slot-15" class="inv-slot" data-area="bag" data-index="15"><div id="bag-name-15" class="inv-name">空</div><div id="bag-count-15" class="inv-count"></div></div>
-                        <div id="bag-slot-16" class="inv-slot" data-area="bag" data-index="16"><div id="bag-name-16" class="inv-name">空</div><div id="bag-count-16" class="inv-count"></div></div>
-                        <div id="bag-slot-17" class="inv-slot" data-area="bag" data-index="17"><div id="bag-name-17" class="inv-name">空</div><div id="bag-count-17" class="inv-count"></div></div>
-                        <div id="bag-slot-18" class="inv-slot" data-area="bag" data-index="18"><div id="bag-name-18" class="inv-name">空</div><div id="bag-count-18" class="inv-count"></div></div>
-                        <div id="bag-slot-19" class="inv-slot" data-area="bag" data-index="19"><div id="bag-name-19" class="inv-name">空</div><div id="bag-count-19" class="inv-count"></div></div>
-                        <div id="bag-slot-20" class="inv-slot" data-area="bag" data-index="20"><div id="bag-name-20" class="inv-name">空</div><div id="bag-count-20" class="inv-count"></div></div>
-                        <div id="bag-slot-21" class="inv-slot" data-area="bag" data-index="21"><div id="bag-name-21" class="inv-name">空</div><div id="bag-count-21" class="inv-count"></div></div>
-                        <div id="bag-slot-22" class="inv-slot" data-area="bag" data-index="22"><div id="bag-name-22" class="inv-name">空</div><div id="bag-count-22" class="inv-count"></div></div>
-                        <div id="bag-slot-23" class="inv-slot" data-area="bag" data-index="23"><div id="bag-name-23" class="inv-name">空</div><div id="bag-count-23" class="inv-count"></div></div>
-                        <div id="bag-slot-24" class="inv-slot" data-area="bag" data-index="24"><div id="bag-name-24" class="inv-name">空</div><div id="bag-count-24" class="inv-count"></div></div>
+                        <div id="bag-slot-0" class="inv-slot" data-area="bag" data-index="0"><div id="bag-name-0" class="inv-name">空</div><div id="bag-throw-0" class="inv-throw"></div><div id="bag-count-0" class="inv-count"></div></div>
+                        <div id="bag-slot-1" class="inv-slot" data-area="bag" data-index="1"><div id="bag-name-1" class="inv-name">空</div><div id="bag-throw-1" class="inv-throw"></div><div id="bag-count-1" class="inv-count"></div></div>
+                        <div id="bag-slot-2" class="inv-slot" data-area="bag" data-index="2"><div id="bag-name-2" class="inv-name">空</div><div id="bag-throw-2" class="inv-throw"></div><div id="bag-count-2" class="inv-count"></div></div>
+                        <div id="bag-slot-3" class="inv-slot" data-area="bag" data-index="3"><div id="bag-name-3" class="inv-name">空</div><div id="bag-throw-3" class="inv-throw"></div><div id="bag-count-3" class="inv-count"></div></div>
+                        <div id="bag-slot-4" class="inv-slot" data-area="bag" data-index="4"><div id="bag-name-4" class="inv-name">空</div><div id="bag-throw-4" class="inv-throw"></div><div id="bag-count-4" class="inv-count"></div></div>
+                        <div id="bag-slot-5" class="inv-slot" data-area="bag" data-index="5"><div id="bag-name-5" class="inv-name">空</div><div id="bag-throw-5" class="inv-throw"></div><div id="bag-count-5" class="inv-count"></div></div>
+                        <div id="bag-slot-6" class="inv-slot" data-area="bag" data-index="6"><div id="bag-name-6" class="inv-name">空</div><div id="bag-throw-6" class="inv-throw"></div><div id="bag-count-6" class="inv-count"></div></div>
+                        <div id="bag-slot-7" class="inv-slot" data-area="bag" data-index="7"><div id="bag-name-7" class="inv-name">空</div><div id="bag-throw-7" class="inv-throw"></div><div id="bag-count-7" class="inv-count"></div></div>
+                        <div id="bag-slot-8" class="inv-slot" data-area="bag" data-index="8"><div id="bag-name-8" class="inv-name">空</div><div id="bag-throw-8" class="inv-throw"></div><div id="bag-count-8" class="inv-count"></div></div>
+                        <div id="bag-slot-9" class="inv-slot" data-area="bag" data-index="9"><div id="bag-name-9" class="inv-name">空</div><div id="bag-throw-9" class="inv-throw"></div><div id="bag-count-9" class="inv-count"></div></div>
+                        <div id="bag-slot-10" class="inv-slot" data-area="bag" data-index="10"><div id="bag-name-10" class="inv-name">空</div><div id="bag-throw-10" class="inv-throw"></div><div id="bag-count-10" class="inv-count"></div></div>
+                        <div id="bag-slot-11" class="inv-slot" data-area="bag" data-index="11"><div id="bag-name-11" class="inv-name">空</div><div id="bag-throw-11" class="inv-throw"></div><div id="bag-count-11" class="inv-count"></div></div>
+                        <div id="bag-slot-12" class="inv-slot" data-area="bag" data-index="12"><div id="bag-name-12" class="inv-name">空</div><div id="bag-throw-12" class="inv-throw"></div><div id="bag-count-12" class="inv-count"></div></div>
+                        <div id="bag-slot-13" class="inv-slot" data-area="bag" data-index="13"><div id="bag-name-13" class="inv-name">空</div><div id="bag-throw-13" class="inv-throw"></div><div id="bag-count-13" class="inv-count"></div></div>
+                        <div id="bag-slot-14" class="inv-slot" data-area="bag" data-index="14"><div id="bag-name-14" class="inv-name">空</div><div id="bag-throw-14" class="inv-throw"></div><div id="bag-count-14" class="inv-count"></div></div>
+                        <div id="bag-slot-15" class="inv-slot" data-area="bag" data-index="15"><div id="bag-name-15" class="inv-name">空</div><div id="bag-throw-15" class="inv-throw"></div><div id="bag-count-15" class="inv-count"></div></div>
+                        <div id="bag-slot-16" class="inv-slot" data-area="bag" data-index="16"><div id="bag-name-16" class="inv-name">空</div><div id="bag-throw-16" class="inv-throw"></div><div id="bag-count-16" class="inv-count"></div></div>
+                        <div id="bag-slot-17" class="inv-slot" data-area="bag" data-index="17"><div id="bag-name-17" class="inv-name">空</div><div id="bag-throw-17" class="inv-throw"></div><div id="bag-count-17" class="inv-count"></div></div>
+                        <div id="bag-slot-18" class="inv-slot" data-area="bag" data-index="18"><div id="bag-name-18" class="inv-name">空</div><div id="bag-throw-18" class="inv-throw"></div><div id="bag-count-18" class="inv-count"></div></div>
+                        <div id="bag-slot-19" class="inv-slot" data-area="bag" data-index="19"><div id="bag-name-19" class="inv-name">空</div><div id="bag-throw-19" class="inv-throw"></div><div id="bag-count-19" class="inv-count"></div></div>
+                        <div id="bag-slot-20" class="inv-slot" data-area="bag" data-index="20"><div id="bag-name-20" class="inv-name">空</div><div id="bag-throw-20" class="inv-throw"></div><div id="bag-count-20" class="inv-count"></div></div>
+                        <div id="bag-slot-21" class="inv-slot" data-area="bag" data-index="21"><div id="bag-name-21" class="inv-name">空</div><div id="bag-throw-21" class="inv-throw"></div><div id="bag-count-21" class="inv-count"></div></div>
+                        <div id="bag-slot-22" class="inv-slot" data-area="bag" data-index="22"><div id="bag-name-22" class="inv-name">空</div><div id="bag-throw-22" class="inv-throw"></div><div id="bag-count-22" class="inv-count"></div></div>
+                        <div id="bag-slot-23" class="inv-slot" data-area="bag" data-index="23"><div id="bag-name-23" class="inv-name">空</div><div id="bag-throw-23" class="inv-throw"></div><div id="bag-count-23" class="inv-count"></div></div>
+                        <div id="bag-slot-24" class="inv-slot" data-area="bag" data-index="24"><div id="bag-name-24" class="inv-name">空</div><div id="bag-throw-24" class="inv-throw"></div><div id="bag-count-24" class="inv-count"></div></div>
                     </div>
                 </div>
                 <div class="inv-column-right">
                     <div class="inv-section-title"><span id="loot-title">附近地面</span> <span id="loot-stack-count" class="inv-count-label">0 堆</span></div>
                     <div id="loot-grid" class="inv-grid loot-grid">
-                        <div id="loot-slot-0" class="inv-slot loot-slot" data-area="loot" data-index="0"><div id="loot-name-0" class="inv-name">无</div><div id="loot-count-0" class="inv-count"></div></div>
-                        <div id="loot-slot-1" class="inv-slot loot-slot" data-area="loot" data-index="1"><div id="loot-name-1" class="inv-name">无</div><div id="loot-count-1" class="inv-count"></div></div>
-                        <div id="loot-slot-2" class="inv-slot loot-slot" data-area="loot" data-index="2"><div id="loot-name-2" class="inv-name">无</div><div id="loot-count-2" class="inv-count"></div></div>
-                        <div id="loot-slot-3" class="inv-slot loot-slot" data-area="loot" data-index="3"><div id="loot-name-3" class="inv-name">无</div><div id="loot-count-3" class="inv-count"></div></div>
-                        <div id="loot-slot-4" class="inv-slot loot-slot" data-area="loot" data-index="4"><div id="loot-name-4" class="inv-name">无</div><div id="loot-count-4" class="inv-count"></div></div>
-                        <div id="loot-slot-5" class="inv-slot loot-slot" data-area="loot" data-index="5"><div id="loot-name-5" class="inv-name">无</div><div id="loot-count-5" class="inv-count"></div></div>
-                        <div id="loot-slot-6" class="inv-slot loot-slot" data-area="loot" data-index="6"><div id="loot-name-6" class="inv-name">无</div><div id="loot-count-6" class="inv-count"></div></div>
-                        <div id="loot-slot-7" class="inv-slot loot-slot" data-area="loot" data-index="7"><div id="loot-name-7" class="inv-name">无</div><div id="loot-count-7" class="inv-count"></div></div>
+                        <div id="loot-slot-0" class="inv-slot loot-slot" data-area="loot" data-index="0"><div id="loot-name-0" class="inv-name">无</div><div id="loot-throw-0" class="inv-throw"></div><div id="loot-count-0" class="inv-count"></div></div>
+                        <div id="loot-slot-1" class="inv-slot loot-slot" data-area="loot" data-index="1"><div id="loot-name-1" class="inv-name">无</div><div id="loot-throw-1" class="inv-throw"></div><div id="loot-count-1" class="inv-count"></div></div>
+                        <div id="loot-slot-2" class="inv-slot loot-slot" data-area="loot" data-index="2"><div id="loot-name-2" class="inv-name">无</div><div id="loot-throw-2" class="inv-throw"></div><div id="loot-count-2" class="inv-count"></div></div>
+                        <div id="loot-slot-3" class="inv-slot loot-slot" data-area="loot" data-index="3"><div id="loot-name-3" class="inv-name">无</div><div id="loot-throw-3" class="inv-throw"></div><div id="loot-count-3" class="inv-count"></div></div>
+                        <div id="loot-slot-4" class="inv-slot loot-slot" data-area="loot" data-index="4"><div id="loot-name-4" class="inv-name">无</div><div id="loot-throw-4" class="inv-throw"></div><div id="loot-count-4" class="inv-count"></div></div>
+                        <div id="loot-slot-5" class="inv-slot loot-slot" data-area="loot" data-index="5"><div id="loot-name-5" class="inv-name">无</div><div id="loot-throw-5" class="inv-throw"></div><div id="loot-count-5" class="inv-count"></div></div>
+                        <div id="loot-slot-6" class="inv-slot loot-slot" data-area="loot" data-index="6"><div id="loot-name-6" class="inv-name">无</div><div id="loot-throw-6" class="inv-throw"></div><div id="loot-count-6" class="inv-count"></div></div>
+                        <div id="loot-slot-7" class="inv-slot loot-slot" data-area="loot" data-index="7"><div id="loot-name-7" class="inv-name">无</div><div id="loot-throw-7" class="inv-throw"></div><div id="loot-count-7" class="inv-count"></div></div>
                     </div>
                     <div class="craft-toolbar">
                         <div class="inv-section-title">制作 <div id="craft-page-prev" class="craft-page-btn disabled">&#8249;</div><span id="craft-count" class="inv-count-label">0 条</span><span id="craft-page-indicator" class="craft-page-indicator">1/1 页</span><div id="craft-page-next" class="craft-page-btn disabled">&#8250;</div></div>
@@ -130,6 +132,7 @@
                             <div id="craft-queue-remove" class="craft-queue-btn craft-queue-remove">&#215;</div>
                         </div>
                     </div>
+                    <div id="storage-vehicle-mods" class="storage-vehicle-mods">车辆改装 · 查看槽位与效果</div>
                     <div id="storage-actions" class="storage-actions">
                         <div id="storage-store-all" class="storage-btn">全部存入</div>
                         <div id="storage-take-all" class="storage-btn">全部取出</div>

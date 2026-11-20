@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "game/VehicleComponents.h"
+#include "game/VehicleMods.h"
 
 namespace zl::game {
 
@@ -909,13 +910,18 @@ inline float VehicleConditionPerformanceScale(float condition) {
                       0.0f, 1.0f);
 }
 
-inline float VehicleRamDamage(float speed, const VehicleTuning& tuning) {
+inline float VehicleRamDamage(float speed, const VehicleTuning& tuning,
+                              float damageScale = 1.0f) {
     if (!std::isfinite(speed) || speed < tuning.ramMinSpeed) {
         return 0.0f;
     }
+    const float scale =
+        std::isfinite(damageScale) ? std::clamp(damageScale, 0.25f, 3.0f)
+                                   : 1.0f;
     return std::max(0.0f, tuning.ramBaseDamage +
                               (speed - tuning.ramMinSpeed) *
-                                  tuning.ramDamagePerSpeed);
+                                  tuning.ramDamagePerSpeed) *
+           scale;
 }
 
 inline float VehicleRamKnockback(float speed, const VehicleTuning& tuning) {
@@ -997,12 +1003,17 @@ inline float VehicleRamConditionDamage(float speed,
 
 inline float VehicleApplyRamConditionDamage(VehicleMotion* vehicle,
                                             float speed,
-                                            const VehicleTuning& tuning) {
+                                            const VehicleTuning& tuning,
+                                            float conditionScale = 1.0f) {
     if (vehicle == nullptr || !std::isfinite(vehicle->condition) ||
         vehicle->condition <= 0.0f) {
         return 0.0f;
     }
-    const float damage = VehicleRamConditionDamage(speed, tuning);
+    const float scale =
+        std::isfinite(conditionScale)
+            ? std::clamp(conditionScale, 0.1f, 4.0f)
+            : 1.0f;
+    const float damage = VehicleRamConditionDamage(speed, tuning) * scale;
     if (damage <= 0.0f) {
         return 0.0f;
     }
@@ -1012,25 +1023,33 @@ inline float VehicleApplyRamConditionDamage(VehicleMotion* vehicle,
 }
 
 inline float VehicleCollisionConditionDamage(float impactSpeed,
-                                             const VehicleTuning& tuning) {
+                                             const VehicleTuning& tuning,
+                                             float conditionScale = 1.0f) {
     if (!std::isfinite(impactSpeed) ||
         impactSpeed < tuning.vehicleCollisionMinSpeed) {
         return 0.0f;
     }
+    const float scale =
+        std::isfinite(conditionScale)
+            ? std::clamp(conditionScale, 0.1f, 4.0f)
+            : 1.0f;
     return std::clamp(
-        tuning.vehicleCollisionConditionDamageBase +
-            (impactSpeed - tuning.vehicleCollisionMinSpeed) *
-                tuning.vehicleCollisionConditionDamagePerSpeed,
+        (tuning.vehicleCollisionConditionDamageBase +
+         (impactSpeed - tuning.vehicleCollisionMinSpeed) *
+             tuning.vehicleCollisionConditionDamagePerSpeed) *
+            scale,
         0.0f, std::max(0.0f, tuning.vehicleCollisionConditionDamageMax));
 }
 
 inline float VehicleApplyCollisionConditionDamage(
-    VehicleMotion* vehicle, float impactSpeed, const VehicleTuning& tuning) {
+    VehicleMotion* vehicle, float impactSpeed, const VehicleTuning& tuning,
+    float conditionScale = 1.0f) {
     if (vehicle == nullptr || !std::isfinite(vehicle->condition) ||
         vehicle->condition <= 0.0f) {
         return 0.0f;
     }
-    const float damage = VehicleCollisionConditionDamage(impactSpeed, tuning);
+    const float damage =
+        VehicleCollisionConditionDamage(impactSpeed, tuning, conditionScale);
     if (damage <= 0.0f) {
         return 0.0f;
     }
@@ -1040,8 +1059,10 @@ inline float VehicleApplyCollisionConditionDamage(
 }
 
 inline float VehicleCollisionConditionDamageForType(
-    float impactSpeed, const VehicleTuning& tuning, ecs::VehicleType type) {
-    const float damage = VehicleCollisionConditionDamage(impactSpeed, tuning);
+    float impactSpeed, const VehicleTuning& tuning, ecs::VehicleType type,
+    float conditionScale = 1.0f) {
+    const float damage = VehicleCollisionConditionDamage(
+        impactSpeed, tuning, conditionScale);
     const float scale = VehicleProfileFor(type).conditionDamageScale;
     if (!std::isfinite(damage) || !std::isfinite(scale) || scale <= 0.0f) {
         return 0.0f;
@@ -1051,13 +1072,14 @@ inline float VehicleCollisionConditionDamageForType(
 }
 
 inline float VehicleApplyCollisionConditionDamageForType(
-    VehicleMotion* vehicle, float impactSpeed, const VehicleTuning& tuning) {
+    VehicleMotion* vehicle, float impactSpeed, const VehicleTuning& tuning,
+    float conditionScale = 1.0f) {
     if (vehicle == nullptr || !std::isfinite(vehicle->condition) ||
         vehicle->condition <= 0.0f) {
         return 0.0f;
     }
     const float damage = VehicleCollisionConditionDamageForType(
-        impactSpeed, tuning, vehicle->type);
+        impactSpeed, tuning, vehicle->type, conditionScale);
     if (damage <= 0.0f) {
         return 0.0f;
     }
@@ -1491,20 +1513,27 @@ inline VehiclePushResult VehiclePushBody(
 // M25-T4-V15：僵尸攻击驾驶位造成的车况磨损；调用方用
 // zombieAttackCooldownSeconds 限制多只僵尸同 tick 叠加。
 inline float VehicleZombieAttackConditionDamage(
-    const VehicleTuning& tuning) {
+    const VehicleTuning& tuning, float conditionScale = 1.0f) {
     if (!std::isfinite(tuning.zombieAttackConditionDamage)) {
         return 0.0f;
     }
-    return std::clamp(tuning.zombieAttackConditionDamage, 0.0f, 1.0f);
+    const float scale =
+        std::isfinite(conditionScale)
+            ? std::clamp(conditionScale, 0.1f, 4.0f)
+            : 1.0f;
+    return std::clamp(tuning.zombieAttackConditionDamage, 0.0f, 1.0f) *
+           scale;
 }
 
 inline float VehicleApplyZombieAttackConditionDamage(
-    VehicleMotion* vehicle, const VehicleTuning& tuning) {
+    VehicleMotion* vehicle, const VehicleTuning& tuning,
+    float conditionScale = 1.0f) {
     if (vehicle == nullptr || !std::isfinite(vehicle->condition) ||
         vehicle->condition <= 0.0f) {
         return 0.0f;
     }
-    const float damage = VehicleZombieAttackConditionDamage(tuning);
+    const float damage =
+        VehicleZombieAttackConditionDamage(tuning, conditionScale);
     if (damage <= 0.0f) {
         return 0.0f;
     }
@@ -1803,7 +1832,8 @@ inline VehicleStepResult VehicleStep(
     const VehicleBlockedGrid& blocked,
     const VehicleTuning& tuning = kVehicleDefaultTuning,
     VehicleSurface surface = VehicleSurface::Paved,
-    const VehicleBodyBlocked& bodyBlocked = {}) {
+    const VehicleBodyBlocked& bodyBlocked = {},
+    const VehicleModStats& modStats = {}) {
     VehicleStepResult result;
     if (vehicle == nullptr || dt <= 0.0f) {
         return result;
@@ -1817,10 +1847,12 @@ inline VehicleStepResult VehicleStep(
     const float conditionScale =
         VehicleConditionPerformanceScale(vehicle->condition);
     const float maxSpeed = std::max(
-        0.01f, tuning.maxSpeed * surfaceProfile.maxSpeedScale * conditionScale);
+        0.01f, tuning.maxSpeed * surfaceProfile.maxSpeedScale *
+                   conditionScale * VehicleModMaxSpeedScale(modStats));
     const float acceleration = std::max(
-        0.01f,
-        tuning.acceleration * surfaceProfile.accelerationScale * conditionScale);
+        0.01f, tuning.acceleration * surfaceProfile.accelerationScale *
+                   conditionScale *
+                   VehicleModAccelerationScale(modStats));
     const float braking =
         std::max(0.01f, tuning.braking * surfaceProfile.brakingScale);
 
@@ -1974,9 +2006,11 @@ inline VehicleStepResult VehicleStep(
             result.impactSpeed = speed;
             if (!result.bodyCollision && !vehicle->crashLatched &&
                 speed >= tuning.crashMinSpeed) {
-                result.damage = std::min(
-                    (speed - tuning.crashMinSpeed) * tuning.crashDamagePerSpeed,
-                    tuning.maxCrashDamage);
+                result.damage =
+                    std::min((speed - tuning.crashMinSpeed) *
+                                 tuning.crashDamagePerSpeed,
+                             tuning.maxCrashDamage) *
+                    VehicleModCrashWearScale(modStats);
                 if (result.damage > 0.0f) {
                     vehicle->condition =
                         std::clamp(vehicle->condition - result.damage, 0.0f, 1.0f);
@@ -2010,7 +2044,8 @@ inline VehicleStepResult VehicleStep(
                           vehicle->longitudinalAcceleration, tuning);
     if (vehicle->fuel > 0.0f && movedSpeed > 0.01f) {
         const float load = std::clamp(movedSpeed / maxSpeed, 0.0f, 1.0f);
-        vehicle->fuel -= tuning.fuelPerSecond * load * dt;
+        vehicle->fuel -= tuning.fuelPerSecond * load * dt *
+                         VehicleModFuelUseScale(modStats);
     }
     vehicle->fuel = std::clamp(vehicle->fuel, 0.0f, 1.0f);
     return result;
@@ -2021,7 +2056,8 @@ inline VehicleStepResult VehiclePredictStep(
     const VehicleBlockedGrid& blocked,
     const VehicleTuning& tuning = kVehicleDefaultTuning,
     VehicleSurface surface = VehicleSurface::Paved,
-    const VehicleBodyBlocked& bodyBlocked = {}) {
+    const VehicleBodyBlocked& bodyBlocked = {},
+    const VehicleModStats& modStats = {}) {
     VehicleStepResult result;
     if (vehicle == nullptr) {
         return result;
@@ -2030,7 +2066,7 @@ inline VehicleStepResult VehiclePredictStep(
     const float condition = vehicle->condition;
     const bool crashLatched = vehicle->crashLatched;
     result = VehicleStep(vehicle, inputX, inputY, dt, blocked, tuning, surface,
-                         bodyBlocked);
+                         bodyBlocked, modStats);
     vehicle->fuel = fuel;
     vehicle->condition = condition;
     vehicle->crashLatched = crashLatched;

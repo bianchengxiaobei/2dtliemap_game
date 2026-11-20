@@ -123,6 +123,18 @@ def refresh():
                    "block" if combat_status != "" else "none")
     UI.SetClass(DOC, "combat-status", "status-warn", combat_tone == "warn")
     UI.SetClass(DOC, "combat-status", "status-fail", combat_tone == "fail")
+    stealth_status = s.get("stealthStatus", "")
+    stealth_tone = s.get("stealthTone", "info")
+    UI.SetText(DOC, "stealth-status", stealth_status)
+    UI.SetProperty(DOC, "stealth-status", "display",
+                   "block" if stealth_status != "" else "none")
+    UI.SetClass(DOC, "stealth-status", "status-ok", stealth_tone == "ok")
+    UI.SetClass(DOC, "stealth-status", "status-warn", stealth_tone == "warn")
+    UI.SetClass(DOC, "stealth-status", "status-fail", stealth_tone == "fail")
+    stealth_prompt = s.get("stealthPrompt", "")
+    UI.SetText(DOC, "stealth-prompt", stealth_prompt)
+    UI.SetProperty(DOC, "stealth-prompt", "display",
+                   "block" if stealth_prompt != "" else "none")
     ranged_status = s.get("rangedStatus", "")
     ranged_tone = s.get("rangedTone", "info")
     UI.SetText(DOC, "ranged-status", ranged_status)
@@ -130,6 +142,14 @@ def refresh():
                    "block" if ranged_status != "" else "none")
     UI.SetClass(DOC, "ranged-status", "status-warn", ranged_tone == "warn")
     UI.SetClass(DOC, "ranged-status", "status-fail", ranged_tone == "fail")
+    throw_status = s.get("throwStatus", "")
+    throw_tone = s.get("throwTone", "info")
+    UI.SetText(DOC, "throw-status", throw_status)
+    UI.SetProperty(DOC, "throw-status", "display",
+                   "block" if throw_status != "" else "none")
+    UI.SetClass(DOC, "throw-status", "status-ok", throw_tone == "ok")
+    UI.SetClass(DOC, "throw-status", "status-warn", throw_tone == "warn")
+    UI.SetClass(DOC, "throw-status", "status-fail", throw_tone == "fail")
     forage_status = s.get("forageStatus", "")
     forage_tone = s.get("forageTone", "info")
     UI.SetText(DOC, "forage-status", forage_status)
@@ -205,6 +225,7 @@ def refresh():
     UI.SetText(DOC, "objective-text", s["objective"])
     UI.SetProperty(DOC, "hud-objective", "display",
                    "block" if (s["objective"] != ""
+                               or s.get("poiStageVisible", False)
                                or s.get("missionGuide", "") != ""
                                or s.get("eventGuide", "") != ""
                                or s.get("regionGuide", "") != ""
@@ -222,6 +243,32 @@ def refresh():
                    "block" if poi_guide != "" else "none")
     UI.SetClass(DOC, "poi-guide", "status-warn", poi_tone == "warn")
     UI.SetClass(DOC, "poi-guide", "status-ok", poi_tone == "ok")
+    poi_stage_visible = s.get("poiStageVisible", False)
+    poi_stage_tone = s.get("poiStageTone", "info")
+    UI.SetProperty(DOC, "poi-stage-panel", "display",
+                   "block" if poi_stage_visible else "none")
+    UI.SetClass(DOC, "poi-stage-panel", "status-warn",
+                poi_stage_tone == "warn")
+    UI.SetClass(DOC, "poi-stage-panel", "status-fail",
+                poi_stage_tone == "fail")
+    UI.SetClass(DOC, "poi-stage-panel", "status-ok",
+                poi_stage_tone == "ok")
+    UI.SetText(DOC, "poi-stage-title", s.get("poiStageTitle", ""))
+    UI.SetText(DOC, "poi-stage-objective",
+               s.get("poiStageObjective", ""))
+    UI.SetText(DOC, "poi-stage-meta", s.get("poiStageMeta", ""))
+    poi_stage_narrative = s.get("poiStageNarrative", "")
+    UI.SetText(DOC, "poi-stage-narrative", poi_stage_narrative)
+    UI.SetProperty(DOC, "poi-stage-narrative", "display",
+                   "block" if poi_stage_narrative != "" else "none")
+    poi_result_visible = s.get("poiResultVisible", False)
+    poi_result_tone = s.get("poiResultTone", "info")
+    UI.SetProperty(DOC, "poi-result-panel", "display",
+                   "block" if poi_result_visible else "none")
+    UI.SetClass(DOC, "poi-result-panel", "status-fail",
+                poi_result_tone == "fail")
+    UI.SetText(DOC, "poi-result-title", s.get("poiResultTitle", ""))
+    UI.SetText(DOC, "poi-result-body", s.get("poiResultBody", ""))
     mission_guide = s.get("missionGuide", "")
     mission_tone = s.get("missionTone", "info")
     UI.SetText(DOC, "mission-guide", mission_guide)
@@ -355,6 +402,37 @@ def refresh():
             UI.SetProperty(DOC, "perk-choice-%d" % i, "display",
                            "block" if line else "none")
 
+    companion = s.get("companion", {})
+    companion_valid = companion.get("valid", False)
+    companion_open = companion_valid and companion.get("open", False)
+    UI.SetProperty(DOC, "companion-panel", "display",
+                   "block" if companion_open else "none")
+    UI.SetText(DOC, "companion-name", companion.get("name", ""))
+    UI.SetText(DOC, "companion-health", companion.get("health", ""))
+    UI.SetText(DOC, "companion-state", companion.get("status", ""))
+    UI.SetText(DOC, "companion-trust", companion.get("trust", ""))
+    UI.SetText(DOC, "companion-equipment", companion.get("equipment", ""))
+    UI.SetText(DOC, "companion-bag", companion.get("bag", ""))
+    UI.SetText(DOC, "companion-quest", companion.get("quest", ""))
+    UI.SetText(DOC, "companion-hint", companion.get("hint", ""))
+    companion_health_max = companion.get("healthMax", 0.0)
+    companion_health_ratio = 0.0
+    if companion_health_max > 0.0:
+        companion_health_ratio = max(0.0, min(
+            1.0, companion.get("healthCurrent", 0.0) / companion_health_max))
+    UI.SetProperty(DOC, "companion-health-fill", "width",
+                   "%.1f%%" % (companion_health_ratio * 100.0))
+    UI.SetClass(DOC, "companion-health-fill", "low",
+                companion.get("lowHealth", False) or
+                companion.get("downed", False) or companion.get("dead", False))
+    UI.SetText(DOC, "companion-status", companion.get("alert", ""))
+    UI.SetProperty(DOC, "companion-status", "display",
+                   "block" if companion_valid and companion.get("alert", "") else "none")
+    alert_tone = companion.get("alertTone", "info")
+    UI.SetClass(DOC, "companion-status", "status-warn", alert_tone == "warn")
+    UI.SetClass(DOC, "companion-status", "status-fail", alert_tone == "fail")
+    UI.SetClass(DOC, "companion-status", "status-ok", alert_tone == "ok")
+
     dialogue_open = s.get("dialogueOpen", False)
     dialogue_options = s.get("dialogueOptions", [])
     dialogue_count = s.get("dialogueOptionCount", 0)
@@ -384,6 +462,12 @@ def refresh():
         UI.SetText(DOC, "slot-name-%d" % i, slot["label"] or "空")
         count = slot["count"]
         UI.SetText(DOC, "slot-count-%d" % i, str(count) if count > 0 else "")
+        throwable = slot.get("throwable", False)
+        throw_tag = slot.get("throwTag", "")
+        UI.SetClass(DOC, "slot-%d" % i, "throwable", throwable)
+        UI.SetText(DOC, "slot-throw-%d" % i, throw_tag)
+        UI.SetProperty(DOC, "slot-throw-%d" % i, "display",
+                       "block" if throwable and throw_tag else "none")
 
     notice_active = s["notice"] != "" and s["noticeRemaining"] > 0.0
     UI.SetProperty(DOC, "notice", "display", "block" if notice_active else "none")
@@ -858,12 +942,15 @@ INV_CATEGORY_ORDER = (
 INV_PREFIXES = (
     ("bag-slot-", "bag"),
     ("bag-name-", "bag"),
+    ("bag-throw-", "bag"),
     ("bag-count-", "bag"),
     ("equip-slot-", "equipment"),
     ("equip-name-", "equipment"),
+    ("equip-throw-", "equipment"),
     ("equip-count-", "equipment"),
     ("loot-slot-", "loot"),
     ("loot-name-", "loot"),
+    ("loot-throw-", "loot"),
     ("loot-count-", "loot"),
 )
 
@@ -907,6 +994,8 @@ def inv_update_slot(area, index, slot):
     UI.SetClass(INV_DOC, element_id, "usable", slot["filled"] and slot["usable"])
     UI.SetClass(INV_DOC, element_id, "equippable",
                 slot["filled"] and slot["equippable"])
+    UI.SetClass(INV_DOC, element_id, "throwable",
+                slot["filled"] and slot.get("throwable", False))
     if slot["filled"]:
         name = slot["label"]
         condition = slot.get("condition", 1.0)
@@ -920,10 +1009,16 @@ def inv_update_slot(area, index, slot):
         UI.SetText(INV_DOC, "%s-name-%d" % (prefix, index), name)
         UI.SetText(INV_DOC, "%s-count-%d" % (prefix, index),
                    str(slot["count"]) if slot["count"] > 1 else "")
+        throw_tag = slot.get("throwTag", "")
+        UI.SetText(INV_DOC, "%s-throw-%d" % (prefix, index), throw_tag)
+        UI.SetProperty(INV_DOC, "%s-throw-%d" % (prefix, index), "display",
+                       "block" if throw_tag else "none")
     else:
         UI.SetText(INV_DOC, "%s-name-%d" % (prefix, index),
                    "无" if area == "loot" else "空")
         UI.SetText(INV_DOC, "%s-count-%d" % (prefix, index), "")
+        UI.SetText(INV_DOC, "%s-throw-%d" % (prefix, index), "")
+        UI.SetProperty(INV_DOC, "%s-throw-%d" % (prefix, index), "display", "none")
 
 
 def inv_recipe_station_ok(recipe):
@@ -1087,6 +1182,12 @@ def inv_refresh():
                    "block" if s.get("lootIsStorage", False) else "none")
     UI.SetProperty(INV_DOC, "storage-take-all", "display",
                    "block" if can_take_all else "none")
+    show_vehicle_mods = (s.get("lootIsVehicle", False) and
+                         s.get("vehicleModsEnabled", False))
+    UI.SetProperty(INV_DOC, "storage-vehicle-mods", "display",
+                   "block" if show_vehicle_mods else "none")
+    UI.SetProperty(INV_DOC, "storage-vehicle-mods", "opacity",
+                   "0.55" if s.get("vehicleModsReadOnly", False) else "1.0")
     UI.SetText(INV_DOC, "inv-status", s["status"])
     UI.SetClass(INV_DOC, "inv-status", "status-info", s["statusTone"] == "info")
     UI.SetClass(INV_DOC, "inv-status", "status-ok", s["statusTone"] == "ok")
@@ -1465,6 +1566,19 @@ def inv_on_click(element):
         except ValueError:
             return
         inv_craft(index)
+        return
+    if element == "storage-vehicle-mods":
+        state = inv_state["state"]
+        if state is not None and state.get("vehicleModsEnabled", False):
+            Inventory.PlayClick()
+            Inventory.Action({
+                "type": "open_vehicle_mods",
+                "from": "loot",
+                "fromIndex": -1,
+                "fromEntityId": state.get("lootEntityId", 0),
+                "to": "bag",
+                "toIndex": -1,
+            })
         return
     if element in ("storage-store-all", "storage-take-all", "storage-sort"):
         state = inv_state["state"]

@@ -14,11 +14,17 @@ constexpr const char* kModule = "script";
 
 // 事件表 v1 全部键（docs/03 §5）：桥接订阅集。
 constexpr std::string_view kEventKeys[] = {
-    core::kOnGameStart,   core::kOnTick,        core::kOnPlayerMove,  core::kOnPlayerDeath,
-    core::kOnZombieSpawn, core::kOnZombieDead,  core::kOnItemPickup,  core::kOnItemDrop,
-    core::kOnSound,       core::kOnChunkLoaded, core::kOnChunkUnloaded, core::kOnSaveBegin,
-    core::kOnSaveEnd,     core::kOnModReload,   core::kOnUiFrame,      core::kOnUiReady,
-    core::kOnUiEvent,     core::kOnMenuChanged, core::kOnInventoryChanged,
+    core::kOnGameStart,     core::kOnWorldStart,   core::kOnWorldExit,
+    core::kOnTick,          core::kOnPlayerMove,   core::kOnPlayerDeath,
+    core::kOnDamage,        core::kOnZombieSpawn,  core::kOnZombieDead,
+    core::kOnAnimalKilled,  core::kOnItemPickup,   core::kOnItemDrop,
+    core::kOnItemUsed,      core::kOnLootSearched, core::kOnCraftStart,
+    core::kOnCraftFinished, core::kOnBuildPlaced,  core::kOnBuildDemolished,
+    core::kOnBuildRepaired,
+    core::kOnSound,         core::kOnChunkLoaded,  core::kOnChunkUnloaded,
+    core::kOnSaveBegin,     core::kOnSaveEnd,      core::kOnModReload,
+    core::kOnUiFrame,       core::kOnUiReady,      core::kOnUiEvent,
+    core::kOnMenuChanged,   core::kOnInventoryChanged,
 };
 
 std::string_view SoundTypeName(core::SoundType type) {
@@ -62,7 +68,7 @@ EventBridge::EventBridge(core::EventBus& bus, ScriptManager& scripts)
             }
         }));
     }
-    ZL_INFO(kModule, "事件桥接就绪（事件表 v1 共 {} 个事件）", std::size(kEventKeys));
+    ZL_INFO(kModule, "事件桥接就绪（v1 + M35 增补共 {} 个事件）", std::size(kEventKeys));
 }
 
 EventBridge::~EventBridge() {
@@ -78,6 +84,25 @@ std::optional<core::ScriptEvent> EventBridge::Translate(const core::Event& event
     if (event.key == core::kOnGameStart || event.key == core::kOnUiReady ||
         event.key == core::kOnUiFrame) {
         return out;  // 无载荷
+    }
+    if (event.key == core::kOnWorldStart) {
+        const auto* world = std::get_if<core::WorldStartEvent>(&event.payload);
+        if (world == nullptr) {
+            return std::nullopt;
+        }
+        AddField(out, "saveId", world->saveId);
+        AddField(out, "isNewGame", world->isNewGame);
+        AddField(out, "day", static_cast<std::int64_t>(world->day));
+        AddId(out, "playerId", world->playerId);
+        return out;
+    }
+    if (event.key == core::kOnWorldExit) {
+        const auto* world = std::get_if<core::WorldExitEvent>(&event.payload);
+        if (world == nullptr) {
+            return std::nullopt;
+        }
+        AddField(out, "saveId", world->saveId);
+        return out;
     }
     if (event.key == core::kOnTick) {
         if (const auto* tick = std::get_if<std::int64_t>(&event.payload)) {
@@ -96,7 +121,25 @@ std::optional<core::ScriptEvent> EventBridge::Translate(const core::Event& event
             AddField(out, "x", static_cast<double>(player->x));
             AddField(out, "y", static_cast<double>(player->y));
             AddField(out, "z", static_cast<std::int64_t>(player->z));
+        } else {
+            AddId(out, "sourceId", player->sourceId);
+            AddField(out, "cause", player->cause);
         }
+        return out;
+    }
+    if (event.key == core::kOnDamage) {
+        const auto* damage = std::get_if<core::DamageEvent>(&event.payload);
+        if (damage == nullptr) {
+            return std::nullopt;
+        }
+        AddId(out, "targetId", damage->targetId);
+        AddId(out, "sourceId", damage->sourceId);
+        AddField(out, "amount", static_cast<double>(damage->amount));
+        AddField(out, "damageType", damage->damageType);
+        AddField(out, "cause", damage->cause);
+        AddField(out, "remainingHp", static_cast<double>(damage->remainingHp));
+        AddField(out, "lethal", damage->lethal);
+        AddField(out, "blocked", damage->blocked);
         return out;
     }
     if (event.key == core::kOnZombieSpawn || event.key == core::kOnZombieDead) {
@@ -114,6 +157,19 @@ std::optional<core::ScriptEvent> EventBridge::Translate(const core::Event& event
         }
         return out;
     }
+    if (event.key == core::kOnAnimalKilled) {
+        const auto* animal = std::get_if<core::AnimalKilledEvent>(&event.payload);
+        if (animal == nullptr) {
+            return std::nullopt;
+        }
+        AddId(out, "animalId", animal->animalId);
+        AddField(out, "speciesId", animal->speciesId);
+        AddId(out, "killerId", animal->killerId);
+        AddField(out, "x", static_cast<double>(animal->x));
+        AddField(out, "y", static_cast<double>(animal->y));
+        AddField(out, "z", static_cast<std::int64_t>(animal->z));
+        return out;
+    }
     if (event.key == core::kOnItemPickup || event.key == core::kOnItemDrop) {
         const auto* item = std::get_if<core::ItemEvent>(&event.payload);
         if (item == nullptr) {
@@ -122,6 +178,90 @@ std::optional<core::ScriptEvent> EventBridge::Translate(const core::Event& event
         AddId(out, "itemId", item->itemId);
         AddField(out, "defId", item->defId);
         AddField(out, "count", static_cast<std::int64_t>(item->count));
+        return out;
+    }
+    if (event.key == core::kOnItemUsed) {
+        const auto* item = std::get_if<core::ItemUsedEvent>(&event.payload);
+        if (item == nullptr) {
+            return std::nullopt;
+        }
+        AddId(out, "playerId", item->playerId);
+        AddField(out, "defId", item->defId);
+        AddField(out, "spoiled", item->spoiled);
+        AddField(out, "remaining", static_cast<std::int64_t>(item->remaining));
+        return out;
+    }
+    if (event.key == core::kOnLootSearched) {
+        const auto* loot = std::get_if<core::LootSearchedEvent>(&event.payload);
+        if (loot == nullptr) {
+            return std::nullopt;
+        }
+        AddId(out, "playerId", loot->playerId);
+        AddId(out, "containerId", loot->containerId);
+        AddField(out, "tableId", loot->tableId);
+        AddField(out, "itemCount", static_cast<std::int64_t>(loot->itemCount));
+        return out;
+    }
+    if (event.key == core::kOnCraftStart) {
+        const auto* craft = std::get_if<core::CraftStartEvent>(&event.payload);
+        if (craft == nullptr) {
+            return std::nullopt;
+        }
+        AddId(out, "playerId", craft->playerId);
+        AddField(out, "recipeId", craft->recipeId);
+        AddField(out, "outputDefId", craft->outputDefId);
+        AddField(out, "outputCount", static_cast<std::int64_t>(craft->outputCount));
+        AddField(out, "batchCount", static_cast<std::int64_t>(craft->batchCount));
+        return out;
+    }
+    if (event.key == core::kOnCraftFinished) {
+        const auto* craft = std::get_if<core::CraftFinishedEvent>(&event.payload);
+        if (craft == nullptr) {
+            return std::nullopt;
+        }
+        AddId(out, "playerId", craft->playerId);
+        AddField(out, "recipeId", craft->recipeId);
+        AddField(out, "outputDefId", craft->outputDefId);
+        AddField(out, "outputCount", static_cast<std::int64_t>(craft->outputCount));
+        AddField(out, "batchCompleted",
+                 static_cast<std::int64_t>(craft->batchCompleted));
+        AddField(out, "failed", craft->failed);
+        return out;
+    }
+    if (event.key == core::kOnBuildPlaced) {
+        const auto* build = std::get_if<core::BuildPlacedEvent>(&event.payload);
+        if (build == nullptr) {
+            return std::nullopt;
+        }
+        AddId(out, "playerId", build->playerId);
+        AddField(out, "defId", build->defId);
+        AddField(out, "x", static_cast<std::int64_t>(build->x));
+        AddField(out, "y", static_cast<std::int64_t>(build->y));
+        AddField(out, "z", static_cast<std::int64_t>(build->z));
+        AddField(out, "vertical", build->vertical);
+        return out;
+    }
+    if (event.key == core::kOnBuildDemolished) {
+        const auto* build = std::get_if<core::BuildDemolishedEvent>(&event.payload);
+        if (build == nullptr) {
+            return std::nullopt;
+        }
+        AddId(out, "playerId", build->playerId);
+        AddField(out, "defId", build->defId);
+        AddField(out, "x", static_cast<std::int64_t>(build->x));
+        AddField(out, "y", static_cast<std::int64_t>(build->y));
+        AddField(out, "z", static_cast<std::int64_t>(build->z));
+        return out;
+    }
+    if (event.key == core::kOnBuildRepaired) {
+        const auto* build = std::get_if<core::BuildRepairedEvent>(&event.payload);
+        if (build == nullptr) {
+            return std::nullopt;
+        }
+        AddId(out, "playerId", build->playerId);
+        AddField(out, "x", static_cast<std::int64_t>(build->x));
+        AddField(out, "y", static_cast<std::int64_t>(build->y));
+        AddField(out, "z", static_cast<std::int64_t>(build->z));
         return out;
     }
     if (event.key == core::kOnSound) {

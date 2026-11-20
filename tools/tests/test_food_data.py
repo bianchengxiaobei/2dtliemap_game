@@ -128,7 +128,7 @@ class FoodDataTest(unittest.TestCase):
 
     def test_f5t3_categories_cookware_fuel_and_nutrition(self):
         self.assertEqual(self.recipe_doc["format"], "recipes-v4")
-        self.assertEqual(len(self.item_doc["items"]), 94)
+        self.assertEqual(len(self.item_doc["items"]), 99)
         valid_categories = {
             "general", "cooking", "preservation", "medical", "crafting",
         }

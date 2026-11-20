@@ -24,6 +24,7 @@
 #include "ui/MenuPanel.h"
 #include "ui/MultiplayerPanel.h"
 #include "ui/SocialPanel.h"
+#include "ui/VehicleModsPanel.h"
 #include "ui/WorldMapUi.h"
 #include "ui/RmlBgfxRenderInterface.h"
 #include "ui/RmlSystemInterface.h"
@@ -206,7 +207,9 @@ bool UiSystem::EnsureHudDocument() {
     m_staminaFillElement = m_hudDocument->GetElementById("stamina-fill");
     m_staminaTextElement = m_hudDocument->GetElementById("stamina-text");
     m_combatStatusElement = m_hudDocument->GetElementById("combat-status");
+    m_stealthStatusElement = m_hudDocument->GetElementById("stealth-status");
     m_rangedStatusElement = m_hudDocument->GetElementById("ranged-status");
+    m_throwStatusElement = m_hudDocument->GetElementById("throw-status");
     m_forageStatusElement = m_hudDocument->GetElementById("forage-status");
     m_fishingStatusElement = m_hudDocument->GetElementById("fishing-status");
     m_needsStatusElement = m_hudDocument->GetElementById("needs-status");
@@ -227,6 +230,22 @@ bool UiSystem::EnsureHudDocument() {
     m_objectiveElement = m_hudDocument->GetElementById("objective-text");
     m_objectiveHintElement = m_hudDocument->GetElementById("objective-hint");
     m_poiGuideElement = m_hudDocument->GetElementById("poi-guide");
+    m_poiStagePanelElement =
+        m_hudDocument->GetElementById("poi-stage-panel");
+    m_poiStageTitleElement =
+        m_hudDocument->GetElementById("poi-stage-title");
+    m_poiStageObjectiveElement =
+        m_hudDocument->GetElementById("poi-stage-objective");
+    m_poiStageMetaElement =
+        m_hudDocument->GetElementById("poi-stage-meta");
+    m_poiStageNarrativeElement =
+        m_hudDocument->GetElementById("poi-stage-narrative");
+    m_poiResultPanelElement =
+        m_hudDocument->GetElementById("poi-result-panel");
+    m_poiResultTitleElement =
+        m_hudDocument->GetElementById("poi-result-title");
+    m_poiResultBodyElement =
+        m_hudDocument->GetElementById("poi-result-body");
     m_missionGuideElement = m_hudDocument->GetElementById("mission-guide");
     m_eventGuideElement = m_hudDocument->GetElementById("event-guide");
     m_worldEventPanelElement =
@@ -290,6 +309,28 @@ bool UiSystem::EnsureHudDocument() {
     m_levelFillElement = m_hudDocument->GetElementById("level-fill");
     m_levelXpElement = m_hudDocument->GetElementById("level-xp");
     m_perkPromptElement = m_hudDocument->GetElementById("perk-prompt");
+    m_companionPanelElement =
+        m_hudDocument->GetElementById("companion-panel");
+    m_companionNameElement =
+        m_hudDocument->GetElementById("companion-name");
+    m_companionHealthElement =
+        m_hudDocument->GetElementById("companion-health");
+    m_companionHealthFillElement =
+        m_hudDocument->GetElementById("companion-health-fill");
+    m_companionStatusElement =
+        m_hudDocument->GetElementById("companion-state");
+    m_companionTrustElement =
+        m_hudDocument->GetElementById("companion-trust");
+    m_companionEquipmentElement =
+        m_hudDocument->GetElementById("companion-equipment");
+    m_companionBagElement =
+        m_hudDocument->GetElementById("companion-bag");
+    m_companionQuestElement =
+        m_hudDocument->GetElementById("companion-quest");
+    m_companionHintElement =
+        m_hudDocument->GetElementById("companion-hint");
+    m_companionAlertElement =
+        m_hudDocument->GetElementById("companion-status");
     m_characterPanelElement = m_hudDocument->GetElementById("character-panel");
     m_characterLevelElement = m_hudDocument->GetElementById("character-level");
     m_characterXpElement = m_hudDocument->GetElementById("character-xp");
@@ -317,12 +358,15 @@ bool UiSystem::EnsureHudDocument() {
     m_dialogueHintElement =
         m_hudDocument->GetElementById("dialogue-hint");
     m_actionHintElement = m_hudDocument->GetElementById("action-hint");
+    m_stealthPromptElement =
+        m_hudDocument->GetElementById("stealth-prompt");
     m_noticeElement = m_hudDocument->GetElementById("notice");
     for (int i = 0; i < 5; ++i) {
         const std::string suffix = std::to_string(i);
         m_hotbarSlots[i] = m_hudDocument->GetElementById("slot-" + suffix);
         m_hotbarNames[i] = m_hudDocument->GetElementById("slot-name-" + suffix);
         m_hotbarCounts[i] = m_hudDocument->GetElementById("slot-count-" + suffix);
+        m_hotbarThrows[i] = m_hudDocument->GetElementById("slot-throw-" + suffix);
     }
     AddClickHandler(m_hudDocument, "hud-bag", [this] { ToggleInventory(); });
     ZL_INFO("ui", "核心 UI 按需加载：HUD");
@@ -347,6 +391,24 @@ bool UiSystem::EnsureWorldMapPanel() {
     m_worldMap->SetStrategicActionHandler(
         m_worldMapStrategicActionHandler);
     ZL_INFO("ui", "核心 UI 按需加载：世界地图");
+    return true;
+}
+
+bool UiSystem::EnsureVehicleModsPanel() {
+    if (m_vehicleMods != nullptr) {
+        return true;
+    }
+    if (m_vehicleModsLoadAttempted || m_context == nullptr) {
+        return false;
+    }
+    m_vehicleModsLoadAttempted = true;
+    auto panel = std::make_unique<VehicleModsPanel>();
+    if (!panel->Init(*m_context, "assets/ui/vehiclemods.rml")) {
+        return false;
+    }
+    m_vehicleMods = std::move(panel);
+    m_vehicleMods->SetActionHandler(m_vehicleModsActionHandler);
+    ZL_INFO("ui", "核心 UI 按需加载：车辆改装");
     return true;
 }
 
@@ -573,7 +635,9 @@ void UiSystem::Shutdown() {
     m_staminaFillElement = nullptr;
     m_staminaTextElement = nullptr;
     m_combatStatusElement = nullptr;
+    m_stealthStatusElement = nullptr;
     m_rangedStatusElement = nullptr;
+    m_throwStatusElement = nullptr;
     m_forageStatusElement = nullptr;
     m_fishingStatusElement = nullptr;
     m_needsStatusElement = nullptr;
@@ -589,6 +653,14 @@ void UiSystem::Shutdown() {
     m_objectiveElement = nullptr;
     m_objectiveHintElement = nullptr;
     m_poiGuideElement = nullptr;
+    m_poiStagePanelElement = nullptr;
+    m_poiStageTitleElement = nullptr;
+    m_poiStageObjectiveElement = nullptr;
+    m_poiStageMetaElement = nullptr;
+    m_poiStageNarrativeElement = nullptr;
+    m_poiResultPanelElement = nullptr;
+    m_poiResultTitleElement = nullptr;
+    m_poiResultBodyElement = nullptr;
     m_missionGuideElement = nullptr;
     m_eventGuideElement = nullptr;
     m_worldEventPanelElement = nullptr;
@@ -621,6 +693,17 @@ void UiSystem::Shutdown() {
     m_levelFillElement = nullptr;
     m_levelXpElement = nullptr;
     m_perkPromptElement = nullptr;
+    m_companionPanelElement = nullptr;
+    m_companionNameElement = nullptr;
+    m_companionHealthElement = nullptr;
+    m_companionHealthFillElement = nullptr;
+    m_companionStatusElement = nullptr;
+    m_companionTrustElement = nullptr;
+    m_companionEquipmentElement = nullptr;
+    m_companionBagElement = nullptr;
+    m_companionQuestElement = nullptr;
+    m_companionHintElement = nullptr;
+    m_companionAlertElement = nullptr;
     m_characterPanelElement = nullptr;
     m_characterLevelElement = nullptr;
     m_characterXpElement = nullptr;
@@ -634,10 +717,12 @@ void UiSystem::Shutdown() {
     m_dialogueOptionElements.fill(nullptr);
     m_dialogueHintElement = nullptr;
     m_actionHintElement = nullptr;
+    m_stealthPromptElement = nullptr;
     m_noticeElement = nullptr;
     m_hotbarSlots.fill(nullptr);
     m_hotbarNames.fill(nullptr);
     m_hotbarCounts.fill(nullptr);
+    m_hotbarThrows.fill(nullptr);
     if (m_scriptUi != nullptr) {
         m_scriptUi->UnloadAll();
         m_scriptUi.reset();
@@ -711,7 +796,7 @@ void UiSystem::Update(core::Input& input) {
     }
     if (input.IsKeyPressed(GLFW_KEY_F11) && !menuOpenAtStart &&
         !multiplayerOpenAtStart && !IsInventoryOpen() &&
-        !IsWorldMapOpen()) {
+        !IsWorldMapOpen() && !IsVehicleModsOpen()) {
         ToggleVisible();
     }
 
@@ -723,7 +808,7 @@ void UiSystem::Update(core::Input& input) {
                 ApplyHudState(m_hudCache, true);
             }
             if (IsMenuOpen() || IsInventoryOpen() || IsMultiplayerOpen() ||
-                IsWorldMapOpen()) {
+                IsWorldMapOpen() || IsVehicleModsOpen()) {
                 m_hudDocument->Hide();
             } else {
                 m_hudDocument->Show();
@@ -749,6 +834,16 @@ void UiSystem::Update(core::Input& input) {
             m_consumeGameplayThisFrame = true;
             escapeHandled = true;
         }
+    } else if (IsVehicleModsOpen()) {
+        if (input.IsKeyPressed(GLFW_KEY_ESCAPE)) {
+            if (m_vehicleModsActionHandler) {
+                m_vehicleModsActionHandler(
+                    {VehicleModPanelActionType::Close, -1});
+            }
+            consumedKey = GLFW_KEY_ESCAPE;
+            m_consumeGameplayThisFrame = true;
+            escapeHandled = true;
+        }
     } else if (m_social != nullptr && m_social->IsChatOpen()) {
         if (input.IsKeyPressed(GLFW_KEY_ESCAPE)) {
             m_social->CloseChat();
@@ -759,7 +854,8 @@ void UiSystem::Update(core::Input& input) {
     } else {
         const bool inventoryOpen = IsInventoryOpen();
         const bool typing = HasInputFocus();
-        if (input.IsKeyPressed(GLFW_KEY_I) && (!typing || inventoryOpen)) {
+        if (input.IsKeyPressed(GLFW_KEY_I) && (!typing || inventoryOpen) &&
+            !IsVehicleModsOpen()) {
             ToggleInventory();
         }
         if (inventoryOpen && input.IsKeyPressed(GLFW_KEY_ESCAPE)) {
@@ -888,12 +984,16 @@ void UiSystem::Update(core::Input& input) {
     }
     if (m_scriptUi != nullptr) {
         m_scriptUi->EndFrame();
+        if (IsVehicleModsOpen()) {
+            m_scriptUi->SetGroupVisible(kHudGroup, false);
+        }
     }
     const bool focusBlocked = HasInputFocus();
     const bool scriptBlocked = m_scriptUi != nullptr && m_scriptUi->IsInputCaptured();
     const bool scriptConsumed = m_scriptUi != nullptr && m_scriptUi->InputConsumedThisFrame();
     input.SetGameplayBlocked(menuOpen || inventoryOpen || multiplayerOpen ||
-                             focusBlocked || scriptBlocked || scriptConsumed ||
+                             IsVehicleModsOpen() || focusBlocked ||
+                             scriptBlocked || scriptConsumed ||
                              m_consumeGameplayThisFrame);
     m_consumeGameplayThisFrame = false;
 }
@@ -904,14 +1004,15 @@ void UiSystem::Render() {
     }
     if (!m_visible && m_hudDocument == nullptr &&
         !IsInventoryOpen() && !IsMenuOpen() && !IsMultiplayerOpen() &&
-        !IsWorldMapOpen() && !IsSocialVisible() &&
+        !IsWorldMapOpen() && !IsVehicleModsOpen() && !IsSocialVisible() &&
         (m_scriptUi == nullptr || !m_scriptUi->HasVisibleDocuments())) {
         return;
     }
     const glm::mat4 view(1.0f);
     const glm::mat4 projection = glm::ortho(0.0f, static_cast<float>(m_width),
                                             static_cast<float>(m_height), 0.0f, -1.0f, 1.0f);
-    if (IsWorldMapOpen() && m_scriptUi != nullptr) {
+    if ((IsWorldMapOpen() || IsVehicleModsOpen()) &&
+        m_scriptUi != nullptr) {
         m_scriptUi->SetGroupVisible(kHudGroup, false);
     }
     bgfx::setViewTransform(static_cast<bgfx::ViewId>(render::ViewId::UI),
@@ -1020,6 +1121,44 @@ void UiSystem::SetWorldMapStrategicActionHandler(
     }
 }
 
+void UiSystem::SetVehicleModsState(const VehicleModsUiState& state,
+                                   bool open) {
+    m_vehicleModsState = state;
+    m_vehicleModsState.open = open;
+    if (!open) {
+        if (m_vehicleMods != nullptr) {
+            m_vehicleMods->SetState(m_vehicleModsState);
+        }
+        if (m_scriptUi != nullptr) {
+            m_scriptUi->SetGroupVisible(kHudGroup, true);
+        }
+        return;
+    }
+    if (!EnsureVehicleModsPanel()) {
+        return;
+    }
+    m_vehicleMods->SetActionHandler(m_vehicleModsActionHandler);
+    m_vehicleMods->SetState(m_vehicleModsState);
+    if (m_hudDocument != nullptr) {
+        m_hudDocument->Hide();
+    }
+    if (m_scriptUi != nullptr) {
+        m_scriptUi->SetGroupVisible(kHudGroup, false);
+    }
+}
+
+void UiSystem::SetVehicleModsActionHandler(
+    VehicleModPanelActionHandler handler) {
+    m_vehicleModsActionHandler = std::move(handler);
+    if (m_vehicleMods != nullptr) {
+        m_vehicleMods->SetActionHandler(m_vehicleModsActionHandler);
+    }
+}
+
+bool UiSystem::IsVehicleModsOpen() const {
+    return m_vehicleMods != nullptr && m_vehicleMods->IsOpen();
+}
+
 void UiSystem::ApplyHudState(const HudState& state, bool force) {
     if (m_hudDocument == nullptr) {
         return;
@@ -1096,6 +1235,27 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
                                             state.combatTone == "fail");
         }
     }
+    if (first || state.stealthStatus != m_hudCache.stealthStatus ||
+        state.stealthTone != m_hudCache.stealthTone) {
+        setText(m_stealthStatusElement, state.stealthStatus);
+        if (m_stealthStatusElement != nullptr) {
+            m_stealthStatusElement->SetProperty(
+                "display", state.stealthStatus.empty() ? "none" : "block");
+            m_stealthStatusElement->SetClass("status-ok",
+                                             state.stealthTone == "ok");
+            m_stealthStatusElement->SetClass("status-warn",
+                                             state.stealthTone == "warn");
+            m_stealthStatusElement->SetClass("status-fail",
+                                             state.stealthTone == "fail");
+        }
+    }
+    if (first || state.stealthPrompt != m_hudCache.stealthPrompt) {
+        setText(m_stealthPromptElement, state.stealthPrompt);
+        if (m_stealthPromptElement != nullptr) {
+            m_stealthPromptElement->SetProperty(
+                "display", state.stealthPrompt.empty() ? "none" : "block");
+        }
+    }
     if (first || state.rangedStatus != m_hudCache.rangedStatus ||
         state.rangedTone != m_hudCache.rangedTone) {
         setText(m_rangedStatusElement, state.rangedStatus);
@@ -1106,6 +1266,20 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
                                             state.rangedTone == "warn");
             m_rangedStatusElement->SetClass("status-fail",
                                             state.rangedTone == "fail");
+        }
+    }
+    if (first || state.throwStatus != m_hudCache.throwStatus ||
+        state.throwTone != m_hudCache.throwTone) {
+        setText(m_throwStatusElement, state.throwStatus);
+        if (m_throwStatusElement != nullptr) {
+            m_throwStatusElement->SetProperty(
+                "display", state.throwStatus.empty() ? "none" : "block");
+            m_throwStatusElement->SetClass("status-warn",
+                                           state.throwTone == "warn");
+            m_throwStatusElement->SetClass("status-fail",
+                                           state.throwTone == "fail");
+            m_throwStatusElement->SetClass("status-ok",
+                                           state.throwTone == "ok");
         }
     }
     if (first || state.forageStatus != m_hudCache.forageStatus ||
@@ -1243,6 +1417,16 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
         state.objectiveHint != m_hudCache.objectiveHint ||
         state.poiGuide != m_hudCache.poiGuide ||
         state.poiGuideTone != m_hudCache.poiGuideTone ||
+        state.poiStageVisible != m_hudCache.poiStageVisible ||
+        state.poiStageTitle != m_hudCache.poiStageTitle ||
+        state.poiStageObjective != m_hudCache.poiStageObjective ||
+        state.poiStageMeta != m_hudCache.poiStageMeta ||
+        state.poiStageNarrative != m_hudCache.poiStageNarrative ||
+        state.poiStageTone != m_hudCache.poiStageTone ||
+        state.poiResultVisible != m_hudCache.poiResultVisible ||
+        state.poiResultTitle != m_hudCache.poiResultTitle ||
+        state.poiResultBody != m_hudCache.poiResultBody ||
+        state.poiResultTone != m_hudCache.poiResultTone ||
         state.missionGuide != m_hudCache.missionGuide ||
         state.missionTone != m_hudCache.missionTone ||
         state.eventGuide != m_hudCache.eventGuide ||
@@ -1256,6 +1440,12 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
         setText(m_objectiveElement, state.objective);
         setText(m_objectiveHintElement, state.objectiveHint);
         setText(m_poiGuideElement, state.poiGuide);
+        setText(m_poiStageTitleElement, state.poiStageTitle);
+        setText(m_poiStageObjectiveElement, state.poiStageObjective);
+        setText(m_poiStageMetaElement, state.poiStageMeta);
+        setText(m_poiStageNarrativeElement, state.poiStageNarrative);
+        setText(m_poiResultTitleElement, state.poiResultTitle);
+        setText(m_poiResultBodyElement, state.poiResultBody);
         setText(m_missionGuideElement, state.missionGuide);
         setText(m_eventGuideElement, state.eventGuide);
         setText(m_regionGuideElement, state.regionGuide);
@@ -1263,7 +1453,9 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
         setText(m_strategicGuideElement, state.strategicGuide);
         if (m_objectivePanelElement != nullptr) {
             m_objectivePanelElement->SetProperty(
-                "display", state.objective.empty() && state.missionGuide.empty() &&
+                "display", state.objective.empty() &&
+                                   !state.poiStageVisible &&
+                                   state.missionGuide.empty() &&
                                    state.eventGuide.empty() &&
                                    state.regionGuide.empty() &&
                                    state.settlementGuide.empty() &&
@@ -1285,6 +1477,27 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
             m_poiGuideElement->SetClass("status-warn",
                                         state.poiGuideTone == "warn");
             m_poiGuideElement->SetClass("status-ok", state.poiGuideTone == "ok");
+        }
+        if (m_poiStagePanelElement != nullptr) {
+            m_poiStagePanelElement->SetProperty(
+                "display", state.poiStageVisible ? "block" : "none");
+            m_poiStagePanelElement->SetClass("status-warn",
+                                             state.poiStageTone == "warn");
+            m_poiStagePanelElement->SetClass("status-fail",
+                                             state.poiStageTone == "fail");
+            m_poiStagePanelElement->SetClass("status-ok",
+                                             state.poiStageTone == "ok");
+        }
+        if (m_poiStageNarrativeElement != nullptr) {
+            m_poiStageNarrativeElement->SetProperty(
+                "display",
+                state.poiStageNarrative.empty() ? "none" : "block");
+        }
+        if (m_poiResultPanelElement != nullptr) {
+            m_poiResultPanelElement->SetProperty(
+                "display", state.poiResultVisible ? "block" : "none");
+            m_poiResultPanelElement->SetClass(
+                "status-fail", state.poiResultTone == "fail");
         }
         if (m_missionGuideElement != nullptr) {
             m_missionGuideElement->SetProperty(
@@ -1603,6 +1816,48 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
             }
         }
     }
+    const bool companionChanged =
+        first || !(state.companion == m_hudCache.companion);
+    if (companionChanged) {
+        const CompanionUiState& companion = state.companion;
+        if (m_companionPanelElement != nullptr) {
+            m_companionPanelElement->SetProperty(
+                "display",
+                companion.valid && companion.open ? "block" : "none");
+        }
+        setText(m_companionNameElement, companion.name);
+        setText(m_companionHealthElement, companion.health);
+        setText(m_companionStatusElement, companion.status);
+        setText(m_companionTrustElement, companion.trust);
+        setText(m_companionEquipmentElement, companion.equipment);
+        setText(m_companionBagElement, companion.bag);
+        setText(m_companionQuestElement, companion.quest);
+        setText(m_companionHintElement, companion.hint);
+        if (m_companionHealthFillElement != nullptr) {
+            const float ratio =
+                companion.healthMax > 0.0f
+                    ? std::clamp(companion.healthCurrent /
+                                     companion.healthMax,
+                                 0.0f, 1.0f)
+                    : 0.0f;
+            char width[24];
+            std::snprintf(width, sizeof(width), "%.1f%%",
+                          static_cast<double>(ratio * 100.0f));
+            m_companionHealthFillElement->SetProperty("width", width);
+            m_companionHealthFillElement->SetClass(
+                "low", companion.lowHealth || companion.downed ||
+                           companion.dead);
+        }
+        setText(m_companionAlertElement, companion.alert);
+        if (m_companionAlertElement != nullptr) {
+            m_companionAlertElement->SetProperty(
+                "display",
+                companion.valid && !companion.alert.empty() ? "block"
+                                                            : "none");
+            m_companionAlertElement->SetClassNames(
+                "companion-status status-" + companion.alertTone);
+        }
+    }
     const bool dialogueChanged =
         first || state.dialogueOpen != m_hudCache.dialogueOpen ||
         state.dialogueSpeaker != m_hudCache.dialogueSpeaker ||
@@ -1660,6 +1915,17 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
         }
         if (first || slot.count != previous.count) {
             setText(m_hotbarCounts[i], slot.count > 0 ? std::to_string(slot.count) : "");
+        }
+        if (first || slot.throwTag != previous.throwTag) {
+            setText(m_hotbarThrows[i], slot.throwable ? slot.throwTag : std::string());
+            if (m_hotbarThrows[i] != nullptr) {
+                m_hotbarThrows[i]->SetProperty(
+                    "display",
+                    slot.throwable && !slot.throwTag.empty() ? "block" : "none");
+            }
+            if (m_hotbarSlots[i] != nullptr) {
+                m_hotbarSlots[i]->SetClass("throwable", slot.throwable);
+            }
         }
     }
 

@@ -247,13 +247,13 @@ bool ItemRegistry::LoadFromString(std::string_view text, const std::string& sour
 
         static const std::unordered_set<std::string> kAllowedKeys = {
             "id", "name", "icon", "weight", "maxStack", "type", "use",
-            "unlocksRecipes", "combat", "ranged", "armor", "repairEfficiency",
-            "spoilDays"};
+            "unlocksRecipes", "combat", "ranged", "throwable", "armor",
+            "repairEfficiency", "spoilDays"};
         for (auto it = item.begin(); it != item.end(); ++it) {
             if (!kAllowedKeys.contains(it.key())) {
                 return itemFail("未知字段 '" + it.key() +
                                 "'（允许: id/name/icon/weight/maxStack/type/use/"
-                                "unlocksRecipes/combat/ranged/armor/"
+                                "unlocksRecipes/combat/ranged/throwable/armor/"
                                 "repairEfficiency/spoilDays）");
             }
         }
@@ -616,6 +616,96 @@ bool ItemRegistry::LoadFromString(std::string_view text, const std::string& sour
                 return itemFail("字段 'armor' 至少需要一个非零参数"
                                 "（claw/bite/blunt/wear/moveScale/insulation/waterproof）");
             }
+        }
+
+        // M34-F2：投掷参数（可选；显式标记才可投掷）。
+        if (item.contains("throwable")) {
+            const nlohmann::json& throwable = item["throwable"];
+            if (!throwable.is_object()) {
+                return itemFail("字段 'throwable' 必须是对象，实际: " +
+                                throwable.dump());
+            }
+            static const std::unordered_set<std::string> kThrowableKeys = {
+                "range", "damage", "impactRadius", "arcHeight", "noiseRadius",
+                "returnable", "breakChance", "fire"};
+            for (auto it = throwable.begin(); it != throwable.end(); ++it) {
+                if (!kThrowableKeys.contains(it.key())) {
+                    return itemFail("throwable 未知字段 '" + it.key() +
+                                    "'（允许: range/damage/impactRadius/"
+                                    "arcHeight/noiseRadius/returnable/"
+                                    "breakChance/fire）");
+                }
+            }
+            auto readThrowableNumber = [&](const nlohmann::json& object,
+                                           const std::string& path,
+                                           const char* key, float minValue,
+                                           float maxValue, float* out) {
+                if (!object.contains(key)) {
+                    return itemFail("缺少字段 '" + path + "." + key + "'");
+                }
+                const nlohmann::json& value = object[key];
+                if (!value.is_number()) {
+                    return itemFail(path + "." + key +
+                                    " 必须是数字，实际: " + value.dump());
+                }
+                const double number = value.get<double>();
+                if (!std::isfinite(number) || number < minValue ||
+                    number > maxValue) {
+                    return itemFail(path + "." + key + " 取值非法: " +
+                                    value.dump() + "（允许 " +
+                                    std::to_string(minValue) + " ~ " +
+                                    std::to_string(maxValue) + "）");
+                }
+                *out = static_cast<float>(number);
+                return true;
+            };
+            ThrowableDef parsed;
+            if (!readThrowableNumber(throwable, "throwable", "range", 1.0f,
+                                     16.0f, &parsed.range) ||
+                !readThrowableNumber(throwable, "throwable", "damage", 0.0f,
+                                     80.0f, &parsed.damage) ||
+                !readThrowableNumber(throwable, "throwable", "impactRadius",
+                                     0.0f, 3.0f, &parsed.impactRadius) ||
+                !readThrowableNumber(throwable, "throwable", "arcHeight", 0.0f,
+                                     3.0f, &parsed.arcHeight) ||
+                !readThrowableNumber(throwable, "throwable", "noiseRadius",
+                                     0.0f, 32.0f, &parsed.noiseRadius) ||
+                !readThrowableNumber(throwable, "throwable", "breakChance",
+                                     0.0f, 1.0f, &parsed.breakChance)) {
+                return false;
+            }
+            if (!throwable.contains("returnable")) {
+                return itemFail("缺少字段 'throwable.returnable'");
+            }
+            if (!throwable["returnable"].is_boolean()) {
+                return itemFail("throwable.returnable 必须是布尔值，实际: " +
+                                throwable["returnable"].dump());
+            }
+            parsed.returnable = throwable["returnable"].get<bool>();
+            if (throwable.contains("fire")) {
+                const nlohmann::json& fire = throwable["fire"];
+                if (!fire.is_object()) {
+                    return itemFail("字段 'throwable.fire' 必须是对象，实际: " +
+                                    fire.dump());
+                }
+                static const std::unordered_set<std::string> kFireKeys = {
+                    "radius", "minutes"};
+                for (auto it = fire.begin(); it != fire.end(); ++it) {
+                    if (!kFireKeys.contains(it.key())) {
+                        return itemFail("throwable.fire 未知字段 '" + it.key() +
+                                        "'（允许: radius/minutes）");
+                    }
+                }
+                ThrowableFire parsedFire;
+                if (!readThrowableNumber(fire, "throwable.fire", "radius", 0.0f,
+                                         3.0f, &parsedFire.radius) ||
+                    !readThrowableNumber(fire, "throwable.fire", "minutes", 0.0f,
+                                         240.0f, &parsedFire.minutes)) {
+                    return false;
+                }
+                parsed.fire = parsedFire;
+            }
+            def.throwable = std::move(parsed);
         }
 
         // M19-F4：维修包恢复量倍率（武器/衣物；缺省 1.0）。

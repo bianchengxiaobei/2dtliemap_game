@@ -1,18 +1,23 @@
-﻿#include <algorithm>
+#include <algorithm>
 #include <cstdint>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <doctest/doctest.h>
 
+#include "core/EventBus.h"
+#include "core/GameEvents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
 #include "game/Homestead.h"
 #include "game/LootContainers.h"
+#include "game/PlayerInventoryService.h"
 #include "items/InventoryOps.h"
 #include "items/ItemComponents.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
+#include "items/RecipeRegistry.h"
 #include "save/BinaryReader.h"
 #include "save/BinaryWriter.h"
 #include "save/ComponentRegistry.h"
@@ -262,6 +267,68 @@ TEST_CASE("M14-T5 容器首次搜索roll 一次、空容器与距离查") {
     CHECK(emptySearch.searchedNow);
     CHECK(emptySearch.totalItems == 0);
     CHECK(world.Registry().get<ecs::LootContainer>(empty).searched);
+}
+
+TEST_CASE("M35-F2-T3 首次搜刮派发 OnLootSearched，重复搜索不重发") {
+    Fixture fixture;
+    ecs::EcsWorld world;
+    const ecs::Entity crate = game::SpawnLootContainer(
+        world, fixture.loot, "test_crate", 10.5f, 20.5f, 0, "object.crate");
+    REQUIRE(crate != ecs::EcsWorld::kNull);
+    const ecs::Entity player = world.CreateWithStableId(7);
+    REQUIRE(player != ecs::EcsWorld::kNull);
+    entt::registry& registry = world.Registry();
+    registry.emplace<ecs::Position>(player, ecs::Position{10.0f, 20.0f, 0});
+    ecs::Container bag;
+    bag.capacityKg = 50.0f;
+    registry.emplace<ecs::Container>(player, std::move(bag));
+
+    items::RecipeRegistry recipes;
+    core::EventBus events;
+    std::vector<core::LootSearchedEvent> searched;
+    const core::EventBus::SubscriptionId subscription = events.Subscribe(
+        core::kOnLootSearched, [&](const core::Event& event) {
+            if (const auto* payload =
+                    std::get_if<core::LootSearchedEvent>(&event.payload);
+                payload != nullptr) {
+                searched.push_back(*payload);
+            }
+        });
+    game::InventoryServiceOptions options;
+    options.lootTables = &fixture.loot;
+    game::PlayerInventoryService service(world, fixture.items, recipes, nullptr,
+                                         &events, options);
+
+    std::string tableId;
+    REQUIRE(service.SearchLoot(player, world.IdOf(crate).id, &tableId).ok);
+    events.FlushQueued();
+    REQUIRE(searched.size() == 1u);
+    CHECK(searched[0].playerId == world.IdOf(player).id);
+    CHECK(searched[0].containerId == world.IdOf(crate).id);
+    CHECK(searched[0].tableId == "test_crate");
+    CHECK(searched[0].itemCount ==
+          CountStacks(registry.get<ecs::Container>(crate)));
+
+    const int itemCount = searched[0].itemCount;
+    REQUIRE(service.SearchLoot(player, world.IdOf(crate).id).ok);
+    events.FlushQueued();
+    CHECK(searched.size() == 1u);
+    CHECK(CountStacks(registry.get<ecs::Container>(crate)) == itemCount);
+
+    const ecs::Entity empty = game::SpawnLootContainer(
+        world, fixture.loot, "empty", 9.5f, 20.5f, 0, "object.locker");
+    REQUIRE(empty != ecs::EcsWorld::kNull);
+    REQUIRE(service.SearchLoot(player, world.IdOf(empty).id).ok);
+    events.FlushQueued();
+    REQUIRE(searched.size() == 2u);
+    CHECK(searched[1].containerId == world.IdOf(empty).id);
+    CHECK(searched[1].tableId == "empty");
+    CHECK(searched[1].itemCount == 0);
+
+    CHECK_FALSE(service.SearchLoot(player, 999999u).ok);
+    events.FlushQueued();
+    CHECK(searched.size() == 2u);
+    events.Unsubscribe(subscription);
 }
 
 TEST_CASE("M14-T5 容器拿取遵守背包容量且失败不改源容器") {
@@ -594,7 +661,7 @@ TEST_CASE("M14-T5 LootContainer 存档往") {
     std::string error;
     REQUIRE(save::RegisterBuiltinComponents(components, &error));
     CHECK(error.empty());
-    CHECK(components.Size() == 46u);
+    CHECK(components.Size() == 53u);
 
     ecs::EcsWorld source;
     const ecs::Entity container = source.Create();

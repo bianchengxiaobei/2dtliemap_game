@@ -448,6 +448,20 @@
     "playerWearPerHit": 0,
     "deathFallSeconds": 0.5
   },
+  "stealth": {
+    "enabled": true,
+    "crouchSpeedScale": 0.55,
+    "stepNoiseScale": 0.45,
+    "visibilityScale": 0.65,
+    "backstabMultiplier": 1.6,
+    "backstabHalfAngleDegrees": 60.0,
+    "exposeOnAttack": true
+  },
+  "throwing": {
+    "cooldownSeconds": 0.7,
+    "maxRange": 12.0,
+    "minRange": 1.0
+  },
   "wounds": {
     "severityPerDamage": 0.02,
     "clawSeverityScale": 1.2,
@@ -506,7 +520,10 @@
       { "id": "fridge", "name": "冷藏柜", "sprite": "object.fridge", "woodCost": 4, "maxHp": 0.0, "blocksMovement": false, "storageKg": 30.0, "storageSlots": 4, "category": "storage" },
       { "id": "spike_trap", "name": "尖刺陷阱", "sprite": "object.trap", "woodCost": 2, "maxHp": 0.0, "blocksMovement": false, "category": "defense" },
       { "id": "floodlight", "name": "泛光灯", "sprite": "object.floodlight", "woodCost": 2, "maxHp": 80.0, "blocksMovement": false, "category": "facility" },
-      { "id": "electric_fence", "name": "电网", "sprite": "object.electric_fence", "woodCost": 3, "maxHp": 100.0, "blocksMovement": true, "category": "defense" }
+      { "id": "electric_fence", "name": "电网", "sprite": "object.electric_fence", "woodCost": 3, "maxHp": 100.0, "blocksMovement": true, "category": "defense" },
+      { "id": "bear_trap", "name": "捕兽夹", "sprite": "object.trap", "woodCost": 3, "maxHp": 0.0, "blocksMovement": false, "category": "defense" },
+      { "id": "tripwire_alarm", "name": "绊线警报", "sprite": "object.trap", "woodCost": 1, "maxHp": 0.0, "blocksMovement": false, "category": "defense" },
+      { "id": "fuel_trap", "name": "燃油陷阱", "sprite": "object.trap", "woodCost": 4, "maxHp": 0.0, "blocksMovement": false, "category": "defense" }
     ]
   },
   "progression": {
@@ -546,6 +563,18 @@
   "pois": {
     "enabled": true,
     "guideRange": 120.0,
+    "boss": {
+      "healthScale": 2.0,
+      "resetRange": 24.0,
+      "resetSeconds": 10.0,
+      "summonIntervalSeconds": 8.0,
+      "summonCount": 2,
+      "summonMax": 4,
+      "summonTotal": 6,
+      "chargeIntervalSeconds": 8.0,
+      "chargeSpeedScale": 2.8,
+      "chargeSeconds": 2.0
+    },
     "defs": [
       {
         "id": "gas_station",
@@ -1366,6 +1395,10 @@
     "staggerSeconds": 0.35,
     "uses": 6
   },
+  "trapDefs": {
+    "enabled": true,
+    "file": "assets/traps.json"
+  },
   "settlements": {
     "enabled": true,
     "file": "assets/settlements.json",
@@ -1400,6 +1433,44 @@
     "enabled": true,
     "file": "assets/world_events.json",
     "randomSeed": 20261113
+  },
+  "companions": {
+    "enabled": true,
+    "file": "assets/companions.json",
+    "ai": {
+      "followDistance": 3.0,
+      "followMin": 1.8,
+      "followMax": 4.5,
+      "ownerEngageRadius": 6.0,
+      "ownerUrgentRadius": 3.5,
+      "leash": 12.0,
+      "freezeRadius": 40.0,
+      "attackRange": 1.35,
+      "attackDamage": 24.0,
+      "attackCooldown": 0.85,
+      "attackDamageScale": 0.38,
+      "attackCooldownScale": 1.20,
+      "attackKnockback": 1.1,
+      "attackStagger": 0.25,
+      "lowHealthFraction": 0.30,
+      "recoverHealthFraction": 0.50,
+      "stayEngageRadius": 4.0,
+      "stayLeash": 4.5,
+      "trapClearance": 0.8,
+      "pathRetrySeconds": 0.35,
+      "downedSeconds": 60.0,
+      "rescueHealthFraction": 0.35,
+      "rescueRange": 2.5,
+      "combatKillTrust": 2
+    }
+  },
+  "vehicleMods": {
+    "enabled": true,
+    "file": "assets/vehicle_mods.json",
+    "removeRefundRatio": 0.5,
+    "removeSecondsScale": 0.5,
+    "weightAccelerationKg": 400.0,
+    "weightFuelKg": 600.0
   },
   "strategic": {
     "file": "assets/strategic.json",
@@ -1552,6 +1623,7 @@
       "HeavyAttack": "LSHIFT",
       "Block": "LCTRL",
       "Dodge": "Z",
+      "Stealth": "N",
       "Pickup": "F",
       "Use": "E",
       "FarmCare": "T",
@@ -1563,6 +1635,7 @@
       "RepairAllStructures": "J",
       "DemolishStructure": "X",
       "CharacterPanel": "C",
+      "CompanionPanel": "P",
       "WorldMap": "M",
       "MissionFocus": "L",
       "MissionAbandon": "K",

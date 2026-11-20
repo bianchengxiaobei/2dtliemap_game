@@ -114,6 +114,13 @@ private:
     void ReturnOrDrop(ecs::Entity player, const ecs::ItemInstance& item);
     bool ApplyUseInfectionRisk(ecs::Entity player, std::string_view defId,
                                float risk);
+    void EmitItemUsed(ecs::Entity player, std::string_view defId, bool spoiled,
+                      int remaining);
+    void EmitCraftStart(ecs::Entity player, const items::RecipeDef& recipe,
+                        int batchCount);
+    void EmitCraftFinished(ecs::Entity player, std::string_view recipeId,
+                           std::string_view outputDefId, int outputCount,
+                           int batchCompleted, bool failed);
     void ApplyFoodUse(ecs::Entity player, const items::ItemDef& def,
                       const items::UseResult& use);
     InventoryResult StartCraft(ecs::Entity player, const items::RecipeDef& recipe,

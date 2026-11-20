@@ -26,6 +26,7 @@
     {
       "name": "x64-debug-python",
       "inherits": "x64-debug",
+      "binaryDir": "${sourceDir}/build/x64-debug-python",
       "cacheVariables": {
         "ZL_ENABLE_PYTHON": "ON"
       }
@@ -33,6 +34,7 @@
     {
       "name": "x64-release-python",
       "inherits": "x64-release",
+      "binaryDir": "${sourceDir}/build/x64-release-python",
       "cacheVariables": {
         "ZL_ENABLE_PYTHON": "ON"
       }

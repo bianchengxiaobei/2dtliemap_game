@@ -753,8 +753,10 @@ void WorldMapPanel::BuildStatic(const game::WorldMapState& state) {
         Rml::Element* marker = MakeElement("div", "map-poi", m_poiLayer);
         if (marker != nullptr) {
             marker->SetAttribute("data-poi", poi.id);
-            marker->SetProperty("left", Percent(poi.x, state.width));
-            marker->SetProperty("top", Percent(poi.y, state.height));
+            marker->SetProperty(
+                "left", Percent(poi.staged ? poi.stageX : poi.x, state.width));
+            marker->SetProperty(
+                "top", Percent(poi.staged ? poi.stageY : poi.y, state.height));
             Rml::Element* dot = MakeElement("div", "map-poi-dot", marker);
             (void)dot;
             AddDynamicEventListener(marker, "click", [this, id = poi.id](Rml::Event&) {
@@ -1030,17 +1032,17 @@ void WorldMapPanel::UpdateDynamic(const game::WorldMapState& state) {
         }
         SetDisplay(poi.marker, true);
         SetDisplay(poi.label, true);
+        const float markerX = found->staged ? found->stageX : found->x;
+        const float markerY = found->staged ? found->stageY : found->y;
         poi.marker->SetClass("discovered", found->discovered);
         poi.marker->SetClass("completed", found->completed);
         poi.marker->SetClass("disabled", found->disabled);
-        poi.marker->SetProperty("left", Percent(found->x, state.width));
-        poi.marker->SetProperty("top", Percent(found->y, state.height));
-        const std::string label =
-            found->discovered
-                ? found->name + (found->disabled
-                                     ? "（沦陷）"
-                                     : (found->completed ? "（完成）" : ""))
-                : "未知地点";
+        poi.marker->SetClass("staged", found->staged);
+        poi.marker->SetClass("stage-failed", found->stageFailed);
+        poi.marker->SetClass("stage-choice", found->stageAwaitingChoice);
+        poi.marker->SetProperty("left", Percent(markerX, state.width));
+        poi.marker->SetProperty("top", Percent(markerY, state.height));
+        const std::string label = game::WorldMapPoiLabel(*found);
         if (poi.label != nullptr) {
             SetDisplay(poi.label, found->discovered &&
                                     labeledPois.contains(found->id));
@@ -1048,9 +1050,12 @@ void WorldMapPanel::UpdateDynamic(const game::WorldMapState& state) {
             poi.label->SetClass("discovered", found->discovered);
             poi.label->SetClass("completed", found->completed);
             poi.label->SetClass("disabled", found->disabled);
-            poi.label->SetProperty("left", Percent(found->x, state.width));
-            poi.label->SetProperty("top", Percent(found->y, state.height));
-            poi.label->SetClass("on-right", found->x < state.width * 0.82f);
+            poi.label->SetClass("staged", found->staged);
+            poi.label->SetClass("stage-failed", found->stageFailed);
+            poi.label->SetClass("stage-choice", found->stageAwaitingChoice);
+            poi.label->SetProperty("left", Percent(markerX, state.width));
+            poi.label->SetProperty("top", Percent(markerY, state.height));
+            poi.label->SetClass("on-right", markerX < state.width * 0.82f);
             const int labelOffset =
                 -9 + static_cast<int>(poiIndex % 4u) * 18;
             poi.label->SetProperty("margin-top",
@@ -1439,6 +1444,7 @@ void WorldMapPanel::UpdateText() {
     struct DiscoveredPoi {
         float distance = 0.0f;
         std::string name;
+        std::string stage;
     };
     std::vector<DiscoveredPoi> discovered;
     for (const game::WorldMapPoi& poi : state.pois) {
@@ -1448,7 +1454,7 @@ void WorldMapPanel::UpdateText() {
         discovered.push_back(
             {std::sqrt((poi.x - state.playerX) * (poi.x - state.playerX) +
                        (poi.y - state.playerY) * (poi.y - state.playerY)),
-             poi.name});
+             poi.name, poi.staged ? poi.stageLabel : std::string()});
     }
     std::sort(discovered.begin(), discovered.end(),
               [](const DiscoveredPoi& a, const DiscoveredPoi& b) {
@@ -1463,7 +1469,11 @@ void WorldMapPanel::UpdateText() {
             if (i > 0) {
                 poiList += " · ";
             }
-            poiList += discovered[i].name + " " +
+            poiList += discovered[i].name;
+            if (!discovered[i].stage.empty()) {
+                poiList += " · " + discovered[i].stage;
+            }
+            poiList += " " +
                        std::to_string(static_cast<int>(
                            std::lround(discovered[i].distance))) +
                        "格";

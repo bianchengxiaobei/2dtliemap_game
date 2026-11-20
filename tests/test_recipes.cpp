@@ -598,7 +598,7 @@ TEST_CASE("仓库内置配方文件与物品定义一致") {
     std::string error;
     const std::string itemsPath = std::string(ZL_SOURCE_DIR) + "/assets/items.json";
     REQUIRE(items.LoadFile(itemsPath, &error));
-    CHECK(items.Size() == 94);
+    CHECK(items.Size() == 99);
     const items::ItemDef* magazine = items.Find("magazine_cooking");
     REQUIRE(magazine != nullptr);
     REQUIRE(magazine->unlocksRecipes.size() == 1u);
@@ -923,7 +923,7 @@ TEST_CASE("M24-T1：新增十个配方与工具/锅具引用") {
     REQUIRE_MESSAGE(recipes.LoadFile(root + "/assets/recipes.json", items,
                                      &error),
                     error);
-    CHECK(recipes.Size() == 30);
+    CHECK(recipes.Size() == 31);
 
     for (const char* id : {"roast_carrot", "cook_chicken", "cook_goat",
                            "carrot_stew", "chicken_stew", "goat_stew",

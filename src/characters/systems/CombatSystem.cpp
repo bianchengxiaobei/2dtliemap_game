@@ -9,6 +9,7 @@
 #include "ai/components/AiComponents.h"
 #include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/systems/StealthRules.h"
 #include "core/Log.h"
 #include "ecs/components/CommonComponents.h"
 
@@ -212,6 +213,7 @@ bool CombatSystem::ApplyDamage(ecs::EcsWorld& world, ecs::Entity target,
 
     // 2) 正面格挡/弹反：只处理 Claw/Bite/Blunt；Fire/Debug 不参与。
     bool guardBroken = false;
+    bool blocked = false;
     if (stance != nullptr && stance->blocking && event.amount > 0.0f &&
         IsBlockableType(event.type)) {
         const float guardBreakLeft =
@@ -261,6 +263,7 @@ bool CombatSystem::ApplyDamage(ecs::EcsWorld& world, ecs::Entity target,
             if (TrySpendStamina(world, target, cost)) {
                 event.amount *= BlockDamageScale(blockReduction, m_rules);
                 event.knockback *= BlockKnockbackScale(m_rules);
+                blocked = true;
                 if (result != nullptr) {
                     result->blocked = true;
                 }
@@ -473,6 +476,17 @@ bool CombatSystem::ApplyDamage(ecs::EcsWorld& world, ecs::Entity target,
     if (result != nullptr) {
         result->applied = true;
         result->poiseBroken = poiseBroken;
+    }
+    if (damage > 0.0f && m_damageAppliedCallback) {
+        DamageApplied applied;
+        applied.targetId = world.IdOf(target).id;
+        applied.sourceId = event.sourceId;
+        applied.type = event.type;
+        applied.amount = damage;
+        applied.remainingHp = std::max(0.0f, health->current);
+        applied.lethal = lethal;
+        applied.blocked = blocked;
+        m_damageAppliedCallback(applied);
     }
     return true;
 }
@@ -844,6 +858,7 @@ void CombatSystem::Update(ecs::EcsWorld& world, float dt) {
             // M5-T6 阵营规则：AI 攻击者不误伤同类（僵尸 vs 僵尸豁免；阵营系统 M7+ 再抽象）
             const bool attackerIsAi = registry.try_get<ecs::AiState>(attacker) != nullptr;
             bool hitAny = false;
+            bool backstabApplied = false;
 
             for (const Candidate& candidate : m_candidates) {
                 if (candidate.e == attacker ||
@@ -863,6 +878,39 @@ void CombatSystem::Update(ecs::EcsWorld& world, float dt) {
                     (ox * dirX + oy * dirY) / dist < halfCos) {
                     continue;  // 扇形外
                 }
+
+                // M34-F1-T4：只有玩家、只对未警觉且位于背后的 AI 目标，
+                // 且一次挥击最多消费一次背刺；倍率只改伤害，不改硬直/击退/磨损。
+                bool backstab = false;
+                float backstabScale = 1.0f;
+                if (!backstabApplied && std::isfinite(attack.backstabMultiplier) &&
+                    attack.backstabMultiplier > 1.0f && candidate.ai &&
+                    registry.all_of<ecs::PlayerTag>(attacker) &&
+                    !registry.any_of<ecs::PlayerTag, ecs::FriendlyNpc,
+                                     ecs::Animal, ecs::Dying>(candidate.e)) {
+                    const auto* targetAi = registry.try_get<ecs::AiState>(candidate.e);
+                    const auto* targetPerception =
+                        registry.try_get<ecs::PerceptionState>(candidate.e);
+                    const auto* targetFacing =
+                        registry.try_get<ecs::Facing>(candidate.e);
+                    if (targetAi != nullptr && targetPerception != nullptr &&
+                        targetFacing != nullptr) {
+                        float facingX = 0.0f;
+                        float facingY = 0.0f;
+                        FacingVector(targetFacing->dir, facingX, facingY);
+                        const float toAttackerX = attackerPos.x - candidate.x;
+                        const float toAttackerY = attackerPos.y - candidate.y;
+                        const bool unaware = StealthTargetUnaware(
+                            targetAi->status, targetPerception->alertness);
+                        const bool behind = StealthBehindTarget(
+                            facingX, facingY, toAttackerX, toAttackerY,
+                            attack.backstabHalfAngleDegrees);
+                        backstabScale = StealthBackstabDamageScale(
+                            unaware && behind, attack.backstabMultiplier);
+                        backstab = backstabScale > 1.0f;
+                    }
+                }
+
                 float damageScale = 1.0f;
                 if (const auto* needs = registry.try_get<ecs::Needs>(attacker);
                     needs != nullptr && std::isfinite(needs->damageScale)) {
@@ -871,7 +919,8 @@ void CombatSystem::Update(ecs::EcsWorld& world, float dt) {
                 ecs::DamageEvent event;
                 event.sourceId = world.IdOf(attacker).id;
                 event.type = attack.type;
-                event.amount = FiniteNonNegative(attack.damage) * damageScale;
+                event.amount = FiniteNonNegative(attack.damage) * damageScale *
+                               backstabScale;
                 event.dirX = dirX;
                 event.dirY = dirY;
                 event.knockback = FiniteNonNegative(attack.knockback);
@@ -884,6 +933,10 @@ void CombatSystem::Update(ecs::EcsWorld& world, float dt) {
                     if (!outcome.blocked) {
                         // 被普通格挡的伤害不是“真实命中”，不进入 m_hits/经验。
                         ++m_stats.hits;
+                        if (backstab) {
+                            ++m_stats.backstabs;
+                            backstabApplied = true;
+                        }
                         const auto* targetHealth =
                             registry.try_get<ecs::Health>(candidate.e);
                         const auto* lastDamage =
@@ -895,11 +948,17 @@ void CombatSystem::Update(ecs::EcsWorld& world, float dt) {
                             targetHealth->current <= 0.0f;
                         m_hits.push_back(HitInfo{
                             attacker, candidate.e, dealt, lethal,
-                            outcome.poiseBroken});
+                            outcome.poiseBroken, backstab});
                         if (m_hitFeedbackCallback) {
                             m_hitFeedbackCallback(HitFeedback{
                                 attacker, candidate.e, dealt, lethal,
-                                outcome.poiseBroken});
+                                outcome.poiseBroken, backstab});
+                        }
+                        if (backstab) {
+                            ZL_INFO(kLogModule,
+                                    "背刺命中：{} -> {}，伤害 {:.1f}（倍率 x{:.2f}）",
+                                    event.sourceId, world.IdOf(candidate.e).id,
+                                    dealt, backstabScale);
                         }
                     }
                 }

@@ -14,20 +14,26 @@
 
 #include <glm/glm.hpp>
 
+#include "characters/systems/StealthRules.h"
 #include "net/SocialProtocol.h"
 #include "ecs/EcsWorld.h"
 #include "game/BaseSiege.h"
 #include "game/BuildingRules.h"
+#include "game/Companion.h"
 #include "game/Fire.h"
 #include "game/Forage.h"
 #include "game/ForageComponents.h"
 #include "game/Homestead.h"
 #include "game/Missions.h"
 #include "game/Poi.h"
+#include "game/PoiComponents.h"
 #include "game/ProgressionRules.h"
 #include "game/Settlement.h"
 #include "game/Sleeping.h"
 #include "game/StrategicState.h"
+#include "game/Throwing.h"
+#include "game/Traps.h"
+#include "game/VehicleMods.h"
 #include "game/VehicleSpike.h"
 #include "game/WorldEvent.h"
 #include "items/LootTable.h"
@@ -165,6 +171,11 @@ public:
         std::uint64_t worldEventChoicesRejected = 0;
         std::uint64_t projectilesFired = 0;
         std::uint64_t projectilesHit = 0;
+        std::uint64_t throwsStarted = 0;
+        std::uint64_t throwsResolved = 0;
+        std::uint64_t throwsRejected = 0;
+        std::uint64_t throwsRecovered = 0;
+        std::uint64_t throwsBroken = 0;
         std::uint64_t effectsSpawned = 0;
         std::uint64_t profileRestores = 0;
         std::uint64_t profileSaves = 0;
@@ -204,6 +215,7 @@ public:
     std::uint16_t NetworkPort() const;
     std::uint64_t ContentHash() const { return m_options.contentHash; }
     std::size_t SessionCount() const { return m_sessions.size(); }
+    std::size_t InFlightThrowCount() const { return m_serverThrows.size(); }
     NetworkStats GetNetworkStats() const { return m_networkStats; }
     // M25-T3/M26：服务器权威载具 StableId；主载具用于兼容旧测试/存档。
     std::uint64_t VehicleStableId() const {
@@ -275,6 +287,8 @@ private:
         // M23-F1-T6：服务器权威远程武器运行时（冷却/换弹），不进入存档。
         items::RangedWeaponRuntime rangedWeapon;
         std::uint32_t rangedShotSerial = 0;
+        bool throwUsed = false;
+        std::uint64_t lastThrowTick = 0;
         // M23-F2a-T6：服务器权威采集/钓鱼动作与附近节点缓存。
         ServerSurvivalAction survival;
         // M23-F2b-T6：服务器权威动物剥取动作。
@@ -300,6 +314,7 @@ private:
         std::uint64_t demolishConfirmExpiresTick = 0;
         bool stateDirty = true;
         std::uint64_t lastStateTick = 0;
+        float stealthHealth = -1.0f;
         std::uint32_t statusSequence = 0;
         std::uint8_t statusTone = 0;
         std::string status;
@@ -348,17 +363,23 @@ private:
         float x, float y, int z, float range, float* outDistance = nullptr);
     void EnsureServerVehicles();
     void AdoptServerVehicle(ecs::Entity entity, bool restored = true);
+    game::VehicleModStats ServerVehicleModStats(
+        const ServerVehicleRuntime& vehicle) const;
+    void SyncServerVehicleModStorage(ServerVehicleRuntime& vehicle);
     void TickServerVehicles(float dt);
     void TickServerVehicle(ServerVehicleRuntime& vehicle, float dt);
     bool ApplyServerVehicleRam(
         ServerVehicleRuntime& vehicle,
-        const game::VehicleMotion* previousMotion = nullptr);
+        const game::VehicleMotion* previousMotion,
+        const game::VehicleModStats& modStats);
     bool ApplyServerVehicleVehicleCollisions(
         ServerVehicleRuntime& vehicle,
         const std::vector<std::uint64_t>& targets,
-        const game::VehicleMotion& previousMotion);
+        const game::VehicleMotion& previousMotion,
+        const game::VehicleModStats& modStats);
     bool ApplyServerVehicleAttacks(ServerVehicleRuntime& vehicle,
-                                   SessionPlayer& session);
+                                   SessionPlayer& session,
+                                   const game::VehicleModStats& modStats);
     void EmitServerVehicleNoise(ServerVehicleRuntime& vehicle,
                                 SessionPlayer& session);
     void SyncServerVehicleToEcs(ServerVehicleRuntime& vehicle);
@@ -392,12 +413,17 @@ private:
     bool HonkServerVehicleHorn(SessionPlayer& session, std::string* error);
     bool ServiceServerVehicle(SessionPlayer& session,
                               const net::Command& command, std::string* error);
+    bool ModifyServerVehicleMod(SessionPlayer& session,
+                                const net::Command& command, bool install,
+                                std::string* error);
     void ReleaseServerVehicleSeat(SessionPlayer& session, bool placeAtExit,
                                   std::string_view reason);
     void PlacePlayerOutsideServerVehicle(ecs::Entity player);
     SessionPlayer* FindSessionByPlayerStableId(std::uint64_t stableId);
     // X-F1 2b-2b：服务器权威世界落盘（结构 diff + 实体/仓库存物；不含玩家实体）。
     bool SaveWorld(const char* reason);
+    // M33-F3-T6：玩家断线/死亡时让归属同伴回所属聚落待命，保留 owner/StableId。
+    void StandbyOwnedCompanion(std::uint64_t ownerStableId, const char* reason);
     // M31-T8：每会话兴趣窗口并集；无会话时退回默认出生点。
     std::vector<glm::vec2> CollectInterestFocuses() const;
     bool ProfilePosition(const PlayerProfile& profile, glm::vec2* out) const;
@@ -405,6 +431,11 @@ private:
     void RestoreServerForageState();
     void StoreServerForageState();
     void StoreServerSettlementState();
+    bool SetServerStealth(SessionPlayer& session, ecs::Entity player,
+                          bool crouched, std::string* error);
+    void ResetServerStealth(SessionPlayer& session, ecs::Entity player,
+                            const char* reason);
+    void UpdateServerStealth();
     void FillPlayerState(const SessionPlayer& session, net::PlayerState* state);
     void BroadcastSnapshots();
     // M32-T7：服务器权威战略快照；旧客户端忽略未知 magic。
@@ -483,6 +514,28 @@ private:
     bool AcceptSettlementMission(ecs::Entity player, SessionPlayer& session,
                                  const net::Command& command,
                                  std::string* error);
+    bool RecruitCompanion(ecs::Entity player, SessionPlayer& session,
+                          const net::Command& command, std::string* error);
+    bool DismissCompanion(ecs::Entity player, SessionPlayer& session,
+                          const net::Command& command, std::string* error);
+    // M33-F3-T7：同伴指令/赠礼/个人委托/救援。
+    bool SetCompanionCommandAction(ecs::Entity player, SessionPlayer& session,
+                                   const net::Command& command,
+                                   std::string* error);
+    bool GiftToCompanionAction(ecs::Entity player, SessionPlayer& session,
+                               const net::Command& command,
+                               std::string* error);
+    bool AcceptCompanionQuestAction(ecs::Entity player,
+                                    SessionPlayer& session,
+                                    const net::Command& command,
+                                    std::string* error);
+    bool AbandonCompanionQuestAction(ecs::Entity player,
+                                     SessionPlayer& session,
+                                     const net::Command& command,
+                                     std::string* error);
+    bool RescueCompanionAction(ecs::Entity player, SessionPlayer& session,
+                               const net::Command& command,
+                               std::string* error);
     void EnsureServerMerchant();
     void EnsureServerSettlementNpcs();
     void TickHomestead(float dt);
@@ -543,6 +596,31 @@ private:
     bool FireProjectile(SessionPlayer& session, const net::Command& command);
     bool FireRanged(SessionPlayer& session, const net::Command& command);
     bool ReloadRanged(SessionPlayer& session);
+    struct ServerThrow {
+        std::uint64_t ownerStableId = 0;
+        std::string defId;
+        std::string name;
+        int z = 0;
+        float targetX = 0.0f;
+        float targetY = 0.0f;
+        float directionX = 1.0f;
+        float directionY = 0.0f;
+        float remainingSeconds = 0.0f;
+        float damage = 0.0f;
+        float impactRadius = 0.0f;
+        float noiseRadius = 0.0f;
+        float fireRadius = 0.0f;
+        float fireMinutes = 0.0f;
+        float itemCondition = 1.0f;
+        bool returnable = false;
+        float breakChance = 0.0f;
+        bool wallClipped = false;
+    };
+    bool ThrowItemAction(SessionPlayer& session, const net::Command& command,
+                         std::string* error);
+    void UpdateServerThrows(float dt);
+    void SettleServerThrows(const char* reason, std::uint64_t ownerStableId = 0);
+    void ResolveServerThrow(ServerThrow& pending);
     bool IgniteFireAction(SessionPlayer& session, const net::Command& command,
                           std::string* error);
     bool ExtinguishFireAction(SessionPlayer& session,
@@ -594,6 +672,41 @@ private:
                                 int* wy) const;
     int CountServerPoiGuards(std::string_view poiId) const;
     bool ServerPoiTargetSearched(const game::PoiDef& poi) const;
+    bool FindServerPoiStageEnemyCell(const game::PoiDef& poi,
+                                     const game::PoiStageDef& stage, int index,
+                                     float originX, float originY, int* wx,
+                                     int* wy) const;
+    ecs::Entity SpawnServerPoiStageEnemy(
+        const game::PoiDef& poi, const game::PoiStageDef& stage,
+        game::PoiStageEnemyRole role, game::PoiGuardKind kind, int index,
+        float originX, float originY);
+    void EnsureServerPoiStageEnemies(const game::PoiDef& poi,
+                                     game::PoiProgress* progress);
+    void UpdateServerPoiBossMechanics(const game::PoiDef& poi,
+                                      const game::PoiProgress& progress,
+                                      float dt);
+    void ClearServerPoiStageEnemies(std::string_view poiId,
+                                    std::string_view stageId = {});
+    bool ServerPoiPlayerNearStart(const game::PoiDef& poi, float x,
+                                  float y) const;
+    void FailServerPoiOnWipe();
+    ecs::PoiWorldProgress* ServerPoiWorldProgress();
+    void TickServerPoiStages(float dt);
+    bool InteractPoi(ecs::Entity player, SessionPlayer& session,
+                     const net::Command& command, std::string* error);
+    bool ServerPlayerHasPoiKeyItem(ecs::Entity player,
+                                   const game::PoiKeyDef& key) const;
+    bool ServerConsumePoiKeyItem(ecs::Entity player,
+                                 const game::PoiKeyDef& key);
+    void GrantServerPoiStageReward(SessionPlayer& session,
+                                   const game::PoiDef& poi,
+                                   const game::PoiStageDef& stage);
+    void GrantServerPoiStageKeys(SessionPlayer& session,
+                                 const game::PoiDef& poi,
+                                 const game::PoiStageDef& stage);
+    void ApplyServerPoiStageUpdate(const game::PoiDef& poi,
+                                   game::PoiProgress& progress,
+                                   const game::PoiStageUpdate& update);
     void TickServerPoiTasks();
     void TickServerObjectives();
     void RecordServerMissionEvent(SessionPlayer& session,
@@ -641,6 +754,9 @@ private:
     std::unique_ptr<game::MissionConfig> m_missionConfig;
     std::unique_ptr<game::SettlementConfig> m_settlements;
     std::unique_ptr<game::WorldEventConfig> m_worldEvents;
+    std::unique_ptr<game::CompanionConfig> m_companions;
+    std::unique_ptr<game::VehicleModsConfig> m_vehicleMods;
+    std::unique_ptr<game::TrapDefsConfig> m_traps;
     std::unique_ptr<game::StrategicConfig> m_strategic;
     std::unique_ptr<save::ComponentRegistry> m_saveComponents;
     std::unique_ptr<save::SaveManager> m_saveManager;
@@ -687,6 +803,7 @@ private:
         bool guardsSpawned = false;
     };
     std::unordered_map<std::string, ServerPoiRuntime> m_poiRuntime;
+    std::unordered_map<std::string, float> m_serverPoiBossResetTimers;
     std::unordered_set<std::string> m_serverEventReady;
     std::unordered_set<std::string> m_serverColdSnapEvents;
     int m_serverEventDay = 0;
@@ -703,12 +820,17 @@ private:
     float m_attackKnockback = 3.0f;
     float m_attackStagger = 0.35f;
     float m_attackWear = 0.0f;
+    characters::StealthRuleConfig m_stealthRules;
     bool m_pvpEnabled = false;
     float m_gunshotRadius = 30.0f;
     float m_projectileDamage = 24.0f;
     float m_projectileSpeed = 18.0f;
     float m_projectileLifetime = 2.5f;
     float m_maxProjectileDistance = 24.0f;
+    game::ThrowingConfig m_throwingConfig;
+    std::uint64_t m_throwCooldownTicks = 42;
+    std::vector<ServerThrow> m_serverThrows;
+    std::mt19937 m_throwRng{20261118u};
     std::uint32_t m_stateSendIntervalTicks = 6;
     std::uint32_t m_socialStateIntervalTicks = 30;
     std::uint32_t m_structureSyncIntervalTicks = 180;

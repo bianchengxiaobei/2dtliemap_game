@@ -42,7 +42,7 @@ TEST_CASE("M7-T5：mod.json 解析与校验") {
     CHECK(info.id == "hello_mod");
     CHECK(info.name == "hello_mod");
     CHECK(info.version == "0.0.0");
-    CHECK(info.apiVersion == 1);
+    CHECK(info.apiVersion == 2);
     CHECK(info.backend == "lua");
     CHECK(info.mainScript == "scripts/main.lua");
     CHECK(info.loadOrder == 100);
@@ -66,6 +66,45 @@ TEST_CASE("M7-T5：mod.json 解析与校验") {
     CHECK_FALSE(script::ModLoader::ParseModInfo(R"({"loadOrder": "fast"})", dir, "lua", info,
                                                 error));
     CHECK(error.find("类型") != std::string::npos);
+}
+
+TEST_CASE("M35-F4-T5：v1 mod 旧 API 回归与 API 版本告警") {
+    script::ScriptApi api;
+    core::EventBus bus;
+    script::ScriptManager manager;
+    {
+        auto lua = std::make_unique<script::LuaRuntime>();
+        lua->SetApi(&api);
+        manager.RegisterRuntime(std::move(lua));
+    }
+    REQUIRE(manager.InitializeAll());
+    manager.SetEventBus(&bus);
+    script::EventBridge bridge(bus, manager);
+
+    TempModRoot mods;
+    mods.WriteManifest("legacy_v1",
+                       R"({"id": "legacy_v1", "api": 1, "backend": "lua"})");
+    mods.WriteLua("legacy_v1", R"lua(
+Log.Info('v1 loaded api=' .. Game.GetApiVersion())
+Events.On('OnTick', function(e)
+    Log.Info('v1 tick=' .. e.tick)
+end)
+)lua");
+
+    LogCapture capture;
+    script::ModLoader loader(manager, "lua");
+    const script::ModLoader::Result result = loader.ScanAndLoad(mods.root);
+    CHECK(result.loaded == 1);
+    CHECK(manager.IsModLoaded("legacy_v1"));
+
+    std::string logs = capture.Str();
+    CHECK(logs.find("v1 loaded api=2") != std::string::npos);
+    CHECK(logs.find("API") != std::string::npos);
+
+    bus.EmitQueued(core::kOnTick, static_cast<std::int64_t>(3));
+    bus.FlushQueued();
+    logs = capture.Str();
+    CHECK(logs.find("v1 tick=3") != std::string::npos);
 }
 
 TEST_CASE("M7-T5：mods 目录扫描（失败隔离 + 加载顺序）") {

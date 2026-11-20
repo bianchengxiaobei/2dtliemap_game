@@ -75,6 +75,7 @@ private:
     Rml::Element* m_lootTitle = nullptr;
     Rml::Element* m_lootStacks = nullptr;
     Rml::Element* m_storageActions = nullptr;
+    Rml::Element* m_storageVehicleMods = nullptr;
     Rml::Element* m_storageStoreAll = nullptr;
     Rml::Element* m_storageTakeAll = nullptr;
     Rml::Element* m_storageSort = nullptr;
@@ -82,12 +83,15 @@ private:
     std::array<Rml::Element*, kInventoryBagSlots> m_bagSlots{};
     std::array<Rml::Element*, kInventoryBagSlots> m_bagNames{};
     std::array<Rml::Element*, kInventoryBagSlots> m_bagCounts{};
+    std::array<Rml::Element*, kInventoryBagSlots> m_bagThrows{};
     std::array<Rml::Element*, kInventoryEquipmentSlots> m_equipmentSlots{};
     std::array<Rml::Element*, kInventoryEquipmentSlots> m_equipmentNames{};
     std::array<Rml::Element*, kInventoryEquipmentSlots> m_equipmentCounts{};
+    std::array<Rml::Element*, kInventoryEquipmentSlots> m_equipmentThrows{};
     std::array<Rml::Element*, kInventoryLootSlots> m_lootSlots{};
     std::array<Rml::Element*, kInventoryLootSlots> m_lootNames{};
     std::array<Rml::Element*, kInventoryLootSlots> m_lootCounts{};
+    std::array<Rml::Element*, kInventoryLootSlots> m_lootThrows{};
     std::array<Rml::Element*, 6> m_contextButtons{};
     struct ListenerBinding {
         Rml::Element* element = nullptr;

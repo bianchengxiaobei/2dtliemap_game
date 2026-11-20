@@ -680,3 +680,80 @@ TEST_CASE("M30-T4：格挡减速与闪避覆盖 MoveIntent") {
     CHECK(world.Registry().get<ecs::MoveIntent>(entity).x ==
           doctest::Approx(2.0f));
 }
+
+TEST_CASE("M35-F2-T2：OnDamage 回调覆盖轻击/格挡/闪避/火焰与致死") {
+    EcsWorld world;
+    const auto attacker = AddActor(world, 0.0f, 0.0f);
+    const auto target = AddActor(world, 1.0f, 0.0f);
+
+    std::vector<CombatSystem::DamageApplied> applied;
+    CombatSystem combat;
+    combat.SetDamageAppliedCallback(
+        [&](const CombatSystem::DamageApplied& value) {
+            applied.push_back(value);
+        });
+
+    // 轻击：一次命中一条，字段来自实际扣血。
+    world.Registry().emplace<AttackIntent>(attacker, MakeIntent(20.0f, 0.0f));
+    combat.Update(world, kDt);
+    REQUIRE(applied.size() == 1u);
+    CHECK(applied[0].targetId == world.IdOf(target).id);
+    CHECK(applied[0].sourceId == world.IdOf(attacker).id);
+    CHECK(applied[0].type == DamageType::Blunt);
+    CHECK(applied[0].amount == doctest::Approx(20.0f));
+    CHECK(applied[0].remainingHp == doctest::Approx(80.0f));
+    CHECK_FALSE(applied[0].lethal);
+    CHECK_FALSE(applied[0].blocked);
+
+    // 普通格挡：剩余伤害也发，blocked=true。
+    const auto guard = AddActor(world, 3.0f, 0.0f);
+    AddGuard(world, guard);
+    DamageEvent blockedHit = MakeBlunt(20.0f);
+    blockedHit.sourceId = 77;
+    CHECK(combat.ApplyDamage(world, guard, blockedHit));
+    REQUIRE(applied.size() == 2u);
+    CHECK(applied[1].targetId == world.IdOf(guard).id);
+    CHECK(applied[1].sourceId == 77u);
+    CHECK(applied[1].amount == doctest::Approx(7.0f));
+    CHECK(applied[1].remainingHp == doctest::Approx(93.0f));
+    CHECK(applied[1].blocked);
+    CHECK_FALSE(applied[1].lethal);
+
+    // 闪避：不扣血，也不发事件。
+    const auto dodger = AddActor(world, 5.0f, 0.0f);
+    CombatStance dodge;
+    dodge.dodgeInvulnLeft = 0.1f;
+    world.Registry().emplace<CombatStance>(dodger, dodge);
+    DamageEvent dodgedHit = MakeBlunt(20.0f);
+    dodgedHit.sourceId = 88;
+    CHECK_FALSE(combat.ApplyDamage(world, dodger, dodgedHit));
+    CHECK(applied.size() == 2u);
+
+    // 火焰：类型为 Fire，来源可为 0（环境）。
+    const auto burning = AddActor(world, 7.0f, 0.0f);
+    DamageEvent fireHit;
+    fireHit.type = DamageType::Fire;
+    fireHit.amount = 5.0f;
+    CHECK(combat.ApplyDamage(world, burning, fireHit));
+    REQUIRE(applied.size() == 3u);
+    CHECK(applied[2].type == DamageType::Fire);
+    CHECK(applied[2].amount == doctest::Approx(5.0f));
+    CHECK(applied[2].remainingHp == doctest::Approx(95.0f));
+    CHECK(applied[2].sourceId == 0u);
+    CHECK_FALSE(applied[2].blocked);
+
+    // 零伤害：不刷事件。
+    DamageEvent zero = MakeBlunt(0.0f);
+    CHECK(combat.ApplyDamage(world, burning, zero));
+    CHECK(applied.size() == 3u);
+
+    // 致死：lethal=true，remainingHp 钳制到 0。
+    DamageEvent kill = MakeBlunt(200.0f);
+    kill.sourceId = 99;
+    CHECK(combat.ApplyDamage(world, burning, kill));
+    REQUIRE(applied.size() == 4u);
+    CHECK(applied[3].sourceId == 99u);
+    CHECK(applied[3].amount == doctest::Approx(200.0f));
+    CHECK(applied[3].remainingHp == doctest::Approx(0.0f));
+    CHECK(applied[3].lethal);
+}

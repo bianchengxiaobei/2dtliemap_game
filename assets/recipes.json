@@ -60,6 +60,19 @@
       "time": 3.0
     },
     {
+      "id": "craft_molotov",
+      "name": "燃烧瓶",
+      "category": "crafting",
+      "output": { "item": "molotov", "count": 1 },
+      "ingredients": [
+        { "item": "empty_bottle", "count": 1 },
+        { "item": "rag", "count": 1 },
+        { "item": "fuel_can", "count": 1 }
+      ],
+      "station": "workbench",
+      "time": 1.5
+    },
+    {
       "id": "campfire_beans",
       "name": "烤豆子",
       "category": "cooking",

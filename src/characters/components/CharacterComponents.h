@@ -67,6 +67,19 @@ struct MoveIntent {
     float y = 0.0f;
 };
 
+struct StealthState {
+    bool crouched = false;
+    float speedScale = 1.0f;
+    float noiseScale = 1.0f;
+    float visibilityScale = 1.0f;
+};
+
+// M34-F1-T5：远端玩家只读姿态；不参与本地 AI/移动结算。
+struct RemoteStealth {
+    bool crouched = false;
+    bool moving = false;
+};
+
 // 4 向朝向（屏幕语义，取值即帧序：Down/Left/Right/Up）。
 // 由移动速度在屏幕坐标下的主轴导出（AnimationSystem）。
 enum class Direction : std::uint8_t {

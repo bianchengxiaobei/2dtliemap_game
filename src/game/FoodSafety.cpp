@@ -148,6 +148,7 @@ void AdvanceFoodStates(ecs::EcsWorld& world, float dtSeconds,
                     registry.get_or_emplace<ecs::LastDamage>(entity);
                 last.cause = ecs::DamageCause::Poison;
                 last.amount = damage;
+                last.sourceId = 0;  // 食物中毒：无击杀者
             }
         });
 }

@@ -156,6 +156,28 @@ bool ValidPoiProgress(const PlayerState& state) {
     return true;
 }
 
+bool ValidPoiStageProgress(const PlayerState& state) {
+    if (state.poiStageProgress.size() > kMaxPlayerStatePoiStages) {
+        return false;
+    }
+    std::unordered_set<std::string> seen;
+    for (const PlayerPoiStageProgress& poi : state.poiStageProgress) {
+        if (!ValidRuntimeId(poi.id) || !seen.insert(poi.id).second ||
+            poi.stageIndex > 8 || poi.stageCount > 8 ||
+            poi.completedStageCount > 8 || poi.flags > 7 ||
+            poi.currentStage.size() > 64 ||
+            poi.chosenBranch.size() > 64 ||
+            (!poi.currentStage.empty() &&
+             !ValidRuntimeId(poi.currentStage)) ||
+            (!poi.chosenBranch.empty() &&
+             !ValidRuntimeId(poi.chosenBranch)) ||
+            (poi.stageCount == 0 && !poi.currentStage.empty())) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ValidMissionProgress(const PlayerState& state) {
     if (state.missions.size() > kMaxPlayerStateMissions ||
         state.missionLastDay < 0 || state.missionLastDay > 1000000 ||
@@ -297,6 +319,21 @@ bool ValidCombat(const PlayerState& state) {
     }
     return combat.staminaMax > 0.0f && combat.staminaMax <= 1.0e6f &&
            combat.stamina >= 0.0f && combat.stamina <= combat.staminaMax;
+}
+
+bool ValidStealth(const PlayerState& state) {
+    const PlayerStealthState& stealth = state.stealth;
+    if (!std::isfinite(stealth.noiseRadius) ||
+        !std::isfinite(stealth.visibilityScale)) {
+        return false;
+    }
+    if (!stealth.valid) {
+        return !stealth.crouched && stealth.noiseRadius == 2.5f &&
+               stealth.visibilityScale == 1.0f;
+    }
+    return stealth.noiseRadius >= 0.0f && stealth.noiseRadius <= 10.0f &&
+           stealth.visibilityScale >= 0.1f &&
+           stealth.visibilityScale <= 1.0f;
 }
 
 bool ValidSleep(const PlayerState& state) {
@@ -721,6 +758,10 @@ std::vector<std::uint8_t> EncodePlayerState(const PlayerState& state,
         SetError(error, "玩家状态 POI 字段非法");
         return {};
     }
+    if (!ValidPoiStageProgress(state)) {
+        SetError(error, "玩家状态 POI 阶段字段非法");
+        return {};
+    }
     if (!ValidMissionProgress(state)) {
         SetError(error, "玩家状态任务字段非法");
         return {};
@@ -767,6 +808,10 @@ std::vector<std::uint8_t> EncodePlayerState(const PlayerState& state,
     }
     if (!ValidCombat(state)) {
         SetError(error, "玩家状态战斗字段非法");
+        return {};
+    }
+    if (!ValidStealth(state)) {
+        SetError(error, "玩家状态潜行字段非法");
         return {};
     }
 
@@ -1074,6 +1119,26 @@ std::vector<std::uint8_t> EncodePlayerState(const PlayerState& state,
         }
         writer.I32(entry.score);
     }
+
+    writer.U16(static_cast<std::uint16_t>(state.poiStageProgress.size()));
+    for (const PlayerPoiStageProgress& poi : state.poiStageProgress) {
+        if (!writer.String(poi.id, 64, false, error)) {
+            return {};
+        }
+        writer.U8(poi.stageIndex);
+        writer.U8(poi.stageCount);
+        writer.U8(poi.completedStageCount);
+        writer.U8(poi.flags);
+        if (!writer.String(poi.currentStage, 64, true, error) ||
+            !writer.String(poi.chosenBranch, 64, true, error)) {
+            return {};
+        }
+    }
+
+    writer.U8(state.stealth.valid ? 1 : 0);
+    writer.U8(state.stealth.crouched ? 1 : 0);
+    writer.F32(state.stealth.noiseRadius);
+    writer.F32(state.stealth.visibilityScale);
 
     if (writer.Bytes().size() > kMaxPlayerStateBytes) {
         SetError(error, "玩家状态超过单包字节上限");
@@ -1729,6 +1794,46 @@ bool DecodePlayerState(std::span<const std::uint8_t> bytes, PlayerState* state,
         }
         if (!ValidSettlementReputation(decoded)) {
             SetError(error, "玩家状态聚落声望数值非法");
+            return false;
+        }
+    }
+    if (version >= 22) {
+        std::uint16_t count = 0;
+        if (!reader.U16(&count) || count > kMaxPlayerStatePoiStages) {
+            SetError(error, "玩家状态 POI 阶段数量非法");
+            return false;
+        }
+        decoded.poiStageProgress.resize(count);
+        for (PlayerPoiStageProgress& poi : decoded.poiStageProgress) {
+            if (!reader.String(&poi.id, 64, false) ||
+                !reader.U8(&poi.stageIndex) ||
+                !reader.U8(&poi.stageCount) ||
+                !reader.U8(&poi.completedStageCount) ||
+                !reader.U8(&poi.flags) ||
+                !reader.String(&poi.currentStage, 64, true) ||
+                !reader.String(&poi.chosenBranch, 64, true)) {
+                SetError(error, "玩家状态 POI 阶段字段非法");
+                return false;
+            }
+        }
+        if (!ValidPoiStageProgress(decoded)) {
+            SetError(error, "玩家状态 POI 阶段数值非法");
+            return false;
+        }
+    }
+    if (version >= 23) {
+        std::uint8_t valid = 0;
+        std::uint8_t crouched = 0;
+        if (!reader.U8(&valid) || valid > 1 || !reader.U8(&crouched) ||
+            crouched > 1 || !reader.F32(&decoded.stealth.noiseRadius) ||
+            !reader.F32(&decoded.stealth.visibilityScale)) {
+            SetError(error, "玩家状态潜行字段非法");
+            return false;
+        }
+        decoded.stealth.valid = valid != 0;
+        decoded.stealth.crouched = crouched != 0;
+        if (!ValidStealth(decoded)) {
+            SetError(error, "玩家状态潜行数值非法");
             return false;
         }
     }

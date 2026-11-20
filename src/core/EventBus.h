@@ -17,8 +17,12 @@ namespace zl::core {
 // 事件表 v1 见 docs/03 §5，命名 OnXxx（M5-T4：OnSound = SoundEvent；
 // M7-T4：多字段事件载荷见 GameEvents.h）。
 using EventPayload = std::variant<std::monostate, bool, int64_t, double, std::string, SoundEvent,
-                                   PlayerEvent, ZombieEvent, ItemEvent, ChunkEvent, UiEvent,
-                                   MenuChangedEvent, InventoryChangedEvent>;
+                                   WorldStartEvent, WorldExitEvent, PlayerEvent, DamageEvent,
+                                   ZombieEvent, AnimalKilledEvent,
+                                   ItemEvent, ItemUsedEvent, LootSearchedEvent, CraftStartEvent,
+                                   CraftFinishedEvent, BuildPlacedEvent, BuildDemolishedEvent,
+                                   BuildRepairedEvent, ChunkEvent, UiEvent, MenuChangedEvent,
+                                   InventoryChangedEvent>;
 
 struct Event {
     std::string key;

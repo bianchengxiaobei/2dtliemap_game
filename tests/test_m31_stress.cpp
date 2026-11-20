@@ -260,7 +260,12 @@ TEST_CASE("M31-T9 1000+ 脏 chunk 后台写盘、文件统计与读档") {
             << "ms load=" << loadMs << "ms";
     MESSAGE(message.str());
 
-    CHECK(maxSnapshotMs < 5.0);
+#ifdef NDEBUG
+    constexpr double kSnapshotBudgetMs = 5.0;
+#else
+    constexpr double kSnapshotBudgetMs = 20.0;
+#endif
+    CHECK(maxSnapshotMs < kSnapshotBudgetMs);
     CHECK(queueMs < 100.0);
     CHECK(totalWriteMs < 15000.0);
     CHECK(loadMs < 8000.0);

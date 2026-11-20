@@ -55,6 +55,10 @@ void Configure(core::Config& config, const TempRoot& root) {
     config.Set("crops.file", (source / "assets" / "crops.json").generic_string());
     config.Set("settlements.file",
                (source / "assets" / "settlements.json").generic_string());
+    config.Set("companions.file",
+               (source / "assets" / "companions.json").generic_string());
+    config.Set("vehicleMods.file",
+               (source / "assets" / "vehicle_mods.json").generic_string());
     config.Set("script.modsDir", (root.path / "mods").generic_string());
 }
 
@@ -136,7 +140,8 @@ std::uint64_t BundleHash(const game::ContentBundle& content,
         content.items, content.recipes, content.modContent.buildables,
         content.lootTables, content.poiConfig, content.missionConfig,
         game::ComputeTreeHash(modsDir), &content.forage, &content.animals,
-        &content.crops, &content.settlements, &content.worldEvents);
+        &content.crops, &content.settlements, &content.worldEvents,
+        &content.companions, &content.vehicleMods);
 }
 
 }  // namespace
@@ -169,6 +174,8 @@ TEST_CASE("X3-T2：候选事务一次性加载物品/配方/建造/战利品/POI
     CHECK(content.modContent.lootFiles.size() == 1u);
     CHECK(content.modContent.poiFiles.size() == 1u);
     CHECK(content.modContent.missionFiles.size() == 1u);
+    CHECK(content.companions.enabled);
+    CHECK(content.companions.Find("companion_medic_lin") != nullptr);
 }
 
 TEST_CASE("X3-T2：成功事务替换旧内容并移除已删除定义") {

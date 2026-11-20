@@ -173,3 +173,48 @@ TEST_CASE("F5-T2 base status reports farm stages and crop warnings") {
     CHECK(clear.find("农田 0") != std::string::npos);
     CHECK(tone == "info");
 }
+
+
+TEST_CASE("M34-F2-T6 投掷 HUD 显示射程、回收、冷却与最近结果") {
+    zl::ui::HudState state;
+    std::string tone;
+    CHECK(zl::ui::ThrowStatusText(state, &tone).empty());
+    CHECK(tone == "info");
+
+    state.throwValid = true;
+    state.throwName = "石块";
+    state.throwRange = 7.5f;
+    state.throwReturnable = true;
+    state.throwBreakChance = 0.05f;
+    std::string text = zl::ui::ThrowStatusText(state, &tone);
+    CHECK(text.find("可投掷：石块") != std::string::npos);
+    CHECK(text.find("射程 7.5 格") != std::string::npos);
+    CHECK(text.find("回收 95%") != std::string::npos);
+    CHECK(tone == "info");
+
+    state.throwCooldownRemaining = 0.4f;
+    state.throwCooldownDuration = 0.7f;
+    state.throwLastResult = "命中 · 回收";
+    state.throwLastTone = "ok";
+    text = zl::ui::ThrowStatusText(state, &tone);
+    CHECK(text.find("冷却 0.4s/0.7s") != std::string::npos);
+    CHECK(text.find("上次：命中 · 回收") != std::string::npos);
+    CHECK(tone == "warn");
+
+    state.throwCooldownRemaining = 0.0f;
+    text = zl::ui::ThrowStatusText(state, &tone);
+    CHECK(text.find("冷却") == std::string::npos);
+    CHECK(tone == "ok");
+
+    state.throwValid = true;
+    state.throwName = "燃烧瓶";
+    state.throwRange = 8.0f;
+    state.throwReturnable = false;
+    state.throwFire = true;
+    state.throwFireRadius = 1.5f;
+    state.throwLastResult.clear();
+    state.throwLastTone = "info";
+    text = zl::ui::ThrowStatusText(state, &tone);
+    CHECK(text.find("火焰 1.5 格") != std::string::npos);
+    CHECK(text.find("回收") == std::string::npos);
+}

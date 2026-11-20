@@ -1,0 +1,45 @@
+{
+  "format": "traps-v1",
+  "defs": [
+    {
+      "id": "bear_trap",
+      "name": "捕兽夹",
+      "buildingId": "bear_trap",
+      "damage": 55.0,
+      "radius": 1.0,
+      "cooldownSeconds": 2.0,
+      "uses": 4,
+      "staggerSeconds": 2.0,
+      "noiseRadius": 0.0,
+      "triggerMask": ["zombie", "animal"],
+      "armSeconds": 1.0
+    },
+    {
+      "id": "tripwire_alarm",
+      "name": "绊线警报",
+      "buildingId": "tripwire_alarm",
+      "damage": 0.0,
+      "radius": 1.0,
+      "cooldownSeconds": 1.0,
+      "uses": 8,
+      "staggerSeconds": 0.0,
+      "noiseRadius": 18.0,
+      "triggerMask": ["zombie", "animal"],
+      "armSeconds": 1.0
+    },
+    {
+      "id": "fuel_trap",
+      "name": "燃油陷阱",
+      "buildingId": "fuel_trap",
+      "damage": 0.0,
+      "radius": 1.0,
+      "cooldownSeconds": 0.0,
+      "uses": 1,
+      "staggerSeconds": 0.0,
+      "noiseRadius": 0.0,
+      "triggerMask": ["zombie", "animal"],
+      "armSeconds": 1.0,
+      "fire": { "radius": 1.5, "minutes": 45.0 }
+    }
+  ]
+}

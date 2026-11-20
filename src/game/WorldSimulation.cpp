@@ -45,6 +45,9 @@
 #include "ecs/components/PhysicsComponents.h"
 #include "game/Armor.h"
 #include "game/Climate.h"
+#include "game/Companion.h"
+#include "game/CompanionInventory.h"
+#include "game/CompanionSystem.h"
 #include "game/FoodSafety.h"
 #include "game/FireSystem.h"
 #include "game/GroundItems.h"
@@ -305,6 +308,7 @@ struct WorldSimulation::Impl {
     std::unique_ptr<game::WeatherSystem> weatherSystem;
     std::unique_ptr<game::AnimalSystem> animalSystem;
     std::unique_ptr<game::SettlementNpcSystem> settlementNpcSystem;
+    std::unique_ptr<game::CompanionSystem> companionSystem;
     std::unique_ptr<game::FireSystem> fireSystem;
     float fireDamageAccumulator = 0.0f;
     game::ClimateParams climateParams;
@@ -405,6 +409,7 @@ struct WorldSimulation::Impl {
         registry.emplace<ecs::LocalControl>(entity, ecs::LocalControl{});
         registry.emplace<ecs::MoveInput>(entity, ecs::MoveInput{});
         registry.emplace<ecs::MoveIntent>(entity, ecs::MoveIntent{});
+        registry.emplace<ecs::StealthState>(entity, ecs::StealthState{});
         registry.emplace<ecs::PathRequest>(entity, ecs::PathRequest{});
         registry.emplace<ecs::PathFollow>(entity, ecs::PathFollow{});
         registry.emplace<ecs::AttackIntent>(entity, ecs::AttackIntent{});
@@ -524,6 +529,9 @@ struct WorldSimulation::Impl {
             if (!registry.all_of<ecs::MoveIntent>(entity)) {
                 registry.emplace<ecs::MoveIntent>(entity);
             }
+            if (!registry.all_of<ecs::StealthState>(entity)) {
+                registry.emplace<ecs::StealthState>(entity);
+            }
             if (!registry.all_of<ecs::PathRequest>(entity)) {
                 registry.emplace<ecs::PathRequest>(entity);
             }
@@ -532,6 +540,21 @@ struct WorldSimulation::Impl {
             }
             if (!registry.all_of<ecs::AttackIntent>(entity)) {
                 registry.emplace<ecs::AttackIntent>(entity);
+            }
+            if (registry.all_of<Companion>(entity)) {
+                (void)PrepareLoadedCompanion(*ecs, entity, options.items);
+                if (options.companions != nullptr) {
+                    const auto* identity =
+                        registry.try_get<Companion>(entity);
+                    auto* state = registry.try_get<CompanionState>(entity);
+                    const CompanionDef* def =
+                        identity != nullptr
+                            ? options.companions->Find(identity->defId)
+                            : nullptr;
+                    if (def != nullptr && state != nullptr) {
+                        RefreshCompanionQuestState(*def, state);
+                    }
+                }
             }
 
             if (isPlayer) {
@@ -700,6 +723,7 @@ struct WorldSimulation::Impl {
                         registry.get_or_emplace<ecs::LastDamage>(entity);
                     last.cause = ecs::DamageCause::Hypothermia;
                     last.amount = tick.healthDamage;
+                    last.sourceId = 0;  // 失温：无击杀者
                     if (wasAlive && health->current <= 0.0f) {
                         ZL_INFO("weather", "玩家因失温死亡（体温 {:.1f}°C）",
                                 static_cast<double>(climate.bodyC));
@@ -1054,6 +1078,23 @@ bool WorldSimulation::Init(std::string* error) {
             }
             s.hitFeedbacks.push_back(feedback);
         });
+    s.combatSystem->SetDamageAppliedCallback(
+        [&s](const characters::CombatSystem::DamageApplied& applied) {
+            if (s.options.events == nullptr) {
+                return;
+            }
+            core::DamageEvent event;
+            event.targetId = applied.targetId;
+            event.sourceId = applied.sourceId;
+            event.amount = applied.amount;
+            event.damageType = ecs::DamageTypeName(applied.type);
+            event.cause =
+                ecs::DamageCauseName(ecs::DamageCauseFromType(applied.type));
+            event.remainingHp = applied.remainingHp;
+            event.lethal = applied.lethal;
+            event.blocked = applied.blocked;
+            s.options.events->EmitQueued(core::kOnDamage, std::move(event));
+        });
     s.woundSystem = std::make_unique<characters::WoundSystem>();
     characters::PainParams painParams;
     painParams.perSeverity =
@@ -1369,6 +1410,13 @@ bool WorldSimulation::Init(std::string* error) {
         config.Get<double>("food.nutritionPoisonReduction", 0.5));
 
     s.ecs = std::make_unique<ecs::EcsWorld>();
+    if (s.options.pois != nullptr && s.options.pois->enabled) {
+        const ecs::Entity poiWorld =
+            s.ecs->CreateWithStableId(ecs::kPoiWorldProgressStableId);
+        if (poiWorld != ecs::EcsWorld::kNull) {
+            s.ecs->Registry().emplace<ecs::PoiWorldProgress>(poiWorld);
+        }
+    }
     if (s.options.spawnAnimals && s.options.animals != nullptr) {
         game::AnimalSystem::Params animalParams;
         animalParams.enabled = config.Get<bool>("animals.spawn.enabled", true);
@@ -1395,6 +1443,13 @@ bool WorldSimulation::Init(std::string* error) {
         [&s](ecs::Entity target, float amount) {
             entt::registry& registry = s.ecs->Registry();
             auto* equipment = registry.try_get<ecs::Equipment>(target);
+            if (equipment == nullptr) {
+                if (auto* companion =
+                        registry.try_get<CompanionState>(target);
+                    companion != nullptr) {
+                    equipment = &companion->equipment;
+                }
+            }
             if (equipment == nullptr) {
                 return;
             }
@@ -1450,36 +1505,47 @@ bool WorldSimulation::Init(std::string* error) {
     s.settlementNpcSystem = std::make_unique<game::SettlementNpcSystem>(
         s.options.settlements,
         [&s](int wx, int wy) { return !s.IsBlocked(wx, wy); });
-    s.settlementNpcSystem->SetDamageCallback(
-        [&s](ecs::Entity source, ecs::Entity target, float damage,
-             ecs::DamageType type) {
-            if (s.combatSystem == nullptr || s.ecs == nullptr ||
-                !s.ecs->Alive(source) || !s.ecs->Alive(target)) {
-                return false;
-            }
-            entt::registry& registry = s.ecs->Registry();
-            const auto* sourcePosition =
-                registry.try_get<ecs::Position>(source);
-            const auto* targetPosition =
-                registry.try_get<ecs::Position>(target);
-            if (sourcePosition == nullptr || targetPosition == nullptr) {
-                return false;
-            }
-            ecs::DamageEvent event;
-            event.sourceId = s.ecs->IdOf(source).id;
-            event.type = type;
-            event.amount = std::max(0.0f, damage);
-            const float dx = targetPosition->x - sourcePosition->x;
-            const float dy = targetPosition->y - sourcePosition->y;
-            const float length = std::sqrt(dx * dx + dy * dy);
-            if (length > 0.0001f) {
-                event.dirX = dx / length;
-                event.dirY = dy / length;
-            }
-            event.knockback = 0.8f;
-            event.staggerSeconds = 0.2f;
-            return s.combatSystem->ApplyDamage(*s.ecs, target, event);
-        });
+    const auto applyNpcDamage = [&s](ecs::Entity source, ecs::Entity target,
+                                     float damage, ecs::DamageType type) {
+        if (s.combatSystem == nullptr || s.ecs == nullptr ||
+            !s.ecs->Alive(source) || !s.ecs->Alive(target)) {
+            return false;
+        }
+        entt::registry& registry = s.ecs->Registry();
+        const auto* sourcePosition =
+            registry.try_get<ecs::Position>(source);
+        const auto* targetPosition =
+            registry.try_get<ecs::Position>(target);
+        if (sourcePosition == nullptr || targetPosition == nullptr) {
+            return false;
+        }
+        ecs::DamageEvent event;
+        event.sourceId = s.ecs->IdOf(source).id;
+        event.type = type;
+        event.amount = std::max(0.0f, damage);
+        const float dx = targetPosition->x - sourcePosition->x;
+        const float dy = targetPosition->y - sourcePosition->y;
+        const float length = std::sqrt(dx * dx + dy * dy);
+        if (length > 0.0001f) {
+            event.dirX = dx / length;
+            event.dirY = dy / length;
+        }
+        event.knockback = 0.8f;
+        event.staggerSeconds = 0.2f;
+        return s.combatSystem->ApplyDamage(*s.ecs, target, event);
+    };
+    s.settlementNpcSystem->SetDamageCallback(applyNpcDamage);
+    game::CompanionSystem::Options companionOptions;
+    if (s.options.config != nullptr) {
+        companionOptions =
+            game::LoadCompanionSystemOptions(*s.options.config);
+    }
+    s.companionSystem = std::make_unique<game::CompanionSystem>(
+        [&s](int wx, int wy) { return !s.IsBlocked(wx, wy); },
+        applyNpcDamage, companionOptions);
+    s.companionSystem->SetItemRegistry(s.options.items);
+    s.companionSystem->SetCompanionConfig(s.options.companions);
+    s.companionSystem->SetTrapDefs(s.options.traps);
     if (s.options.config != nullptr && s.options.strategic != nullptr &&
         s.options.strategic->enabled && s.options.settlements != nullptr) {
         RegionalSiegeConfig siege;
@@ -1745,6 +1811,11 @@ bool WorldSimulation::Init(std::string* error) {
                           }
                           s.settlementNpcSystem->Update(value, dt, hour, day);
                       });
+    systems.AddSystem("CompanionSystem", [&s](ecs::EcsWorld& value, float dt) {
+        if (s.companionSystem != nullptr) {
+            s.companionSystem->Update(value, dt);
+        }
+    });
     systems.AddSystem("PathFollowSystem", [&s](ecs::EcsWorld& value, float dt) {
         s.pathFollowSystem->Update(value, dt);
     });
@@ -2008,6 +2079,12 @@ bool WorldSimulation::Init(std::string* error) {
     ZL_INFO("sim", "模拟已就绪（无窗口可运行）：{} 个系统，世界 {}×{} chunks",
             systems.Count(), loadedMeta.chunksX, loadedMeta.chunksY);
     return true;
+}
+
+void WorldSimulation::SetTrapDefs(const TrapDefsConfig* traps) {
+    if (m_impl != nullptr && m_impl->companionSystem != nullptr) {
+        m_impl->companionSystem->SetTrapDefs(traps);
+    }
 }
 
 void WorldSimulation::Shutdown() {
@@ -3298,6 +3375,206 @@ ecs::Entity WorldSimulation::SpawnZombieAt(float x, float y,
                        stableId, &s.combatRules);
 }
 
+ecs::Entity WorldSimulation::SpawnCompanionAt(
+    const CompanionDef& def, std::uint64_t ownerStableId,
+    std::string_view homeSettlementId, float targetX, float targetY,
+    int searchRadius) {
+    Impl& s = *m_impl;
+    if (!s.initialized || s.ecs == nullptr || ownerStableId == 0 ||
+        !std::isfinite(targetX) || !std::isfinite(targetY)) {
+        return entt::null;
+    }
+    const int targetGridX = static_cast<int>(std::floor(targetX));
+    const int targetGridY = static_cast<int>(std::floor(targetY));
+    const world::ChunkCoord targetChunk =
+        world::ChunkOf(targetGridX, targetGridY);
+    const world::Chunk* chunk =
+        FindChunkInWorld(*s.world, targetChunk.cx, targetChunk.cy);
+    if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
+        return entt::null;
+    }
+    int spawnX = 0;
+    int spawnY = 0;
+    if (!ai::FindNearestWalkable(
+            targetGridX, targetGridY, std::max(1, searchRadius),
+            [&s](int wx, int wy) { return !s.IsBlocked(wx, wy); }, &spawnX,
+            &spawnY)) {
+        return entt::null;
+    }
+    const float x = static_cast<float>(spawnX) + 0.5f;
+    const float y = static_cast<float>(spawnY) + 0.5f;
+    const ecs::Entity entity = s.ecs->Create();
+    if (entity == entt::null) {
+        return entt::null;
+    }
+    entt::registry& registry = s.ecs->Registry();
+    registry.emplace<ecs::Position>(entity, ecs::Position{x, y, 0});
+    registry.emplace<ecs::Velocity>(entity, ecs::Velocity{});
+    const ecs::Collider collider;
+    registry.emplace<ecs::Collider>(entity, collider);
+    if (s.physics != nullptr) {
+        ecs::RigidBody rigid;
+        rigid.body = s.physics->CreateCharacterBody(
+            collider.radius, collider.height, x, y, 0);
+        registry.emplace<ecs::RigidBody>(entity, rigid);
+    }
+    registry.emplace<ecs::SpriteRef>(
+        entity, ecs::SpriteRef{ecs::HashName("character.placeholder"), 0,
+                               0xFF9AD8B0u});
+    registry.emplace<ecs::Facing>(entity, ecs::Facing{});
+    registry.emplace<ecs::AnimState>(entity, ecs::AnimState{});
+    registry.emplace<ecs::ActionState>(entity, ecs::ActionState{});
+    registry.emplace<ecs::MoveIntent>(entity, ecs::MoveIntent{});
+    registry.emplace<ecs::PathRequest>(entity, ecs::PathRequest{});
+    ecs::PathFollow follow;
+    follow.speed = 3.6f;
+    registry.emplace<ecs::PathFollow>(entity, follow);
+    ecs::Health health;
+    health.max = std::max(1.0f, def.baseHealth);
+    health.current = health.max;
+    registry.emplace<ecs::Health>(entity, health);
+    registry.emplace<ecs::FriendlyNpc>(entity);
+    registry.emplace<ecs::NoCombatTarget>(entity);
+    registry.emplace<Companion>(
+        entity, Companion{def.id, ownerStableId,
+                          std::string(homeSettlementId)});
+    CompanionState state;
+    state.loyalty = def.startingLoyalty;
+    state.command = CompanionCommand::Follow;
+    state.inventory.capacityKg = def.inventoryCapacityKg;
+    if (s.options.items != nullptr) {
+        const auto equipInitial = [&](ecs::EquipSlot slot,
+                                      const std::string& itemId) {
+            if (itemId.empty()) {
+                return;
+            }
+            const items::ItemDef* itemDef = s.options.items->Find(itemId);
+            if (itemDef == nullptr) {
+                ZL_WARN("companions", "同伴 {} 的初始装备 '{}' 不存在",
+                        def.id, itemId);
+                return;
+            }
+            ecs::ItemInstance item{itemId, 1, 1.0f, 0};
+            if (!items::Equip(state.equipment, *s.options.items, slot, item,
+                              nullptr)) {
+                ZL_WARN("companions", "同伴 {} 的初始装备 '{}' 槽位不匹配",
+                        def.id, itemId);
+            }
+        };
+        equipInitial(ecs::EquipSlot::PrimaryHand, def.equipment.primary);
+        equipInitial(ecs::EquipSlot::Body, def.equipment.body);
+        for (const CompanionItemStack& stack : def.inventory) {
+            const int added = items::AddItem(
+                state.inventory, *s.options.items,
+                ecs::ItemInstance{stack.item, stack.count, 1.0f, 0});
+            if (added != stack.count) {
+                ZL_WARN("companions",
+                        "同伴 {} 的初始物品 '{}' 只放入 {}/{}",
+                        def.id, stack.item, added, stack.count);
+            }
+        }
+    }
+    registry.emplace<CompanionState>(entity, std::move(state));
+    if (auto* loadedState = registry.try_get<CompanionState>(entity);
+        loadedState != nullptr) {
+        RefreshCompanionQuestState(def, loadedState);
+    }
+    (void)PrepareLoadedCompanion(*s.ecs, entity, s.options.items);
+    CompanionAiState ai;
+    ai.anchorX = x;
+    ai.anchorY = y;
+    ai.homeX = x;
+    ai.homeY = y;
+    registry.emplace<CompanionAiState>(entity, ai);
+    ZL_INFO("companions", "同伴生成：{}，owner={}，格 ({}, {})", def.id,
+            ownerStableId, spawnX, spawnY);
+    return entity;
+}
+
+bool WorldSimulation::TeleportCompanion(ecs::Entity companion, float targetX,
+                                        float targetY, int searchRadius) {
+    Impl& s = *m_impl;
+    if (!s.initialized || s.ecs == nullptr || companion == entt::null ||
+        !s.ecs->Alive(companion) ||
+        s.ecs->Registry().try_get<Companion>(companion) == nullptr ||
+        !std::isfinite(targetX) || !std::isfinite(targetY)) {
+        return false;
+    }
+    int spawnX = 0;
+    int spawnY = 0;
+    if (!ai::FindNearestWalkable(
+            static_cast<int>(std::floor(targetX)),
+            static_cast<int>(std::floor(targetY)), std::max(1, searchRadius),
+            [&s](int wx, int wy) { return !s.IsBlocked(wx, wy); }, &spawnX,
+            &spawnY)) {
+        return false;
+    }
+    const float x = static_cast<float>(spawnX) + 0.5f;
+    const float y = static_cast<float>(spawnY) + 0.5f;
+    entt::registry& registry = s.ecs->Registry();
+    if (auto* position = registry.try_get<ecs::Position>(companion);
+        position != nullptr) {
+        position->x = x;
+        position->y = y;
+        position->z = 0;
+    }
+    if (auto* velocity = registry.try_get<ecs::Velocity>(companion);
+        velocity != nullptr) {
+        *velocity = ecs::Velocity{};
+    }
+    if (auto* rigid = registry.try_get<ecs::RigidBody>(companion);
+        rigid != nullptr && rigid->body != nullptr && s.physics != nullptr) {
+        s.physics->TeleportBody(rigid->body, x, y, 0);
+    }
+    if (auto* intent = registry.try_get<ecs::MoveIntent>(companion);
+        intent != nullptr) {
+        intent->x = 0.0f;
+        intent->y = 0.0f;
+    }
+    if (auto* request = registry.try_get<ecs::PathRequest>(companion);
+        request != nullptr) {
+        request->newRequest = false;
+        request->queryId = 0;
+        request->state = ecs::PathStatus::None;
+        request->goalX = spawnX;
+        request->goalY = spawnY;
+    }
+    if (auto* follow = registry.try_get<ecs::PathFollow>(companion);
+        follow != nullptr) {
+        follow->waypoints.clear();
+        follow->index = 0;
+        follow->status = ecs::PathStatus::None;
+        follow->anchorX = x;
+        follow->anchorY = y;
+        follow->stuckTimer = 0.0f;
+    }
+    if (auto* ai = registry.try_get<CompanionAiState>(companion);
+        ai != nullptr) {
+        ai->targetId = 0;
+        ai->engaged = false;
+        ai->autoRetreat = false;
+        ai->frozen = false;
+        ai->hasAnchor = false;
+        ai->anchorX = x;
+        ai->anchorY = y;
+        ai->repathTimer = 0.0f;
+    }
+    return true;
+}
+
+bool WorldSimulation::RescueCompanion(ecs::Entity companion,
+                                      ecs::Entity rescuer,
+                                      std::string* error) {
+    Impl& s = *m_impl;
+    if (!s.initialized || s.companionSystem == nullptr) {
+        if (error != nullptr) {
+            *error = "同伴系统不可用";
+        }
+        return false;
+    }
+    return s.companionSystem->TryRescue(*s.ecs, companion, rescuer, error);
+}
+
 int WorldSimulation::SpawnRegionEventContent(const RegionEvent& event) {
     Impl& s = *m_impl;
     if (!s.initialized || s.ecs == nullptr ||
@@ -3607,6 +3884,18 @@ bool WorldSimulation::LoadSave(const std::string& saveId, std::string* error) {
     }
     if (!s.RestoreRuntimeComponents(loaded)) {
         return fail("恢复运行时组件失败");
+    }
+    if (s.options.pois != nullptr && s.options.pois->enabled) {
+        ecs::Entity poiWorld =
+            s.ecs->FindById(ecs::kPoiWorldProgressStableId);
+        if (poiWorld == ecs::EcsWorld::kNull) {
+            poiWorld =
+                s.ecs->CreateWithStableId(ecs::kPoiWorldProgressStableId);
+        }
+        if (poiWorld != ecs::EcsWorld::kNull &&
+            !s.ecs->Registry().all_of<ecs::PoiWorldProgress>(poiWorld)) {
+            s.ecs->Registry().emplace<ecs::PoiWorldProgress>(poiWorld);
+        }
     }
     if (s.settlementNpcSystem != nullptr) {
         s.ecs->Registry().view<SettlementState>().each(

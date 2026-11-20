@@ -1,6 +1,9 @@
 ﻿#pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace zl::ecs {
 
@@ -16,6 +19,12 @@ struct Vehicle {
     bool headlights = false;
     VehicleType type = VehicleType::Pickup;
     float heading = 1.5707963267948966f;
+};
+
+inline constexpr std::size_t kVehicleModSlotCount = 5;
+
+struct VehicleMods {
+    std::array<std::string, kVehicleModSlotCount> defIds{};
 };
 
 struct VehicleDriver {

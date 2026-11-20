@@ -165,6 +165,7 @@ void NeedsSystem::Update(ecs::EcsWorld& world, float dt) {
                                  ? ecs::DamageCause::Dehydration
                                  : ecs::DamageCause::Starvation;
                 last.amount = drain;
+                last.sourceId = 0;  // 环境伤害：无击杀者
                 if (wasAlive && health->current <= 0.0f) {
                     ZL_INFO("needs", "玩家因{}耗尽生命",
                             last.cause == ecs::DamageCause::Dehydration ? "脱水"

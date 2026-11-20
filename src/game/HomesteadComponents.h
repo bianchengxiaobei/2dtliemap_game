@@ -51,6 +51,15 @@ struct SpikeTrap {
     int uses = 6;
 };
 
+struct PlacedTrap {
+    std::string defId;
+    bool armed = false;
+    float cooldown = 0.0f;
+    int uses = 0;
+    std::uint64_t owner = 0;
+    float armRemaining = 0.0f;
+};
+
 struct MerchantStock {
     std::array<int, 5> stock{{4, 2, 1, 2, 1}};
     int restockDay = 0;

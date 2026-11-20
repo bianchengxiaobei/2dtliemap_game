@@ -36,7 +36,53 @@
           "rewardXp": 80.0,
           "rewardItem": "bandage",
           "rewardCount": 2
-        }
+        },
+        "stages": [
+          {
+            "id": "triage_choice",
+            "kind": "choice",
+            "hint": "从急诊正门强攻，或绕到药房侧门",
+            "next": [ "ward", "pharmacy" ]
+          },
+          {
+            "id": "ward",
+            "kind": "kill",
+            "hint": "击败夜班医师与急诊感染者",
+            "target": "armored",
+            "x": 150.5,
+            "y": 63.5,
+            "radius": 3.0,
+            "count": 2,
+            "reward": { "xp": 90.0, "item": "first_aid_kit", "count": 1 }
+          },
+          {
+            "id": "pharmacy",
+            "kind": "loot",
+            "hint": "在药房取得隔离记录",
+            "target": "hospital_patient_log",
+            "x": 148.5,
+            "y": 65.5,
+            "radius": 2.0,
+            "count": 1,
+            "reward": { "xp": 45.0, "item": "antibiotics", "count": 1 }
+          }
+        ],
+        "branches": [
+          { "id": "ward_route", "name": "急诊正门（Boss）", "from": "triage_choice", "stages": [ "ward" ] },
+          { "id": "pharmacy_route", "name": "药房侧门（低风险）", "from": "triage_choice", "stages": [ "pharmacy" ] }
+        ],
+        "boss": {
+          "name": "夜班医师",
+          "variant": "armored",
+          "stage": "ward",
+          "mechanic": "summon",
+          "count": 1
+        },
+        "narrative": [
+          { "id": "clinic_intro", "stage": "triage_choice", "text": "诊所广播反复播放：药房封锁，急诊满员。", "item": "hospital_patient_log" },
+          { "id": "clinic_ward", "stage": "ward", "text": "夜班医师的录音：别让他们离开急诊区。" },
+          { "id": "clinic_pharmacy", "stage": "pharmacy", "text": "隔离记录最后一行：症状在退烧后突然恶化。" }
+        ]
       },
       {
         "id": "farmstead",
@@ -69,7 +115,54 @@
           "rewardXp": 100.0,
           "rewardItem": "canned_beans",
           "rewardCount": 2
-        }
+        },
+        "stages": [
+          {
+            "id": "farm_yard",
+            "kind": "reach",
+            "hint": "进入农场仓外院",
+            "x": 110.5,
+            "y": 213.5,
+            "radius": 3.0,
+            "next": [ "supply_cache" ],
+            "reward": { "xp": 30.0 }
+          },
+          {
+            "id": "supply_cache",
+            "kind": "loot",
+            "hint": "在农场仓找到入库单",
+            "target": "farm_supply_log",
+            "x": 114.5,
+            "y": 208.5,
+            "radius": 2.0,
+            "count": 1,
+            "next": [ "farm_boss" ],
+            "reward": { "xp": 50.0, "item": "canned_beans", "count": 2 }
+          },
+          {
+            "id": "farm_boss",
+            "kind": "kill",
+            "hint": "击败农场主与守仓感染者",
+            "target": "strong",
+            "x": 110.5,
+            "y": 214.0,
+            "radius": 3.0,
+            "count": 3,
+            "reward": { "xp": 110.0, "item": "ammo_shells", "count": 4 }
+          }
+        ],
+        "boss": {
+          "name": "农场主",
+          "variant": "strong",
+          "stage": "farm_boss",
+          "mechanic": "summon",
+          "count": 1
+        },
+        "narrative": [
+          { "id": "farm_intro", "stage": "farm_yard", "text": "农场仓的入库单被撕掉了一半。" },
+          { "id": "farm_cache", "stage": "supply_cache", "text": "入库单：最后一批罐头被搬进了仓内。", "item": "farm_supply_log" },
+          { "id": "farm_boss_note", "stage": "farm_boss", "text": "谷仓深处传来铃声，像是有人在召集什么。" }
+        ]
       },
       {
         "id": "river_hut",
@@ -136,7 +229,59 @@
           "rewardXp": 130.0,
           "rewardItem": "ammo_shells",
           "rewardCount": 6
-        }
+        },
+        "stages": [
+          {
+            "id": "patrol_cache",
+            "kind": "loot",
+            "hint": "在补给箱取得巡逻记录与门禁卡",
+            "target": "checkpoint_patrol_log",
+            "x": 303.5,
+            "y": 280.5,
+            "radius": 2.0,
+            "count": 1,
+            "next": [ "armory_gate" ],
+            "reward": { "xp": 40.0, "item": "bandage", "count": 1 }
+          },
+          {
+            "id": "armory_gate",
+            "kind": "interact",
+            "hint": "用门禁卡打开军械库门",
+            "target": "checkpoint_armory_gate",
+            "x": 300.5,
+            "y": 277.5,
+            "radius": 1.8,
+            "requires": [ "checkpoint_key" ],
+            "next": [ "commander" ],
+            "reward": { "xp": 40.0 }
+          },
+          {
+            "id": "commander",
+            "kind": "kill",
+            "hint": "击败检查站指挥官与守军",
+            "target": "armored",
+            "x": 300.5,
+            "y": 279.5,
+            "radius": 3.0,
+            "count": 3,
+            "reward": { "xp": 130.0, "item": "ammo_shells", "count": 8 }
+          }
+        ],
+        "keys": [
+          { "id": "checkpoint_key", "item": "checkpoint_keycard", "name": "检查站门禁卡", "source": "patrol_cache", "consumed": true }
+        ],
+        "boss": {
+          "name": "检查站指挥官",
+          "variant": "armored",
+          "stage": "commander",
+          "mechanic": "fortify",
+          "count": 1
+        },
+        "narrative": [
+          { "id": "checkpoint_intro", "stage": "patrol_cache", "text": "巡逻记录：东侧信号中断，军械库封闭。", "item": "checkpoint_patrol_log" },
+          { "id": "checkpoint_gate", "stage": "armory_gate", "text": "门禁灯转绿，门后传来整齐的脚步声。" },
+          { "id": "checkpoint_boss", "stage": "commander", "text": "指挥官的最后一条命令：守住军械库。" }
+        ]
       }
     ]
   },

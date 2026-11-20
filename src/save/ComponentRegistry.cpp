@@ -18,6 +18,7 @@
 #include "characters/components/CombatComponents.h"
 #include "characters/components/ProgressionComponents.h"
 #include "ecs/components/CommonComponents.h"
+#include "game/Companion.h"
 #include "game/FireComponents.h"
 #include "game/ForageComponents.h"
 #include "game/HomesteadComponents.h"
@@ -27,8 +28,11 @@
 #include "game/SettlementNpc.h"
 #include "game/SettlementReputation.h"
 #include "game/StructureComponents.h"
+#include "game/Traps.h"
 #include "game/VehicleComponents.h"
+#include "game/VehicleMods.h"
 #include "items/ItemComponents.h"
+#include "script/ModDataComponents.h"
 #include "save/BinaryReader.h"
 #include "save/BinaryWriter.h"
 
@@ -36,6 +40,7 @@ namespace zl::save {
 namespace {
 
 constexpr std::uint32_t kMaxItemDefIdBytes = 64;
+constexpr std::uint32_t kMaxPoiClaimBytes = 129;
 constexpr int kMaxItemStack = 9999;
 constexpr int kMaxItemLoadedAmmo = 200;
 constexpr std::uint32_t kMinItemBytes = 12;
@@ -218,6 +223,36 @@ bool ReadVehicle(BinaryReader& reader, ecs::Vehicle* vehicle) {
     return true;
 }
 
+bool WriteVehicleMods(const ecs::VehicleMods& mods, BinaryWriter& writer) {
+    std::unordered_set<std::string> seen;
+    for (const std::string& id : mods.defIds) {
+        if (!id.empty() &&
+            (!game::IsValidVehicleModToken(id) || !seen.insert(id).second)) {
+            return false;
+        }
+        if (!writer.WriteString(id, game::kMaxVehicleModIdBytes)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ReadVehicleMods(BinaryReader& reader, ecs::VehicleMods* mods) {
+    ecs::VehicleMods loaded;
+    std::unordered_set<std::string> seen;
+    for (std::string& id : loaded.defIds) {
+        if (!reader.ReadString(id, game::kMaxVehicleModIdBytes)) {
+            return false;
+        }
+        if (!id.empty() &&
+            (!game::IsValidVehicleModToken(id) || !seen.insert(id).second)) {
+            return false;
+        }
+    }
+    *mods = std::move(loaded);
+    return true;
+}
+
 bool WriteStructureOwner(const ecs::StructureOwner& owner, BinaryWriter& writer) {
     return writer.Write(owner.ownerStableId);
 }
@@ -376,6 +411,33 @@ bool ReadSpikeTrap(BinaryReader& reader, ecs::SpikeTrap* trap) {
     trap->radius = radius;
     trap->staggerSeconds = stagger;
     trap->uses = static_cast<int>(uses);
+    return true;
+}
+
+bool WritePlacedTrap(const ecs::PlacedTrap& trap, BinaryWriter& writer) {
+    return game::IsValidTrapToken(trap.defId) && Finite(trap.cooldown) &&
+           trap.cooldown >= 0.0f && trap.uses >= 0 && trap.uses <= 999 &&
+           writer.WriteString(trap.defId, 64) && writer.Write(trap.armed) &&
+           writer.Write(trap.cooldown) &&
+           writer.Write(static_cast<std::int32_t>(trap.uses)) &&
+           writer.Write(trap.owner);
+}
+
+bool ReadPlacedTrap(BinaryReader& reader, ecs::PlacedTrap* trap) {
+    ecs::PlacedTrap loaded;
+    std::int32_t uses = 0;
+    if (!reader.ReadString(loaded.defId, 64) ||
+        !game::IsValidTrapToken(loaded.defId) || !reader.Read(loaded.armed) ||
+        !reader.Read(loaded.cooldown) || !reader.Read(uses) ||
+        !reader.Read(loaded.owner)) {
+        return false;
+    }
+    if (!Finite(loaded.cooldown) || loaded.cooldown < 0.0f || uses < 0 ||
+        uses > 999) {
+        return false;
+    }
+    loaded.uses = static_cast<int>(uses);
+    *trap = std::move(loaded);
     return true;
 }
 
@@ -1037,6 +1099,175 @@ bool ValidRecipeId(std::string_view id) {
     });
 }
 
+bool ValidPoiClaimKey(std::string_view key) {
+    if (key.empty() || key.size() > kMaxPoiClaimBytes) {
+        return false;
+    }
+    return std::all_of(key.begin(), key.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+               c == '_' || c == '.';
+    });
+}
+
+bool ValidCompanionTrait(std::string_view trait) {
+    return game::IsValidCompanionToken(trait) &&
+           trait.size() <= game::kMaxCompanionTraitBytes;
+}
+
+bool ValidCompanionState(const game::CompanionState& state) {
+    if (state.loyalty < 0 || state.loyalty > 100 ||
+        static_cast<std::uint8_t>(state.command) > 2u ||
+        (state.downed && state.dead) ||
+        !Finite(state.downedRemaining) || state.downedRemaining < 0.0f ||
+        state.downedRemaining > 300.0f ||
+        (!state.downed && state.downedRemaining > 0.0f) ||
+        static_cast<std::uint8_t>(state.personalStatus) > 4u ||
+        state.personalStage < 0 ||
+        state.personalStage >
+            static_cast<int>(game::kMaxCompanionQuestStages) ||
+        state.personalProgress < 0 || state.personalProgress > 1000000 ||
+        state.personalRewardMask > 0xFFu ||
+        state.extraTraits.size() > game::kMaxCompanionTraits ||
+        !Finite(state.inventory.capacityKg) ||
+        state.inventory.capacityKg < 0.0f ||
+        state.inventory.capacityKg > game::kCompanionMaxInventoryKg ||
+        state.inventory.items.size() >
+            game::kMaxCompanionInventoryEntries) {
+        return false;
+    }
+    for (std::size_t i = 0; i < state.extraTraits.size(); ++i) {
+        if (!ValidCompanionTrait(state.extraTraits[i])) {
+            return false;
+        }
+        for (std::size_t j = 0; j < i; ++j) {
+            if (state.extraTraits[j] == state.extraTraits[i]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool WriteCompanion(const game::Companion& companion,
+                    BinaryWriter& writer) {
+    if (!ValidRecipeId(companion.defId) ||
+        companion.ownerStableId == 0 ||
+        !ValidRecipeId(companion.homeSettlementId)) {
+        return false;
+    }
+    return writer.WriteString(companion.defId,
+                              game::kMaxCompanionIdBytes) &&
+           writer.Write(companion.ownerStableId) &&
+           writer.WriteString(companion.homeSettlementId,
+                              game::kMaxCompanionIdBytes);
+}
+
+bool ReadCompanion(BinaryReader& reader, game::Companion* companion) {
+    game::Companion loaded;
+    if (!reader.ReadString(loaded.defId, game::kMaxCompanionIdBytes) ||
+        !reader.Read(loaded.ownerStableId) ||
+        !reader.ReadString(loaded.homeSettlementId,
+                           game::kMaxCompanionIdBytes) ||
+        !ValidRecipeId(loaded.defId) || loaded.ownerStableId == 0 ||
+        !ValidRecipeId(loaded.homeSettlementId)) {
+        return false;
+    }
+    *companion = std::move(loaded);
+    return true;
+}
+
+bool WriteCompanionState(const game::CompanionState& state,
+                         BinaryWriter& writer) {
+    if (!ValidCompanionState(state)) {
+        return false;
+    }
+    if (!writer.Write(static_cast<std::int32_t>(state.loyalty)) ||
+        !writer.Write(static_cast<std::uint8_t>(state.command)) ||
+        !writer.Write(state.standby) || !writer.Write(state.downed) ||
+        !writer.Write(state.dead) || !writer.Write(state.downedRemaining) ||
+        !writer.Write(static_cast<std::uint8_t>(state.personalStatus)) ||
+        !writer.Write(static_cast<std::int32_t>(state.personalStage)) ||
+        !writer.Write(static_cast<std::int32_t>(state.personalProgress)) ||
+        !writer.Write(state.personalRewardMask) ||
+        !writer.Write(static_cast<std::uint32_t>(state.extraTraits.size()))) {
+        return false;
+    }
+    for (const std::string& trait : state.extraTraits) {
+        if (!writer.WriteString(trait, game::kMaxCompanionTraitBytes)) {
+            return false;
+        }
+    }
+    if (!WriteContainer(state.inventory, writer) ||
+        !WriteEquipment(state.equipment, writer)) {
+        return false;
+    }
+    return true;
+}
+
+bool ReadCompanionState(BinaryReader& reader, game::CompanionState* state) {
+    std::int32_t loyalty = 0;
+    std::uint8_t command = 0;
+    bool standby = false;
+    bool downed = false;
+    bool dead = false;
+    float downedRemaining = 0.0f;
+    if (!reader.Read(loyalty) || !reader.Read(command) ||
+        !reader.Read(standby) || !reader.Read(downed) || !reader.Read(dead) ||
+        !reader.Read(downedRemaining)) {
+        return false;
+    }
+    if (loyalty < 0 || loyalty > 100 || command > 2) {
+        return false;
+    }
+    game::CompanionState loaded;
+    loaded.loyalty = static_cast<int>(loyalty);
+    loaded.command = static_cast<game::CompanionCommand>(command);
+    loaded.standby = standby;
+    loaded.downed = downed;
+    loaded.dead = dead;
+    loaded.downedRemaining = downedRemaining;
+    if (reader.Header().version >=
+        kSaveComponentVersionCompanionState) {
+        std::uint8_t personalStatus = 0;
+        std::int32_t personalStage = 0;
+        std::int32_t personalProgress = 0;
+        std::uint32_t rewardMask = 0;
+        std::uint32_t traitCount = 0;
+        if (!reader.Read(personalStatus) || !reader.Read(personalStage) ||
+            !reader.Read(personalProgress) || !reader.Read(rewardMask) ||
+            !reader.Read(traitCount) || personalStatus > 4 ||
+            personalStage < 0 ||
+            personalStage >
+                static_cast<std::int32_t>(game::kMaxCompanionQuestStages) ||
+            personalProgress < 0 || personalProgress > 1000000 ||
+            rewardMask > 0xFFu ||
+            traitCount > game::kMaxCompanionTraits) {
+            return false;
+        }
+        loaded.personalStatus =
+            static_cast<game::CompanionQuestStatus>(personalStatus);
+        loaded.personalStage = static_cast<int>(personalStage);
+        loaded.personalProgress = static_cast<int>(personalProgress);
+        loaded.personalRewardMask = rewardMask;
+        loaded.extraTraits.reserve(traitCount);
+        for (std::uint32_t i = 0; i < traitCount; ++i) {
+            std::string trait;
+            if (!reader.ReadString(trait, game::kMaxCompanionTraitBytes) ||
+                !ValidCompanionTrait(trait)) {
+                return false;
+            }
+            loaded.extraTraits.push_back(std::move(trait));
+        }
+    }
+    if (!ReadContainer(reader, &loaded.inventory) ||
+        !ReadEquipment(reader, &loaded.equipment) ||
+        !ValidCompanionState(loaded)) {
+        return false;
+    }
+    *state = std::move(loaded);
+    return true;
+}
+
 bool WriteKnownRecipes(const ecs::KnownRecipes& known, BinaryWriter& writer) {
     std::vector<std::string> ids = known.recipeIds;
     std::sort(ids.begin(), ids.end());
@@ -1564,6 +1795,38 @@ bool ReadPoiGuard(BinaryReader& reader, ecs::PoiGuard* guard) {
     return true;
 }
 
+bool ValidPoiStageEnemy(const ecs::PoiStageEnemy& enemy) {
+    return ValidRecipeId(enemy.poiId) && ValidRecipeId(enemy.stageId) &&
+           static_cast<std::uint8_t>(enemy.role) <=
+               static_cast<std::uint8_t>(game::PoiStageEnemyRole::Summon);
+}
+
+bool WritePoiStageEnemy(const ecs::PoiStageEnemy& enemy,
+                        BinaryWriter& writer) {
+    if (!ValidPoiStageEnemy(enemy)) {
+        return false;
+    }
+    const auto role = static_cast<std::uint8_t>(enemy.role);
+    return writer.WriteString(enemy.poiId, kMaxItemDefIdBytes) &&
+           writer.WriteString(enemy.stageId, kMaxItemDefIdBytes) &&
+           writer.Write(role);
+}
+
+bool ReadPoiStageEnemy(BinaryReader& reader, ecs::PoiStageEnemy* enemy) {
+    std::string poiId;
+    std::string stageId;
+    std::uint8_t role = 0;
+    if (!reader.ReadString(poiId, kMaxItemDefIdBytes) ||
+        !reader.ReadString(stageId, kMaxItemDefIdBytes) || !reader.Read(role) ||
+        role > static_cast<std::uint8_t>(game::PoiStageEnemyRole::Summon)) {
+        return false;
+    }
+    enemy->poiId = std::move(poiId);
+    enemy->stageId = std::move(stageId);
+    enemy->role = static_cast<game::PoiStageEnemyRole>(role);
+    return ValidPoiStageEnemy(*enemy);
+}
+
 bool WriteRandomEventActor(const ecs::RandomEventActor& actor,
                            BinaryWriter& writer) {
     return ValidRecipeId(actor.eventId) && actor.index >= 0 &&
@@ -1590,7 +1853,10 @@ bool WritePoiTasks(const ecs::PoiTasks& tasks, BinaryWriter& writer) {
     std::vector<std::string> ids = tasks.completed;
     std::sort(ids.begin(), ids.end());
     ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
-    if (ids.size() > 64) {
+    std::vector<std::string> claims = tasks.rewardClaims;
+    std::sort(claims.begin(), claims.end());
+    claims.erase(std::unique(claims.begin(), claims.end()), claims.end());
+    if (ids.size() > 64 || claims.size() > 256) {
         return false;
     }
     if (!writer.Write(static_cast<std::uint32_t>(ids.size()))) {
@@ -1601,12 +1867,170 @@ bool WritePoiTasks(const ecs::PoiTasks& tasks, BinaryWriter& writer) {
             return false;
         }
     }
+    if (!writer.Write(static_cast<std::uint32_t>(claims.size()))) {
+        return false;
+    }
+    for (const std::string& claim : claims) {
+        if (!ValidPoiClaimKey(claim) ||
+            !writer.WriteString(claim, kMaxPoiClaimBytes)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ValidPoiProgress(const game::PoiProgress& poi) {
+    if (!ValidRecipeId(poi.poiId) || poi.currentStage < -1 ||
+        poi.currentStage > 8 || poi.failedStage < -1 ||
+        poi.failedStage > 8 || poi.completedStages.size() > 8 ||
+        poi.acquiredKeys.size() > 8 || poi.attempts < 0 ||
+        poi.attempts > 1000000 || poi.stageKills < 0 ||
+        poi.stageKills > 9999 || poi.lastLiveGuards < 0 ||
+        poi.lastLiveGuards > 9999 ||
+        (poi.completed && poi.currentStage != -1) ||
+        (poi.awaitingChoice &&
+         (poi.completed || poi.currentStage < 0)) ||
+        (!poi.chosenBranch.empty() && !ValidRecipeId(poi.chosenBranch))) {
+        return false;
+    }
+    std::set<std::string> stages;
+    for (const std::string& stageId : poi.completedStages) {
+        if (!ValidRecipeId(stageId) || !stages.insert(stageId).second) {
+            return false;
+        }
+    }
+    std::set<std::string> keys;
+    for (const std::string& keyId : poi.acquiredKeys) {
+        if (!ValidRecipeId(keyId) || !keys.insert(keyId).second) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ValidPoiWorldProgress(const ecs::PoiWorldProgress& state) {
+    if (state.pois.size() > ecs::kMaxPoiWorldProgress) {
+        return false;
+    }
+    std::set<std::string> seen;
+    for (const game::PoiProgress& poi : state.pois) {
+        if (!ValidPoiProgress(poi) || !seen.insert(poi.poiId).second) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool WritePoiWorldProgress(const ecs::PoiWorldProgress& state,
+                           BinaryWriter& writer) {
+    if (!ValidPoiWorldProgress(state) ||
+        !writer.Write(static_cast<std::uint32_t>(state.pois.size()))) {
+        return false;
+    }
+    for (const game::PoiProgress& poi : state.pois) {
+        if (!writer.WriteString(poi.poiId, kMaxItemDefIdBytes) ||
+            !writer.Write(static_cast<std::int32_t>(poi.currentStage)) ||
+            !writer.Write(static_cast<std::int32_t>(poi.failedStage)) ||
+            !writer.Write(static_cast<std::uint16_t>(
+                poi.completedStages.size()))) {
+            return false;
+        }
+        for (const std::string& stageId : poi.completedStages) {
+            if (!writer.WriteString(stageId, kMaxItemDefIdBytes)) {
+                return false;
+            }
+        }
+        if (!writer.WriteString(poi.chosenBranch, kMaxItemDefIdBytes) ||
+            !writer.Write(static_cast<std::uint16_t>(
+                poi.acquiredKeys.size()))) {
+            return false;
+        }
+        for (const std::string& keyId : poi.acquiredKeys) {
+            if (!writer.WriteString(keyId, kMaxItemDefIdBytes)) {
+                return false;
+            }
+        }
+        if (!writer.Write(poi.powered) || !writer.Write(poi.failed) ||
+            !writer.Write(poi.awaitingChoice) || !writer.Write(poi.completed) ||
+            !writer.Write(static_cast<std::int32_t>(poi.attempts)) ||
+            !writer.Write(static_cast<std::int32_t>(poi.stageKills)) ||
+            !writer.Write(static_cast<std::int32_t>(poi.lastLiveGuards))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ReadPoiWorldProgress(BinaryReader& reader,
+                          ecs::PoiWorldProgress* state) {
+    std::uint32_t count = 0;
+    if (!reader.Read(count) || count > ecs::kMaxPoiWorldProgress ||
+        count > reader.RemainingInSegment() / 16) {
+        return false;
+    }
+    ecs::PoiWorldProgress loaded;
+    loaded.pois.reserve(count);
+    std::set<std::string> seen;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        game::PoiProgress poi;
+        std::int32_t currentStage = -1;
+        std::int32_t failedStage = -1;
+        std::uint16_t completedCount = 0;
+        if (!reader.ReadString(poi.poiId, kMaxItemDefIdBytes) ||
+            !reader.Read(currentStage) || !reader.Read(failedStage) ||
+            !reader.Read(completedCount) || completedCount > 8 ||
+            completedCount > reader.RemainingInSegment() / 4) {
+            return false;
+        }
+        poi.currentStage = currentStage;
+        poi.failedStage = failedStage;
+        poi.completedStages.reserve(completedCount);
+        for (std::uint16_t j = 0; j < completedCount; ++j) {
+            std::string stageId;
+            if (!reader.ReadString(stageId, kMaxItemDefIdBytes)) {
+                return false;
+            }
+            poi.completedStages.push_back(std::move(stageId));
+        }
+        std::uint16_t keyCount = 0;
+        if (!reader.ReadString(poi.chosenBranch, kMaxItemDefIdBytes) ||
+            !reader.Read(keyCount) || keyCount > 8 ||
+            keyCount > reader.RemainingInSegment() / 4) {
+            return false;
+        }
+        poi.acquiredKeys.reserve(keyCount);
+        for (std::uint16_t j = 0; j < keyCount; ++j) {
+            std::string keyId;
+            if (!reader.ReadString(keyId, kMaxItemDefIdBytes)) {
+                return false;
+            }
+            poi.acquiredKeys.push_back(std::move(keyId));
+        }
+        std::int32_t attempts = 0;
+        std::int32_t stageKills = 0;
+        std::int32_t lastLiveGuards = 0;
+        if (!reader.Read(poi.powered) || !reader.Read(poi.failed) ||
+            !reader.Read(poi.awaitingChoice) || !reader.Read(poi.completed) ||
+            !reader.Read(attempts) || !reader.Read(stageKills) ||
+            !reader.Read(lastLiveGuards)) {
+            return false;
+        }
+        poi.attempts = attempts;
+        poi.stageKills = stageKills;
+        poi.lastLiveGuards = lastLiveGuards;
+        if (!ValidPoiProgress(poi) || !seen.insert(poi.poiId).second) {
+            return false;
+        }
+        loaded.pois.push_back(std::move(poi));
+    }
+    *state = std::move(loaded);
     return true;
 }
 
 bool ReadPoiTasks(BinaryReader& reader, ecs::PoiTasks* tasks) {
     std::uint32_t count = 0;
-    if (!reader.Read(count) || count > 64 || count > reader.RemainingInSegment() / 5) {
+    if (!reader.Read(count) || count > 64 ||
+        count > reader.RemainingInSegment() / 5) {
         return false;
     }
     ecs::PoiTasks loaded;
@@ -1619,6 +2043,25 @@ bool ReadPoiTasks(BinaryReader& reader, ecs::PoiTasks* tasks) {
             return false;
         }
         loaded.completed.push_back(std::move(id));
+    }
+    if (reader.Header().version >= kSaveComponentVersionPoiTasks) {
+        std::uint32_t claimCount = 0;
+        if (!reader.Read(claimCount) || claimCount > 256 ||
+            claimCount > reader.RemainingInSegment() / 3) {
+            return false;
+        }
+        loaded.rewardClaims.reserve(claimCount);
+        for (std::uint32_t i = 0; i < claimCount; ++i) {
+            std::string claim;
+            if (!reader.ReadString(claim, kMaxPoiClaimBytes) ||
+                !ValidPoiClaimKey(claim) ||
+                std::find(loaded.rewardClaims.begin(),
+                          loaded.rewardClaims.end(),
+                          claim) != loaded.rewardClaims.end()) {
+                return false;
+            }
+            loaded.rewardClaims.push_back(std::move(claim));
+        }
     }
     *tasks = std::move(loaded);
     return true;
@@ -1742,6 +2185,76 @@ bool ReadMissionLog(BinaryReader& reader, ecs::MissionLog* log) {
         loaded.missions.push_back(std::move(state));
     }
     *log = std::move(loaded);
+    return true;
+}
+
+bool WriteModData(const ecs::ModData& data, BinaryWriter& writer) {
+    if (!ecs::IsValidModData(data) ||
+        !writer.Write(static_cast<std::uint32_t>(data.mods.size()))) {
+        return false;
+    }
+    for (const auto& [modId, entries] : data.mods) {
+        if (!writer.WriteString(modId, ecs::kMaxModDataModIdBytes) ||
+            !writer.Write(static_cast<std::uint32_t>(entries.size()))) {
+            return false;
+        }
+        for (const ecs::ModDataEntry& entry : entries) {
+            if (!writer.WriteString(entry.key, ecs::kMaxModDataKeyBytes) ||
+                !writer.WriteString(entry.value, ecs::kMaxModDataValueBytes)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool ReadModData(BinaryReader& reader, ecs::ModData* data) {
+    std::uint32_t modCount = 0;
+    if (!reader.Read(modCount) ||
+        modCount > ecs::kMaxModDataMods ||
+        modCount > reader.RemainingInSegment() / 9u) {
+        return false;
+    }
+    ecs::ModData loaded;
+    loaded.mods.reserve(std::min<std::uint32_t>(modCount, 256));
+    std::unordered_set<std::string> modIds;
+    std::size_t totalBytes = 0;
+    for (std::uint32_t i = 0; i < modCount; ++i) {
+        std::string modId;
+        std::uint32_t entryCount = 0;
+        if (!reader.ReadString(modId, ecs::kMaxModDataModIdBytes) ||
+            !ecs::IsValidModDataId(modId) ||
+            !modIds.insert(modId).second || !reader.Read(entryCount) ||
+            entryCount > ecs::kMaxModDataEntriesPerMod ||
+            entryCount > reader.RemainingInSegment() / 9u) {
+            return false;
+        }
+        std::vector<ecs::ModDataEntry> entries;
+        entries.reserve(
+            std::min<std::uint32_t>(entryCount,
+                                    static_cast<std::uint32_t>(
+                                        ecs::kMaxModDataEntriesPerMod)));
+        std::unordered_set<std::string> keys;
+        for (std::uint32_t j = 0; j < entryCount; ++j) {
+            ecs::ModDataEntry entry;
+            if (!reader.ReadString(entry.key, ecs::kMaxModDataKeyBytes) ||
+                !reader.ReadString(entry.value, ecs::kMaxModDataValueBytes) ||
+                !ecs::IsValidModDataKey(entry.key) ||
+                !keys.insert(entry.key).second) {
+                return false;
+            }
+            totalBytes += entry.key.size() + entry.value.size();
+            if (totalBytes > ecs::kMaxModDataTotalBytes) {
+                return false;
+            }
+            entries.push_back(std::move(entry));
+        }
+        loaded.mods.emplace_back(std::move(modId), std::move(entries));
+    }
+    if (!ecs::IsValidModData(loaded)) {
+        return false;
+    }
+    *data = std::move(loaded);
     return true;
 }
 
@@ -2072,6 +2585,30 @@ bool RegisterBuiltinComponents(ComponentRegistry& registry, std::string* error) 
             [](BinaryReader& reader, ecs::PoiTasks* tasks) {
                 return ReadPoiTasks(reader, tasks);
             },
+            kSaveComponentVersionPoiTasks, error, kSaveComponentVersion)) {
+        return false;
+    }
+
+    if (!registry.Register<ecs::PoiWorldProgress>(
+            kSaveComponentPoiWorldProgress, "PoiWorldProgress",
+            [](const ecs::PoiWorldProgress& state, BinaryWriter& writer) {
+                return WritePoiWorldProgress(state, writer);
+            },
+            [](BinaryReader& reader, ecs::PoiWorldProgress* state) {
+                return ReadPoiWorldProgress(reader, state);
+            },
+            kSaveComponentVersion, error)) {
+        return false;
+    }
+
+    if (!registry.Register<ecs::PoiStageEnemy>(
+            kSaveComponentPoiStageEnemy, "PoiStageEnemy",
+            [](const ecs::PoiStageEnemy& enemy, BinaryWriter& writer) {
+                return WritePoiStageEnemy(enemy, writer);
+            },
+            [](BinaryReader& reader, ecs::PoiStageEnemy* enemy) {
+                return ReadPoiStageEnemy(reader, enemy);
+            },
             kSaveComponentVersion, error)) {
         return false;
     }
@@ -2145,6 +2682,18 @@ bool RegisterBuiltinComponents(ComponentRegistry& registry, std::string* error) 
             },
             [](BinaryReader& reader, ecs::SpikeTrap* trap) {
                 return ReadSpikeTrap(reader, trap);
+            },
+            kSaveComponentVersion, error)) {
+        return false;
+    }
+
+    if (!registry.Register<ecs::PlacedTrap>(
+            kSaveComponentPlacedTrap, "PlacedTrap",
+            [](const ecs::PlacedTrap& trap, BinaryWriter& writer) {
+                return WritePlacedTrap(trap, writer);
+            },
+            [](BinaryReader& reader, ecs::PlacedTrap* trap) {
+                return ReadPlacedTrap(reader, trap);
             },
             kSaveComponentVersion, error)) {
         return false;
@@ -2370,15 +2919,79 @@ bool RegisterBuiltinComponents(ComponentRegistry& registry, std::string* error) 
         return false;
     }
 
-    return registry.Register<ecs::AnimalWorldState>(
-        kSaveComponentAnimalWorldState, "AnimalWorldState",
-        [](const ecs::AnimalWorldState& state, BinaryWriter& writer) {
-            return WriteAnimalWorldState(state, writer);
-        },
-        [](BinaryReader& reader, ecs::AnimalWorldState* state) {
-            return ReadAnimalWorldState(reader, state);
-        },
-        kSaveComponentVersion, error);
+    if (!registry.Register<ecs::VehicleMods>(
+            kSaveComponentVehicleMods, "VehicleMods",
+            [](const ecs::VehicleMods& mods, BinaryWriter& writer) {
+                return WriteVehicleMods(mods, writer);
+            },
+            [](BinaryReader& reader, ecs::VehicleMods* mods) {
+                return ReadVehicleMods(reader, mods);
+            },
+            kSaveComponentVersionVehicleMods, error, kSaveComponentVersion)) {
+        return false;
+    }
+
+    if (!registry.Register<game::Companion>(
+            kSaveComponentCompanion, "Companion",
+            [](const game::Companion& companion, BinaryWriter& writer) {
+                return WriteCompanion(companion, writer);
+            },
+            [](BinaryReader& reader, game::Companion* companion) {
+                return ReadCompanion(reader, companion);
+            },
+            kSaveComponentVersion, error)) {
+        return false;
+    }
+
+    if (!registry.Register<game::CompanionState>(
+            kSaveComponentCompanionState, "CompanionState",
+            [](const game::CompanionState& state, BinaryWriter& writer) {
+                return WriteCompanionState(state, writer);
+            },
+            [](BinaryReader& reader, game::CompanionState* state) {
+                return ReadCompanionState(reader, state);
+            },
+            kSaveComponentVersionCompanionState, error,
+            kSaveComponentVersionLoadedAmmo)) {
+        return false;
+    }
+
+    if (!registry.Register<ecs::AnimalWorldState>(
+            kSaveComponentAnimalWorldState, "AnimalWorldState",
+            [](const ecs::AnimalWorldState& state, BinaryWriter& writer) {
+                return WriteAnimalWorldState(state, writer);
+            },
+            [](BinaryReader& reader, ecs::AnimalWorldState* state) {
+                return ReadAnimalWorldState(reader, state);
+            },
+            kSaveComponentVersion, error)) {
+        return false;
+    }
+
+    ComponentCodec modData;
+    modData.type = kSaveComponentModData;
+    modData.name = "ModData";
+    modData.version = kSaveComponentVersion;
+    modData.minimumVersion = kSaveComponentVersion;
+    modData.has = [](const entt::registry& registry, entt::entity entity) {
+        return registry.all_of<ecs::ModData>(entity);
+    };
+    modData.write = [](const entt::registry& registry, entt::entity entity,
+                       BinaryWriter& writer) {
+        const auto* data = registry.try_get<ecs::ModData>(entity);
+        return data != nullptr && WriteModData(*data, writer);
+    };
+    modData.read = [](BinaryReader& reader, entt::registry& registry,
+                      entt::entity entity) {
+        ecs::ModData data;
+        if (!ReadModData(reader, &data)) {
+            return false;
+        }
+        registry.emplace_or_replace<ecs::ModData>(entity, std::move(data));
+        registry.emplace_or_replace<ecs::ModDataTag>(entity);
+        return true;
+    };
+    return registry.Register(std::move(modData), error);
 }
 
 }  // namespace zl::save

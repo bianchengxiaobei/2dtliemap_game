@@ -37,6 +37,7 @@ public:
         std::uint64_t guardBreaks = 0;  // 格挡体力不足破防（跨帧累计）
         std::uint64_t dodges = 0;       // 无敌帧闪避伤害（跨帧累计）
         std::uint64_t poiseBreaks = 0;  // 硬直条破防（跨帧累计）
+        std::uint64_t backstabs = 0;    // M34-F1-T4：背刺增伤命中（跨帧累计）
         float damageDealt = 0.0f;   // 累计伤害（跨帧累计）
         int staggered = 0;          // 本帧硬直中的实体数（每帧快照）
     };
@@ -50,6 +51,18 @@ public:
         bool guardBroken = false;
         bool dodged = false;
         bool poiseBroken = false;
+    };
+
+    // M35-F2-T2：ApplyDamage 实际扣血后的脚本事件载荷（一次扣血一条）。
+    // amount 是护甲/格挡减伤后的实际伤害；remainingHp 下限为 0。
+    struct DamageApplied {
+        std::uint64_t targetId = 0;
+        std::uint64_t sourceId = 0;
+        ecs::DamageType type = ecs::DamageType::Blunt;
+        float amount = 0.0f;
+        float remainingHp = 0.0f;
+        bool lethal = false;
+        bool blocked = false;
     };
 
     enum class BlockOutcome : std::uint8_t {
@@ -81,6 +94,7 @@ public:
         float damage = 0.0f;
         bool lethal = false;
         bool poiseBroken = false;
+        bool backstab = false;
     };
 
     // M19-F1：本 tick 的实际命中记录（只由 AttackIntent 扇形判定产生）。
@@ -91,6 +105,7 @@ public:
         float damage = 0.0f;
         bool lethal = false;
         bool poiseBroken = false;
+        bool backstab = false;
     };
 
     // M19-F4：护甲磨损回调。CombatSystem 只读取 DamageResist 并通知上层，
@@ -118,6 +133,12 @@ public:
     using HitFeedbackCallback = std::function<void(const HitFeedback&)>;
     void SetHitFeedbackCallback(HitFeedbackCallback callback) {
         m_hitFeedbackCallback = std::move(callback);
+    }
+
+    // M35-F2-T2：实际扣血回调（闪避/弹反/零伤害不触发）。
+    using DamageAppliedCallback = std::function<void(const DamageApplied&)>;
+    void SetDamageAppliedCallback(DamageAppliedCallback callback) {
+        m_damageAppliedCallback = std::move(callback);
     }
 
     void SetCombatRules(CombatRuleConfig rules) {
@@ -156,6 +177,7 @@ private:
     InfectionExposureCallback m_infectionExposureCallback;
     BlockFeedbackCallback m_blockFeedbackCallback;
     HitFeedbackCallback m_hitFeedbackCallback;
+    DamageAppliedCallback m_damageAppliedCallback;
     WoundParams m_woundParams;
     CombatRuleConfig m_rules;
     Stats m_stats;

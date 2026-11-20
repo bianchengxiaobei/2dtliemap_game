@@ -19,9 +19,12 @@
 #include <vector>
 
 #include "game/BuildingRules.h"
+#include "game/Companion.h"
+#include "game/Traps.h"
 #include "game/Missions.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/VehicleMods.h"
 #include "game/WorldEvent.h"
 #include "items/ItemDef.h"
 #include "items/ItemRegistry.h"
@@ -161,6 +164,22 @@ void HashRangedCombat(ContentHasher& hasher,
     hasher.F32(ranged.falloffScale);
 }
 
+void HashThrowableDef(ContentHasher& hasher,
+                      const items::ThrowableDef& throwable) {
+    hasher.F32(throwable.range);
+    hasher.F32(throwable.damage);
+    hasher.F32(throwable.impactRadius);
+    hasher.F32(throwable.arcHeight);
+    hasher.F32(throwable.noiseRadius);
+    hasher.Bool(throwable.returnable);
+    hasher.F32(throwable.breakChance);
+    hasher.Bool(throwable.fire.has_value());
+    if (throwable.fire.has_value()) {
+        hasher.F32(throwable.fire->radius);
+        hasher.F32(throwable.fire->minutes);
+    }
+}
+
 void HashArmorStats(ContentHasher& hasher, const items::ArmorStats& armor) {
     hasher.F32(armor.clawReduction);
     hasher.F32(armor.biteReduction);
@@ -187,6 +206,10 @@ void HashItemDef(ContentHasher& hasher, const items::ItemDef& item) {
     hasher.Bool(item.ranged.has_value());
     if (item.ranged.has_value()) {
         HashRangedCombat(hasher, *item.ranged);
+    }
+    hasher.Bool(item.throwable.has_value());
+    if (item.throwable.has_value()) {
+        HashThrowableDef(hasher, *item.throwable);
     }
     HashArmorStats(hasher, item.armor);
     hasher.F32(item.repairEfficiency);
@@ -292,6 +315,72 @@ void HashPoiDef(ContentHasher& hasher, const PoiDef& poi) {
     hasher.F32(poi.task.rewardXp);
     hasher.String(poi.task.rewardItem);
     hasher.I32(poi.task.rewardCount);
+
+    const auto hashStrings = [&](const std::vector<std::string>& values) {
+        hasher.U32(static_cast<std::uint32_t>(values.size()));
+        for (const std::string& value : values) {
+            hasher.String(value);
+        }
+    };
+
+    hasher.U32(static_cast<std::uint32_t>(poi.stages.size()));
+    for (const PoiStageDef& stage : poi.stages) {
+        hasher.String(stage.id);
+        hasher.U8(static_cast<std::uint8_t>(stage.kind));
+        hasher.String(stage.hint);
+        hasher.String(stage.target);
+        hasher.F32(stage.x);
+        hasher.F32(stage.y);
+        hasher.F32(stage.radius);
+        hasher.I32(stage.count);
+        hashStrings(stage.next);
+        hashStrings(stage.requiredKeys);
+        hasher.F32(stage.reward.xp);
+        hasher.String(stage.reward.item);
+        hasher.I32(stage.reward.count);
+    }
+
+    hasher.U32(static_cast<std::uint32_t>(poi.entries.size()));
+    for (const PoiEntryDef& entry : poi.entries) {
+        hasher.String(entry.id);
+        hasher.String(entry.label);
+        hasher.F32(entry.x);
+        hasher.F32(entry.y);
+        hasher.String(entry.stage);
+        hasher.String(entry.requiredKey);
+    }
+
+    hasher.U32(static_cast<std::uint32_t>(poi.keys.size()));
+    for (const PoiKeyDef& key : poi.keys) {
+        hasher.String(key.id);
+        hasher.String(key.item);
+        hasher.String(key.name);
+        hasher.String(key.source);
+        hasher.Bool(key.consumed);
+    }
+
+    hasher.U32(static_cast<std::uint32_t>(poi.branches.size()));
+    for (const PoiBranchDef& branch : poi.branches) {
+        hasher.String(branch.id);
+        hasher.String(branch.name);
+        hasher.String(branch.from);
+        hashStrings(branch.stages);
+    }
+
+    hasher.Bool(poi.boss.enabled);
+    hasher.String(poi.boss.name);
+    hasher.String(poi.boss.variant);
+    hasher.String(poi.boss.stage);
+    hasher.String(poi.boss.mechanic);
+    hasher.I32(poi.boss.count);
+
+    hasher.U32(static_cast<std::uint32_t>(poi.narrative.size()));
+    for (const PoiNarrativeDef& note : poi.narrative) {
+        hasher.String(note.id);
+        hasher.String(note.stage);
+        hasher.String(note.text);
+        hasher.String(note.item);
+    }
 }
 
 void HashSettlementReputationConfig(
@@ -455,6 +544,117 @@ void HashStringList(ContentHasher& hasher,
     hasher.U32(static_cast<std::uint32_t>(values.size()));
     for (const std::string& value : values) {
         hasher.String(value);
+    }
+}
+
+void HashCompanionDef(ContentHasher& hasher, const CompanionDef& companion) {
+    hasher.String(companion.id);
+    hasher.String(companion.name);
+    hasher.String(companion.background);
+    hasher.F32(companion.baseHealth);
+    hasher.String(companion.equipment.primary);
+    hasher.String(companion.equipment.body);
+    hasher.F32(companion.inventoryCapacityKg);
+    hasher.U32(static_cast<std::uint32_t>(companion.inventory.size()));
+    for (const CompanionItemStack& stack : companion.inventory) {
+        hasher.String(stack.item);
+        hasher.I32(stack.count);
+    }
+    HashStringList(hasher, companion.traits);
+    hasher.U8(static_cast<std::uint8_t>(companion.recruit.minReputationTier));
+    hasher.String(companion.recruit.requiredMission);
+    hasher.String(companion.recruit.requiredItem);
+    hasher.I32(companion.recruit.requiredItemCount);
+    hasher.String(companion.dialogueProfile);
+    hasher.I32(companion.startingLoyalty);
+    hasher.U32(static_cast<std::uint32_t>(companion.personalQuest.size()));
+    for (const CompanionQuestStageDef& stage : companion.personalQuest) {
+        hasher.String(stage.id);
+        hasher.String(stage.name);
+        hasher.String(stage.description);
+        hasher.I32(stage.minTrust);
+        hasher.U8(static_cast<std::uint8_t>(stage.objective.kind));
+        hasher.String(stage.objective.target);
+        hasher.I32(stage.objective.count);
+        hasher.String(stage.objective.description);
+        hasher.I32(stage.rewardTrust);
+        hasher.String(stage.rewardTrait);
+        hasher.String(stage.rewardItem);
+        hasher.I32(stage.rewardItemCount);
+        hasher.String(stage.rewardEquipSlot);
+        hasher.String(stage.completionText);
+    }
+}
+
+void HashCompanionConfig(ContentHasher& hasher,
+                         const CompanionConfig& config) {
+    hasher.Bool(config.enabled);
+    hasher.U32(static_cast<std::uint32_t>(config.defs.size()));
+    for (const CompanionDef& companion : config.defs) {
+        HashCompanionDef(hasher, companion);
+    }
+}
+
+void HashVehicleModDef(ContentHasher& hasher, const VehicleModDef& def) {
+    hasher.String(def.id);
+    hasher.String(def.name);
+    hasher.String(def.description);
+    hasher.U8(static_cast<std::uint8_t>(def.slot));
+    hasher.F32(def.effects.crashConditionScale);
+    hasher.F32(def.effects.zombieConditionScale);
+    hasher.F32(def.effects.ramConditionScale);
+    hasher.F32(def.effects.ramDamageScale);
+    hasher.F32(def.effects.trunkCapacityKg);
+    hasher.I32(def.effects.trunkStacks);
+    hasher.F32(def.effects.headlightRangeScale);
+    hasher.F32(def.effects.headlightBrightnessScale);
+    hasher.F32(def.effects.maxSpeedScale);
+    hasher.F32(def.effects.accelerationScale);
+    hasher.F32(def.effects.fuelUseScale);
+    hasher.F32(def.effects.conditionWearScale);
+    hasher.U32(static_cast<std::uint32_t>(def.materials.size()));
+    for (const VehicleModMaterial& material : def.materials) {
+        hasher.String(material.item);
+        hasher.I32(material.count);
+    }
+    hasher.F32(def.installSeconds);
+    hasher.F32(def.weightKg);
+    HashStringList(hasher, def.excludes);
+}
+
+void HashVehicleModsConfig(ContentHasher& hasher,
+                           const VehicleModsConfig& config) {
+    hasher.Bool(config.enabled);
+    hasher.U32(static_cast<std::uint32_t>(config.defs.size()));
+    for (const VehicleModDef& def : config.defs) {
+        HashVehicleModDef(hasher, def);
+    }
+}
+
+void HashTrapDef(ContentHasher& hasher, const TrapDef& def) {
+    hasher.String(def.id);
+    hasher.String(def.name);
+    hasher.String(def.buildingId);
+    hasher.F32(def.damage);
+    hasher.F32(def.radius);
+    hasher.F32(def.cooldownSeconds);
+    hasher.I32(def.uses);
+    hasher.F32(def.staggerSeconds);
+    hasher.F32(def.noiseRadius);
+    hasher.U8(def.triggerMask);
+    hasher.F32(def.armSeconds);
+    hasher.Bool(def.fire.has_value());
+    if (def.fire.has_value()) {
+        hasher.F32(def.fire->radius);
+        hasher.F32(def.fire->minutes);
+    }
+}
+
+void HashTrapDefsConfig(ContentHasher& hasher, const TrapDefsConfig& config) {
+    hasher.Bool(config.enabled);
+    hasher.U32(static_cast<std::uint32_t>(config.defs.size()));
+    for (const TrapDef& def : config.defs) {
+        HashTrapDef(hasher, def);
     }
 }
 
@@ -673,7 +873,8 @@ std::uint64_t ComputeContentHash(
     const MissionConfig& missions, std::uint64_t extraHash,
     const ForageRegistry* forage, const AnimalRegistry* animals,
     const CropRegistry* crops, const SettlementConfig* settlements,
-    const WorldEventConfig* worldEvents) {
+    const WorldEventConfig* worldEvents, const CompanionConfig* companions,
+    const VehicleModsConfig* vehicleMods, const TrapDefsConfig* traps) {
     ContentHasher hasher;
     hasher.String("ZomboidLike.Content");
     hasher.U32(kContentHashVersion);
@@ -755,6 +956,21 @@ std::uint64_t ComputeContentHash(
     hasher.Bool(worldEvents != nullptr);
     if (worldEvents != nullptr) {
         HashWorldEventConfig(hasher, *worldEvents);
+    }
+
+    hasher.Bool(companions != nullptr);
+    if (companions != nullptr) {
+        HashCompanionConfig(hasher, *companions);
+    }
+
+    hasher.Bool(vehicleMods != nullptr);
+    if (vehicleMods != nullptr) {
+        HashVehicleModsConfig(hasher, *vehicleMods);
+    }
+
+    hasher.Bool(traps != nullptr);
+    if (traps != nullptr) {
+        HashTrapDefsConfig(hasher, *traps);
     }
 
     hasher.U64(extraHash);

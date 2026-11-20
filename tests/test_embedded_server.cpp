@@ -9,6 +9,7 @@
 #include "core/Config.h"
 #include "game/Animals.h"
 #include "game/BuildingRules.h"
+#include "game/Companion.h"
 #include "game/ContentHash.h"
 #include "game/Crops.h"
 #include "game/EmbeddedServer.h"
@@ -18,6 +19,8 @@
 #include "game/NetworkClient.h"
 #include "game/Poi.h"
 #include "game/Settlement.h"
+#include "game/Traps.h"
+#include "game/VehicleMods.h"
 #include "game/WorldEvent.h"
 #include "items/ItemRegistry.h"
 #include "items/LootTable.h"
@@ -141,6 +144,40 @@ TEST_CASE("M13-T9 内嵌主机：自动内容指纹下可连接并收发社交�
                                           nullptr, &error, &clientItems),
             error);
     }
+    zl::game::CompanionConfig clientCompanions;
+    REQUIRE_MESSAGE(zl::game::LoadCompanionConfig(
+                        clientConfig, &clientCompanions, &error, &clientItems),
+                    error);
+    for (const std::string& modCompanion :
+         clientModContent.companionFiles) {
+        REQUIRE_MESSAGE(
+            zl::game::MergeCompanionFile(modCompanion, &clientCompanions,
+                                         nullptr, &error, &clientItems),
+            error);
+    }
+    zl::game::VehicleModsConfig clientVehicleMods;
+    REQUIRE_MESSAGE(
+        zl::game::LoadVehicleModConfig(clientConfig, &clientVehicleMods,
+                                       &error, &clientItems),
+        error);
+    for (const std::string& modVehicleMod :
+         clientModContent.vehicleModFiles) {
+        REQUIRE_MESSAGE(
+            zl::game::MergeVehicleModFile(modVehicleMod, &clientVehicleMods,
+                                          nullptr, &error, &clientItems),
+            error);
+    }
+    zl::game::TrapDefsConfig clientTraps;
+    REQUIRE_MESSAGE(
+        zl::game::LoadTrapDefsConfig(clientConfig, clientBuildables,
+                                     &clientTraps, &error),
+        error);
+    for (const std::string& modTrap : clientModContent.trapFiles) {
+        REQUIRE_MESSAGE(
+            zl::game::MergeTrapFile(modTrap, &clientTraps, nullptr,
+                                    clientBuildables, &error),
+            error);
+    }
     const std::uint64_t clientModsHash = zl::game::ComputeTreeHash(
         clientConfig.Get<std::string>("script.modsDir", "mods"));
     CHECK(zl::game::ComputeContentHash(clientItems, clientRecipes,
@@ -148,7 +185,8 @@ TEST_CASE("M13-T9 内嵌主机：自动内容指纹下可连接并收发社交�
                                        clientMissions, clientModsHash,
                                        &clientForage, &clientAnimals,
                                        &clientCrops, &clientSettlements,
-                                       &clientWorldEvents) ==
+                                       &clientWorldEvents, &clientCompanions,
+                                       &clientVehicleMods, &clientTraps) ==
           server.ContentHash());
 
     zl::game::NetworkClient::Options clientOptions;

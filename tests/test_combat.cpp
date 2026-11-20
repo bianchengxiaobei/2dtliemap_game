@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -8,6 +9,7 @@
 #include "ai/components/AiComponents.h"
 #include "ai/systems/AiSystem.h"
 #include "ai/systems/PerceptionSystem.h"
+#include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
 #include "characters/systems/CombatSystem.h"
@@ -43,6 +45,58 @@ constexpr float kDt = 1.0f / 60.0f;
 constexpr std::uint32_t kFlashTint = 0xFF6060FFu;
 constexpr std::uint32_t kWhiteTint = 0xFFFFFFFFu;
 
+struct BackstabProbe {
+    float damage = 0.0f;
+    std::uint64_t backstabs = 0;
+    std::uint32_t hits = 0;
+};
+
+// M34-F1-T4：玩家在 (4,4)、AI 在 (5,5) 且朝下；玩家位于目标正后方。
+// decorate 用于改目标类型、朝向或警觉状态，保持基础命中数值不变。
+template <typename Decorate>
+BackstabProbe RunBackstabProbe(Decorate decorate) {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto player = world.Create();
+    registry.emplace<ecs::PlayerTag>(player);
+    registry.emplace<Position>(player, Position{4.0f, 4.0f, 0});
+    registry.emplace<Health>(player, Health{100.0f, 100.0f});
+
+    const auto target = world.Create();
+    registry.emplace<Position>(target, Position{5.0f, 5.0f, 0});
+    registry.emplace<Health>(target, Health{100.0f, 100.0f});
+    registry.emplace<ecs::Facing>(target,
+                                  ecs::Facing{ecs::Direction::Down});
+    ecs::AiState ai;
+    ai.status = ecs::AiStatus::Idle;
+    registry.emplace<ecs::AiState>(target, ai);
+    ecs::PerceptionState perception;
+    perception.alertness = 0.0f;
+    registry.emplace<ecs::PerceptionState>(target, perception);
+
+    ecs::AttackIntent attack;
+    attack.dirX = 1.0f;
+    attack.dirY = 1.0f;
+    attack.range = 2.0f;
+    attack.arcDegrees = 360.0f;
+    attack.damage = 10.0f;
+    attack.backstabMultiplier = 1.6f;
+    attack.backstabHalfAngleDegrees = 60.0f;
+    attack.pending = true;
+    registry.emplace<ecs::AttackIntent>(player, attack);
+
+    decorate(registry, target);
+
+    CombatSystem combat;
+    combat.Update(world, kDt);
+    float damage = 0.0f;
+    for (const auto& hit : combat.GetHits()) {
+        damage += hit.damage;
+    }
+    return BackstabProbe{damage, combat.GetStats().backstabs,
+                         static_cast<std::uint32_t>(combat.GetHits().size())};
+}
+
 }  // namespace
 
 TEST_CASE("战斗组件：默认值与平凡可拷贝（M5-T6 定稿）") {
@@ -58,6 +112,8 @@ TEST_CASE("战斗组件：默认值与平凡可拷贝（M5-T6 定稿）") {
     CHECK(attack.range == 1.0f);
     CHECK(attack.arcDegrees == 100.0f);
     CHECK(attack.staggerSeconds == 0.35f);
+    CHECK(attack.backstabMultiplier == 1.0f);
+    CHECK(attack.backstabHalfAngleDegrees == 60.0f);
     CHECK_FALSE(attack.pending);
 
     const HitReaction hit;
@@ -1077,4 +1133,141 @@ TEST_CASE("M15-T3 前摇中断：硬直期间清空蓄力，结束后必须重�
     system.Update(world, kDt);
     CHECK(registry.get<ecs::AiState>(zombie).attackWindupLeft > 0.0f);
     CHECK_FALSE(registry.get<ecs::AttackIntent>(zombie).pending);
+}
+
+TEST_CASE("M34-F1-T4 背刺只对未警觉且背后的 AI 增伤，正面/侧面/警戒/非法目标不增伤") {
+    const BackstabProbe base = RunBackstabProbe([](entt::registry&, ecs::Entity) {});
+    CHECK(base.damage == doctest::Approx(16.0f));
+    CHECK(base.backstabs == 1u);
+    CHECK(base.hits == 1u);
+
+    const BackstabProbe front = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.get<ecs::Facing>(target).dir = ecs::Direction::Up;
+        });
+    CHECK(front.damage == doctest::Approx(10.0f));
+    CHECK(front.backstabs == 0u);
+
+    const BackstabProbe side = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.get<ecs::Facing>(target).dir = ecs::Direction::Left;
+        });
+    CHECK(side.damage == doctest::Approx(10.0f));
+    CHECK(side.backstabs == 0u);
+
+    const BackstabProbe alerted = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.get<ecs::AiState>(target).status = ecs::AiStatus::Chase;
+        });
+    CHECK(alerted.damage == doctest::Approx(10.0f));
+    CHECK(alerted.backstabs == 0u);
+
+    const BackstabProbe attacking = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.get<ecs::AiState>(target).status = ecs::AiStatus::Attack;
+        });
+    CHECK(attacking.damage == doctest::Approx(10.0f));
+    CHECK(attacking.backstabs == 0u);
+
+    const BackstabProbe searching = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.get<ecs::AiState>(target).status =
+                ecs::AiStatus::SearchLastKnown;
+        });
+    CHECK(searching.damage == doctest::Approx(10.0f));
+    CHECK(searching.backstabs == 0u);
+
+    const BackstabProbe halfAlert = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.get<ecs::PerceptionState>(target).alertness = 0.5f;
+        });
+    CHECK(halfAlert.damage == doctest::Approx(10.0f));
+    CHECK(halfAlert.backstabs == 0u);
+
+    const BackstabProbe animal = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.emplace<ecs::Animal>(target);
+        });
+    CHECK(animal.damage == doctest::Approx(10.0f));
+    CHECK(animal.backstabs == 0u);
+
+    const BackstabProbe friendly = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.emplace<ecs::FriendlyNpc>(target);
+        });
+    CHECK(friendly.damage == doctest::Approx(10.0f));
+    CHECK(friendly.backstabs == 0u);
+
+    const BackstabProbe playerTarget = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.emplace<ecs::PlayerTag>(target);
+        });
+    CHECK(playerTarget.damage == doctest::Approx(10.0f));
+    CHECK(playerTarget.backstabs == 0u);
+
+    const BackstabProbe downed = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.emplace<ecs::Dying>(target);
+        });
+    CHECK(downed.damage == doctest::Approx(10.0f));
+    CHECK(downed.backstabs == 0u);
+
+    const BackstabProbe dead = RunBackstabProbe(
+        [](entt::registry& registry, ecs::Entity target) {
+            registry.get<Health>(target).current = 0.0f;
+        });
+    CHECK(dead.damage == doctest::Approx(0.0f));
+    CHECK(dead.hits == 0u);
+    CHECK(dead.backstabs == 0u);
+}
+
+TEST_CASE("M34-F1-T4 一次挥击最多背刺一个目标，其他命中保持原伤害") {
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto player = world.Create();
+    registry.emplace<ecs::PlayerTag>(player);
+    registry.emplace<Position>(player, Position{4.0f, 4.0f, 0});
+    registry.emplace<Health>(player, Health{100.0f, 100.0f});
+    ecs::AttackIntent attack;
+    attack.dirX = 1.0f;
+    attack.dirY = 1.0f;
+    attack.range = 3.0f;
+    attack.arcDegrees = 360.0f;
+    attack.damage = 10.0f;
+    attack.backstabMultiplier = 1.6f;
+    attack.backstabHalfAngleDegrees = 60.0f;
+    attack.pending = true;
+    registry.emplace<ecs::AttackIntent>(player, attack);
+
+    const auto first = world.Create();
+    registry.emplace<Position>(first, Position{5.0f, 5.0f, 0});
+    registry.emplace<Health>(first, Health{100.0f, 100.0f});
+    registry.emplace<ecs::Facing>(first, ecs::Facing{ecs::Direction::Down});
+    registry.emplace<ecs::AiState>(first);
+    registry.emplace<ecs::PerceptionState>(first);
+
+    const auto second = world.Create();
+    registry.emplace<Position>(second, Position{5.5f, 5.5f, 0});
+    registry.emplace<Health>(second, Health{100.0f, 100.0f});
+    registry.emplace<ecs::Facing>(second, ecs::Facing{ecs::Direction::Down});
+    registry.emplace<ecs::AiState>(second);
+    registry.emplace<ecs::PerceptionState>(second);
+
+    CombatSystem combat;
+    combat.Update(world, kDt);
+
+    const float firstDamage = 100.0f - registry.get<Health>(first).current;
+    const float secondDamage = 100.0f - registry.get<Health>(second).current;
+    CHECK(firstDamage + secondDamage == doctest::Approx(26.0f));
+    CHECK(std::min(firstDamage, secondDamage) == doctest::Approx(10.0f));
+    CHECK(std::max(firstDamage, secondDamage) == doctest::Approx(16.0f));
+    CHECK(combat.GetStats().backstabs == 1u);
+    REQUIRE(combat.GetHits().size() == 2u);
+    int backstabHits = 0;
+    for (const auto& hit : combat.GetHits()) {
+        if (hit.backstab) {
+            ++backstabHits;
+        }
+    }
+    CHECK(backstabHits == 1);
 }

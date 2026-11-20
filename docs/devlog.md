@@ -1,8 +1,647 @@
-﻿# 开发日志（devlog）
+# 开发日志（devlog）
 
 > 每个里程碑结束写一段小结：学了什么 / 踩了什么坑 / 下阶段风险（见 docs/01 附录）。
 
 ---
+
+## 2026-11-20 M34-F3-T3 触发规则与三种效果
+
+**范围**：新增 `TrapSystem` 纯函数与 `FireSystem::IgniteForcedAt`。目标筛选按 `triggerMask` + 半径取最近僵尸/动物，排除玩家、同伴、聚落友军、尸体/`Dying`、`NoCombatTarget`、Human Raiders 和异层；捕兽夹 55 Blunt/2 秒硬直/4 次，绊线只发 18 格噪声/8 次，燃油陷阱强制生成 1.5 格、45 游戏分钟的 `trap_fuel` 火焰/1 次。单机 `UpdateTraps` 改为所有非联机 tick 推进，服务器 `TickTrapTriggers` 同时处理新陷阱，同伴 AI 依据 `PlacedTrap.defId` 半径避开武装陷阱；旧尖刺仍只在基地守城激活时处理。
+
+**关键修复**：T2 把 `UpdateTraps` 放在守城流程里，导致新陷阱平时不自动布防；T3 移到所有非联机 tick，并给旧 `SpikeTrap` 保留守城门控。服务器绊线噪声经 `core::kOnSound` + `WorldSound` 发出，网络用例用 `PerceptionState.sinceHeard` 验证目标确实听见；燃油火源不依赖目标格可燃物/湿度，但仍走现有火焰伤害、燃烧僵尸、存档和视觉管线。
+
+**验证**：`M34-F3-T3*` **5/5（103 assertions）**，覆盖目标掩码/最近目标/友军/玩家/尸体/Dying/异层/Raider 排除、布防/冷却/次数、45 分钟换算、9 格燃油、无可燃物强制点燃、同伴避让，以及真实 UDP/KCP 的捕兽夹 55 伤害、绊线噪声与零伤害、燃油 9 格火焰与 `BurningZombie`；`M34-F3*` **12/12（275）**、Debug 定向 **26/26（600）**、Release 全量 **1140/1140（145165 assertions，4 skipped）**、Python 数据 **127/127**；旧 `X-F1 2b-3*` **1/1（28）**、`M32-T18*` **1/1（23）** 回归通过。
+
+**限制/下一步**：`PlacedTrap` 布防/冷却/次数存档与重启恢复留 T4；客户端只读复制和双客户端一致性留 T5；没有 1280 陷阱状态/建造面板（T6）。燃油形成的环境火焰可伤害进入范围的玩家/友方，T3 只保证陷阱目标选择不误触；目标收集仍按每 tick 一次候选快照，20+ 陷阱空间索引优化留 F4-T3。下一步 M34-F3-T4。
+
+## 2026-11-20 M34-F3-T2 建造放置、布防与拆除
+
+**范围**：把 3 个陷阱建造项接进现有建造/设施/拆除命令。`Traps` 新增 `FindByBuilding`、`TrapCanToggle`、`SetPlacedTrapArmed`、`AdvancePlacedTrapArming` 和 `SpawnPlacedTrap`；单机与服务器共用实体生成、自动布防和 E 切换规则，不碰旧 `SpikeTrap`/电网。`X` 继续复用 3 秒二次确认和 `demolishRefundRatio`，只返还木材。
+
+**关键修复**：T1 的 `PlacedTrap` 虽已注册 `TRAP2`，但不在 ZLR1 Prop 候选里，客户端也不会把 `hasPlacedTrap` 还原成 ECS 组件；T2 一并接线。`object.trap` 是三个新陷阱和旧尖刺共用占位图，拆除/脚本查询现在先按 `PlacedTrap.defId → TrapDefinition.buildingId` 定位建造项，避免把捕兽夹误认成尖刺陷阱。
+
+**验证**：`M34-F3-T2*` **2/2（104 assertions）**，覆盖建造项映射、实体字段/owner、1 秒自动布防、手动布防/解除不扣次数、耗尽拒绝、旧尖刺无新映射；真实 UDP/KCP 用例覆盖越界/木材不足/占用/成功放置、服务器布防、客户端 `TRAP2` 复制、E 切换、非 owner 拒绝、拆除返还 2 木材和复制删除。`M34-F3*` **7/7（172）**、Debug 定向 **21/21（497）**、Release 全量 **1139/1139（145154 assertions）**、Python 数据 **127/127**。
+
+**限制/下一步**：不接触发、伤害、噪声、火焰（T3）；`armRemaining` 不写入 `TRP2 v1`，布防中的陷阱存档后会保持解除（T4 再接）；没有 1280 建造菜单/陷阱状态 UI（T6）。网络用例是无窗口客户端，F4 再做双客户端画面联调。下一步 M34-F3-T3。
+
+## 2026-11-20 M34-F3-T1 traps-v1 数据、组件与版本
+
+**范围**：新增 `assets/traps.json`（`traps-v1`）与 `src/game/Traps.{h,cpp}`，加载/合并捕兽夹、绊线警报、燃油陷阱；`building.types` 与 `DefaultBuildables` 增加 3 个木材建造项。新增 `ecs::PlacedTrap`、`TRP2` 存档组件与 ZLR1 `TRAP2` 复制组件，内容指纹升 v23，内置存档组件 52→53、ZLR1 32→33。数据由 `ContentBundle`/`GameApp`/`ServerHost` 统一加载并参与联机握手。
+
+**校验**：`id`/`name`/`buildingId` 必须合法且建造项存在；`damage` 0–100、`radius` 0.5–3、`uses` 1–99、`noiseRadius` 0–32、`armSeconds` 0–10；`triggerMask` 仅接受 `zombie`/`animal`；可选 `fire{radius,minutes}` 为 0.5–3 格/1–240 游戏分钟；至少提供伤害、噪声或火焰之一。mod 文件按加载顺序追加，非法条目逐条跳过，重复 id 不覆盖基础定义。
+
+**测试**：`M34-F3-T1*` **5/5（68 assertions）**、`M13 Replication*` **5/5（158）**、`M10*` **30/30（825）**、`M31*` **37/37（2385）**、`*content*` **11/11（197）**；Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1133/1133（144958 assertions）**。重新运行 `ZL_ENABLE_PYTHON=ON` 的 `*Python*` **14/14**、`M8*` **11/11**，此前 SIGSEGV 未复现；Python 数据工具 **127/127**。限制：T1 只完成数据/组件/存档/复制注册，尚未接放置、布防、触发、燃油火焰和服务器权威结算；下一步 **F3-T2**。
+
+## 2026-11-20 M35-F5-T5 全量收口与 1280 验收
+
+**范围**：补齐 `README` 脚本内容包说明、示例验收记录与 M35 状态；用 Release 1280×720 真实窗口、真实键盘/鼠标跑完示例三波并验证关闭面板后继续。
+
+**1280 验收**：准备→第 1 波→真实鼠标点击“隐藏”→三波清场→结算→12 秒自动重开第二局；首局 360 分/最佳 360，HUD 右侧挑战字段在面板关闭后持续更新。证据 `build/m35_f5_t5_smoke/01-prep-1280.png`～`05-restart-1280.png` 与 `world.out.log`，日志含三次 `波清场`、`挑战结束：完成`、`挑战面板已关闭；挑战继续运行`、第二局 `挑战开始第 1/3 波`，stderr 为空，音频引擎系统默认设备就绪。
+
+**修复**：core_ui 全屏 HUD body 会拦截脚本面板点击，改为 `body pointer-events:none` 并只给 `#hud-bag` 重开；点击 UI 仍会触发世界点击移动，`WorldDemoState` 左键移动增加 `IsPointerOverUi` 守卫；`challenge.rcss` 子元素默认 inline 导致面板文字垂直重叠，显式 block 布局并让 body 不拦截点击，仅隐藏按钮可点。`M35-F5-T2*` 2/2（83）复验通过。
+
+**测试**：`M35*` Debug/Release 39/39（1406）、Python 44/44（1456）；Release 全量排除既有 `M30-T6`/`M31-T9` flake **1129/1129（144885 assertions）**。Debug 全量在本机负载下仍命中 6 个既有计时/性能用例（M5 boids、ChunkManager p95、M31-T9 soak、3 个网络集成），与 M35 路径无关；X-F1 2b-2b 的 Debug diff 等待调整为 10s，M31-T9 Debug 快照预算调整为 20ms，以减少慢构建误报。三套 app 已重建。
+
+**限制**：自动化真实窗口覆盖了键鼠/视觉/关闭/重开，人工听感仍建议单独确认；Debug 全量计时用例仍受机器负载影响。
+
+## 2026-11-20 M35-F5-T4 脚本查询性能护栏
+
+**范围**：为 `Entities.Query` 补截断日志与每 mod 每 tick 查询统计；只观测不额外限流，不改 API 返回结构。
+
+**实现**：`ScriptApi` 新增 `QueryEntitiesForMod`、`QueryTickStats`、`FlushQueryStats`；Lua/Python 绑定把当前 mod id 带入，C++ 直调归入 `<direct>`。每 mod 每 tick 首条截断写 `ZL_WARN`（匹配数/limit/返回数/tick/半径/kind），后续仅计数；`GameApp::Tick` 末尾输出 `ZL_INFO` 汇总，下一 tick 自动重置。查询路径从“全量构造 `ScriptEntityInfo` 再排序”改为轻量 `Candidate`（entity/StableId/距离）排序，最终只对 limit 条构造快照；单次查询缓存 `Position/Health/StableId` 等组件 storage 指针，避免逐实体 `try_get` 的 type_hash 查找。
+
+**验证**：新增 `M35-F5-T4*` 1/1（44 assertions），覆盖默认/最大 limit、半径钳制、截断只告警一次、per-mod/tick 汇总与下一 tick 重置；Lua M7-T3/Python M8-T3 补充 mod 归属与截断日志断言。`M35*` Debug/Release 39/39（1406）、Python 44/44（1456）；Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1129/1129（144885 assertions）**。性能基线：140 实体/半径 32/默认 limit 32，20 次平均 **0.38–0.61 ms Debug**、**0.011–0.016 ms Release**（目标 <1 ms Debug）。
+
+**踩坑**：最初把完整 `ScriptEntityInfo` 放进排序候选，Debug 下 140 实体约 4.8–7.4 ms；改成轻量候选后仍约 1.6 ms，最后发现逐实体 `try_get` 的 storage 查找才是大头，缓存组件 storage 指针后降到 0.4–0.6 ms。
+
+**限制**：统计只覆盖 `Entities.Query`，不统计 `Get`/容器/目录查询；日志不做硬限流，mod 仍可高频查询；直接 C++ 调用没有真实 mod id，统一记为 `<direct>`。下一步 M35-F5-T5 全量收口与 1280 实机验收。
+
+## 2026-11-20 M35-F5-T3 脚本音频
+
+**范围**：新增 Lua/Python `Audio.Play2D/Play3D`，只播放现有 `assets/audio/*.wav`；不注册新素材、不进入 AI 听觉。
+
+**实现**：`ScriptApi::PlayAudio2D/PlayAudio3D` 校验 clip 为字母/数字/`_`/`-`（拒绝路径/扩展名）、音量有限并钳制 0~1、3D 坐标有限、`radius` 0~256；通过既有 `SoundManager::Engine()` 的 SFX 组播放，文件缺失/引擎未就绪/`audio.device=off` 返回 false。`PlayAudio3D` 直接调音频引擎，不写 `OnSound`；Lua/Python `Audio` 表支持可选 `volume`/`radius`。示例挑战在波次开始/结束播放 `ui_click` 2D、击杀按事件坐标播放 `impact` 3D。
+
+**验证**：C++ 覆盖已有 clip（null device）、缺失 clip、路径逃逸、非法坐标/半径/音量、设备关闭与 `OnSound` 不触发；Lua/Python 绑定分别覆盖正常/失败/设备关闭。`M35-F5-T3*` Debug/Release 2/2（30 assertions）、Python 3/3（39）；`M35*` Debug/Release 38/38（1362）、Python 43/43（1412）；Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1128/1128（144838 assertions）**。
+
+**限制**：首次文件解码仍走 miniaudio 同步路径（调用不等待播放完成）；无新增音频素材；实机听感/1280 音频设备验收留 F5-T5。
+
+**下一步**：M35-F5-T4 性能护栏。
+
+## 2026-11-20 M35-F5-T2 示例脚本挑战面板
+
+**范围**：给 `example_scripted_gameplay` 增加 `ui/challenge.rml` 脚本面板，显示波次/倒计时/本局/最佳/目标；不新增 C++ HUD 或 API。
+
+**实现**：新增 `mods/example_scripted_gameplay/ui/challenge.rml` 与 `challenge.rcss`，左上角 16px、244px 宽，`pointer-events:none` 仅“隐藏”按钮可点，非模态、`hud` 组。`challenge.lua` 在 `OnUiReady` 打开面板，`push_ui` 每 15 tick 与 HUD 同步，覆盖等待/准备/波次/间隙/完成/阵亡/多人禁用，进度条按剩余时间计算；点击 `challenge-hide` 调用 `UI.CloseDocument(..., true)` 后停止 UI 更新但挑战/HUD 继续；`OnWorldStart/OnModReload` 重开，`OnWorldExit` 卸载。新增 2 个测试：1280x720/1920x1080 与 `hud-clock/hud-right/hud-left/hotbar/hud-bag` 不重叠且面板无内部溢出；等待/准备/波次文本更新、非模态不捕获输入、真实鼠标点击隐藏后继续刷怪计分。
+
+**验证**：`M35-F5-T2*` Debug/Release/Python 均 **2/2（83 assertions）**；`M35*` Debug/Release **36/36（1332）**、Python **40/40（1373）**；Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1126/1126（144809 assertions）**。
+
+**限制**：自动布局只覆盖内置 HUD 主要块，实机 1280 视觉与键鼠完整一局留 F5-T5；音频/性能留 F5-T3/T4。
+
+**下一步**：M35-F5-T3 音频（可选）。
+
+## 2026-11-20 M35-F5-T1 示例 mod example_scripted_gameplay
+
+**范围**：交付端到端 Lua 内容包，串起 M35 的只读查询、行为事件、命令化动作、`Mod.Data`、`Json`、`require` 与 HUD；不新增 C++ API。
+
+**实现**：新增 `mods/example_scripted_gameplay`（`api:2`、Lua，`loadOrder=130`），拆为 `main.lua`、`config.lua`、`challenge.lua`、`wave/director.lua`。进入世界 4 秒准备后开始 3 波（3/4/5 只，normal/fast/strong/armored 混编，每波 30 秒、间隙 6 秒）；击杀 +10、连杀最多 +10、清场 +50，制作/建造事件另有加分；完成/阵亡后 12 秒重开。最佳分数/最佳波次/局数/当前 run 写入 `Mod.Data`，run 用 `Json` 编码；热重载和读档从 run 状态继续。HUD 注册 4 个字段显示状态、波次/倒计时、本局/最佳分、天气/附近实体/饥饿/背包/等级。示例在准备阶段尝试装备武器、用 3 木材放木门，低血用背包物品，每波清场尝试 `Craft.Start("field_bandage")`，结束切换/维修/拆除木门，并调用 `Player.GiveXp`。新增 `tests/test_example_gameplay.cpp` 两用例：完整 3 波模拟 + 击杀归属/动作/HUD/Mod.Data 断言；`Mod.Data` 实体快照往返后成绩保留；运行中热重载继续当前 run。
+
+**验证**：`M35-F5-T1*` Debug/Release/Python 均 **2/2（68 assertions）**；`M35*` Debug/Release **34/34（1249）**、Python **38/38（1290）**；Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1124/1124（144726 assertions）**。热重载后 HUD 与分数保持，读档快照恢复 `best_score`/`best_wave`。
+
+**限制**：自动化用 `OnZombieDead` 模拟击杀，不等同真实 1280 键鼠战斗视觉验收；自定义 `ui/challenge.rml` 留 F5-T2，音频/性能护栏留 F5-T3/F5-T4；多人只显示“仅单机”；木门/制作受实际站位、材料和背包限制，失败只记录不阻断挑战。
+
+**下一步**：M35-F5-T2 HUD 辅助与示例 UI（`ui/challenge.rml`）。
+
+## 2026-11-20 M35-F4-T5 文档与旧档兼容收口
+
+**范围**：审计 M35 脚本文档、补 v1 mod/旧档兼容回归，完成 F4 持久化与工具收口；不改生产代码。
+
+**实现/文档**：`docs/modding.md` 补齐 v1→v2 兼容说明，明确 `api:1` 告警加载、v1 函数签名不变、旧档无 `MDAT` 时 `Mod.Data` 为空、Lua `require` 可选而 Python 仍单入口；`docs/03` 更新 API 清单 header、F4 说明、沙箱/热重载/双后端与验收表；`docs/23` 回填 F4-T5 记录。新增 `M35-F4-T5` 用例：`legacy_v1` 以 `api:1` 经 `ModLoader` 告警加载，脚本内 `Game.GetApiVersion()==2`，v1 `Log.Info/Events.On` 正常执行；旧档无 `MDAT` 由既有 `M35-F4-T1` 用例覆盖。
+
+**测试**：`M35-F4-T5*` Debug/Release/Python 均 **1/1（6 assertions）**；`M35*` Debug/Release **32/32（1181）**、Python **36/36（1222）**；Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1122/1122（144658 assertions）**。
+
+**下一步**：M35-F5-T1 `example_scripted_gameplay` 示例与玩法包。
+
+## 2026-11-20 M35-F4-T4 Lua require 多文件
+
+**范围**：为 Lua mod 提供受限 `require`，支持多文件拆分、点号/相对路径、模块返回值与热重载清缓存；Python 后端保持单入口。
+
+**实现**：每个 mod 环境绑定带 5 个 upvalue 的 `require` C 闭包（Impl、canonical scripts 根、缓存表、加载中/深度表、环境）；缓存表作为 Lua upvalue 随环境 GC，`ReloadMod` 新建环境即清空。模块名支持 `util`、`wave.director`、可选 `.lua`；`./`/`.\` 相对调用文件目录。路径拒绝空段、`.`/`..`、绝对路径、盘符/冒号，`weakly_canonical` 后再校验仍位于 `<modRoot>/scripts/**`，symlink 逃逸拒绝；单文件 ≤1 MB、嵌套 ≤32 层、循环依赖报错。模块在同一环境执行，返回首值（无返回/`nil` 为 `true`），缓存按 canonical 路径；解析/加载/执行错误带调用文件行号，运行时错误带模块路径、行号与 traceback。嵌套 `RunChunk` 改用预算作用域，保存/恢复外层指令预算。
+
+**测试**：新增 3 个 `test_lua_runtime` 用例（37 assertions），覆盖多文件/点号/相对路径/缓存身份/无返回值、类型/空名/`..`/绝对路径/symlink 越界、循环/深度/1 MB/语法/运行时行号、热重载 v1→v2 与每 mod 独立缓存；M7 沙箱用例更新为 `require=function`。`M35-F4-T4*` Debug/Release/Python 均 **3/3（37 assertions）**；`M35*` Debug/Release **31/31（1175）**、Python **35/35（1216）**；Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1121/1121（144652 assertions）**。
+
+**下一步**：M35-F4-T5 文档与旧档兼容收口。
+
+## 2026-11-20 M35-F4-T3 Json 双后端
+
+**范围**：为 Lua/Python 暴露同名 `Json.Encode/Decode/Array/Null`，统一处理对象/数组/空表/null、中文、浮点、循环与大小上限。
+
+**实现**：Lua 手写 table ↔ nlohmann；连续整数 key `1..N` 为数组，空 table 为对象，对象 key 必须字符串；`Json.Array()`/`Json.Null()` 用私有标记表保留空数组/null，解码空数组/null 还原为标记。Python 由 C++ 预校验类型/深度/项数/字符串/有限数字/循环，再调用标准 `json.dumps/loads`（`ensure_ascii=false`、`sort_keys=true`、`allow_nan=false`、紧凑分隔符）。两端统一容器深度 16、字符串 64 KB、数组/对象 1024 项；循环失败并 `ZL_WARN`；非法 JSON/类型/非字符串 Decode 返回 nil/None。修复 Release 下 sol2 `is<int64_t>` 将浮点误判为整数的问题，改用 `lua_isinteger`。
+
+**测试**：Lua 覆盖嵌套/数组/中文/浮点/空表/空数组/null/非法 JSON/循环/深度/项数/字符串/NaN；Python 覆盖同名场景及 dict 非字符串 key、`NaN/Infinity`。`M35-F4-T3*` Debug/Release **1/1（4 assertions）**、Python **2/2（10 assertions）**；`M35*` Debug/Release **28/28（1138）**、Python **32/32（1179）**；Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1118/1118（144614 assertions）**。
+
+**下一步**：M35-F4-T4 Lua `require` 多文件与热重载缓存。
+
+## 2026-11-20 M35-F4-T2 Mod.Data Lua/Python API
+
+**范围**：在 F4-T1 `ModData` 组件上暴露 per-mod `Mod.Id()` 与 `Mod.Data` 五个操作，覆盖热重载、存档、新世界与联机失败关闭。
+
+**实现**：`ScriptApi` 新增 `GetModData/SetModData/RemoveModData/ListModDataKeys/ClearModData`；`Set` 复制当前组件后校验再整块提交，非法 mod id/key、非字符串、4097 bytes、单 mod 64 key、256 mod、全局 128 KB 均 false 且无部分写入；`Remove` 不存在 false，移空后删除 mod 条目；`Clear` 幂等 true；`Keys` 字典序。Lua/Python 均绑定 `Mod.Id()` 与 `Mod.Data.{Get,Set,Remove,Keys,Clear}`，Lua 非字符串 value 返回 false、Python 非 `str` 返回 false；loopback/client 下 `Get=nil/None`、`Keys` 空、写 false，每个 mod 每次加载最多 `ZL_WARN` 一次。热重载复用同一 `GameContext` 的组件，新 `EcsWorld` 为空，`MDAT` 存档往返后 API 直接可读。
+
+**测试**：`test_script_api` 覆盖键序/四类上限/无部分写入/存档往返/新世界/loopback+client；`test_lua_runtime`/`test_python_api` 覆盖绑定、类型拒绝、热重载、新世界、联机与单次警告。`M35-F4-T2*` Debug/Release **4/4（161 assertions）**、Python **6/6（185 assertions）**；`M35*` Debug/Release **27/27（1134）**、Python **30/30（1169）**；Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1117/1117（144610 assertions）**。
+
+**下一步**：M35-F4-T3 `Json` 双后端。
+
+## 2026-11-20 M35-F4-T1 ModData 组件与 codec
+
+**范围**：新增跨存档脚本状态的世界单例组件、`MDAT` v1 二进制编码与惰性创建辅助；本任务不暴露 `Mod.Data` API。
+
+**实现**：`src/script/ModDataComponents.h` 定义 `ModDataTag/ModDataEntry/ModData` 与上限常量；`EnsureModData` 首次创建无 `Position/SpriteRef` 的单例实体，重复调用复用同一实体。`ComponentRegistry` 注册 `MDAT`（内置组件 51→52），编码 u32 mod 数→mod id/u32 entry 数→key/value；校验 mod 数 ≤256、每 mod 64 key、id ≤128 bytes、key ≤64 bytes、value ≤4096 bytes、全局 key+value ≤128 KB、重复 id/key/控制字符/段剩余长度。`ModDataTag` 不单独入档，读档 codec 在还原后补挂 tag，查找优先 `ModData` 组件，避免加载后 tag 丢失。旧档无 `MDAT` 视为空；不新增 API/网络复制/`PlayerState` 字段。
+
+**测试**：`test_entity_save` 新增 `M35-F4-T1` **1/1（60 assertions）**，覆盖空数据、多 mod/中文/空值往返、单例复用、无 Position、旧档缺组件、65 key/4097 bytes/全局超限写拒绝与 65 key 读拒绝；同步更新内置组件基线 51→52。Debug/Release/Python 定向全绿，`M35*` Debug/Release **23/23（973）**、Python **24/24（984）**；Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1113/1113（144449 assertions）**；三套 `ZomboidLike` 构建通过。
+
+**下一步**：M35-F4-T2 `Mod.Data` Lua/Python API、联机拒绝与热重载保留。
+
+## 2026-11-20 M35-F3-T7 联机策略与双后端收口
+
+**范围**：非 direct 下所有 M35 新写 API fail-closed；`Game.IsMultiplayer/GetNetMode` 文档化；Lua/Python 双模式一致。
+
+**实现**：`Game.IsMultiplayer()` 在主机/加入/loopback 均为 true，`GetNetMode()` 返回 `direct/loopback/client`，`networkClient` 优先。`ApplyDamage/AdjustNeeds/GiveXp/Craft.Learn/Build.CanPlace` 在 loopback/client 下返回 `ok=false` 且状态不变；`World.EmitSound` 追加非 direct 拒绝，避免只在本地客户端派发声音造成 AI/音频分歧。命令化动作仍提交服务器；v1 的 `Teleport/AddItem/SpawnItem/Zombies.Spawn` 保持本地兼容行为并文档化。`Mod.Data` 属 F4-T2，当前未暴露，未添加无效占位；其非 direct 写拒绝/读 nil 契约保留到 F4-T2 落地时补测。
+
+**测试**：`test_script_api`、M7、M8 分别覆盖 loopback/client；`M35-F3-T7*` Debug/Release **2/2（49 assertions）**、Python **3/3（60 assertions）**，`M35*` Debug/Release **22/22（913）**、Python **23/23（924）**。Release 全量排除既有 `M30-T6`/`M31-T9` flake 后 **1112/1112（144390 assertions）**；Debug/Release/Python 三套 `ZomboidLike` 构建通过。
+
+**限制/下一步**：`Mod.Data` 的联机拒绝用例随 F4-T2 补；命令化动作的服务器端真实结果仍由既有 HUD/事件验收。下一步 M35-F4-T1 `ModData` 组件与 codec。
+
+## 2026-11-20 M35-F3-T6 僵尸变体与声音引怪
+
+**范围**：`Zombies.Spawn(x,y,z,variant?)` 可选变体；`World.EmitSound(x,y,radius,kind?,clip?)` 本地世界声音。
+
+**实现**：`SpawnZombie` 严格解析 `normal/fast/strong/armored`，未知变体或非有限坐标返回 0；生成继续复用 `game::SpawnZombie`，HP/速度/缩放/色调/硬直条沿用现有变体配置，旧三参调用默认 `normal`。`EmitSound` 校验 `(0,256]` 半径与声音类型，构造 `core::SoundEvent`；有 `SoundManager` 时走 `EmitWorldSound`，无音频时回退 `OnSound` 事件总线，联机不广播。Lua/Python 绑定同步追加可选参数；脚本与 AI 通过既有 `OnSound` 订阅消费。
+
+**测试**：`test_script_api` 新增四变体 HP/速度断言、默认/非法变体、非有限坐标、声音半径/类型/clip、`OnSound` 载荷与 PerceptionSystem 可闻；M7/M8 补双后端调用。`M35-F3-T6*` Debug/Release/Python 均 **1/1（58 assertions）**，`M35*` **20/20（864）**，`M7-T3*` **6/6（154）**，`M8-T3*` **6/6（111）**。Release 全量重试命中既有 M30-T6 闪避、M31-T9 性能阈值与 M23 网络时序抖动；对应失败用例均不经过 F3-T6 路径，排除 `M30-T6`/`M31-T9` 两组既有 flake 后 **1110/1110（144340 assertions）**，F3-T6 定向与 `M35*` 全绿。
+
+**下一步**：M35-F3-T7 联机策略与双后端收口。
+
+## 2026-11-19 M35-F3-T5 建造动作
+
+**范围**：`Build.CanPlace(defId,x,y,vertical?) / Place / Demolish / Repair / ToggleDoor`。CanPlace 仅单机只读预检；Place/Demolish/Repair/ToggleDoor 单机直调 `WorldDemoState`，loopback/KCP 走 `PlaceStructure/DemolishStructure/RepairStructure/ToggleDoor`。
+
+**实现**：`GameContext` 新增 5 个建造 hook，`WorldDemoState` 进入赋值/退出清空。`Build.Place` 解析 `defId`→目录 index、拒绝不支持竖向项；Direct 复用原建造路径（距离/地面/占用/任务/系统开关/木材、设施生成、建筑 XP、`OnBuildPlaced`），MP 命令带 `index` 与 `flags bit0=vertical`。`Demolish/Repair/ToggleDoor` 新增按格坐标的 Direct 路径：按 Wall/Furniture/Floor 顺序找玩家结构，校验距离/所有权/耐久/门口占用；拆除支持地图结构与玩家设施/仓库，维修支持结构/泛光灯。`Demolish` 的 MP 命令用 flags=0 立即执行，不进入 UI 两次确认。Lua/Python `Build` 增加同名 5 个方法。
+
+**测试**：`test_script_api` 覆盖 SP hook、CanPlace 占用错误、竖向校验、MP 命令字段/index/排队、无玩家拒绝；M7/M8 补双后端调用。`M35-F3-T5*` Debug/Release/Python 均 **1/1（56 assertions）**，`M35*` **19/19（806）**，`M7-T3*` **6/6（146）**，`M8-T3*` **6/6（100）**，Release 全量 **1113/1113（144366 assertions）**。
+
+**下一步**：M35-F3-T6 僵尸变体与声音引怪（`Zombies.Spawn` 可选 variant、`World.EmitSound`）。
+
+## 2026-11-19 M35-F3-T4 制作动作
+
+**范围**：`Craft.Start(recipeId,count?) / Craft.Cancel() / Craft.Learn(recipeId)`。Start/Cancel 走现有 `InventoryActionType::Craft/CancelCraft` 命令，Direct 立即执行、loopback/KCP 排队；Learn 仅单机。
+
+**实现**：`StartCraft` 预检数量 1~99、配方存在、`recipeKnown`、`craftStationNearby`、`items::CanCraft`（材料/工具/锅具/燃料/输出空间），按 registry 顺序取 `fromIndex`，构造 `InventoryActionType::Craft` 命令（flags 高字节=数量）。`CancelCraft` 在 `CraftingJob`/UI 队列均为空时返回 `ok=false`；`LearnRecipe` 仅 Direct，未知/已会/联机拒绝，成功追加 `KnownRecipes` 并排序去重。`GameContext` 新增 `craftStationNearby`，`WorldDemoState` 进入赋值/退出清空，避免在脚本层复制制作站判定。Lua/Python `Craft` 增加 `Start/Cancel/Learn`，结果表/dict 复用 `{ok,queued,error}`。
+
+**测试**：`test_script_api` 覆盖未知/锁定/已会/缺材料/无站点/数量边界、Craft/Cancel 命令字段与 loopback 排队；M7/M8 补双后端调用与命令映射。`M35-F3-T4*` Debug/Release/Python 均 **1/1（38 assertions）**，`M35*` **18/18（750）**，`M7-T3*` **6/6（135）**，`M8-T3*` **6/6（95）**，Release 全量 **1112/1112（144299 assertions）**。
+
+**下一步**：M35-F3-T5 建造动作（`Build.Place/Demolish/Repair/ToggleDoor`）。
+
+## 2026-11-19 M35-F3-T3 单机直接状态效果
+
+**范围**：`Player.ApplyDamage/AdjustNeeds/GiveXp`，仅 Direct；loopback/KCP 直接返回 `ok=false`，不排队。为撤离计时、赏金奖励、脚本惩罚提供最小写入口。
+
+**实现**：`ApplyDamage` 解析 `blunt/bite/claw/fire/debug`，拒绝 `<=0`/NaN/Inf，保持 `CombatSystem::ApplyDamage` 单一伤害管线（护甲/格挡/闪避/伤口/受击反馈/OnDamage 全部复用）。接口无方向参数；有 `Facing` 时把事件方向设为正面来袭，使格挡/弹反可参与，`Debug`/`Fire` 仍不可格挡；`ok=true` 只表示进入管线，闪避/弹反时实际扣血可为 0。`AdjustNeeds` 只改 `hunger/thirst/fatigue`，非负有限增量后钳制 [0,1]，不触发营养/中毒或派生字段。`GiveXp` 校验技能/成长配置后调用 `AwardXp + RefreshDerived`，返回 `characterLevels/skillLevels/perkPoints/characterXp/skillXp`；Lua/Python 均绑定同名同参数与结果表/dict。
+
+**测试**：`test_script_api` 覆盖 MP 拒绝、无玩家/无战斗/无成长配置、非法伤害类型与数值、护甲减伤、正面格挡、闪避、Debug 穿透、死亡目标、需求钳制/负值/NaN、经验奖励与非法输入；Lua M7-T3/Python M8-T3 各补直接效果调用与 C++ 状态校验。`M35-F3-T3*` Debug/Release/Python 均 **1/1（59 assertions）**，`M35*` **17/17（712）**，`M7-T3*` **6/6（126）**，`M8-T3*` **6/6（89）**，Release 全量重跑 **1111/1111（144252 assertions）**。
+
+**下一步**：M35-F3-T4 制作动作（`Craft.Start/Cancel/Learn`）。
+
+## 2026-11-19 M35-F3-T2 命令化物品动作
+
+**范围**：把 `Player.UseItem/EquipItem/Unequip/DropItem/PickupNearest/Pickup/Attack` 接到 F3-T1 的 `SubmitCommand` 上，不新增命令类型，不改服务器协议。
+
+**实现**：7 个 `ScriptApi` 动作分别映射 `UseBag/EquipBag/Unequip/DropBag/PickupNearest/PickupEntity/Attack`；`index` 0-based、`-1` 为第一件/第一堆；`slot` 接受 `primary/body` 或 `0/1`，Lua/Python 绑定层统一转换；重击写 `kAttackHeavyFlag`。提交前 fail-closed：空背包/非法索引、非法槽位、`Pickup(0)`、攻击目标不存在/自己/非 AI 或动物/死亡/尸体/`Dying`/闪避无敌均返回 `ok=false`。单机实际效果仍由既有 `ExecutePlayerCommand`/库存与战斗逻辑执行，`ok=true` 只代表命令被接受；loopback/KCP 返回 `queued=true`。Lua/Python 均返回 `{ok,queued,error}`。
+
+**测试**：`test_script_api` 覆盖 7 条命令的 type/payload、默认 `-1`/primary、越界索引、非法槽位、重击标记、尸体/无敌/死亡目标与 loopback 入队；`test_lua_runtime`/`test_python_api` 覆盖双后端结果表及命令映射。`M35-F3-T2*` Debug/Release/Python **1/1（50 assertions）**，`M35*` **16/16（653）**，`M7-T3*` **6/6（117）**，`M8-T3*` **6/6（84）**，Release 全量 **1110/1110（144184 assertions）**。真实库存效果沿用既有 `test_network_inventory`。
+
+**下一步**：M35-F3-T3 直接状态效果（`Player.ApplyDamage/AdjustNeeds/GiveXp`，SP only）。
+
+## 2026-11-19 M35-F3-T1 动作结果与命令路由
+
+**范围**：先建脚本写动作的统一返回与命令下发基础设施，不新增脚本可见的 `Player.*` 动作；F3-T2 起在此之上绑定物品动作。
+
+**实现**：新增 `ScriptActionResult{ok,queued,error}`；`ScriptApi::SubmitCommand` 只负责填当前玩家 `playerStableId` 与 `GameLoop::TotalTicks()`，然后调用 `GameContext::submitPlayerCommand`，不在脚本层判断网络模式。`WorldDemoState` 在 OnEnter 注入该入口、OnExit 清理；新增 `game/PlayerCommand.{h,cpp}`：direct 同步执行、loopback 入批、KCP 走 `NetworkClient::SendCommand`，成功时 loopback/KCP 返回 `queued=true`，无玩家/无入口/无管线/未连接均返回 `ok=false` 与可读错误。`WorldDemoState::SubmitPlayerCommand` 保留原 bool 重载给既有 UI 调用，新重载透传 `queued/error`。
+
+**测试**：`test_script_api` 新增 F3-T1 用例，覆盖未绑定/无玩家/无入口失败、字段填充与覆盖、direct 立即执行、loopback Flush/Pump 前不执行且 `queued=true`、KCP 分支优先于本地管线及未连接错误透传。`M35-F3-T1*` Debug/Release/Python 均 **1/1（35 assertions）**，`M35*` **15/15（603 assertions）**；Release 全量 **1109/1109（144114 assertions）**。Debug/Release/Python 三套应用目标构建通过。KCP 成功发送沿用既有 M12/M13 `NetworkClient` 网络用例。
+
+**下一步**：M35-F3-T2 在此 helper 上绑定 `Player.UseItem/EquipItem/Unequip/DropItem/PickupNearest/Pickup/Attack`，并接真实 `ExecutePlayerCommand`。
+
+## 2026-11-19 M35-F2-T6 世界生命周期
+
+**范围**：给脚本一个真正的世界开局/退出时机；不改变存档格式、世界生成或联机协议。F2 事件层 T1–T6 至此完成。
+
+**实现**：`GameEvents.h` 新增 `kOnWorldStart/kOnWorldExit` 与 `WorldStartEvent{saveId,isNewGame,day,playerId}`、`WorldExitEvent{saveId}`，加入 `EventBus` variant；新增 `game/WorldLifecycle.h` 一次性状态机（Start 需 playerId 非 0，Exit 只在 Start 后）。`WorldDemoState` 在玩家实体生成/读档恢复后的首个 `OnTick` 顶部同步发 `OnWorldStart`，`OnExit` 开头、自动存档提交前同步发 `OnWorldExit`；单机暂停菜单的“返回主菜单”覆盖层不算退出，应用进程退出因 EventBridge 先释放不保证收到 Exit。联机客户端同样发，`saveId` 为空、`isNewGame=false`。`EventBridge` 事件键增至 30 个；`OnGameStart` 的文档语义纠正为“应用启动、脚本加载后（可能仍在主菜单，玩家未生成）”。
+
+**测试**：`test_event_bridge` 增加两事件字段断言与 `M35-F2-T6 世界生命周期事件只发一次`，覆盖未生成玩家不发、读档/新游戏字段、同步派发、重复 Start/Exit、Reset 与空总线。`M35-F2-T6*` Debug/Release **1/1（32 assertions）**，`M35*` **14/14（568 assertions）**，`M7-T4*` **5/5（187 assertions）**；Python `M8-T3*,M8-T5*` **6/6（72）**、`M35-F2-T6*` **1/1**、`M7-T4*` **5/5**。Release 全量 **1108/1108（144079 assertions）**；Debug 本轮不再跑全量（上一任务已记录既有联机 `PumpUntil` 超时），F2-T6 定向 Debug 全绿；Debug/Release/Python 构建通过。
+
+**限制/下一步**：`Mod.Data` 本体属 F4；本任务保证 `OnWorldStart` 在存档实体恢复后同步派发，F4 落地后可直接在该事件读取。`OnWorldExit` 不带退出原因；MP 的 `saveId` 为空。下一步 M35-F3-T1 动作结果与命令辅助。
+
+## 2026-11-19 M35-F2-T5 建造事件
+
+**范围**：让单机脚本知道建造、拆除、维修成功的位置和对象；不改变建造规则、材料/返还、维修量、存档或网络协议。
+
+**实现**：`GameEvents.h` 新增 `kOnBuildPlaced/kOnBuildDemolished/kOnBuildRepaired` 与 `BuildPlacedEvent{playerId,defId,x,y,z,vertical}`、`BuildDemolishedEvent{playerId,defId,x,y,z}`、`BuildRepairedEvent{playerId,x,y,z}`，加入 `EventBus` variant；新增 `game/BuildingEvents.h` 统一排队派发。`WorldDemoState` 单机放置（设施/仓库/普通对象）、拆除（地图结构/仓库/设施）和维修（泛光灯/单结构/维修全部）成功后发事件；网络路径不发，拆除首次确认、门槛拒绝和维修失败不发。`OnBuildRepaired` 对“维修全部”的每个实际修复结构各发一条；`OnBuildPlaced.vertical` 为实际朝向（不支持竖向的建造项恒为 false）。`EventBridge` 事件键增至 28 个。
+
+**测试**：`test_event_bridge` 增加 3 类事件字段断言；`test_building` 新增 `M35-F2-T5 建造事件载荷与门槛`，覆盖排队/载荷、空总线、占用与归属门槛。`M35-F2-T5*` Debug/Release **1/1（31 assertions）**，`M35*` **13/13（536 assertions）**，`M7-T4*` **5/5（180 assertions）**；Python `M8-T3*,M8-T5*` **6/6（72 assertions）**，`M35-F2-T5*` **1/1**，`M7-T4*` **5/5**。Release 全量 **1107/1107（144041 assertions）**；Debug 全量本轮受既有联机 `PumpUntil` 超时影响，15 分钟中止未产生汇总（失败均不在建造事件路径），F2-T5 定向 Debug 全绿；Debug/Release/Python 构建通过。Release 前两次全量中 `M31-T9 1000+ 脏 chunk` 的 `snapshotMax < 5ms` 阈值出现 20.16/5.10ms 抖动，单独与第三次全量通过。
+
+**限制/下一步**：三个事件 M35 只在单机派发，联机服务器建造/拆除/维修留给 M36；`OnBuildRepaired` 不含 `defId`，脚本需要对象类型时可按格坐标查询/等 M36 扩展；车辆/工具维修不归此事件。下一步 F2-T6 世界生命周期。
+
+## 2026-11-19 M35-F2-T4 制作事件
+
+**范围**：让单机脚本知道一个制作批次何时开始、实际开始多少件、批末完成/失败/取消以及批内完成件数；不改变制作耗时、材料扣除、工具磨损、经验或网络协议。
+
+**实现**：`GameEvents.h` 新增 `kOnCraftStart`/`kOnCraftFinished`、`CraftStartEvent{playerId,recipeId,outputDefId,outputCount,batchCount}` 与 `CraftFinishedEvent{playerId,recipeId,outputDefId,outputCount,batchCompleted,failed}`，并加入 `EventBus` variant；`EventBridge` 翻译字段，事件键增至 25 个。`PlayerInventoryService::StartCraft` 在成功启动后发 Start，`TickCrafting` 在整批成功、材料中断/制作失败时发 Finished，`Dispatch CancelCraft` 对活跃批次发 `failed=true`；`WorldDemoState` 的单机 UI 路径同样覆盖开始、批末完成、失败中断与取消。`batchCount` 为实际开始件数（可能被材料/空间截断）；`OnCraftFinished` 每批只发一次，`batchCompleted` 为批内已完成件数，成功总产量为 `outputCount * batchCompleted`；无效 Start 不发 Start，仅队列取消（无活跃批次）不发 Finished，读档恢复不补发 Start。
+
+**测试**：`test_event_bridge` 增加两个事件的字段断言；`test_inventory_service` 新增无效 Start、批量开始、首批完成、材料中断、整批完成、取消中断用例。`M35-F2-T4*` Debug/Release **1/1（42 assertions）**，`M35*` **12/12（505 assertions）**，`M7-T4*` **5/5（162 assertions）**，`M13-T7*` **7/7（327 assertions）**；Python `M8-T3*,M8-T5*` **6/6（72 assertions）**。Release 全量 **1106/1106（143991 assertions）**；Debug 全量 **1100/1106**，失败为既有网络/性能时序（M31-T9 soak、X-F1 建筑格、M22 睡眠、M23-F2a-T6 觅食、M26-V2 载具碰撞、X-F1 2b-2b），均不经过制作路径；Debug/Release/Python 构建通过。全量日志 `build/m35_f2_t4_full_release.log`、`build/m35_f2_t4_full_debug.log`。
+
+**限制/下一步**：两个事件 M35 只在单机派发，联机服务器脚本与 M36 的事件同步不做；`OnCraftFinished` 不包含失败原因/工具损坏列表，脚本需要提示时读 HUD/状态或等待后续字段；队列项只有在真正启动时才发 Start。下一步 F2-T5 建造事件。
+
+## 2026-11-19 M35-F2-T3 使用与搜刮事件
+
+**范围**：让单机脚本知道玩家成功使用了什么、剩余多少，以及哪个容器首次被搜刮、产出多少；不改变物品效果、搜刮 roll、任务/经验或网络协议。
+
+**实现**：`GameEvents.h` 新增 `kOnItemUsed`/`kOnLootSearched`、`ItemUsedEvent{playerId,defId,spoiled,remaining}` 与 `LootSearchedEvent{playerId,containerId,tableId,itemCount}`，并加入 `EventBus` variant；`EventBridge` 翻译字段，事件键增至 23 个。`WorldDemoState` 在 UI/快捷键/蓝图三条成功使用路径和首次搜刮路径排队派发；`PlayerInventoryService` 在共用的成功使用/首次搜索路径也派发，供服务器/单测使用。`OnLootSearched` 只在 `searchedNow=true` 时发，重复搜索、失败、未知容器不发；普通消耗品只在 `UseResult.applied` 后发，蓝图在消耗并学会配方后发，`spoiled=false`，`remaining` 为使用后槽位剩余数量（替换物也计 1）。
+
+**测试**：`test_event_bridge` 增加两个事件的字段断言；`test_inventory_service` 新增成功/失败/耗尽 `OnItemUsed` 用例；`test_loot` 新增首次搜索发一次、重复/失败不重发 `OnLootSearched` 用例。`M35-F2-T3*` Debug/Release **2/2（35 assertions）**，与 F2-T1/T2 组合 **4/4（86 assertions）**，`M35*` **11/11（463 assertions）**；`M7-T4*` Debug/Release **5/5（149 assertions）**；Python `M8-T3*,M8-T5*` **6/6（72 assertions）**。Release 全量 **1105/1105（143936 assertions）**；Debug 全量 **1103/1105**，失败为既有网络时序（X-F1 建筑格、M13-T5 移动复制），均不经过使用/搜刮路径；Debug/Release/Python 构建通过。
+
+**限制/下一步**：两个事件 M35 只在单机派发，联机服务器脚本与 M36 的事件同步不做；`OnItemUsed` 不包含具体效果结果，脚本需读状态或自行累计；`OnLootSearched` 不覆盖动物尸体收获。下一步 F2-T4 制作事件。
+
+## 2026-11-19 M35-F2-T2 伤害事件 OnDamage
+
+**范围**：让脚本在伤害真正扣血后收到一条结构化事件，用于伤害统计、受击反馈与赏金/战斗日志；不改变护甲、格挡、闪避、伤口和死亡流程。
+
+**实现**：`CombatSystem` 新增 `DamageAppliedCallback`，在 `ApplyDamage` 扣血后回传 `targetId/sourceId/type/amount/remainingHp/lethal/blocked`；`WorldSimulation` 转成 `core::DamageEvent`，排队派发 `OnDamage`；`EventBridge` 输出小写 `damageType`（`blunt/bite/claw/debug/fire`）与 `cause`。零伤害、闪避、弹反、完全格挡不发；普通格挡的剩余伤害发且 `blocked=true`；`remainingHp` 钳制到 0。
+
+**测试**：`test_combat_m30` 新增 `M35-F2-T2`，覆盖轻击、普通格挡剩余伤害、闪避不发、火焰、零伤害不发与致死；`test_event_bridge` 增加 `OnDamage` 字段翻译断言。定向 Debug/Release `M35-F2-T2*,M35-F2-T1*,M7-T4*` 均 **7/7（190 assertions）**，Python `M8-T3*,M8-T5*` **6/6（72 assertions）**；Debug/Release/Python 构建通过。全量 Debug 当前机器出现既有网络/性能时序失败（`M26-V2`、`X-F1 2b-2b` 隔离通过；`M4-T6`/chunk/soak 性能阈值受负载影响；`X-F1 2b-4` 仅 Debug 5s 超时、Release 通过），未改网络/换弹路径。
+
+**限制/下一步**：`OnDamage` 仅单机派发（M36 再统一联机脚本事件）；回调按实际扣血触发，火焰持续伤害会每个伤害 tick 产生一条，脚本侧自行聚合。下一步 F2-T3 使用与搜刮事件。
+
+## 2026-11-19 M35-F2-T1 死亡归属与动物击杀事件
+
+**范围**：补齐死亡事件的击杀者与死因，不改变死亡流程、倒地窗口或尸体生成时机。
+
+**实现**：`DeathSystem` 在转尸体时读取 `ecs::LastDamage`：`OnZombieDead.killer` 填 `sourceId`，`OnPlayerDeath` 追加 `sourceId/cause`；新增 `core::kOnAnimalKilled` 与 `AnimalKilledEvent{animalId,speciesId,killerId,x,y,z}`，动物不再误发 `OnZombieDead`。`DamageCauseName` 提供脚本稳定小写名（`bite/claw/starvation/infection/...`），日志仍用中文标签。`PlayerEvent` 只追加字段，旧构造与 v1 脚本字段不变。
+
+**测试**：`test_death` 新增 `M35-F2-T1`（玩家环境死亡 sourceId=0/cause=starvation、僵尸 killer 非 0、动物单独事件）；`test_event_bridge` 扩展翻译与 `M7-T4` 死亡链路；`test_needs` 补环境伤害清旧 `sourceId`。全量 Debug **1102/1102（143835 assertions）** 绿；Release 全量 **1101/1102**，唯一失败为既有 `M30-T6` 闪避计时（`test_network_integration`，隔离复跑 **2/2（56 assertions）** 通过）；Python `M8*` **11/11（101 assertions）**。Debug/Release/Python 构建通过。
+
+**限制/下一步**：`LastDamage` 仍是瞬时组件，不参与存档；饥饿/脱水/感染/失温/中毒/流血的写入点已显式把 `sourceId` 归零，避免继承旧攻击者。下一步 F2-T2 `OnDamage`。
+
+## 2026-11-19 M35-F1 脚本 API v2 只读观测层
+
+**范围**：`ScriptApi::kApiVersion` 升到 2，保持 v1 函数与 mod 兼容；补齐脚本判断玩法所需的状态读取，不新增写动作、事件或存档格式。设计见 `docs/23-M35脚本API与内容化扩展.md`。
+
+**实现**：`Game` 增加 `GetApiVersion/IsMultiplayer/GetNetMode`；`Player` 增加需求/体力/伤口/疼痛/感染/体温/成长/背包/装备/计数查询；`World` 增加天气/当天进度；新增 `Entities.Get/Query/GetContainer`、`Items.GetInfo`、`Craft.List/GetState/IsKnown`、`Build.List`、`Mission.List/Get`。`Craft.*` 优先复用 `GameContext::getInventoryState`（与 HUD 同源），无 UI 时回退注册表/`KnownRecipes`/`CanCraft`/`CraftingJob`；`GameContext` 增加 `progressionConfig` 与 `recipeKnown`，由 `WorldDemoState::OnEnter` 赋值、`OnExit` 清空。Lua/Python 同步绑定，返回 table/dict。
+
+**测试**：`test_script_api` 新增 7 个 M35-F1 用例（377 assertions）；`test_lua_runtime`/`test_python_api` 各补 v2 烟测；`M35-F1-T*` Debug/Release 7/7，`M7-T3*` 6/6（Lua）与 `M8-T3*` 6/6（Python）。全量 Debug 首轮 6 失败：1 个 `test_mod_loader` 默认 api 断言已从 1 改为 2；其余 5 个为 `test_network_integration` UDP 超时，未改网络路径，需在干净工作区复验。Debug/Release 构建通过。
+
+**限制/下一步**：F1 只读；`Player.UseItem/ApplyDamage/GiveXp` 等写动作在 F3，行为事件在 F2，`Mod.Data`/`Json`/`require` 在 F4。联机写 API 仍按规划 fail-closed。
+
+## 2026-11-19 构建加速：Core 静态库、PCH 与快速测试目标
+
+**范围**：解决 M34 迭代中全量 C++ 构建耗时明显、单测与 app 重复编译 168 个生产源的问题，不改游戏逻辑、协议、存档或内容指纹。
+
+**实现**：CMake 将 app/test 共用的 168 个源抽成 `ZomboidLikeCore` 静态库；`ZomboidLike` 仅保留 18 个 app 专属源（main、GameApp、states、render、UiSystem 等），`ZomboidLikeTests` 只编译 140 个测试源，二者链接 core。新增 `src/ZomboidLikePch.h`（标准库 + entt/glm/nlohmann/spdlog）并给 core/app/tests 配置预编译头；新增 `EXCLUDE_FROM_ALL` 的 `ZomboidLikeTestsFast`，只编 7 个投掷测试源 + core，用于快速回归。Python 宏与运行时库复制改为 core PUBLIC 传播，原有 `ZL_ENABLE_PYTHON=OFF/ON` 边界不变；同时修复 `x64-debug-python` / `x64-release-python` 未设独立 `binaryDir`、与普通 Debug/Release 共用 build 目录导致切换 Python 后全量重编的预设问题。
+
+**验证**（i7-10700，`-j12`，PCH 冷启动）：Debug app **190/190 步 80.6s**（core 168 + app 18 + 链接），Debug 全量测试 **142/142 步 67.4s**（core 复用），快速测试目标首次 **44.5s**、PCH 重建后增量 **16s**；Release app **173.3s**、Release 全量测试 **193.7s**。基线不再要求每次构建 `all`；全量测试 Debug **1094/1094（143405 assertions）**、Release **1094/1094（143419 assertions）** 绿；`M34-F2-T7*` **2/2（100）**；快速目标 **18/18（730）**。Debug 首轮全量命中既有 `X-F1 2b-2b` 世界重启时序 flake，隔离该组 **6/6（139）** 后全量复跑绿。Python 独立目录配置 **13.1s**、Python app **190/190 步 72.2s** 编译通过；Python API 测试 SIGSEGV 仍为既有环境问题，不在本次构建改动内。
+
+**限制/下一步**：PCH 每个目标约 289MB，属构建产物且不入库；首次构建仍需编译 168 个 core 源，后续共用 core 的增量修改只需一次编译 + 链接。下一次先按此结构做 F3-T1；若继续追求增量速度，再把 `ServerHost.cpp` / `WorldDemoState.cpp` 的热点头文件继续解耦。
+
+## 2026-11-19 M34-F2-T7 F2 回归、双客户端与文档
+
+**范围**：收口 F2 投掷。补跨 F2 的定向/全量回归、双客户端 1280 视觉联调、`throwable` 契约文档，并记录 v22 内容指纹、`ThrowItem=62` 与旧档/旧客户端限制。
+
+**实现/验证**：新增 `tests/test_throw_regression.cpp`：一个可复用的夹具用例生成 A 的 8 石块/8 简易长矛/2 燃烧瓶、静态靶、木屋站位和 `players.bin`/世界存档；另一个真实 UDP/KCP 双客户端用例验证石头 `Impact` 噪声让 AI 监听者更新 `lastKnownX/Y` 并提升警觉、B 收到远端落点音效；长矛命中静态靶结算 28 伤害并在 roll=0.541 时回收，B 的 ZLR1 健康与地面长矛一致；燃烧瓶在木地板点燃 8/9 格，B 看到 `FireSource`。排查联机 1280 烟测时发现快捷栏选择只在服务器校验、客户端本地 `m_hotbarSelected` 不更新，导致按 2/3 仍投槽 1；现 `SelectHotbar` 发送成功后立即更新本地选中槽，服务器仍只做索引合法性校验。`M34-F2-T7*` **2/2（100 assertions；夹具环境 125 assertions）**，定向 **81/81（4710）**，Release 全量 **1094/1094（143419 assertions）**（首轮 M30-T6 闪避超时 flake，隔离 **2/2** 后复跑绿），Debug 全量 **1094/1094（143405 assertions）**，Python **123/123**。Release 1280 双客户端烟测 `build/m34_f2_t7_dual/`：A/B 均 1280×720，A 石块命中（伤害 8）、简易长矛命中并回收（伤害 28）、燃烧瓶点燃 8/9 格；B 日志三次 `网络落点音效`，B 截图同步看到命中/地面长矛/火区；6 张截图、server/A/B stderr 0，临时脚本 `build/m34_f2_t7_dual_smoke.ps1` 不入库。
+
+**记录/限制**：内容指纹 v22；无 mod（空 mods 目录）启动指纹 `0x2d8e84bb23e35479`，带 core_ui+探针的烟测 `0x49d19e1384ee7aeb`（mod 文件树 `0x3c76f75955ea3f7e`）。`ThrowItem=62`、`SetStealth=61` 不变；旧客户端命令/内容哈希不兼容，握手拒绝；旧存档无新增 schema，飞行投掷物在保存/退出前结算、冷却不持久化。1280 烟测靶为夹具静态实体，石头引怪由 AI 监听者单测覆盖；B 只看到落地音效和复制的生命/火焰/地面物品，A HUD 仍显示“请求已发送”。F2 无阻塞，下一步 **F3-T1**。
+
+## 2026-11-18 M34-F2-T6 投掷内容、UI 与平衡
+
+**范围**：固定石块/简易长矛/骨矛/燃烧瓶的射程、伤害、噪声、回收/损坏和火焰数值；给原生 HUD/背包与 `core_ui` Lua/Python 补投掷标记、射程/回收提示、冷却和最近结果；把燃烧瓶材料/成品获取路径写进数据并做用途/成本平衡测试。
+
+**实现**：`HudSlot`/`InventorySlot` 增加投掷字段，`ThrowableHotbarTag`/`ThrowableInventoryTag` 生成紧凑标记，原生 `UiSystem`/`InventoryPanel` 与 `mods/core_ui` 的 Lua/Python 同步显示快捷栏 `投7.5 回95%`、背包/地面/装备 `可投7.5 回95%` 和 HUD `可投掷：石块 · 射程 6 格 · 回收 95% · 冷却 0.3/0.7s · 上次：命中 · 回收`。单机落地写 4 秒最近结果；联机只显示本地冷却与“请求已发送”，不伪造服务器结果。`poi_gas_station` 新增 weight 1 的成品燃烧瓶，空瓶/破布/燃料罐继续使用既有 loot 表；未新增货币、命令或存档字段。
+
+**验证**：`M34-F2-T6*` **2/2（96 assertions）**，Debug/Release 各通过；定向 `M34-F2*`/`M34-F1*` + 相关 M23/M12/UI **79/79（4610）** Debug 全绿；Release 全量 **1092/1092（143319 assertions）**、Python **123/123**；Debug 全量 **1092/1092（143306）** 全绿。Release 1280 core_ui 烟测 `build/m34_f2_t6_ui/`：探针放入石块×2/简易长矛×4/燃烧瓶×1，日志确认背包标签、HUD `cool=0.57/0.70`、第二块石头和长矛 `结算=回收`、燃烧瓶点燃 `8/9` 格；6 张截图 `m34_f2_t6_inventory/aim/cooldown/stone_land/spear_recover/molotov_fire.png`，stderr 0，临时脚本 `build/m34_f2_t6_ui_smoke.ps1` 不入库。
+
+**限制/下一步**：背包 64×64 格使用紧凑标记，完整说明在 HUD；联机没有逐投掷服务器结果回包，F2-T7 再做双客户端 1280 结果核验。烟测使用探针传送/加物品，第一块石头固定 roll=0.023 损坏，第二块展示回收；不是自然搜刮。内容版本仍 v22，`assets/loot.json` 变更后运行时哈希为 `0xd8b6b4d816d4cae0`。F2-T6 无阻塞，下一步 **F2-T7**。
+
+## 2026-11-18 M34-F2-T5 联机投掷权威、在飞账本与双客户端复制
+
+**范围**：把 T3/T4 的单机投掷接入服务器权威：新增 `ThrowItem=62`，服务器校验来源/射程/冷却/存活/倒地/驾驶/落点并把物品扣进在飞账本；客户端只做瞄准和本地视觉飞行，远程客户端通过落点音效与现有生命/火源/地面物品复制看到结果。不做远端逐帧投掷物、PvP 投掷或投掷 UI/平衡。
+
+**实现**：`CommandType` 扩到 62（`ThrowItem`，`index=-1` 主手、`>=0` 背包，`x/y` 世界落点，其余 payload 必须默认），`CommandTypeName`/`IsValidCommandType` 和命令包往返同步。`ServerHost` 新增 `ThrowItemAction`、`ServerThrow` 在飞账本、`UpdateServerThrows`、`SettleServerThrows`：开始校验 `throwable` 来源、射程/最小距离、墙体/加载格、存活/倒地/驾驶和服务器冷却，成功后扣 1 件并记录飞行时间（0.18–1.2s，服务器 RNG）；落地选最近有效目标 `CombatSystem::ApplyDamage`、发送 `Impact` 噪声、调用现有 `FireSystem::IgniteAt`、按服务器 roll 生成回收/损坏/消耗，并广播 `WorldSoundEvent`。`RemoveSession`、`SaveWorld`、`Shutdown` 强制结算，掉线/重连/关机不复制物品；生命、火源、地面物品继续走 ZLR1/实体复制。`WorldDemoState` 联机 `V` 改为发送 `ThrowItem` 并生成 `visualOnly` 本地飞行，不扣件、不本地结算伤害，库存以 `PlayerState` 回流为准；单机 T3/T4 路径不变。
+
+**验证**：新增 `tests/test_throw_network.cpp`，用真实 UDP/KCP 双客户端验证：A 连续投石块，B 看到目标生命下降、至少一个地面石块和落点 `Impact` 音效；燃烧瓶在木地板目标点燃 8/9 格，B 看到 `FireSource`；同一命令连续发送只启动 1 次且 `throwsRejected` 增加；A 在飞状态断线，服务器结算为地面物品，重连后背包只剩 1 件且 `InFlightThrowCount=0`。`M34-F2-T5*` **1/1（135 assertions）**，Debug 重复 3 次、Release 1 次通过；定向 `M34-F2*`/`M34-F1*` + 相关 M23/M12 **57/57（2225）**；Release 全量 **1090/1090（143220 assertions）**。Debug 全量本轮 **1088/1090（143204/143206）**，失败为既有 `M5 500 僵尸 tick 计时` 和 `M31-T9 快照写盘` 性能时序 flake，失败不涉及 T5。
+
+**限制/下一步**：不做远端逐帧投掷物复制，远程客户端只看到落地音效/结果及复制的生命/火焰/地面物品；目标选择沿用 T3，排除玩家/友方/`NoCombatTarget`，没有新增 PvP 投掷；服务器冷却只在会话运行时保存，重连会重置；测试使用传送空地和临时代码设置木地板，不是 1280 画面双客户端烟测；投掷 HUD/背包标记和最终平衡留 F2-T6，F2-T7 再做 1280 双客户端与全量回归。F2-T5 无阻塞，下一步 M34-F2-T6。
+
+## 2026-11-18 M34-F2-T4 燃烧瓶火区与火源存档联动
+
+**范围**：把燃烧瓶的 `throwable.fire` 接到现有 M23 火焰系统：落地范围内创建/点燃 `FireSource`，按物品数据覆盖燃烧时长；不做第二套火焰状态、联机投掷或投掷 UI/平衡。
+
+**实现**：`Throwing` 新增 `ThrowFireAreaCells`（格心半径、中心优先、最多 3 格）与 `ThrowFireBurnSeconds`（游戏分钟按 `game.dayLengthMinutes` 换算现实秒）；`ThrowAimRuntime`/`ThrownProjectile` 快照 `fireRadius/fireMinutes`。`WorldDemoState` 在投掷落地伤害/噪声后逐格调用 `FireSystem::IgniteAt`，传入天气湿度和玩家 owner；新点燃的 `FireSource` 覆盖 `burnDuration/burnRemaining`，已存在的活跃火源不覆盖，无易燃格/过湿只告警且不生成回收物。火焰继续走 `FireSource`/`FireAnchor` 的 M23 点燃、伤害、蔓延、存档与联机组件；owner 仅运行时用于守城贡献，不写存档。燃烧瓶仍为不可回收/100% 损坏，不产生地面物品。
+
+**验证**：新增 `tests/test_throw_fire.cpp` 3 个用例，覆盖范围/时长换算、无易燃格与潮湿失败、火区伤害/僵尸燃烧/蔓延、生成火源实体快照往返；`M34-F2-T4*` **3/3（171 assertions）**，T2+T3+T4 定向 **11/11（291）**，T2/T3/T4+相关 M23 **29/29（541）** Debug/Release 均绿。Release 全量 **1089/1089（143071 assertions）**、Python 工具 **123/123**。Release 1280 烟测 `build/m34_f2_t4_fire/`：传送到木地板房屋后投掷燃烧瓶，日志 `投掷火焰：范围 1.5 格，持续 45.0 游戏分钟（112.5s），点燃 6/9 格`、`投掷落地：燃烧瓶…火焰 6/9`；玩家受到火焰伤害 100000→99885；最终烟测落点为墙前、未命中僵尸，火区对僵尸的命中/持续燃烧与蔓延由 T4 单测覆盖；2 张截图、stderr 0。
+
+**限制/下一步**：范围按格心收集，稀疏地表不会强行点燃无易燃物格；玩家/友方/安全区沿用 M23 火焰规则，进入火区仍会受伤；owner 不持久化；联机权威/客户端表现留 F2-T5，投掷 HUD/背包标记和最终平衡留 F2-T6。本机 Debug 全量本轮受既有 M31-T9/网络压力 flake 影响（失败不涉及 T4），Release 全量及 Debug 定向回归均通过。F2-T4 无阻塞，下一步 M34-F2-T5。
+
+## 2026-11-18 M34-F2-T3 单机投掷飞行、落点伤害与回收
+
+**范围**：把 T2 的“松开 V 只预览”闭合成单机投掷：墙体夹取、扣 1 件、飞行时间、落点目标伤害、噪声、可回收物品落点生成/损坏、冷却，以及存档/退出前结算在飞投掷物；不做火焰、联机权威或投掷 HUD/平衡。
+
+**实现**：`game/Throwing.{h,cpp}` 新增 `ThrownProjectile`、`ClipThrowPath`（按 0.125 格步进采样，遇阻挡/未加载格夹到上一安全点）、`SelectThrowTarget`（`impactRadius` 内最近、同层、非自身）、`ResolveThrowLanding`（不可回收=消耗；可回收按 `breakChance` 与 roll 判损坏/回收）、`ConsumeThrowableSource`（主手/快捷栏精确校验 defId 后扣 1 件，保留 condition，防误删）和 `ThrowFlightSeconds`（0.18–1.2s）。`WorldDemoState` 瞄准每帧在射程夹取后调用墙体夹取并更新“墙前落点”，松开 V 校验存活/倒地/驾驶/UI/冷却/来源后扣件并生成运行时投掷物；固定 tick 推进飞行，落地筛掉玩家/友方/`NoCombatTarget`/死亡/异层目标，调用 `CombatSystem::ApplyDamage`（Blunt、0 击退/硬直），发送 `noiseRadius` 的 `SoundEvent`，按 `breakChance` 生成地面物品并派发 `OnItemDrop`，不可回收/损坏只消耗；投掷冷却 0.7s。F12/退出前 `SettleThrownProjectiles` 立即结算并清空，不保存飞行实体；进入世界/读档清空冷却和在飞列表。HUD action hint 从“V 投掷预览”改为“松开 V 投掷/墙前落点”，仍不新增 `HudState`/脚本字段。联机仍不生成投掷预览/命令。
+
+**验证**：新增 `tests/test_throw_flight.cpp` 4 个用例，覆盖墙体夹取/飞行时间、落点最近目标/排除同层与自身/未命中、回收-损坏边界、主手/快捷栏扣件防误删、`Advance`/`ForceSettle` 幂等；`M34-F2-T3*` **4/4（62 assertions）**，T2 提示断言更新为 **4/4（58）**，T2+T3 定向 **8/8（120）**。Debug 全量 **1086/1086（142886 assertions）**；Release 首轮命中既有 M30-T6 闪避时序 flake，隔离 **2/2（56）** 通过后全量 **1086/1086（142900）**；Python 工具 **123/123**。Release 1280 真实按键 `build/m34_f2_t3_aim/`：5 块石头连续投掷，库存日志 5→4→3→2→1→0，`roll=0.023/0.001` 两块损坏、其余 3 块生成地面物品；F12 在飞时日志 `存档/退出前结算在飞投掷物：1 件（不保存飞行中实体）`，2 张截图、stderr 0。`build/m34_f2_t3_hit/`：快捷栏 2 的燃烧瓶命中脚本在投掷开始生成的僵尸，日志 `伤害：来源 34 → 目标 …（6 点），剩 94.0 HP` 与 `结算=消耗`，2 张截图、stderr 0；两个脚本均为临时探针，不入库。
+
+**限制/下一步**：T3 不生成火焰（F2-T4）、不新增 `ThrowItem`/网络复制/服务器权威冷却（F2-T5）、不做投掷 HUD/背包标记/最终平衡（F2-T6）。墙体夹取与目标选择由纯逻辑测试覆盖；烟测目标由探针生成，长矛未单独命中烟测，石块/长矛共用同一运行时。F2-T3 无阻塞，下一步 M34-F2-T4。
+
+## 2026-11-18 M34-F2-T2 投掷瞄准、射程夹取与预览
+
+**范围**：给 `V` 增加“主手/当前快捷栏有 `throwable` 时优先投掷”的上下文，完成射程夹取、落点/抛物线预览、UI/建造/背包/菜单拦截、退出潜行和“不消耗物品”的预览闭环；不做飞行、伤害、噪声、回收、火焰或联机投掷。
+
+**实现**：新增 `game/Throwing.{h,cpp}`：`ThrowingConfig` 默认 `cooldownSeconds=0.7/maxRange=12/minRange=1`，`LoadThrowingConfig` 对非法值与非有限值回退并告警；纯函数 `ResolveThrowAimSource`/`ResolveThrowAimAction` 固定“主手 → 快捷栏 1–5 → 枪械”优先级，`ThrowAimBlockReasonFor` 覆盖 UI 光标、建造、背包、菜单、其他模态、死亡/倒地、载具、未加载区域与过近距离，`EvaluateThrowAim` 取 `min(item.range, throwing.maxRange)` 并输出夹取后的连续落点与方向。`WorldDemoState` 新增投掷源检测、每帧瞄准更新、ESC/失源/界面变化取消、松开 V 预览确认；瞄准成功即 `ExitStealth(Throw)`，只写朝向和预览状态，不扣物品。预览绘制最大射程圆、落点 `impactRadius` 圆与按 `arcHeight` 抬升的抛物线，HUD 复用 `actionHint` 显示“V 投掷/投掷预览”，未新增 HudState 字段或脚本 API。联机模式不生成投掷预览或投掷命令，联机投掷留 F2-T5。
+
+**验证**：新增 `tests/test_throw_aim.cpp` 4 个用例（投掷/主手优先与枪械回退、射程夹取/最小距离/无效落点、UI/建造/背包/菜单/载具拦截与文案、配置读取/非法回退），`M34-F2-T2*` **4/4（57 assertions）**；Debug 全量 **1082/1082（142823 assertions）**、Release 全量 **1082/1082（142837 assertions）**、Python 工具 **123/123** 全绿。Release 1280 真实按键烟测 `build/m34_f2_t2_aim/`：临时 mod 先加手枪/9mm 并装备，再加 5 个石块到快捷栏 1；`throwing.maxRange=4.0` 下 5.83 格目标夹到 4.0，日志含 `投掷瞄准：石块`、`夹取=true`、`退出潜行：投掷`、`投掷预览确认…未扣物品`；松开 V 后石块仍为 5。光标移到 HUD 后 V 被拒绝为“光标在界面元素上”；快捷栏切到空槽并 R 换弹后 V 正常开火 `手枪 7/8`。截图 `m34_f2_t2_aim_ready.png`、`m34_f2_t2_aim_released.png`、`m34_f2_t2_ui_block.png`、`m34_f2_t2_gun_fallback.png`，stderr 0；脚本 `build/m34_f2_t2_aim_smoke.ps1`（临时，不入库）。
+
+**限制/下一步**：T2 只是瞄准/夹取/预览；松开 V 仍只确认预览，不扣物品、不结算伤害/噪声/火焰，也没有投掷冷却、回收/损坏和联机命令。联机投掷留 F2-T5，实际飞行/落点/回收留 F2-T3。F2-T2 无阻塞，下一步 M34-F2-T3。
+
+## 2026-11-18 M34-F2-T1 投掷物品数据、校验与内容指纹
+
+**范围**：只建立投掷数据契约、内置投掷物与燃烧瓶配方，不接 `V` 瞄准、飞行、伤害、回收或火焰运行时。
+
+**实现**：`ItemDef` 新增可选 `throwable{range,damage,impactRadius,arcHeight,noiseRadius,returnable,breakChance,fire?}`，`fire{radius,minutes}` 可选；`ItemRegistry` 严格校验对象、必填字段、布尔、范围、未知字段和 `fire` 子对象，非法物品/ mod 事务回退且不崩溃。`assets/items.json` 为 `forage_stone`（7.5/8/0.6/噪声6/回收/5%损坏）、`makeshift_spear`（9/28/0.45/噪声5/35%损坏）、`bone_spear`（8.5/24/0.45/噪声4.5/45%损坏）补 `throwable`，新增 `molotov`（8/6/1.2/噪声5/不可回收/100%损坏/1.5格火45分钟，内置物品 98→99）；`assets/recipes.json` 新增 `craft_molotov`（空瓶+破布+燃料罐，工作台 1.5s，配方 30→31）。`HashItemDef` 纳入全部 `throwable` 字段并把 `kContentHashVersion` 升 **v22**。
+
+**验证**：新增 `tests/test_throwing.cpp` 与 `tools/tests/test_throwing_data.py`，覆盖合法/旧物品缺省/越界/未知字段/`fire` 子字段/mod 追加、内置物品/配方和 v22 指纹；`M34-F2-T1*` **5/5（128 assertions）**、`M6-T1*` **8/8（695）**；Python 工具 **123/123**、内置物品 99/配方 31 可加载；Release 600 tick 无 mod 启动烟测 `build/m34_f2_t1_startup/startup_nomods.out.log` 加载物品 99、配方 31、内容指纹 `0x10757d00f3d1acda`、stderr 0。Debug **1078/1078（142766 assertions）**、Release **1078/1078（142780 assertions）**（首轮 Release 命中 M23-F2b-T6/M30-T6/M32-T5 既有网络/时序 flake，隔离通过后复跑绿）。
+
+**限制/下一步**：仍无投掷输入、射程预览、飞行、落点伤害、噪声、回收和火焰；非法 `throwable` 沿用严格物品契约整体回退，不逐条保留。F2-T6 再平衡数值，下一步 M34-F2-T2。
+
+## 2026-11-17 M34-F1-T7 F1 平衡、回归与文档
+
+**范围**：固定 F1 潜行基线，补 8 格/3 格定点感知用例，用独立 startup + 真实按键复核远距、近距与被追击三组场景；不改 T1–T6 的潜行、背刺、HUD 或联机协议。
+
+**实现**：基线保持 `crouchSpeedScale=0.55`、`stepNoiseScale=0.45`、`visibilityScale=0.65`、`backstabMultiplier=1.6`、半角 60°；派生蹲行 2.2 格/s、脚步 1.125 格、AI 有效视距 7.8 格，`closeRadius=2.5` 全向感知不变。新增 `M34-F1-T7*`：8.2 格站立可见，同距蹲下不可见并保留 lastKnown/警觉，3.0 格蹲下仍可见。`docs/modding.md` 补 `stealth` 配置范围、`N` 键、派生值和“动物视觉不叠加潜行视距”的限制；README/docs01/docs22/devlog 更新到 7/25、F1 完成。
+
+**验证**：`M34-F1-T7*` **1/1（6 assertions）**、`M34-F1*` **21/21（301）**、`M5/M30/P1 HUD/M9-T4` 定向 **50/50（1710）**；Debug 全量 **1074/1074（142624 assertions）**、Release 全量 **1074/1074（142638 assertions）**（首轮 Release 命中 `M31-T9` maxSnapshotMs 与 network inventory pending-work 两个时序断言，复跑绿）、Python 工具 **119/119**。启用 `ZL_ENABLE_PYTHON=ON` 的独立构建中 Python API **9/9（86 assertions）**、`M34-F1*` **21/301** 全绿，实际执行了 Python `Hud.GetState` 的 T6 字段断言。3 次独立 startup 1280（core_ui、10:00、关闭天气/游荡者/动物/POI、1000 HP）在开阔草地 34.5,28.5 用真实 `N` 键进入潜行，探针固定生成普通僵尸：远距站立 10.242 格在 7.821 格被发现（alert 1）；同距蹲下保持 10.242 格、alert 0；近距蹲下 6.5 格在 5.967 格被发现并追到 1.4 格。截图 `%TEMP%/m34_t7_smoke_standing-far/m34-f1-t7-far-standing-1280.png`、`%TEMP%/m34_t7_smoke_crouched-far/m34-f1-t7-far-crouched-1280.png`、`%TEMP%/m34_t7_smoke_crouched-near/m34-f1-t7-near-crouched-1280.png`、`%TEMP%/m34_t7_smoke_crouched-near/m34-f1-t7-chasing-crouched-1280.png`，stderr 均为空。
+
+**限制/下一步**：烟测是开阔草地定点生成 + 真实按键，不是自然村庄遭遇；远距目标位于 0.5x 镜头边缘/林缘，距离证据以 HUD/探针日志为准。动物视觉仍不读取 `visibilityScale`；联机仍不显示附近警觉/背刺；投掷退出留 F2。F1 无阻塞，下一步 M34-F2-T1。
+
+## 2026-11-17 M34-F1-T6 HUD、提示与脚本字段
+
+**范围**：让玩家不用翻日志就能判断潜行是否生效、附近是否已有警觉目标、当前是否可背刺；不改 AI/战斗判定，不做联机 AI 真值复制。
+
+**实现**：`HudState` 增加 `stealthAwarenessValid/stealthNearbyAlertCount/stealthBackstabAvailable/stealthPrompt`。单机 `RefreshStealthHud` 以玩家为中心 8 格扫描存活敌意 `AiState`，警觉数沿用 `StealthTargetUnaware`；背刺沿用 T4 的未警觉/背后/倍率规则，攻击距离取当前武器重击 reach（重矛 2.6 格可越过 `closeRadius=2.5`）。`stealth-status` 追加“附近警觉 N”和“可背刺”；背刺可用时另显 `#stealth-prompt`“背刺可用 · SPACE”，不复用会抢占战斗提示的 `actionHint`。菜单、背包、交易、对话、角色/同伴/地图/建造/载具改装/睡眠/战报打开时由 `HudStealthPromptSuppressed` 统一抑制。Native `hud.rml/hud.rcss`、`core_ui` 的 RML/RCSS/Lua/Python、Lua/Python `Hud.GetState` 字段同步。联机保持 awareness unknown，只显示姿态/速度/脚步，不由客户端残缺副本推断 AI 真值。
+
+**验证**：`M34-F1-T6*` **1/1（11 assertions）**；`M34-F1*` **20/20（295）**、P1 HUD/M9-T4/Lua UI binding 定向通过；Debug 全量 **1073/1073（142617 assertions）**；Release `M34-F1*` 20/295、`M30*/M15*/P1 HUD*/M9-T4*` 66/66（2000）通过（首轮 M30-T6 闪避时序 flake，隔离 2/2 通过后组合复跑绿）。1280 烟测 `%TEMP%/m34_t6_smoke`（core_ui）与 `%TEMP%/m34_t6_native_smoke`（native fallback）各 4 张截图（站立、潜行、背刺提示、低姿态移动），探针日志确认 `backstab=true/prompt=true`，打开背包后 `prompt=false`、关闭后恢复，两份 stderr 均为空。
+
+**限制**：附近警觉/背刺提示只读单机本地 AI 真值；联机客户端不复制 `alertness`，因此不显示附近警觉/背刺可用。烟测用构造生成的未警觉僵尸 + 重矛验证，不等于自然遭遇下每个距离都能背刺；菜单抑制由纯函数测试覆盖，实际只截图了背包抑制。当前本地 `ZL_ENABLE_PYTHON=OFF`，Python `Hud.GetState` 字段代码已同步但未执行 Python 后端用例，F1-T7 需在启用 Python 的构建复跑。下一步 M34-F1-T7。
+
+## 2026-11-17 M34-F1-T5 联机权威、姿态复制与旧档
+
+**范围**：把潜行从单机开关升级为服务器权威状态，覆盖命令、owner-only 摘要、ZLR1 远端姿态、攻击/受伤/上车/倒地的退出与重连/读档/复活复位；不改 F1-T4 的伤害公式，不做 PvP 背刺。
+
+**实现**：`CommandType::SetStealth=61`，`flags bit0=1` 进入、0 退出，无其他 payload；服务器校验存活、非倒地、非驾驶后写 `ecs::StealthState`，菜单只由客户端拦截。`PlayerState` 升 **v23**，尾部 owner-only `valid/crouched/noiseRadius/visibilityScale`，v22 解码默认站立、噪声 2.5、视距 1；玩家档案保存时剥离摘要，潜行不写世界存档。`ZLR1` 新增 `STLH` 1B（bit0 低姿态、bit1 移动），只对 `PlayerTag` 发出；远端客户端按 actor 显示潜行标记/移动短线，本地 AI 真值仍只来自服务器。服务器接受近战后把背刺倍率/半角写入 `AttackIntent`，并在攻击、远程攻击、受伤、上车、倒地/死亡时退出潜行；生成/恢复/复活复位站立，客户端断线复位本地加速。旧 v22 或无 `STLH` 的新客户端回退站立。
+
+**验证**：`M34-F1-T5*` **5/5（119 assertions）**，覆盖 SetStealth loopback 字段、ZLR1 1B 移动位/缺失回退、双客户端权威切换与远端 `STLH`、非法 payload/倒地拒绝、服务器攻击背刺参数与退出、重启/重连/复活默认站立；`M34-F1*` **19/19（284）**、`M13 Replication*` **5/5（158）**、`M13-T7*` **7/7（327）**；Debug 全量 **1072/1072（142580 assertions）**；Release `M34-F1*` 19/284、`M30*/M15*` 63/976、`M13-T7/T8` 13/440 通过。未新增 live 双客户端 1280 烟测，F1-T7 用真实输入复核。
+
+**限制**：`STLH` 只带姿态/移动位，不复制噪声/视距；远端仅显示标记，AI 发现仍只在服务端。驾驶中 `SetStealth` 由服务器统一拒绝；旧客户端仍需同协议重建。PvP 背刺仍不生效。下一步 M34-F1-T6。
+
+## 2026-11-17 M34-F1-T4 背刺与攻击暴露
+
+**范围**：在现有近战伤害管线内接入背刺，不新建攻击/伤害入口，不改硬直、击退、耐久与磨损；背刺只对 AI，PvP 留后续。
+
+**实现**：`StealthRules` 新增 `StealthTargetUnaware`（Idle/Wander 且 `alertness < 0.5`，Chase/Attack/SearchLastKnown/Dead 不可）、`StealthBehindTarget`（目标→攻击者向量与目标朝向反方向的夹角 ≤ 半角）和 `StealthBackstabDamageScale`（1..3 安全倍率）。`AttackIntent` 增加 `backstabMultiplier/backstabHalfAngleDegrees`，单机 `WorldDemoState::PlayerAttack` 从已清洗的 `stealth` 配置写入；`CombatSystem` 命中循环只允许 `PlayerTag` 攻击者、`AiState` 目标，排除倒地/死亡/友方/动物/玩家，每次挥击最多消费一次背刺，倍率只乘伤害。攻击仍走既有 `ExitStealth(Attack)`；既有挥击动画 `AnimEvent::Hit` 的 6.0/7.5 格 `CombatCue` 保持为一次挥击一次的攻击噪声，未新增重复 `SoundEvent`；命中反馈新增“背刺！”提示。
+
+**验证**：`M34-F1-T4*` **3/3（54 assertions）**，覆盖正后方 10 格伤害 16、正面/侧面、Idle+0.49 可背刺、Chase/Attack/SearchLastKnown/0.5 警觉不可、动物/友方/玩家/倒地/死亡排除、一次挥击双目标只增伤一个、60° 边界与倍率 1/1.6/3/NaN 回退、攻击退出潜行条件。`M34-F1*` **14/14（165）**、`M30*/M15*` **63/63（976）**；Debug 全量 **1067/1067（142450 assertions）**；Release 同组定向通过。未新增 live 背刺烟测，F1-T7 用真实输入三距离验收。
+
+**限制**：T3 的 `closeRadius=2.5` 全向感知保留，常规 1.45~2.3 格武器贴脸时目标通常已警觉；背刺实际主要靠 2.6 格重矛或尚未完成感知的目标，T7 平衡复核。联机 `SetStealth` 与服务器权威背刺随 F1-T5 接入。下一步 M34-F1-T5。
+
+## 2026-11-17 M34-F1-T3 AI 视觉/听觉接入
+
+**范围**：让 AI 真正按潜行可视倍率判断玩家，同时保留既有天气视距、近距全向、视线遮挡、听觉和搜索行为；不新增 AI 监听器、不改联机协议。
+
+**实现**：`PerceptionSystem::VisibleTarget` 快照增加 `visibilityScale`，从玩家 `StealthState` 读取，无该组件的旧/远端实体按 1；`CanSee` 增加目标倍率参数，先保留 M20-F2 的天气视距门控，非 `closeRadius` 时有效视距 = `sightRadius × 环境倍率 × visibilityScale`，非法/越界倍率回退 1（避免损坏状态变成隐身）。`closeRadius` 内仍全向且不乘潜行倍率，但 `LineOfSight` 始终执行，树木/墙体不会因潜行失效。听觉、警觉衰减、`lastKnown` 和 `SearchLastKnown` 均未改；脚步声只沿用 T2 的 1.125 格半径进入既有 `SoundEvent` 链路。
+
+**验证**：`M34-F1-T3*` **4/4（24 assertions）**，覆盖站立 10 格可见 / 蹲下 10 格不可见 / 7 格可见、近距 2 格背后全向、树木遮挡、天气 0.5×潜行 0.65 叠乘、警觉衰减不清零、失去目标后 `SearchLastKnown`、潜行脚步 1.125 格内可闻/外无感；`M34-F1*` **11/11（111）**、`Perception*` **8/8（43）**、`M5-*` **3/3（31）**、`M20-*` **29/29（348）**。Debug 全量 **1064/1064（142395 assertions）**；Release 同组定向通过。live AI 烟测未新增，真实输入三距离验收按 F1-T7 执行。
+
+**限制**：远端玩家姿态复制留 F1-T5；AI 仍只在单机/服务端读取玩家快照，客户端不参与感知真值。下一步 M34-F1-T4。
+
+## 2026-11-16 M34-F1-T2 单机低姿态移动、脚步噪声与 HUD
+
+**范围**：让潜行从“状态骨架”变成可感知的单机行为：低姿态降速、玩家脚步降噪、攻击/受击/载具/倒地自动退出，以及 HUD 可见反馈；不接 AI 视距、背刺、投掷实际动作或联机复制。
+
+**实现**：`StealthScales` 增加 `speedScale`，`StealthState` 增加运行时 `speedScale`；`MovementSystem` 只对带 `StealthState.crouched` 的玩家叠加 `crouchSpeedScale`，站立/非玩家路径不变。`UpdateAudio` 把玩家脚步基础半径 2.5 格乘 `stepNoiseScale`，潜行脚步输出 `潜行脚步噪声：x.xx 格` 日志；枪声、载具、陷阱的 `SoundEvent.radius` 不动。新增 `StealthExitReason`（Attack/Throw/Damage/Vehicle/Downed）与 `StealthExitRequired`；近战/远程攻击在成功起手时退出，`HitReaction.hitSerial` 变化时按受击退出，`EnterVehicle` 与每帧 `Dying/Health<=0/VehicleOccupant` 检查兜底。HUD 新增 `stealthValid/stealthCrouched/stealthMoveSpeed/stealthFootstepRadius/stealthStatus/stealthTone`，native `hud.rml`、`core_ui` RML/脚本、Lua/Python `Hud.GetState` 同步；显示“潜行/站立 · x.x 格/s · 脚步 x.x 格”。
+
+**验证**：`M34-F1-T2*` **3/3（29 assertions）**，覆盖速度/脚步倍率边界、禁用/非法配置回退、五种退出原因、MovementSystem 站立/潜行/坏倍率、HUD 文案；`M34-F1*` **7/7（87）**、`M9-T4` **1/1（296）**、`M9-T6` **2/2（98）**、`M15-T5` **2/2（31）**、`P1 HUD` **2/2（702）**、`Lua UI binding` **1/1（36）**。Debug 全量 **1060/1060（142370 assertions）**；Release 同组定向通过。1280 烟测 `%TEMP%/m34_t2_smoke` 验证站立 4.0 格/s → 潜行 2.2 格/s、脚步 2.5→1.12 格、攻击退出（4 张截图）；`%TEMP%/m34_t2_damage_smoke` 验证受击退出（2 张截图）；两目录 stderr 均为 0。
+
+**限制**：HUD 速度用 `LocalControl.walkSpeed × 潜行倍率`，未叠加疲劳/疼痛/护甲/气候；`Throw` 原因已预留但实际投掷动作在 F2 接入；载具/倒地实际烟测、AI 视距、背刺、姿态复制留 F1-T3/T5/T6/T7。下一步 M34-F1-T3。
+
+## 2026-11-16 M34-F1-T1 潜行配置、输入与状态骨架
+
+**范围**：为 M34 潜行建立可验证的最小闭环：配置读取、默认键位/设置页、运行时状态和单机切换；不接移动、AI、战斗、背刺或联机权威。
+
+**实现**：新增 `characters::StealthRuleConfig`/`SanitizeStealthRuleConfig`/`StealthScalesFor` 与 `game::LoadStealthRuleConfig`；`config/game.json` 增加 `stealth` 段（速度/脚步噪声/可视距离/背刺/暴露）和 `input.bindings.Stealth=N`。`kDefaultBindings`、`kMenuBindingDefs`、设置菜单 RML 与 `MenuPanel::kKeyBindingCount` 同步增加“潜行”；`N` 与联机睡眠投票 `SleepVoteNo` 共用键，但睡眠/投票在前段直接 return，不触发潜行。新增运行时 `ecs::StealthState`（`crouched/noiseScale/visibilityScale`，不注册存档），玩家生成/旧档运行时恢复默认站立；单机按 `N` 写状态、输出 `stealth` 日志并显示 notice，联机/菜单/背包/载具/倒地/死亡/失败状态拒绝本地切换。未新增 `PlayerState`/ZLR1/网络命令。
+
+**验证**：`M34-F1-T1*` **4/4（55 assertions）**，覆盖默认值/范围/NaN/非法回退、旧配置缺键回退、设置页第 14 项 `Stealth=N`、输入动作按下与 UI 阻断；`M9-T6` **2/2（98 assertions）**。Debug 全量 **1057/1057（142337 assertions）**通过；首轮命中 `M31-T9`/`M22-F1`/`M26-V2`/`X-F1 2b-2b` 时序/覆盖 flake，隔离均通过后全量复跑绿。Release 定向与 UI 定向通过。1280 实机烟测 `%TEMP%/m34_t1_smoke` 发送 `N` 两次：日志 `潜行切换：开（噪声 x0.45，可视 x0.65）`、`关（x1.00/x1.00）`，菜单打开后再按 `N` 不产生第三次切换，3 张截图、stderr 0。
+
+**限制**：HUD 当时仅用 notice；低姿态移动、脚步噪声、自动退出已由 F1-T2 补齐；AI 视觉/听觉、背刺、联机复制与 `PlayerState v23` 仍未实现。下一步当时为 M34-F1-T2。
+
+## 2026-11-16 M33-F5-T7 F5 回归与 M33 收口
+
+**范围**：完成 F5 双客户端阶段验收、15–30 分钟跨包循环、全量回归和 M33 文档收口；不新增内容字段或协议。
+
+**双客户端**：新增 `tests/test_m33_f5_t7.cpp`，加载 3 阶段测试 POI：A/B 共同推进 world 级阶段，A 击杀 Boss 后双方各获得一次阶段奖励；每人 3 条 `rewardClaims` 且奖励物品各 1 份。服务器重启并以同一身份重连后，完成阶段保持、Boss 不重刷、claim 与物品不重复。`M33-F5-T7*` **1/1（68 assertions）**；`M33-F5*` **21/21（646 assertions）**。
+
+**1280 循环**：`build/m33_f5_t7_loop_smoke/` 使用实际 M31 内容与正常 `E/1/2/I`、鼠标菜单完成：商队余波选择交易（声望 +5）→村庄求助者招募林医生→安装车顶行李架→诊所药房 3 阶段→返回村庄→快速存档→主菜单继续读档；游戏内 **15.3 分钟**，15 张 1280 截图，主进程/读档进程 stderr 为空，读档恢复 70 实体/1 玩家。
+
+**回归**：Debug **1053/1053（142279 assertions）**、Release **1053/1053（142293 assertions）**、Python **119/119**；Release 首轮全量命中既有 `M32-T5` 区域围攻 active 时序偶发失败，隔离 5/5 与全量复跑通过。Release 600 tick 无 mod 启动烟测 `build/m33_f5_t7_startup_final/startup_nomods.out.log`：POI 4 个、物品 98、内容指纹 `0xcd19753800f05050`、tick=600、stderr 0。同步 docs/18（35/35）、docs/01、README、docs/21、docs/modding、mapformat 和本日志。
+
+**限制**：循环烟测用 `dayLengthMinutes=180`、传送、100000 HP、事件起始直开和放宽林医生招募条件，不等同无修改的 15–30 分钟墙钟真人流程；双客户端 T7 用测试 POI，不是 M31 诊所/检查站的 1280 双窗口。真实自然流程与旧图迁移取舍建议后续人工复验。
+
+## 2026-11-16 M33-F5-T6 POI 内容包
+
+**范围**：把默认 M31 的诊所、检查站、农场仓改成 3 阶段内置内容，覆盖分支、钥匙门禁、阶段搜刮与 Boss；不改旧 `village_demo` 的 11 个单段 POI，不新增 Boss 血条/动画。
+
+**内容**：`clinic` 为 `triage_choice` 分支——`ward` 夜班医师（armored/summon）+1 精英，奖励急救包；`pharmacy` 搜刮 `hospital_patient_log`，奖励抗生素。`checkpoint` 为 `patrol_cache` 搜刮 `checkpoint_patrol_log` 并发放 `checkpoint_keycard` → `armory_gate` 消耗钥匙按 `E` 开门 → `commander` 检查站指挥官（armored/fortify）+2 精英。`farmstead` 为 `farm_yard` 到达 → `supply_cache` 搜刮 `farm_supply_log` → `farm_boss` 农场主（strong/summon）+2 精英。新增 4 个物品，笔记分别保底在 `poi_clinic_medicine`/`poi_military_supplies`/`poi_farm_tools`；物品总数 98。
+
+**修复**：1280 烟测发现玩家绑定过远处皮卡后，`WorldDemoState::FindNearbyStorage` 会把 `m_vehicle` 无条件当作附近仓库，导致所有 POI 容器被空后备箱覆盖、搜刮动作拿不到笔记。现在非驾驶/乘坐只接受 `FindNearestVehicle(enterRange)`，驾驶/乘坐才保留绑定车辆；日志确认三个容器 `can=true/stacks>0` 并成功 `take_all`。
+
+**验证**：C++ `M33-F5-T6*` **1/1（77 assertions）** 从实际 M31 内容加载并验证分支/钥匙/Boss/奖励与阶段流；Python `test_f5_poi_content.py` 5 用例验证引用/保底/可达性。Debug **1052/1052（142211 assertions）**、Release **1052/1052（142225 assertions）**、Python **119/119**。Release 600 tick 无 mod 启动烟测 `build/m33_f5_t6_startup_final/startup_nomods.out.log`：POI 4 个、物品 98、指纹 `0xcd19753800f05050`、tick=600、stderr 0。1280 烟测 `build/m33_f5_t6_smoke/` 使用临时传送/高伤害/高生命，正常 `1/2`、`E`、`I` 与 `take_all` 完成三处 POI；13 张截图（分支/背包/钥匙/门禁/三处 Boss/完成/地图），stderr 为空。
+
+**限制**：默认 M31 使用诊所/检查站/农场仓对应医疗/军事/农仓场景；旧 `village_demo` 未迁移；诊所分支为 Boss/搜刮二选一，检查站与农场为线性；烟测用传送和高伤害隔离阶段，不等同真实 5–10 分钟步行计时；自然 15–30 分钟循环、双客户端阶段一致性与 M33 收口留 T7。下一步 M33-F5-T7。
+
+## 2026-11-16 M33-F5-T5 HUD、地图、叙事与阶段提示
+
+**范围**：把 T2–T4 的阶段状态接成可读的玩家界面：结构化阶段卡、钥匙/供电/路线/Boss 条件、阶段叙事、完成/失败结果卡，以及世界地图上的阶段标记与完成度；不新增内置 staged/Boss 内容（T6）。
+
+**实现**：`Poi` 新增 `PoiStageProgressText`/`PoiStageHudObjective`/`PoiStageHudRequirements`/`PoiStageNarrativeText`/`PoiStageMapStatusText`/`PoiStageResultTitle`/`PoiStageResultText`/`PoiStageMapPoint`。`HudState` 与 native/core_ui 两套 HUD 新增 `poi-stage-panel`、`poi-result-panel`，Lua/Python `Hud.GetState` 暴露 `poiStage*`/`poiResult*` camelCase 字段；阶段卡显示当前阶段、目标、钥匙/供电/路线/Boss 与当前 `narrative[]` 文本，完成/失败卡约 10 秒后自动收起，不阻塞战斗。`WorldMapPoi` 新增阶段序号/完成数/失败/待选路线/当前阶段坐标与 `WorldMapPoiLabel`，地图标记优先落在当前阶段坐标，右侧已发现地点列表同步；`RefreshWorldMapState` 从单机 `PoiWorldProgress` 或网络只读镜像构建 `WorldMapPoiProgress`。完成/失败面板由单机阶段完成、Boss 脱战失败与网络阶段 flags 转换触发。同步 docs/18、docs/21、docs/01、README、docs/modding、docs/07、docs/devlog。
+
+**验证**：`M33-F5-T5*` **2/2（43 assertions）**，覆盖 HUD/叙事/结果文本、地图阶段标记与标签；`M9-T4 HUD` **294 assertions** 在 1280 下验证阶段/结果面板不越界且不压目标区/mod 面板。Debug **1051/1051（142114 assertions）**、Release **1051/1051（142128 assertions）**、Python **114/114**。Release 600 tick 无 mod 启动烟测 `build/m33_f5_t5_startup_final/startup_nomods.out.log`：POI 4 个、指纹 `0x38f10fa308f0fc42`、tick=600、stderr 0。1280 构造截图 `build/m33_f5_t5_capture/` 六张（阶段 1/2/3、门禁、Boss、完成面板）；临时 staged POI 实测 `build/m33_f5_t5_actual/actual-stage.png`、`actual-complete.png`、`actual-map.png` 验证真实 `HudState` 路径。
+
+**限制**：T5 不新增内置 staged/Boss 内容（T6）；门禁/Boss 截图是临时视觉探针构造状态，不替代 T6/T7 自然流程；叙事目前是阶段卡文本，没有独立阅读弹窗/物品阅读 UI；地图阶段标记由当前进度驱动，未做多层地图/图例筛选。下一步 M33-F5-T6 POI 内容包。
+
+## 2026-11-16 M33-F5-T4 精英/Boss 与阶段战斗
+
+**范围**：把 T3 的 kill 阶段接成真实 Boss/精英战斗，加入阶段敌人、三种简单 Boss 机制、脱战/团灭失败和自动重试；不新增内置 Boss 内容（T6），不做完整阶段 HUD/地图（T5）。
+
+**实现**：`Poi` 新增 `BuildPoiStageEnemyPlan`/`PoiStageHasBoss`/`PoiBossStage`/`PoiBossMechanicFor`/`PoiBossMechanicName`/`PoiBossMechanicText`；`PoiStageObjectiveText` 对 Boss 阶段显示名称、机制和击杀进度。`kill` 阶段生成 `PoiStageEnemy`（Boss/精英/召唤物），Boss 按 `boss.count` 生成并截断到 `stage.count`，剩余精英由 `stage.target` 选择变体；实体同时带 `PoiGuard`，但 kill 只统计 `PoiStageEnemy` 的 Boss/精英，普通守军不参与。Boss 生命乘 `pois.boss.healthScale`；`summon` 在 Boss 附近生成不参与计数的快速增援，`charge` 周期性触发速度冲锋，`fortify` 复用 `ZombieSpecial::Breaker` 破坏工事。阶段敌人新增 `PoiStageEnemy` 内置存档段 `PSEN`（组件 50→51），`PoiBossRuntime` 为不存档的机制计时器。Boss 脱战超过 `resetRange/resetSeconds` 或服务器团灭时失败并清除敌人；玩家回到 marker 16 格/入口 6 格内自动重试，阶段奖励继续用 `PoiTasks.rewardClaims` 只发一次。`PlayerState` v22、内容指纹 v21 不变；`config/game.json` 新增 `pois.boss.*` 调参。同步 docs/18、docs/21、docs/01、README、docs/modding。
+
+**验证**：`M33-F5-T4*` **3/3（86 assertions）**，覆盖生成计划/机制映射/失败重试、`PoiStageEnemy` 存档往返、服务器 Boss 生成+召唤+脱战失败+自动重试+击杀完成+奖励一次；Debug **1049/1049（142038 assertions）**、Release **1049/1049（142052 assertions）**、Python **114/114**。Release 服务器 600 tick 无 mod 启动烟测 `build/m33_f5_t4_startup_final2/startup_nomods.out.log`：POI 4 个、指纹 `0x38f10fa308f0fc42`、stderr 0。
+
+**限制**：T4 不新增内置 Boss/精英内容（T6）；`boss.stage` 必须绑定 `kill` 阶段；冲锋是速度倍率而非独立动画/碰撞技能，fortify 复用 Breaker；单机死亡仍按既有规则结束本局；没有独立 Boss 血条/技能树；完整阶段 HUD/地图/叙事与 1280 截图留 T5。下一步 M33-F5-T5。
+
+## 2026-11-16 M33-F5-T3 门禁、钥匙、供电与可选路线
+
+**范围**：把 T2 的权威阶段信号接成可玩的钥匙/门禁/供电/入口/路线交互；不新增内置 staged 内容，不做 Boss 机制或完整阶段 HUD/地图。
+
+**实现**：`Poi` 新增 `FindPoiStage`/`FindPoiKey`/`FindPoiEntry`、`StartPoiProgressAtStage`、`MarkPoiKeyAcquired`、`PoiStageKeyAwards`、`PoiAvailableBranches`、`PoiKeyDisplayName`、`PoiStageObjectiveText`/`PoiStageRequiredKeysText`/`PoiChoiceText`。阶段完成时按 `keys[].source` 向单机玩家或服务器 32 格内玩家发放实际物品；门禁/供电/路线交互前检查玩家背包钥匙，`consumed` 控制消耗并写入世界钥匙标记。`entries[]` 允许从非首阶段开始（靠近且钥匙满足时自动进入），`choice` 用快捷栏 1/2 选择 `branches[]`。服务器新增 `PoiInteract=60`（POI 定义索引 + 路线索引），复核距离/阶段/钥匙/燃料；单机复用同一规则。`power` 消耗 `homestead.power.fuelItem`（默认 `fuel_can`），启动阶段附近已有 `ecs::Generator` 并写 `powered`；电力系统关闭时允许手动合闸，缺钥匙/燃料都有明确 `notice`/HUD 提示。`PlayerState` v22、`PoiTasks` v2、`PoiWorldProgress` 存档组件和内容指纹 v21 不变。同步 docs/18、docs/21、docs/01、README、docs/modding。
+
+**验证**：`M33-F5-T3*` **2/2（66 assertions）**，覆盖钥匙物品/入口/路线纯数据、缺钥匙/有钥匙、燃料、实际发电机启动、服务器路线选择与入口；Debug **1046/1046（141952 assertions）**、Release **1046/1046（141966 assertions）**、Python **114/114**。Release 服务器 600 tick 无 mod 启动烟测 `build/m33_f5_t3_startup_final/startup_nomods.out.log`：POI 4 个、指纹 `0x38f10fa308f0fc42`、stderr 0。Release 全量首跑再次命中既有 `M30-T6` 闪避时序 flake；隔离复跑 **2/2（56 assertions）** 通过，随后全量 Release 复跑绿。
+
+**限制**：T3 不新增 3 个内置多阶段 POI（T6）；门禁是阶段坐标上的逻辑交互，不绑定可开关的建造成门实体；发电机只在附近已有实体时启动，否则只写世界供电标记；入口为靠近自动进入、无独立入口面板；无 Boss/阶段专属刷怪（T4）或完整 HUD/地图/1280 截图（T5）。`pois-v1` 仍要求至少一个合法容器占位。下一步 M33-F5-T4 精英/Boss 与阶段战斗。
+## 2026-11-15 M33-F5-T2 POI 阶段运行时与存档
+
+**范围**：为 T1 的 staged POI 增加世界级阶段状态、单机/服务器权威推进、阶段奖励幂等、世界存档/重启恢复与客户端只读镜像；不接真实门禁/钥匙物品消耗/发电机/路线 UI/Boss 机制/阶段 HUD。
+
+**实现**：新增 `PoiProgress`（当前/失败阶段、完成阶段、已选分支、已获得钥匙标记、供电、失败/重试、击杀进度、守军基线）与纯函数 `StartPoiProgress`/`TickPoiStage`/`SignalPoiStage`/`ChoosePoiBranch`/`FailPoiProgress`/`RetryPoiProgress`。单机/服务器共享 `ecs::PoiWorldProgress`，StableId 必须放高段 `0xF333504F49575001`：最初使用低段 `0x4D33...` 会把 `EcsWorld::m_nextStableId` 推高，导致所有后续自动 StableId 和载具生成确定性变化，`M26-V14` 由通过变为固定失败；改为 `>= 1<<63` 后恢复。进度进入实体世界存档（内置组件 49→50）；服务器/单机在玩家进入 marker 16 格内启动，`reach` 按位置、`kill` 按守军存活数下降、`loot` 按玩家持有目标物品数推进，`interact/power/choice` 保留 `SignalPoiStage`/`ChoosePoiBranch` 权威接口供 T3 接玩法。阶段奖励用 `PoiTasks.rewardClaims` 的 `poiId.stageId` 幂等键，`PoiTasks` 存档升 v2（旧 v1 可读），服务器只给阶段完成时 32 格内玩家发奖。`PlayerState` 升 v22，在尾部追加 `poiStageProgress[]` 只读镜像（阶段序号/总数/完成数、choice/failed/powered、当前阶段、已选分支），旧 v21 缺省为空。已完成 staged POI 不再补生成守军，旧单段 POI 路径不变。同步 docs/18、docs/21、docs/01、README、docs/modding。
+
+**验证**：`M33-F5-T2*` **7/7（127 assertions）**，覆盖到达/搜刮/钥匙阻塞、击杀/供电、分支选择、奖励幂等、失败重试、旧 POI 无 stages、世界进度存档、`PlayerState v22` 往返、服务器三阶段推进+重启恢复；Debug **1044/1044（141884 assertions）**、Release **1044/1044（141899 assertions）**、Python **114/114**。Release 服务器 600 tick 无 mod 启动烟测 `build/m33_f5_t2_startup/startup_nomods.out.log`：POI 4 个、指纹 `0x38f10fa308f0fc42`、stderr 0。Release 全量首跑命中一次既有 `M30-T6` 闪避时序 flake；隔离复跑 **2/2（56 assertions）** 通过，随后全量 Release 复跑绿。
+
+**限制**：T2 不消费真实钥匙物品、不执行门禁/发电机/分支交互、不生成阶段专属敌人/Boss、不触发 Boss 失败、不显示阶段 HUD/地图标记；这些留 T3–T5。`pois-v1` 解析仍要求至少一个合法容器条目，纯阶段 POI 目前需放占位容器。下一步 M33-F5-T3 门禁、钥匙、供电与可选路线。
+
+## 2026-11-15 M33-F5-T1 POI 多阶段数据契约与校验
+
+**范围**：为 `pois-v1` 增加可选多阶段数据契约，不改现有 11 个单段 POI 的运行时；阶段状态、存档、门禁/钥匙、Boss 机制和 HUD 留 F5-T2–T5。
+
+**实现**：`PoiDef` 新增 `stages/entries/keys/branches/boss/narrative` 与 `PoiStageKind{reach,interact,kill,loot,power,choice}`。阶段按数组顺序推进，`next` 只能指向后续阶段；非 `choice` 最多 1 个后继，`choice` 必须 2–4 个；分支最多 2 条；阶段、入口、分支、Boss、叙事各有限额。解析校验阶段 id/坐标/半径/数量/奖励、钥匙 item/source/consumed、入口/分支/Boss/叙事引用；非法阶段逐条跳过并级联跳过依赖阶段，非法 Boss 只禁用而不丢弃 POI。阶段 `requires` 引用的钥匙若带 `source`，来源阶段必须在本阶段之前，避免先要求后发放。没有 `stages` 时保持旧 `task` 必填与单段行为；有有效阶段时 `task` 可省略；mod 可追加 staged POI，重复 id 仍跳过。`kContentHashVersion` 升 **v21**，全部新字段与数组顺序进入指纹。新增 `docs/21-M33多阶段POI数据格式.md`，同步 `docs/18`、`docs/01`、README、`docs/modding` 及同伴/载具文档的指纹版本说明。
+
+**验证**：`M33-F5-T1*` **5/5（179 assertions）**，覆盖合法字段/默认值、非法阶段与引用级联跳过、旧 v1 不变、mod 追加、阶段/入口/钥匙/分支/Boss/叙事指纹；Debug **1037/1037（141754 assertions）**、Release **1037/1037（141768 assertions）**、Python **114/114**。Release 服务器 600 tick 无 mod 启动烟测 `build/m33_f5_t1_startup/startup_nomods.out.log`：内容指纹 `0x38f10fa308f0fc42`、地图内容 POI 4 个、tick=600、stderr 0。Release 全量首轮受外部 `hdrp-bgfx` 的 16 个 `shaderc.exe` 占满 CPU 影响，命中 `M31-T9` 快照耗时与 `X-F1 2b-6` chunk 加载时序两个既有 flake；分别隔离 **1/1（22 assertions）**、**1/1（16 assertions）** 通过，空闲后全量复跑绿。
+
+**限制**：T1 只解析/校验，不新增 `PoiProgress`、阶段存档、服务器权威推进、钥匙门禁/供电、Boss 生成/机制或阶段 HUD/地图标记；不修改基础 11 个 POI 内容，也没有 1280 阶段截图。非法阶段当前按单条跳过并告警，不提供编辑器级错误定位。下一步 M33-F5-T2 阶段运行时与存档。
+
+## 2026-11-15 M33-F4-T6 改装内容、平衡与交付
+
+**范围**：固定 F4 五个内置改装的收益、代价、材料来源与全套总账，补平衡测试、1280 交付烟测和 F4 文档收口；不改已完成的安装/复制/存档协议。
+
+**实现**：`assets/vehicle_mods.json` 继续保持 5 槽 5 件，全部有明确代价：装甲撞击车况 -32%/-28% 但油耗 +7%、重 28kg；行李架容量 +24kg 但油耗 +3%、重 12kg；撞尸犁撞击伤害 +45%、撞击车况 -35% 但油耗 +5%、重 32kg；探照灯车灯范围 +45%/亮度 +25% 但油耗 +2%、重 6kg；发动机极速 +18%/加速 +12% 但油耗 +15%、车况损耗 +10%、重 8kg。材料总消耗维修包×8、木材×14、无线电零件×2、螺丝刀×1，全部来自现有搜刮表，不新增货币。新增 `tests/test_vehicle_mod_balance.cpp` 固定单件收益/代价、全套重量 86kg、加速 -8%、油耗 +55%、车况倍率、容量 64kg、材料总账和面板摘要；Python 数据测试补材料来源校验。新增 `docs/20-M33载具改装数据与平衡.md`，同步 `docs/18`、`docs/01`、README、`docs/modding`。
+
+**验证**：`M33-F4-T6*` **2/2（106 assertions）**；`M33-F4*` **23/23（545 assertions）**、`M25*,M26*` **71/71（1478 assertions）**、`M13 Replication*` **5/5（157 assertions）**；Debug **1033/1033（141578 assertions）**、Release **1033/1033（141592 assertions）**、Python **114/114**。Release 服务器 600 tick 无 mod 启动烟测 `build/m33_f4_t6_startup/startup_nomods.out.log`：车辆改装 5 个、内容指纹 `0xe0db877f3199c38d`、世界事件 6 个、stderr 0。Release 1280 烟测 `build/m33_f4_t6_smoke/` 通过正常 `I` 背包入口依次安装 5 个改装（145s），拆除并重装行李架，随后上车开灯；12 张截图，stderr 0。首次全量跑在外部 `shaderc` 编译占满 CPU 时命中网络用例超时，空闲后两套全量串行复跑全绿。
+
+**限制**：数值为确定性公式与构造烟测，不等同于长时间自然驾驶油耗/维护体验；`trunkStacks` 仍受 6 格 UI 限制；装甲不减乘员碰撞伤害，重量不改悬挂/制动；探照灯不改世界光照或 AI 感知。F4 检查表 5/5 通过，下一步 M33-F5-T1 POI 阶段数据契约与校验。
+
+## 2026-11-15 M33-F4-T5 服务器权威、复制与重连
+
+**范围**：把载具改装从单机闭环接到服务器权威命令、ZLR1 只读摘要与重启/重连恢复；不改改装数值，不扩 6 格背包 UI，不做 T6 平衡交付。
+
+**实现**：新增 `InstallVehicleMod=58`（载具 StableId、槽位、候选索引）与 `RemoveVehicleMod=59`。服务器复核玩家非驾驶/乘坐、载具存活/空载/停稳、同层/距离、候选属于目标槽位、同槽占用/双向 `excludes` 与材料计数；材料事务扣除后写权威 `ecs::VehicleMods`，拆除按 `removeRefundRatio` 返还并将背包溢出掉在玩家脚下，重复/非法候选/远端/使用中载具均拒绝。ZLR1 新增 `VMOD` 只读组件（5 槽 defId，384B），客户端镜像到 ECS；旧负载无 `VMOD` 按无改装回退，不改 `VHCL` 旧字段。网络面板取消 `readOnly`，恢复候选/材料/安装/拆除按钮；客户端只提交命令，不本地改组件，服务器提示经 `PlayerState` 回写面板；服务器拆除空槽时保留空组件，避免增量快照留下客户端旧槽位。服务器重启、客户端重连和车辆重载从 `VehicleMods v1` 与全量快照恢复。
+
+**验证**：`M33-F4-T5*` **3/3（100 assertions）**，覆盖旧 ZLR1 负载回退、双客户端一致、重复/非法候选拒绝且不扣料、不串车、服务器重启、客户端重连和容量 64→40kg 恢复；`M33-F4*,M25*,M26*` **92/92（1917 assertions）**、`M13 Replication*` **5/5（157 assertions）**；Debug **1031/1031（141472 assertions）**、Release **1031/1031（141486 assertions）**、Python **113/113**。Release 服务器 600 tick 无 mod 启动烟测 `build/m33_f4_t5_startup/startup_nomods.out.log`：车辆改装 5 个、指纹 `0xe0db877f3199c38d`、世界事件 6 个、stderr 0。
+
+**限制**：联机安装/拆除由服务器即时结算，单机保留施工进度；网络面板状态只来自服务器 `PlayerState`，客户端不做预测；`trunkStacks` 仍未扩到 8 格 UI，面板不显示未应用格位；T5 未新增 1280 截图，联机一致性由双客户端 headless 用例覆盖。下一步 M33-F4-T6 改装内容、平衡与交付。
+
+## 2026-11-15 M33-F4-T4 改装 UI、HUD 与交互
+
+**范围**：把 T2 的调试面板入口改为正常车辆后备箱/HUD 入口，补齐逐槽效果、总览与只读联机状态；不新增网络命令，不做 ZLR1 改装摘要复制，不扩 6 格背包 UI。
+
+**实现**：移除 `VehicleMods=O` 绑定和 HUD 的 `O 改装` 提示，车辆附近提示改为 `I 后备箱/改装`。原生背包与 `mods/core_ui`（Lua/Python）背包增加“车辆改装 · 查看槽位与效果”按钮，通过 `Inventory.Action(type=open_vehicle_mods, fromEntityId=车辆 StableId)` 打开面板；`InventoryPanel` 同时支持原生点击。`VehicleModsPanel` 新增逐槽当前/候选效果文案和总览行（总重、后备箱容量、极速/加速/油耗/撞墙/撞尸/撞击/车灯）；`VehicleModEffectSummary`/`VehicleModStatsSummary` 统一格式化，当前/候选/材料/时间/重量/进度/失败提示保留。入口按 StableId 精确绑定车辆；`VehicleModTargetInRange` 统一校验存活、车辆类型、同 z、距离，驾驶/乘坐、死亡、离车或车辆失效时拒绝/中止。联机模式 `readOnly`：只显示服务器结果，隐藏候选/切换/安装/拆除，不提交本地修改；T5 再接复制和服务器命令。
+
+**验证**：`M33-F4-T4*` **3/3（77 assertions）**，覆盖效果文案/总览、目标距离、面板效果/失败色/只读按钮/鼠标点击和后备箱入口；`M33-F4*,M25*,M26*` **89/89（1817 assertions）**；Debug **1028/1028（141367 assertions）**、Release **1028/1028（141381 assertions）**、Python **113/113**。Release 服务器 600 tick 无 mod 启动烟测 `build/m33_f4_t4_startup/startup_nomods.out.log`：车辆改装 5 个、指纹 `0xe0db877f3199c38d`、世界事件 6 个、stderr 0。Release 1280 夜间烟测 `build/m33_f4_t4_smoke/`：按 `I` 打开后备箱并点击改装入口，安装行李架（20s，容量 40→64kg），拆除（10s，容量 64→40kg，返还木材×3），再安装探照灯（15s），ESC 关闭后上车开灯；8 张截图，日志含 2 次安装/1 次拆除/容量往返/`车灯：开`，stderr 0。
+
+**限制**：联机面板只读且没有改装摘要复制/服务器安装拆除（T5）；`trunkStacks` 仍未扩到 8 格 UI，面板不显示未应用格位；联机候选/材料与操作反馈留 T5。下一步 M33-F4-T5 服务器权威、复制与重连。
+
+## 2026-11-15 M33-F4-T3 改装效果接入驾驶、碰撞、载重与灯光
+
+**范围**：把 F4-T1 的改装效果数据接到 M25/M26 现有载具运行逻辑；不新增网络命令，不做改装 UI 效果摘要，不扩 6 格背包 UI。
+
+**实现**：`VehicleMods.{h,cpp}` 新增 `VehicleModStatsFor`，按 5 槽聚合产品倍率、容量加值、堆数加值和重量；产品倍率分别 clamp，重量合计 0–500kg，加速项 `1/(1+weight/400)`、油耗项 `1+weight/600`（可配置）。`VehicleStep`/`VehiclePredictStep` 接极速/加速/油耗/撞墙车况/重量；单机与服务器车辆间碰撞接 `crashConditionScale`，撞击接 `ramDamageScale/ramConditionScale`，僵尸/危险动物攻击接 `zombieConditionScale`，发动机 `conditionWearScale` 叠加到所有车况损耗。后备箱容量在安装/拆除/单机换车/服务器读档时按基础值重算；探照灯缩放夜间光束距离和透明度。纯逻辑与服务器重启测试覆盖 5 类效果和无改装基线；Release 1280 夜间烟测用真实车辆安装行李架/探照灯/发动机后上车开灯。
+
+**验证**：`M33-F4-T3*` 5/5（74 assertions）、`M33-F4-T1/T2/T3 + M25/M26` 86/86（1740）、Debug 1025/1025（141290）、Release 1025/1025（141304）、Python 113/113。Release 全量首跑出现一次与本 T 无关的 `M32-T5 真实失守到反攻恢复并重建守卫` 时序失败；单跑该过滤 5/5、Release 全量复跑 1025/1025 通过。1280 烟测 `build/m33_f4_t3_smoke/`：3 个改装安装完成、容量 40→64kg、夜间车灯开启、stderr 0。
+
+**限制**：`trunkStacks` 仍解析但未扩到 8 格 UI；装甲不额外减乘员碰撞伤害；重量不改悬挂/制动；探照灯不改世界光照/AI；联机客户端效果摘要与服务器安装/拆除留 T5，效果摘要/HUD 入口留 T4；拆下行李架后已有超重物品保留。
+
+## 2026-11-15 M33-F4-T2 车辆改装组件、安装/拆除与存档
+
+**范围**：为现有载具增加按槽位持久化的改装组件、单机安装/拆除面板、材料/时间/返还规则和车辆/服务器存档恢复；本 T 不接驾驶/碰撞/容量/灯光效果，不做联机命令与 ZLR1 复制。
+
+**实现**：新增 `ecs::VehicleMods`（5 个槽位 defId）与 `VMOD v1` 存档组件，内置存档组件 **49**；`Vehicle` 存档组件升 **v4**（载荷不变，v1–v3 解码路径保留）。`VehicleMods.{h,cpp}` 增加同槽占用、双向 `excludes`、材料计数/事务扣除、`floor(count×ratio)` 返还和拆除耗时；`config/game.json` 新增 `removeRefundRatio=0.5`、`removeSecondsScale=0.5`。单机靠近车辆按 `O` 打开独立 `vehiclemods.rml` 面板，显示 5 槽当前/候选/材料/安装时间/重量/拆除返还，鼠标安装/拆除，进度条和状态；完成时安装扣材料、拆除返还材料，离开车辆/死亡/关闭面板中止，背包放不下的返还物掉在脚下。面板打开时隐藏 HUD，`ESC`/X 关闭。服务器重启测试把 3 个槽位写入载具后保存/重启并恢复。
+
+**验证**：`M33-F4-T2*` **4/4（92 assertions）**，覆盖安装/拆除/重复/缺材料/互斥/候选/退款/旧 v3 存档/服务器重启；载具存档定向 **16/16（355 assertions）**、载具旧回归 `M25*,M26*` **71/71（1478 assertions）**；Debug **1020/1020（141212 assertions）**、Release **1020/1020（141226 assertions）**、Python **113/113**。Release 服务器 600 tick 无 mod 启动烟测 `build/m33_f4_t2_startup/startup_nomods.out.log` 加载车辆改装 5 个、内容指纹 `0xe0db877f3199c38d`、世界事件 6 个、stderr 为空。Release 1280 烟测 `build/m33_f4_t2_smoke/` 用真实车辆和 `O` 面板完成装甲安装（30s，维修包×2+木材×4）→ 拆除（15s，返还维修包×1+木材×2）→ 关闭，7 张截图，日志有安装/拆除/关闭，stderr 为空。
+
+**限制/下一步**：T2 仅单机安装/拆除和持久化；效果值仍待 T3 接入驾驶/碰撞/后备箱/车灯/油耗；面板入口与效果摘要、后备箱/HUD 入口留 T4；服务器安装/拆除命令、ZLR1 改装摘要、重连和旧负载回退留 T5。下一步 M33-F4-T3 改装效果接入驾驶、碰撞、载重与灯光。
+
+## 2026-11-14 M33-F4-T1 改装数据契约与校验
+
+**范围**：为 F4 载具改装建立独立内容文件、5 个槽位和效果字段，接入 mod 追加、内容指纹、客户端/服务器/ContentBundle 加载和单机热重载；本 T 不创建车辆组件、不安装/拆除、不改变驾驶物理。
+
+**实现**：新增 `game/VehicleMods.{h,cpp}` 与 `assets/vehicle_mods.json`（`vehicle_mods-v1`）。每条定义含 `id/name/description/slot/effects/materials/installSeconds/weightKg/excludes`；槽位为 `armor/storage/plow/lights/engine`，效果覆盖碰撞/被攻击/撞尸车况、撞尸伤害、后备箱容量/堆数、车灯范围/亮度、极速/加速/油耗/车况磨损。材料引用现有物品，安装时间/重量/效果均有范围校验；重复 id、非法槽位、越界效果、未知/重复材料、自互斥和未知互斥目标按单条跳过，合法条目保留。内置 5 条改装覆盖全部槽位。`config/game.json` 新增 `vehicleMods.enabled/file`；`ModContent` 扫描 `content/vehicle_mods.json`，`ContentBundle`、`GameApp`、`ServerHost` 和热重载均加载；内容指纹升 **v20**。无 `vehicleMods` 配置时保持禁用，旧车辆运行时不变。
+
+**验证**：`M33-F4-T1*` **6/6（92 assertions）**；`M33-F3-T5*`、`X3-T2/T3/T5`、`M13-T9` 等定向 **41/41（899 assertions）**、载具旧回归 `M25*,M26*` **71/71（1478 assertions）**；Debug **1016/1016（141120 assertions）**、Release **1016/1016（141135 assertions）**、Python **113/113**；Release 首轮命中既有 `M23-F2b-T6` 动物剥取时序 flake，隔离 **2/2（51 assertions）** 后全量复跑通过。Release 服务器 600 tick 无 mod 启动烟测 `build/m33_f4_t1_startup/startup_nomods.out.log` 加载车辆改装 5 个、内容指纹 `0xe0db877f3199c38d`、世界事件 6 个、stderr 为空。
+
+**限制/下一步**：T1 仅数据/加载/校验/指纹；尚无 `VehicleMods` 组件、安装/拆除、效果应用、UI、服务器复制和存档。下一步 M33-F4-T2 车辆改装组件、安装/拆除与存档。
+
+## 2026-11-14 M33-F3-T8 同伴内容、平衡与交付
+
+**范围**：收口两名内置同伴的差异化内容、单同伴 DPS/受伤平衡、配置化 AI 参数、双客户端 15 分钟验收和文档；不新增同伴类型、不做 RTS 框选/编队、不做完整背包复制或换装/服药/装填 UI。
+
+**实现**：保留林医生（村庄营地，95 HP，厨刀/夹克，`field_medic/steady_hands`，绷带×2+罐头汤，`settlement_help`+绷带×2）与阿默（南部农场，115 HP，长矛/加固夹克，`scout/cool_headed`，能量棒×2+绷带，`south_harvest_help`+罐头汤）两名定义，每人最多 1 名活动/待命同伴。新增 `config/game.json` 的 `companions.ai.*` 24 个 AI/战斗参数，`CompanionSystem` 通过 `LoadCompanionSystemOptions` 读取并 clamp；主手武器伤害/冷却按 `attackDamageScale=0.38`/`attackCooldownScale=1.20` 缩放，空手回退 24/0.85。林医生 41.56 DPS（厨刀玩家 131.25 的 31.67%）、阿默 28.79 DPS（长矛玩家 90.91 的 31.67%）、空手 28.24/80.00（35.29%），均落在 30–50%；倒地 60 秒、救援 35%/2.5 格、低血 30%/恢复 50%。`MakeCompanionDialogue` 按 `companion_lin`/`companion_amo` 区分医疗/斥候闲聊和受伤文本；已有同伴时求助者提示改为“已有同伴：名字（状态）”，不再重复显示招募条件。新增 `tests/test_companion_balance.cpp` 和 [docs/19-M33同伴数据与平衡.md](19-M33同伴数据与平衡.md)。
+
+**验证**：`M33-F3-T8*` **3/3（56 assertions）**、`M33-F3-*` **31/31（792）**、`M13 Replication*` **5/5（156）**、`M33-F1*` **25/25（654）**、`M23-F4*` **27/27（559）**、`M30-T6*` **2/2（56）**；Debug **1010/1010（141028 assertions）**、Release **1010/1010（141042 assertions）**、Python **108/108**。Release 服务器 600 tick 无 mod 启动烟测 `build/m33_f3_t8_startup/startup_nomods.out.log` 加载同伴 2 个、指纹 `0x915728de32ed9b54`、世界事件 6 个、stderr 为空。Release 1280×720 双客户端 15 游戏分钟烟测 `build/m33_f3_t8_dual_smoke/`：A/B 通过正常 `E` 对话各招募 1 名林医生，服务器 2 次 `服务器同伴招募`/`同伴生成`，双方均记录 15 分钟标记，10 张截图，stderr 为空。
+
+**限制/下一步**：联机只同步装备摘要，不显示完整背包；不提供换装/服药/装填 UI；赠礼一次 1 件；待命同伴需回聚落召回；`traits`/`extraTraits` 当前是持久化内容标签，不直接改伤害/护甲公式；未做 RTS 框选/编队或好感度恋爱线。下一步 M33-F4-T1 改装数据契约与校验。
+
+## 2026-11-14 M33-F3-T7 同伴 UI、HUD 与交互
+
+**范围**：给玩家一套正常游戏内 UI 管理同伴：面板/HUD、跟随/停留/撤退、赠礼、个人委托接取/放弃、救援和聚落招募条件；不引入 RTS 框选/编队，不做换装/服药/装填面板。
+
+**实现**：新增 `game/CompanionUi.{h,cpp}` 与 `ui/CompanionUi.h` 生成只读快照；原生 `assets/ui/hud.rml` 与 `mods/core_ui` Lua/Python HUD 同步新增 `companion-panel`/`companion-status`。`P` 开关面板（`CompanionPanel` 普通绑定），显示生命/状态/信任/装备/背包/个人委托；`1/2/3` 跟随/停留/撤退、`4` 赠礼当前快捷栏物品、`E` 靠近交谈/救援、`P/ESC` 关闭。HUD 按死亡、倒地（剩余秒数/E 救援）、低血、远离、路径受阻、聚落待命优先提示；聚落求助者交互提示和对话 hint 追加招募所需声望档位/当前分数、前置委托和物资数量。新增服务器权威 `SetCompanionCommand=53`、`GiftToCompanion=54`、`AcceptCompanionQuest=55`、`AbandonCompanionQuest=56`、`RescueCompanion=57`，服务器复核 owner/同层/距离/倒地/待命/背包；单机走同一规则。同伴对话新增赠礼选项，接取/放弃个人委托接实际状态；联机客户端用只读 `CMPN` 快照构造上下文，不本地改信任/委托/死亡。内容指纹保持 v19，未改存档/复制 schema。
+
+**验证**：新增 `tests/test_companion_ui.cpp` 2 用例并扩展 `tests/test_companion_network.cpp` T7 服务器用例；`M33-F3-T7*` **3/3（78 assertions）**，覆盖面板文本/信任/装备/背包、倒地/远离/卡住/待命/死亡告警、服务器指令/赠礼/委托/救援。`M33-F3-*` **28/28（736 assertions）**、`M13 Replication*` **5/5（156 assertions）**；Debug **1007/1007（140972 assertions）**、Release **1007/1007（140987 assertions）**、Python **108/108**；Release 服务器 600 tick 启动烟测 `build/m33_f3_t7_startup/` 加载同伴 2 个、内容指纹 `0x915728de32ed9b54`、世界事件 6 个、stderr 为空。Release 1280×720 烟测 `build/m33_f3_t7_smoke/` 通过：正常 `E` 对话招募林医生，`P` 打开面板、`2` 停留、`P` 关闭；截图 `companion_recruit_hint_1280.png`、`companion_recruited_1280.png`、`companion_panel_1280.png`、`companion_panel_stay_1280.png`、`companion_panel_closed_1280.png`，stderr 为空。
+
+**限制/下一步**：联机仍只同步装备摘要，不显示完整背包；面板不提供换装/服药/装填 UI；赠礼一次只转移当前快捷栏物品 1 件；待命同伴需回所属聚落对话召回；未做 RTS 框选/编队。下一步 M33-F3-T8 同伴内容、平衡与交付。
+
+## 2026-11-14 M33-F3-T6 存档、服务器权威与重连
+
+**范围**：让同伴实体/状态进入联机只读复制，补玩家断线/死亡/同身份接管时的安全待命、重连 owner 关系与服务器重启恢复；不做同伴交互 UI、对话/委托/赠礼命令、完整背包复制或自动召回。
+
+**实现**：`EntityReplicationProducer` 不再跳过 `Companion`，新增 `ZLR1 CMPN` 只读组件，携带 `defId`、跟随/停留/撤退指令、待命/倒地/死亡、信任、个人委托状态/阶段/进度/奖励 mask、倒地剩余；实体 `ownerStableId` 来自 `Companion.ownerStableId`。位置/生命/朝向/动画继续走通用组件，装备摘要从 `CompanionState.equipment` 复用既有 `EQUIP` 编码；客户端副本只补 `FriendlyNpc`/`NoCombatTarget`，不生成本地 `Companion`/`CompanionState`，无 `CMPN` 的旧负载按普通角色安全回退。`ServerHost::StandbyOwnedCompanion` 在断线、玩家死亡和同身份接管时保留 StableId/owner，健康同伴传送到所属聚落待命，位置不可用时原地清路径/AI；服务器只恢复玩家档案，不补生成同伴。世界存档沿用 `Companion`/`CompanionState` v3，重启恢复 owner、生命、装备、信任、委托、额外特长和倒地状态；注册复制组件 29→30，内容指纹保持 v19。
+
+**验证**：新增 `tests/test_companion_persistence.cpp` 3 用例与 `tests/test_replication.cpp` 同伴 `CMPN` 用例；`M33-F3-T6*` **4/4（188 assertions）**，覆盖全量/增量/旧负载、双玩家 owner 隔离、死亡/断线待命、重连不复制、单机读档、服务器重启。`M13 Replication*` **5/5（156 assertions）**、`M33-F3-*` **25/25（658 assertions）**；Debug **1004/1004（140884 assertions）**、Release **1004/1004（140898 assertions）**、Python **108/108**。Release 服务器 600 tick 启动烟测 `build/m33_f3_t6_startup/` 加载同伴配置 2 个、内容指纹 `0x915728de32ed9b54`、stderr 为空。
+
+**限制/下一步**：同伴面板/命令、对话/个人委托接取、赠礼/救援/服药/装填/换装 UI 留 T7；复制只含装备摘要，不含完整背包；重连后同伴保持聚落待命，需要玩家重新召回；旧客户端的未知 `CMPN` 组件不在本次兼容范围。下一步 M33-F3-T7 UI、HUD 与交互。
+
+## 2026-11-14 M33-F3-T5 信任、对话与个人委托
+
+**范围**：让同伴信任随战斗/赠礼/个人委托变化，补信任档、状态化同伴对话和两人各一条个人委托链；委托奖励只给少量物资/装备/特长；不做恋爱线、不做玩家 UI、不做服务器权威对话/接取、不做 `ZLR1`。
+
+**实现**：新增 `game/CompanionTrust.{h,cpp}`，复用 `CompanionState.loyalty` 为 0~100 信任值（Wary<25、Steady<50、Trusted<75、Bonded），`AddCompanionTrust` 统一钳制。`CompanionSystem` 在同伴击杀敌人时 +2 战斗信任并记录 `kill` 委托进度；`GiftToCompanion` 从玩家背包原子转移物品到同伴背包并 +2，容量不足回滚。`companions-v1` 新增可选 `personalQuest[]`，林医生/阿默各两段：`gift`（绷带/热汤）→`kill`（3/4 名感染者），每段有 `minTrust`、`rewardTrust`、`rewardTrait`、`rewardItem`、`rewardEquipSlot`、`completionText`；`CompanionState` 追加 `personalStatus/personalStage/personalProgress/personalRewardMask/extraTraits`，阶段完成按 mask 只发一次奖励，死亡/显式失败中止当前阶段。`Dialogue` 新增 `MakeCompanionDialogue` 与信任/委托/低血/倒地条件，根节点按状态显示不同文本和入口；`AcceptCompanionQuest`/`AbandonCompanionQuest` 结果已预留。`CompanionState` 存档组件升 v3（旧 v2 默认无委托），内置组件保持 48；`personalQuest` 全部字段进入内容指纹 v19。
+
+**验证**：`M33-F3-T5*` **4/4（108 assertions）**，覆盖信任边界、击杀+2、赠礼原子转移、委托前置/失败/完成/防重复、额外特长与装备、对话正常/低血/倒地/死亡/信任/委托分支；`M33-F3-T1*` **4/4（95 assertions）**、`M33-F3-T2*` **4/4（126 assertions）**、`M33-F3-T3*` **5/5（43 assertions）**、`M33-F3-T4*` **4/4（98 assertions）**。Debug **1000/1000（140697 assertions）**、Release **1000/1000（140710 assertions）**、Python **108/108**。Release 服务器 600 tick 启动烟测 `build/m33_f3_t5_startup/` 加载同伴 2 个、内容指纹 `0x915728de32ed9b54`、世界事件 6 个、stderr 为空。
+
+**限制/下一步**：同伴对话/个人委托接取/赠礼/救援等玩家 UI 留 T7；服务器权威对话/接取、`ZLR1`/客户端可见、重连与旧 v2 完整回归留 T6；个人委托是同伴专属链，不写入全局 `MissionLog`/任务 HUD；赠礼目前只按一次调用 +2 信任，不按物品价值细分。另将既有 `M23-F2a-T6` 钓鱼咬钩等待从 15s 放宽到 30s，避免 Debug 慢机把 5.5 秒游戏等待误判为失败（不改变断言/玩法）。下一步 M33-F3-T6 存档、服务器权威与重连。
+
+## 2026-11-14 M33-F3-T4 同伴生命、装备、背包与倒地
+
+**范围**：复用通用 `Health` 与 `CompanionState.inventory/equipment`，生成时放入初始装备/背包；主手武器影响近战伤害/距离/冷却/磨损，躯干护甲影响受击减伤；补背包/装备迁移、药品/弹药、倒地救援窗口、死亡尸体与装备转移、世界存档；不做玩家 UI、不自动制作、不做客户端复制。
+
+**实现**：新增 `game/CompanionInventory.{h,cpp}`。初始装备按 `equipment.primary/body` 放入现有两槽，初始背包按 `inventory[]` 放入容量；`CompanionSystem` 从主手武器读取 `damage/range/cooldown/wear`，躯干护甲派生 `DamageResist` 并在装备变化/受击磨损后重算。入包/出包/换装/卸装/药品/弹药都先试算目标容量再提交，失败回滚；药品走 `items::UseAt` + `ApplyUseEffect`，远程武器从背包扣匹配弹药后填 `loadedAmmo`，单机/服务器共用同一规则。生命 ≤0 进入 60 秒倒地窗口，`TryRescue`/`WorldSimulation::RescueCompanion` 在 2.5 格内恢复 35% 最大生命；窗口结束标记死亡并把装备/背包 move 到 `companion_corpse` 尸体容器（`Corpse` + `LootContainer.searched=true`），死亡同伴保留实体并阻止再次招募/解散。`Companion`/`CompanionState` 注册为存档组件（内置组件 46→48，嵌套物品按 loadedAmmo v2）；单机/服务器存档都包含同伴，读档后补 `FriendlyNpc`/`NoCombatTarget`/`DamageResist`，单机保存前 Flush 避免延迟尸体丢失。
+
+**验证**：`M33-F3-T4*` **4/4（98 assertions）**；`M33-F3-T2*` 因新增初始装备/护甲断言 **4/4（126 assertions）**；`M33-F3-T3*` 保持 **5/5（43 assertions）**。Debug **997/997（140589 assertions）**、Release **997/997（140603 assertions）**、Python **108/108**。Release 服务器 600 tick 启动烟测 `build/m33_f3_t4_startup/` 加载同伴 2 个、内容指纹 `0x53a59928194171fd`、世界事件 6 个、stderr 为空。测试覆盖装备/背包往返、初始装备/护甲、武器伤害、倒地/救起/死亡、尸体物品总数与状态清空、药品/弹药不复制、SaveManager 磁盘读档。
+
+**限制/下一步**：倒地救援/服药/装填/换装的玩家 UI 留 T7；`CompanionAiState`、队伍复制、客户端可见、重连恢复留 T6；`CompanionAiState` 不存档，读档后从当前位置重建；尸体当前是通用容器内容，专用尸体搜刮 UI/提示留后续；死亡同伴为永久状态，不复活/不重新招募；敌对 AI 仍主要锁定玩家，同伴当前通过火焰/环境/范围伤害与脚本承伤，专用同伴仇恨留后续。下一步 M33-F3-T5 信任、对话与个人委托。
+
+## 2026-11-14 M33-F3-T3 同伴跟随与战斗 AI
+
+**范围**：让已招募同伴自动跟随 owner、停留、撤退并在 owner 受威胁时参战；复用 A* 与动态物理体，补 leash/卡住/远距离冻结/陷阱落点/低血撤退与友伤过滤；不做装备/倒地死亡、玩家指令 UI、存档/复制。
+
+**实现**：新增 `game/CompanionSystem.{h,cpp}`，运行时 `CompanionAiState` 保存 targetId、停留锚点、home、攻击冷却、重寻路计时、autoRetreat、frozen、engaged。跟随落点取 owner `Facing` 背后 3 格并带侧向偏移，1.8–4.5 格内停步；停留以切换时位置为锚点，威胁靠近时在 4.5 格内迎战；撤退/低生命（≤30%）回 owner，收缩到 50% 后恢复。统一复用 `PathRequest`/`PathFollow`/A*，失败/到达按 0.35 秒重试，保留 PathFollow 卡住重寻路；owner 超过 40 格或异层时冻结，门口/建筑边界沿用静态通行位图，不穿墙。目标只在 owner 被攻击、owner 攻击中或威胁进入 owner 3.5 格时获取，取最近 owner 威胁，最多追到 owner 12 格 leash；过滤玩家/友方/聚落 NPC/动物/同伴/`NoCombatTarget`，近战走现有伤害管线，不产生 AOE。跟随时落点、停留锚点和被陷阱覆盖时的离开点避开武装 `SpikeTrap`；`SpawnCompanionAt` 补 Collider/RigidBody，`TeleportCompanion` 同步物理体并清理 AI 状态。
+
+**验证**：`M33-F3-T3*` **5/5（43 assertions）**；`tests/test_companion_network.cpp` 追加服务器真实同伴攻击僵尸，`M33-F3-T2*` 现 **4/4（118 assertions）**。Debug **993/993（140483 assertions）**、Release **993/993（140497 assertions）**、Python **108/108**。Debug 全量首轮命中既有 M23-F2a-T6 觅食/钓鱼时序 flake，隔离通过后复跑通过；Release 全量重试期间命中既有 M30-T6 双客户端闪避时序（2 次）与 M32-T5 反攻时序，均隔离通过，最终全量复跑通过。测试覆盖跟随距离/背后落点、停留/撤退、低血自动撤退、目标选择、玩家开战前不拉怪、leash 脱战、友伤过滤、跨区域绕墙、卡住重试、远距离冻结、陷阱落点。Release 服务器 600 tick 启动烟测 `build/m33_f3_t3_startup/` 加载同伴 2 个、内容指纹 `0x53a59928194171fd`、世界事件 6 个、stderr 为空。服务器真实战斗回归最初因同伴与僵尸被建筑/路径隔开而在 7 秒内未接战，改为先 `TeleportCompanion` 到 owner 侧并把僵尸物理体同步到 0.6 格内后稳定通过（连续 4 次）。
+
+**限制/下一步**：跟随/停留/撤退玩家 UI 留 T7；装备/背包/倒地死亡留 T4；AI 状态不存档、不复制，联机客户端不可见，留 T6；路径只避开静态墙体与陷阱落点/当前覆盖，不做动态陷阱代价图，楼梯/异层仅冻结不跨层。下一步 M33-F3-T4 同伴生命、装备、背包与倒地。
+
+## 2026-11-14 M33-F3-T2 聚落招募、解散与唯一性
+
+**范围**：在求助者对话中加入同伴招募/归队/聚落待命入口，按聚落 `recruit` 服务、声望、已完成前置任务和物资校验；实现同伴实体生成/StableId 绑定、同 owner 唯一、解散回聚落待命、服务器权威命令与双玩家回归；不做 AI、装备/倒地死亡、存档/复制。
+
+**实现**：`CompanionState` 新增 `standby`；`Companion.{h,cpp}` 新增 `FindSettlementCompanion/EvaluateCompanionRecruitment/ConsumeCompanionRecruitItems/FindOwnedCompanion`，聚落按 `recruit.requiredMission` 是否属于 `missionPool` 选择同伴定义，统一返回 `Ready/NoCompanion/ServiceUnavailable/ReputationTooLow/MissionRequired/ItemRequired/AlreadyRecruited`，物资先校验后原子扣除。`DialogueConditionKind` 新增招募/归队/解散待命条件，`DialogueResultKind` 新增 `RecruitCompanion/DismissCompanion`，求助者根节点显示对应入口；`DialogueContext` 携带同伴配置与玩家当前同伴状态。`WorldSimulation::SpawnCompanionAt` 生成带独立 StableId、`Companion`/`CompanionState`/`Health`/位置/精灵/寻路组件的同伴，`TeleportCompanion` 负责聚落待命与归队。新增 `RecruitCompanion=51`、`DismissCompanion=52`，服务器复核求助者/距离/聚落失守夜袭/声望/任务/物资/归属与唯一性，成功后回 status；单机复用同一校验和生成路径。当前同伴实体暂不写世界存档、不进入 `ZLR1`/实体复制，避免 T2 产生半持久化或半复制实体。
+
+**验证**：`M33-F3-T2*` **4/4（110 assertions）**；Debug **988/988（140432 assertions）**、Release **988/988（140446 assertions）**、Python **108/108**。新增纯逻辑/对话/归属测试与 `tests/test_companion_network.cpp` 双客户端用例：条件不足不扣物、两名玩家各招募一名、重复招募拒绝、解散回聚落待命、归队不换 StableId；双客户端用例在每步命令前重设玩家位置，避免服务器权威位置校正造成范围拒绝抖动。Release 服务器 600 tick 启动烟测 `build/m33_f3_t2_startup/` 加载同伴 2 个、内容指纹 `0x53a59928194171fd`、世界事件 6 个、stderr 为空。
+
+**限制/下一步**：同伴不会跟随/战斗（T3），装备/初始背包/倒地/死亡结算未接（T4），信任/对话/个人委托未接（T5），完整存档/复制/重连未接（T6）；联机客户端暂不可见同伴，服务器重启后需重新招募但不会重复生成。下一步 M33-F3-T3 同伴跟随与战斗 AI。
+
+## 2026-11-13 M33-F3-T1 同伴数据契约与组件
+
+**范围**：为 F3 建立同伴 `companions-v1` 数据、组件、mod 合并、内容指纹与加载链路；不做招募、AI、UI、存档/复制。
+
+**实现**：新增 `game/Companion.{h,cpp}`，定义 `CompanionDef/CompanionConfig/CompanionRecruitRequirement` 与 `Companion/CompanionState` 组件。`assets/companions.json` 内置 `companion_medic_lin`（村庄营地，林医生）与 `companion_scout_amo`（南部农场，阿默）两名定义；支持背景、基础生命、初始忠诚、主手/躯干装备、背包容量与物品、特长、最低声望/前置任务/物资招募条件、对话 profile。缺省值为生命 100、背包 12kg、忠诚 50、Friendly、对话 id；校验 item 引用、重复 id/trait、装备槽、背包数量/容量与招募物资。`LoadCompanionConfig`、`MergeCompanionFile/Json`、`ModContent` 的 `content/companions.json` 扫描、`ContentBundle`、`GameApp`、`ServerHost` 加载与热重载接线；内容指纹升 **v18**。生命复用 `ecs::Health`，`CompanionState` 只保存忠诚/指令/倒地/背包/装备，`ValidateCompanionComponents` 统一校验。旧配置无 `companions` 时 `enabled=false`，无同伴不启用。
+
+**验证**：`M33-F3-T1*` **5/5（96 assertions）**；Debug **984/984（140318 assertions）**、Release **984/984（140332 assertions）**、Python **108/108**。Debug 全量首轮命中既有 M31-T9 soak `uniqueChunks` 与 M23-F2a-T6 觅食时序 flake，分别隔离通过后全量复跑通过。Release 服务器 600 tick 启动烟测 `build/m33_f3_t1_startup/` 加载同伴 2 个、内容指纹 `0x53a59928194171fd`、世界事件 6 个、stderr 为空。
+
+**限制/下一步**：T1 只有数据/组件，没有聚落招募入口、同伴实体生成、AI/战斗、存档或复制；两名定义的具体数值与第二名招募条件留给 T8 平衡。下一步 M33-F3-T2 聚落招募、解散与唯一性。
 
 ## 2026-11-13 M33-F2-T7 F2 回归与交付
 

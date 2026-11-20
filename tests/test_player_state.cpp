@@ -118,6 +118,10 @@ TEST_CASE("M13-T7 玩家状态协议：背包/装备/配方/制作往返") {
     state.sleep.status = "睡眠中：4 小时 · 1.0/6.0 小时 · ESC 取消";
     state.objective.valid = true;
     state.objective.step = 2;
+    state.stealth.valid = true;
+    state.stealth.crouched = true;
+    state.stealth.noiseRadius = 1.125f;
+    state.stealth.visibilityScale = 0.65f;
 
     std::string error;
     const std::vector<std::uint8_t> bytes = net::EncodePlayerState(state, &error);
@@ -241,13 +245,47 @@ TEST_CASE("M13-T7 玩家状态协议：背包/装备/配方/制作往返") {
     CHECK(decoded.sleep.status == "睡眠中：4 小时 · 1.0/6.0 小时 · ESC 取消");
     CHECK(decoded.objective.valid);
     CHECK(decoded.objective.step == 2);
+    CHECK(decoded.stealth.valid);
+    CHECK(decoded.stealth.crouched);
+    CHECK(decoded.stealth.noiseRadius == doctest::Approx(1.125f));
+    CHECK(decoded.stealth.visibilityScale == doctest::Approx(0.65f));
 
-    // v21 尾部为聚落声望，v20 尾部为战斗体力/姿态；剥离后得到 v19 负载。
-    const std::size_t combatTail = 2 + 1 + 4 + 4 + 1 + 4 + 4 + 4;
-    REQUIRE(bytes.size() > combatTail);
-    std::vector<std::uint8_t> legacyV19(
+    // v23 尾部为潜行摘要；剥离后得到 v22 负载并回退为站立。
+    const std::size_t stealthTail = 1 + 1 + 4 + 4;
+    REQUIRE(bytes.size() > stealthTail);
+    std::vector<std::uint8_t> legacyV22(
         bytes.begin(),
-        bytes.end() - static_cast<std::ptrdiff_t>(combatTail));
+        bytes.end() - static_cast<std::ptrdiff_t>(stealthTail));
+    legacyV22[4] = 22;
+    legacyV22[5] = 0;
+    net::PlayerState legacyV22Decoded;
+    REQUIRE_MESSAGE(net::DecodePlayerState(legacyV22, &legacyV22Decoded,
+                                           &error),
+                    error);
+    CHECK_FALSE(legacyV22Decoded.stealth.valid);
+    CHECK_FALSE(legacyV22Decoded.stealth.crouched);
+    CHECK(legacyV22Decoded.stealth.noiseRadius == doctest::Approx(2.5f));
+    CHECK(legacyV22Decoded.stealth.visibilityScale == doctest::Approx(1.0f));
+
+    // v22 尾部为 POI 阶段镜像（本用例为空），剥离后得到 v21 负载。
+    REQUIRE(legacyV22.size() > 2u);
+    std::vector<std::uint8_t> legacyV21(
+        legacyV22.begin(),
+        legacyV22.end() - static_cast<std::ptrdiff_t>(2));
+    legacyV21[4] = 21;
+    legacyV21[5] = 0;
+    net::PlayerState legacyV21Decoded;
+    REQUIRE_MESSAGE(net::DecodePlayerState(legacyV21, &legacyV21Decoded,
+                                           &error),
+                    error);
+    CHECK(legacyV21Decoded.poiStageProgress.empty());
+
+    // v21 为聚落声望，v20 为战斗体力/姿态；剥离后得到 v19 负载。
+    const std::size_t combatTail = 2 + 1 + 4 + 4 + 1 + 4 + 4 + 4;
+    REQUIRE(legacyV21.size() > combatTail);
+    std::vector<std::uint8_t> legacyV19(
+        legacyV21.begin(),
+        legacyV21.end() - static_cast<std::ptrdiff_t>(combatTail));
     legacyV19[4] = 19;
     legacyV19[5] = 0;
     net::PlayerState legacyV19Decoded;
@@ -827,8 +865,8 @@ TEST_CASE("M33-F1-T4 玩家状态协议：聚落声望摘要往返与 v20 缺省
     empty.playerStableId = 7;
     std::vector<std::uint8_t> legacyV20 =
         net::EncodePlayerState(empty, &error);
-    REQUIRE(legacyV20.size() > 2u);
-    legacyV20.resize(legacyV20.size() - 2u);
+    REQUIRE(legacyV20.size() > 14u);
+    legacyV20.resize(legacyV20.size() - 14u);
     legacyV20[4] = 20;
     legacyV20[5] = 0;
     net::PlayerState legacyDecoded;
@@ -944,5 +982,57 @@ TEST_CASE("M30-T6 玩家状态协议：战斗体力/姿态往返与非法值") {
 
     invalid = state;
     invalid.combat.valid = false;
+    CHECK(net::EncodePlayerState(invalid, &error).empty());
+}
+
+TEST_CASE("M33-F5-T2 玩家状态协议：POI 阶段进度往返与非法值") {
+    net::PlayerState state;
+    state.playerStableId = 9;
+    state.capacityKg = 20.0f;
+    net::PlayerPoiStageProgress stage;
+    stage.id = "staged_hospital";
+    stage.stageIndex = 2;
+    stage.stageCount = 5;
+    stage.completedStageCount = 2;
+    stage.flags = net::kPlayerPoiStageAwaitingChoice |
+                  net::kPlayerPoiStageFailed |
+                  net::kPlayerPoiStagePowered;
+    stage.currentStage = "choose_route";
+    stage.chosenBranch = "morgue_route";
+    state.poiStageProgress.push_back(stage);
+
+    std::string error;
+    const std::vector<std::uint8_t> bytes =
+        net::EncodePlayerState(state, &error);
+    REQUIRE_MESSAGE(!bytes.empty(), error);
+    net::PlayerState decoded;
+    REQUIRE_MESSAGE(net::DecodePlayerState(bytes, &decoded, &error), error);
+    REQUIRE(decoded.poiStageProgress.size() == 1u);
+    CHECK(decoded.poiStageProgress[0].id == "staged_hospital");
+    CHECK(decoded.poiStageProgress[0].stageIndex == 2);
+    CHECK(decoded.poiStageProgress[0].stageCount == 5);
+    CHECK(decoded.poiStageProgress[0].completedStageCount == 2);
+    CHECK(decoded.poiStageProgress[0].flags ==
+          (net::kPlayerPoiStageAwaitingChoice |
+           net::kPlayerPoiStageFailed | net::kPlayerPoiStagePowered));
+    CHECK(decoded.poiStageProgress[0].currentStage == "choose_route");
+    CHECK(decoded.poiStageProgress[0].chosenBranch == "morgue_route");
+
+    net::PlayerState invalid = state;
+    invalid.poiStageProgress[0].stageCount = 9;
+    CHECK(net::EncodePlayerState(invalid, &error).empty());
+
+    invalid = state;
+    invalid.poiStageProgress[0].flags = 8;
+    CHECK(net::EncodePlayerState(invalid, &error).empty());
+
+    invalid = state;
+    invalid.poiStageProgress[0].currentStage = "Bad Id";
+    CHECK(net::EncodePlayerState(invalid, &error).empty());
+
+    invalid = state;
+    const net::PlayerPoiStageProgress duplicate =
+        invalid.poiStageProgress[0];
+    invalid.poiStageProgress.push_back(duplicate);
     CHECK(net::EncodePlayerState(invalid, &error).empty());
 }

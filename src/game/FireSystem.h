@@ -159,6 +159,9 @@ public:
                                 int wy, int z, float wetness,
                                 std::string* error = nullptr,
                                 std::uint64_t ownerStableId = 0);
+    bool IgniteForcedAt(ecs::EcsWorld& ecs, world::World& world, int wx, int wy,
+                        int z, float burnSeconds, float heatRadius,
+                        std::uint64_t ownerStableId = 0);
     bool ExtinguishAt(ecs::EcsWorld& ecs, int wx, int wy, int z);
     std::size_t UnloadChunk(ecs::EcsWorld& ecs, int chunkX, int chunkY);
 

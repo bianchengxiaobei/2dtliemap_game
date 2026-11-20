@@ -1,0 +1,128 @@
+{
+  "format": "companions-v1",
+  "defs": [
+    {
+      "id": "companion_medic_lin",
+      "name": "林医生",
+      "background": "村庄营地的战地医护，见过太多人死在搬运伤员的路上。她愿意跟着能让她救人的人。",
+      "baseHealth": 95.0,
+      "startingLoyalty": 55,
+      "equipment": {
+        "primary": "kitchen_knife",
+        "body": "jacket"
+      },
+      "inventoryCapacityKg": 10.0,
+      "inventory": [
+        { "item": "bandage", "count": 2 },
+        { "item": "canned_soup", "count": 1 }
+      ],
+      "traits": ["field_medic", "steady_hands"],
+      "personalQuest": [
+        {
+          "id": "lin_triage_supplies",
+          "name": "干净的绷带",
+          "description": "林医生想补足随身医疗包，也想确认你愿意在她低头救人时守在旁边。",
+          "minTrust": 45,
+          "objective": {
+            "kind": "gift",
+            "target": "bandage",
+            "count": 2,
+            "description": "赠送给林医生 2 个绷带"
+          },
+          "rewardTrust": 6,
+          "rewardTrait": "triage_drills",
+          "rewardItem": "first_aid_kit",
+          "rewardItemCount": 1,
+          "completionText": "“这不仅是绷带，是让我敢继续救人的底气。”"
+        },
+        {
+          "id": "lin_hold_the_line",
+          "name": "守住背后",
+          "description": "林医生想和你一起顶住一次真正的战斗，确认她低头救人时背后有人。",
+          "minTrust": 60,
+          "objective": {
+            "kind": "kill",
+            "target": "any",
+            "count": 3,
+            "description": "与林医生一起击杀 3 名感染者"
+          },
+          "rewardTrust": 8,
+          "rewardTrait": "steady_hands_ii",
+          "rewardItem": "leather_jacket",
+          "rewardItemCount": 1,
+          "rewardEquip": "body",
+          "completionText": "“下次你倒下，我会先把你拖回来。”"
+        }
+      ],
+      "recruit": {
+        "minReputationTier": "friendly",
+        "requiredMission": "settlement_help",
+        "requiredItem": "bandage",
+        "requiredItemCount": 2
+      },
+      "dialogueProfile": "companion_lin"
+    },
+    {
+      "id": "companion_scout_amo",
+      "name": "阿默",
+      "background": "南部农场的斥候，习惯在别人吃饭时盯着地平线。他话不多，但记得每条能撤退的路。",
+      "baseHealth": 115.0,
+      "startingLoyalty": 40,
+      "equipment": {
+        "primary": "makeshift_spear",
+        "body": "padded_jacket"
+      },
+      "inventoryCapacityKg": 14.0,
+      "inventory": [
+        { "item": "energy_bar", "count": 2 },
+        { "item": "bandage", "count": 1 }
+      ],
+      "traits": ["scout", "cool_headed"],
+      "personalQuest": [
+        {
+          "id": "amo_shared_meal",
+          "name": "分一口热的",
+          "description": "阿默不习惯欠人情。他想确认你不是只在需要探路时才想起他。",
+          "minTrust": 35,
+          "objective": {
+            "kind": "gift",
+            "target": "canned_soup",
+            "count": 1,
+            "description": "给阿默 1 罐热汤"
+          },
+          "rewardTrust": 5,
+          "rewardTrait": "trailwise",
+          "rewardItem": "machete",
+          "rewardItemCount": 1,
+          "rewardEquip": "primary",
+          "completionText": "“路我记着，人也记着。”"
+        },
+        {
+          "id": "amo_clear_the_road",
+          "name": "清出一条路",
+          "description": "阿默想和你把一条撤退路线上的感染者清干净，给后来的人留条活路。",
+          "minTrust": 55,
+          "objective": {
+            "kind": "kill",
+            "target": "any",
+            "count": 4,
+            "description": "与阿默一起击杀 4 名感染者"
+          },
+          "rewardTrust": 7,
+          "rewardTrait": "cool_headed_ii",
+          "rewardItem": "padded_jacket",
+          "rewardItemCount": 1,
+          "rewardEquip": "body",
+          "completionText": "“路通了。下次别一个人走。”"
+        }
+      ],
+      "recruit": {
+        "minReputationTier": "friendly",
+        "requiredMission": "south_harvest_help",
+        "requiredItem": "canned_soup",
+        "requiredItemCount": 1
+      },
+      "dialogueProfile": "companion_amo"
+    }
+  ]
+}

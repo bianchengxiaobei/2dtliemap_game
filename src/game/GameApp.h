@@ -29,6 +29,7 @@
 #include "ecs/SpatialIndex.h"
 #include "game/Animals.h"
 #include "game/AssetProvider.h"
+#include "game/Companion.h"
 #include "game/Crops.h"
 #include "game/EventProbe.h"
 #include "game/Fire.h"
@@ -38,6 +39,8 @@
 #include "game/Poi.h"
 #include "game/Settlement.h"
 #include "game/StrategicState.h"
+#include "game/Traps.h"
+#include "game/VehicleMods.h"
 #include "game/WorldEvent.h"
 #include "game/WorldSimulation.h"
 #include "items/ItemRegistry.h"
@@ -144,6 +147,9 @@ private:
     MissionConfig m_missionConfig;
     SettlementConfig m_settlements;
     WorldEventConfig m_worldEvents;
+    CompanionConfig m_companions;
+    VehicleModsConfig m_vehicleMods;
+    TrapDefsConfig m_traps;
     StrategicConfig m_strategic;
 
     // 存档管理（M10-T4/T5）：save.root 下的元数据、原子写盘与 zl-save 后台线程

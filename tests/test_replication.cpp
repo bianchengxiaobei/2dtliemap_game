@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -9,6 +10,7 @@
 #include "characters/components/CharacterComponents.h"
 #include "characters/components/CombatComponents.h"
 #include "ecs/EcsWorld.h"
+#include "game/Companion.h"
 #include "game/EntityReplication.h"
 #include "game/StructureComponents.h"
 #include "game/VehicleComponents.h"
@@ -83,7 +85,9 @@ net::ReplicationRegistry MakeRegistry() {
 TEST_CASE("M13 Replication：全量快照、组件注册表与客户端副本") {
     net::ReplicationRegistry registry;
     REQUIRE(game::RegisterEntityReplicationComponents(registry));
-    CHECK(registry.Size() == 29);
+    CHECK(registry.Size() == 33);
+    CHECK(registry.Find(game::kReplicationVehicleMods) != nullptr);
+    CHECK(registry.Find(game::kReplicationStealth) != nullptr);
     CHECK(registry.Find(game::kReplicationPosition) != nullptr);
     CHECK(registry.Find(game::kReplicationHealth) != nullptr);
     CHECK(registry.Find(game::kReplicationEquipment) != nullptr);
@@ -150,6 +154,65 @@ TEST_CASE("M13 Replication：全量快照、组件注册表与客户端副本") 
     CHECK(zombie->special.windup == doctest::Approx(0.2f));
     CHECK(zombie->special.windupDuration == doctest::Approx(0.9f));
     CHECK(zombie->special.serial == 7u);
+}
+
+TEST_CASE("M34-F1-T5 ZLR1 STLH：1 字节姿态、moving 位与缺失回退") {
+    const net::ReplicationRegistry registry = MakeRegistry();
+    ecs::EcsWorld world;
+    entt::registry& ecsRegistry = world.Registry();
+    const TestActors actors = MakeActors(world);
+    ecsRegistry.emplace<ecs::StealthState>(
+        actors.player,
+        ecs::StealthState{true, 0.55f, 0.45f, 0.65f});
+    ecsRegistry.get<ecs::Velocity>(actors.player) = ecs::Velocity{1.0f, 0.0f};
+
+    game::EntityReplicationProducer producer(
+        world, registry, game::EntityReplicationProducer::Options{10.0f, 16});
+    game::EntityReplicationClient client;
+    std::string error;
+    net::ReplicationSnapshot full = producer.BuildFull(10, 0.0f, 0.0f, &error);
+    REQUIRE_MESSAGE(error.empty(), error);
+    const net::ReplicatedEntity* playerEntity = nullptr;
+    for (const net::ReplicatedEntity& entity : full.upserts) {
+        if (entity.stableId == actors.playerId) {
+            playerEntity = &entity;
+        }
+    }
+    REQUIRE(playerEntity != nullptr);
+    const net::ReplicatedComponent* stealthComponent =
+        playerEntity->Find(game::kReplicationStealth);
+    REQUIRE(stealthComponent != nullptr);
+    REQUIRE(stealthComponent->data.size() == 1u);
+    CHECK(stealthComponent->data[0] == 3u);
+
+    std::vector<std::uint8_t> bytes =
+        net::EncodeReplicationSnapshot(full, registry, &error);
+    REQUIRE_MESSAGE(!bytes.empty(), error);
+    net::ReplicationSnapshot decoded;
+    REQUIRE(net::DecodeReplicationSnapshot(bytes, registry, &decoded, &error));
+    REQUIRE(client.Apply(decoded, &error));
+    const game::ReplicatedActor* remote = client.Find(actors.playerId);
+    REQUIRE(remote != nullptr);
+    CHECK(remote->hasStealth);
+    CHECK(remote->stealthCrouched);
+    CHECK(remote->stealthMoving);
+    const game::ReplicatedActor* zombie = client.Find(actors.zombieId);
+    REQUIRE(zombie != nullptr);
+    CHECK_FALSE(zombie->hasStealth);
+
+    ecsRegistry.get<ecs::Velocity>(actors.player).x = 0.0f;
+    ecsRegistry.get<ecs::StealthState>(actors.player).crouched = false;
+    net::ReplicationSnapshot delta;
+    REQUIRE(producer.BuildDelta(11, 0.0f, 0.0f, &delta, &error));
+    bytes = net::EncodeReplicationSnapshot(delta, registry, &error);
+    REQUIRE_MESSAGE(!bytes.empty(), error);
+    REQUIRE(net::DecodeReplicationSnapshot(bytes, registry, &decoded, &error));
+    REQUIRE(client.Apply(decoded, &error));
+    remote = client.Find(actors.playerId);
+    REQUIRE(remote != nullptr);
+    CHECK(remote->hasStealth);
+    CHECK_FALSE(remote->stealthCrouched);
+    CHECK_FALSE(remote->stealthMoving);
 }
 
 TEST_CASE("M13 Replication：增量只发变化组件，AOI 离开发移除，回来重新生成") {
@@ -877,6 +940,8 @@ TEST_CASE("X-F3 复制审计：农场/陷阱/商人状态完整往返") {
     spike.staggerSeconds = 0.35f;
     spike.uses = 4;
     ecsRegistry.emplace<ecs::SpikeTrap>(trap, spike);
+    ecsRegistry.emplace<ecs::PlacedTrap>(
+        trap, ecs::PlacedTrap{"bear_trap", true, 1.25f, 3, 0x123456789ull});
 
     const ecs::Entity merchant = world.CreateWithStableId(822);
     ecsRegistry.emplace<ecs::Position>(merchant, ecs::Position{5.0f, 4.0f, 0});
@@ -953,6 +1018,13 @@ TEST_CASE("X-F3 复制审计：农场/陷阱/商人状态完整往返") {
     CHECK(trapActor->trap.radius == doctest::Approx(1.0f));
     CHECK(trapActor->trap.staggerSeconds == doctest::Approx(0.35f));
     CHECK(trapActor->trap.uses == 4);
+    REQUIRE(trapActor->hasPlacedTrap);
+    CHECK(trapActor->placedTrap.defId == "bear_trap");
+    CHECK(trapActor->placedTrap.armed);
+    CHECK(trapActor->placedTrap.cooldown == doctest::Approx(1.25f));
+    CHECK(trapActor->placedTrap.uses == 3);
+    CHECK(trapActor->placedTrap.owner == 0x123456789ull);
+    CHECK(trapActor->ownerStableId == 0x123456789ull);
 
     const game::ReplicatedActor* merchantActor = client.Find(822);
     REQUIRE(merchantActor != nullptr);
@@ -1266,4 +1338,126 @@ TEST_CASE("M30-T9 CombatStance 经 ZLR1 全量/增量复制到客户端") {
         producer.BuildFull(52, 5.0f, 6.0f, &error);
     CHECK(invalid.upserts.empty());
     CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("M33-F3-T6 同伴复制 defId/owner/信任/委托/装备摘要与旧负载") {
+    const net::ReplicationRegistry registry = MakeRegistry();
+    CHECK(registry.Find(game::kReplicationCompanion) != nullptr);
+
+    ecs::EcsWorld world;
+    entt::registry& ecsRegistry = world.Registry();
+    const ecs::Entity companion = world.CreateWithStableId(600);
+    ecsRegistry.emplace<ecs::Position>(companion,
+                                       ecs::Position{10.0f, 12.0f, 0});
+    ecsRegistry.emplace<ecs::Velocity>(companion, ecs::Velocity{});
+    ecsRegistry.emplace<ecs::SpriteRef>(
+        companion, ecs::SpriteRef{ecs::HashName("character.placeholder"), 0,
+                                  0xFF9AD8B0u});
+    ecsRegistry.emplace<ecs::Facing>(companion, ecs::Facing{});
+    ecsRegistry.emplace<ecs::AnimState>(companion, ecs::AnimState{});
+    ecsRegistry.emplace<ecs::Health>(companion, ecs::Health{72.0f, 95.0f});
+    ecsRegistry.emplace<ecs::FriendlyNpc>(companion);
+    ecsRegistry.emplace<ecs::NoCombatTarget>(companion);
+    ecsRegistry.emplace<game::Companion>(
+        companion, game::Companion{"companion_scout_amo", 500,
+                                   "south_farm"});
+    game::CompanionState state;
+    state.loyalty = 73;
+    state.command = game::CompanionCommand::Stay;
+    state.standby = true;
+    state.personalStatus = game::CompanionQuestStatus::Active;
+    state.personalStage = 1;
+    state.personalProgress = 2;
+    state.personalRewardMask = 1;
+    state.equipment.slots[0] =
+        ecs::ItemInstance{"kitchen_knife", 1, 0.5f, 0};
+    state.equipment.slots[1] =
+        ecs::ItemInstance{"jacket", 1, 0.75f, 0};
+    ecsRegistry.emplace<game::CompanionState>(companion, state);
+
+    game::EntityReplicationProducer producer(
+        world, registry, game::EntityReplicationProducer::Options{16.0f, 8});
+    game::EntityReplicationClient client;
+    std::string error;
+    const net::ReplicationSnapshot full =
+        producer.BuildFull(60, 10.0f, 12.0f, &error);
+    REQUIRE_MESSAGE(error.empty(), error);
+    REQUIRE(full.upserts.size() == 1u);
+
+    auto bytes = net::EncodeReplicationSnapshot(full, registry, &error);
+    REQUIRE_MESSAGE(!bytes.empty(), error);
+    net::ReplicationSnapshot decoded;
+    REQUIRE(net::DecodeReplicationSnapshot(bytes, registry, &decoded, &error));
+    REQUIRE(client.Apply(decoded, &error));
+
+    const game::ReplicatedActor* actor = client.Find(600);
+    REQUIRE(actor != nullptr);
+    CHECK(actor->ownerStableId == 500u);
+    CHECK_FALSE(actor->player);
+    REQUIRE(actor->hasCompanion);
+    CHECK(actor->companion.defId == "companion_scout_amo");
+    CHECK(actor->companion.command == game::CompanionCommand::Stay);
+    CHECK(actor->companion.standby);
+    CHECK_FALSE(actor->companion.downed);
+    CHECK_FALSE(actor->companion.dead);
+    CHECK(actor->companion.loyalty == 73);
+    CHECK(actor->companion.questStatus ==
+          game::CompanionQuestStatus::Active);
+    CHECK(actor->companion.questStage == 1);
+    CHECK(actor->companion.questProgress == 2);
+    CHECK(actor->companion.rewardMask == 1u);
+    REQUIRE(actor->hasHealth);
+    CHECK(actor->health.current == doctest::Approx(72.0f));
+    REQUIRE(actor->hasEquipment);
+    REQUIRE(actor->equipment[0].has_value());
+    CHECK(actor->equipment[0]->defId == "kitchen_knife");
+    REQUIRE(actor->equipment[1].has_value());
+    CHECK(actor->equipment[1]->defId == "jacket");
+
+    state.loyalty = 74;
+    state.personalProgress = 3;
+    ecsRegistry.get<game::CompanionState>(companion) = state;
+    net::ReplicationSnapshot delta;
+    REQUIRE(producer.BuildDelta(61, 10.0f, 12.0f, &delta, &error));
+    REQUIRE_MESSAGE(error.empty(), error);
+    REQUIRE(delta.upserts.size() == 1u);
+    REQUIRE(delta.upserts[0].components.size() == 1u);
+    CHECK(delta.upserts[0].components[0].type ==
+          game::kReplicationCompanion);
+    bytes = net::EncodeReplicationSnapshot(delta, registry, &error);
+    REQUIRE_MESSAGE(!bytes.empty(), error);
+    REQUIRE(net::DecodeReplicationSnapshot(bytes, registry, &delta, &error));
+    REQUIRE(client.Apply(delta, &error));
+    actor = client.Find(600);
+    REQUIRE(actor != nullptr);
+    CHECK(actor->companion.loyalty == 74);
+    CHECK(actor->companion.questProgress == 3);
+
+    // 旧 ZLR1 负载没有 CMPN 组件：客户端仍按普通角色显示，不猜造同伴状态。
+    net::ReplicationSnapshot legacy = full;
+    for (net::ReplicatedEntity& entity : legacy.upserts) {
+        auto& components = entity.components;
+        components.erase(
+            std::remove_if(
+                components.begin(), components.end(),
+                [](const net::ReplicatedComponent& component) {
+                    return component.type == game::kReplicationCompanion;
+                }),
+            components.end());
+    }
+    game::EntityReplicationClient legacyClient;
+    bytes = net::EncodeReplicationSnapshot(legacy, registry, &error);
+    REQUIRE_MESSAGE(!bytes.empty(), error);
+    net::ReplicationSnapshot legacyDecoded;
+    REQUIRE(net::DecodeReplicationSnapshot(bytes, registry, &legacyDecoded,
+                                           &error));
+    REQUIRE(legacyClient.Apply(legacyDecoded, &error));
+    const game::ReplicatedActor* legacyActor = legacyClient.Find(600);
+    REQUIRE(legacyActor != nullptr);
+    CHECK_FALSE(legacyActor->hasCompanion);
+    CHECK(legacyActor->ownerStableId == 500u);
+    REQUIRE(legacyActor->hasHealth);
+    CHECK(legacyActor->health.current == doctest::Approx(72.0f));
+    REQUIRE(legacyActor->hasEquipment);
+    CHECK(legacyActor->equipment[0]->defId == "kitchen_knife");
 }

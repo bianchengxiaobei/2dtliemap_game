@@ -57,6 +57,7 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"HeavyAttack", "LSHIFT"},  // M30-T3：玩家重击（单机；联机协议 T6）
     {"Block", "LCTRL"},      // M30-T4：按住格挡（单机；联机命令 T6）
     {"Dodge", "Z"},          // M30-T4：闪避（单机；联机命令 T6）
+    {"Stealth", "N"},        // M34-F1-T1：潜行切换（单机；联机命令 T5）
     {"Pickup", "F"},         // M6-T3：拾取最近地面物品
     {"Use", "E"},            // M6-T5：使用消耗品（回血/饱食）
     {"FarmCare", "T"},       // F5-T2：农田施肥/杀菌
@@ -68,6 +69,7 @@ constexpr std::pair<const char*, const char*> kDefaultBindings[] = {
     {"RepairAllStructures", "J"}, // M18-F4：批量维修
     {"DemolishStructure", "X"}, // M17-T2：拆除最近结构
     {"CharacterPanel", "C"}, // M19-F1：角色技能/Perk 面板
+    {"CompanionPanel", "P"}, // M33-F3-T7：同伴生命/装备/背包与指令面板
     {"WorldMap", "M"},       // M31-T7：世界地图/发现/导航
     {"MissionFocus", "L"},   // M19-F3：切换任务焦点
     {"MissionAbandon", "K"}, // M19-F3：放弃当前焦点任务
@@ -354,6 +356,75 @@ bool GameApp::Init(int argc, char** argv) {
     }
     m_ctx.worldEvents = &m_worldEvents;
 
+    std::string companionError;
+    if (!LoadCompanionConfig(m_config, &m_companions, &companionError,
+                             &m_itemRegistry)) {
+        ZL_ERROR("companions", "同伴配置加载失败：{}", companionError);
+    } else {
+        CompanionMergeStats companionStats;
+        if (m_companions.enabled) {
+            for (const std::string& modCompanion :
+                 modContent.companionFiles) {
+                if (!MergeCompanionFile(modCompanion, &m_companions,
+                                        &companionStats, &companionError,
+                                        &m_itemRegistry)) {
+                    ZL_WARN("companions", "跳过 mod 同伴文件 {}：{}",
+                            modCompanion, companionError);
+                }
+            }
+            ZL_INFO("companions", "同伴配置：{} 个（mod 文件 {}，新增 {}）",
+                    m_companions.defs.size(), companionStats.filesLoaded,
+                    companionStats.defsAdded);
+        }
+    }
+    m_ctx.companions = &m_companions;
+
+    std::string vehicleModError;
+    if (!LoadVehicleModConfig(m_config, &m_vehicleMods, &vehicleModError,
+                              &m_itemRegistry)) {
+        ZL_ERROR("vehicle-mods", "车辆改装配置加载失败：{}", vehicleModError);
+    } else {
+        VehicleModMergeStats vehicleModStats;
+        if (m_vehicleMods.enabled) {
+            for (const std::string& modVehicleMod :
+                 modContent.vehicleModFiles) {
+                if (!MergeVehicleModFile(modVehicleMod, &m_vehicleMods,
+                                         &vehicleModStats, &vehicleModError,
+                                         &m_itemRegistry)) {
+                    ZL_WARN("vehicle-mods", "跳过 mod 车辆改装文件 {}：{}",
+                            modVehicleMod, vehicleModError);
+                }
+            }
+            ZL_INFO("vehicle-mods",
+                    "车辆改装配置：{} 个（mod 文件 {}，新增 {}，跳过 {}）",
+                    m_vehicleMods.defs.size(), vehicleModStats.filesLoaded,
+                    vehicleModStats.defsAdded, vehicleModStats.defsSkipped);
+        }
+    }
+    m_ctx.vehicleMods = &m_vehicleMods;
+
+    std::vector<BuildableDef> trapBuildables = LoadBuildableDefs(m_config);
+    AppendBuildableDefs(trapBuildables, m_ctx.modBuildables);
+    std::string trapError;
+    if (!LoadTrapDefsConfig(m_config, trapBuildables, &m_traps, &trapError)) {
+        ZL_ERROR("traps", "陷阱配置加载失败：{}", trapError);
+        m_traps.enabled = false;
+        m_traps.defs.clear();
+    } else if (m_traps.enabled) {
+        TrapMergeStats trapStats;
+        for (const std::string& modTrap : modContent.trapFiles) {
+            if (!MergeTrapFile(modTrap, &m_traps, &trapStats, trapBuildables,
+                               &trapError)) {
+                ZL_WARN("traps", "跳过 mod 陷阱文件 {}：{}", modTrap,
+                        trapError);
+            }
+        }
+        ZL_INFO("traps", "陷阱配置：{} 个（mod 文件 {}，新增 {}，跳过 {}）",
+                m_traps.defs.size(), trapStats.filesLoaded,
+                trapStats.defsAdded, trapStats.defsSkipped);
+    }
+    m_ctx.traps = &m_traps;
+
     const std::string strategicFile =
         m_config.Get<std::string>("strategic.file", "assets/strategic.json");
     std::string strategicError;
@@ -516,6 +587,8 @@ bool GameApp::Init(int argc, char** argv) {
         simulationOptions.settlements = &m_settlements;
         simulationOptions.worldEvents = &m_worldEvents;
         simulationOptions.strategic = &m_strategic;
+        simulationOptions.companions = &m_companions;
+        simulationOptions.traps = &m_traps;
         simulationOptions.spawnAnimals = true;
         simulationOptions.fire = &m_fireRegistry;
         simulationOptions.tasks = m_tasks.get();
@@ -965,6 +1038,9 @@ void GameApp::Tick(double tickDt) {
         m_simulation->Flush();  // 状态逻辑里入队的创建/销毁也在本 tick 末统一 flush
     }
     m_events.FlushQueued();
+    // M35-F5-T4：tick 末输出各 mod 的 Entities.Query 次数/截断统计；
+    // 仅日志观测，不限制脚本继续查询。
+    m_scriptApi.FlushQueryStats();
 }
 
 void GameApp::RenderFrame(double frameDt, double alpha) {
@@ -1357,6 +1433,9 @@ bool GameApp::ReloadContentFromDisk(std::string& error) {
     m_missionConfig = std::move(bundle.missionConfig);
     m_settlements = std::move(bundle.settlements);
     m_worldEvents = std::move(bundle.worldEvents);
+    m_companions = std::move(bundle.companions);
+    m_vehicleMods = std::move(bundle.vehicleMods);
+    m_traps = std::move(bundle.traps);
     m_ctx.missionSourceJson = std::move(bundle.missionSourceJson);
     m_ctx.modBuildables = std::move(bundle.modContent.buildables);
     ++m_ctx.contentReloadCount;
@@ -1369,11 +1448,12 @@ bool GameApp::ReloadContentFromDisk(std::string& error) {
 
     ZL_INFO("content",
             "mod 内容热重载成功：物品 {}→{}，配方 {}→{}，建造 mod {}→{}，"
-            "战利品 {}，POI {}，任务 {}，世界事件 {}",
+            "战利品 {}，POI {}，任务 {}，世界事件 {}，同伴 {}，车辆改装 {}，陷阱 {}",
             oldItems, m_itemRegistry.Size(), oldRecipes, m_recipeRegistry.Size(),
             oldBuildables, m_ctx.modBuildables.size(), m_lootTableRegistry.Size(),
             m_poiConfig.defs.size(), m_missionConfig.defs.size(),
-            m_worldEvents.defs.size());
+            m_worldEvents.defs.size(), m_companions.defs.size(),
+            m_vehicleMods.defs.size(), m_traps.defs.size());
     ZL_INFO("content", "mod 内容指纹刷新：{:#x}→{:#x}", oldContentHash,
             m_ctx.contentHash);
     return true;
@@ -1389,15 +1469,17 @@ void GameApp::RefreshContentHash() {
         ComputeContentHash(m_itemRegistry, m_recipeRegistry, buildables,
                            m_lootTableRegistry, m_poiConfig, m_missionConfig,
                            modsHash, &m_forageRegistry, &m_animalRegistry,
-                           &m_cropRegistry, &m_settlements, &m_worldEvents);
+                           &m_cropRegistry, &m_settlements, &m_worldEvents,
+                           &m_companions, &m_vehicleMods, &m_traps);
     ZL_INFO("mod-content",
             "客户端内容指纹刷新：{:#x}（物品 {}，配方 {}，建造 {}，战利品 {}，"
-            "POI {}，任务 {}，动物 {}，作物 {}，聚落 {}，世界事件 {}，mod 文件树 {:#x}）",
+            "POI {}，任务 {}，动物 {}，作物 {}，聚落 {}，世界事件 {}，同伴 {}，车辆改装 {}，陷阱 {}，mod 文件树 {:#x}）",
             m_ctx.contentHash, m_itemRegistry.Size(), m_recipeRegistry.Size(),
             buildables.size(), m_lootTableRegistry.Size(), m_poiConfig.defs.size(),
             m_missionConfig.defs.size(), m_animalRegistry.Size(),
             m_cropRegistry.Size(), m_settlements.defs.size(),
-            m_worldEvents.defs.size(), modsHash);
+            m_worldEvents.defs.size(), m_companions.defs.size(),
+            m_vehicleMods.defs.size(), m_traps.defs.size(), modsHash);
 }
 
 }  // namespace zl::game

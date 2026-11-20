@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -16,6 +17,7 @@
 #include "core/SoundEvent.h"
 #include "ecs/components/CommonComponents.h"
 #include "ecs/components/PhysicsComponents.h"
+#include "game/BuildingRules.h"
 #include "game/Homestead.h"
 #include "game/MissionComponents.h"
 #include "game/NetworkClient.h"
@@ -2321,5 +2323,288 @@ TEST_CASE("M24-T7 双客户端新 POI/任务/事件权威与重连不重复") {
 
     firstReconnect.Close();
     secondReconnect.Close();
+    host.Shutdown();
+}
+
+TEST_CASE("M34-F3-T2 联机陷阱：权威放置、布防/解除、拆除与拒绝") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    REQUIRE(std::filesystem::exists(root / "config" / "game.json"));
+    ScopedWorkingDirectory cwd(root);
+
+    zl::server::ServerHost::Options hostOptions;
+    hostOptions.configPath = (root / "config" / "game.json").string();
+    hostOptions.spawnDemoPopulation = false;
+    hostOptions.spawnLocalPlayer = false;
+    hostOptions.network = true;
+    hostOptions.port = 0;
+    hostOptions.contentHash = 0x5452415032ull;
+
+    zl::server::ServerHost host;
+    std::string error;
+    REQUIRE_MESSAGE(host.Init(hostOptions, &error), error);
+    REQUIRE(host.NetworkPort() != 0);
+
+    zl::game::NetworkClient::Options clientOptions;
+    clientOptions.host = "127.0.0.1";
+    clientOptions.port = host.NetworkPort();
+    clientOptions.contentHash = hostOptions.contentHash;
+    clientOptions.autoReconnect = false;
+
+    zl::game::NetworkClient client(clientOptions);
+    REQUIRE(client.Connect(&error));
+    REQUIRE(PumpUntil(host, client, 6000, [&] {
+        return client.IsConnected() && client.HasPlayer() &&
+               client.HasPlayerState();
+    }));
+    const std::uint64_t playerId = client.PlayerStableId();
+    REQUIRE(playerId != 0);
+
+    const zl::ecs::Entity player =
+        host.Simulation().Ecs().FindById(playerId);
+    REQUIRE(static_cast<bool>(player != entt::null));
+    auto& registry = host.Simulation().Ecs().Registry();
+    auto& serverBag = registry.get<zl::ecs::Container>(player);
+    serverBag.items.push_back(zl::ecs::ItemInstance{"wood", 20, 1.0f});
+
+    const auto& defs = zl::game::DefaultBuildables();
+    const zl::game::BuildableDef* bearDef = nullptr;
+    for (const zl::game::BuildableDef& def : defs) {
+        if (def.id == "bear_trap") {
+            bearDef = &def;
+            break;
+        }
+    }
+    REQUIRE(bearDef != nullptr);
+    const std::int32_t bearIndex = static_cast<std::int32_t>(
+        std::distance(defs.data(), bearDef));
+
+    const auto findFreeCell = [&](int* outX, int* outY) {
+        const auto* position = registry.try_get<zl::ecs::Position>(player);
+        if (position == nullptr) {
+            return false;
+        }
+        const int px = static_cast<int>(std::floor(position->x));
+        const int py = static_cast<int>(std::floor(position->y));
+        for (int radius = 1; radius <= 3; ++radius) {
+            for (int dy = -radius; dy <= radius; ++dy) {
+                for (int dx = -radius; dx <= radius; ++dx) {
+                    if (std::abs(dx) != radius && std::abs(dy) != radius) {
+                        continue;
+                    }
+                    if (std::hypot(static_cast<float>(dx),
+                                   static_cast<float>(dy)) > 3.0f) {
+                        continue;
+                    }
+                    const int wx = px + dx;
+                    const int wy = py + dy;
+                    zl::world::GridSquare* square =
+                        host.Simulation().World().GetSquare(wx, wy, 0);
+                    if (square == nullptr ||
+                        !zl::game::IsBuildCellFreeFor(*bearDef, *square)) {
+                        continue;
+                    }
+                    bool occupied = false;
+                    registry.view<zl::ecs::Position>().each(
+                        [&](const zl::ecs::Position& candidate) {
+                            if (!occupied && candidate.z == 0 &&
+                                static_cast<int>(std::floor(candidate.x)) == wx &&
+                                static_cast<int>(std::floor(candidate.y)) == wy) {
+                                occupied = true;
+                            }
+                        });
+                    if (!occupied) {
+                        *outX = wx;
+                        *outY = wy;
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    };
+    const auto placeCommand = [&](int wx, int wy) {
+        zl::net::Command command;
+        command.type = zl::net::CommandType::PlaceStructure;
+        command.playerStableId = playerId;
+        command.payload.x = static_cast<float>(wx);
+        command.payload.y = static_cast<float>(wy);
+        command.payload.index = bearIndex;
+        return command;
+    };
+    const auto findTrapAt = [&](int wx, int wy) {
+        zl::ecs::Entity found = entt::null;
+        registry.view<zl::ecs::PlacedTrap, zl::ecs::Position>().each(
+            [&](const zl::ecs::Entity entity,
+                const zl::ecs::PlacedTrap&,
+                const zl::ecs::Position& position) {
+                if (found == entt::null && position.z == 0 &&
+                    static_cast<int>(std::floor(position.x)) == wx &&
+                    static_cast<int>(std::floor(position.y)) == wy) {
+                    found = entity;
+                }
+            });
+        return found;
+    };
+
+    const auto* playerPosition =
+        registry.try_get<zl::ecs::Position>(player);
+    REQUIRE(playerPosition != nullptr);
+
+    const std::uint64_t rangeBefore = host.GetNetworkStats().rangeRejected;
+    REQUIRE(client.SendCommand(
+        placeCommand(static_cast<int>(std::floor(playerPosition->x)) + 40,
+                     static_cast<int>(std::floor(playerPosition->y))),
+        &error));
+    REQUIRE(PumpUntil(host, client, 3000, [&] {
+        return host.GetNetworkStats().rangeRejected > rangeBefore;
+    }));
+
+    int woodlessX = 0;
+    int woodlessY = 0;
+    REQUIRE(findFreeCell(&woodlessX, &woodlessY));
+    const int woodCount = zl::items::CountOf(serverBag, "wood");
+    REQUIRE(woodCount >= 3);
+    REQUIRE(zl::items::RemoveItem(serverBag, "wood", woodCount) == woodCount);
+    const std::uint64_t woodlessRejectedBefore =
+        host.GetNetworkStats().commandsRejected;
+    REQUIRE(client.SendCommand(placeCommand(woodlessX, woodlessY), &error));
+    REQUIRE(PumpUntil(host, client, 3000, [&] {
+        return host.GetNetworkStats().commandsRejected >
+               woodlessRejectedBefore;
+    }));
+    CHECK_FALSE(static_cast<bool>(findTrapAt(woodlessX, woodlessY) != entt::null));
+    serverBag.items.push_back(zl::ecs::ItemInstance{"wood", 20, 1.0f});
+
+    int trapX = 0;
+    int trapY = 0;
+    REQUIRE(findFreeCell(&trapX, &trapY));
+    REQUIRE(client.SendCommand(placeCommand(trapX, trapY), &error));
+    zl::ecs::Entity trap = entt::null;
+    REQUIRE(PumpUntil(host, client, 5000, [&] {
+        trap = findTrapAt(trapX, trapY);
+        return trap != entt::null;
+    }));
+    const std::uint64_t trapId = host.Simulation().Ecs().IdOf(trap).id;
+    REQUIRE(trapId != 0);
+    const auto& placed = registry.get<zl::ecs::PlacedTrap>(trap);
+    CHECK(placed.defId == "bear_trap");
+    CHECK(placed.owner == playerId);
+    CHECK(placed.uses == 4);
+    CHECK(placed.cooldown == doctest::Approx(0.0f));
+    CHECK((placed.armed || placed.armRemaining > 0.0f));
+    CHECK(registry.get<zl::ecs::StructureOwner>(trap).ownerStableId ==
+          playerId);
+    CHECK(zl::items::CountOf(serverBag, "wood") == 17);
+
+    REQUIRE(PumpUntil(host, client, 5000, [&] {
+        const auto* actor = client.Replication().Find(trapId);
+        return actor != nullptr && actor->hasPlacedTrap &&
+               actor->placedTrap.defId == "bear_trap" &&
+               actor->placedTrap.owner == playerId;
+    }));
+    REQUIRE(PumpUntil(host, client, 3000, [&] {
+        return registry.get<zl::ecs::PlacedTrap>(trap).armed;
+    }));
+
+    const std::uint64_t occupiedRejectedBefore =
+        host.GetNetworkStats().commandsRejected;
+    REQUIRE(client.SendCommand(placeCommand(trapX, trapY), &error));
+    REQUIRE(PumpUntil(host, client, 3000, [&] {
+        return host.GetNetworkStats().commandsRejected >
+               occupiedRejectedBefore;
+    }));
+    CHECK(findTrapAt(trapX, trapY) == trap);
+
+    const auto facilityCommand = [&](std::uint64_t entityId,
+                                     std::uint64_t stableId) {
+        zl::net::Command command;
+        command.type = zl::net::CommandType::InteractFacility;
+        command.playerStableId = stableId;
+        command.payload.entityId = entityId;
+        return command;
+    };
+    REQUIRE(client.SendCommand(facilityCommand(trapId, playerId), &error));
+    REQUIRE(PumpUntil(host, client, 3000, [&] {
+        const auto& state = registry.get<zl::ecs::PlacedTrap>(trap);
+        return !state.armed && state.uses == 4 &&
+               state.armRemaining == doctest::Approx(0.0f);
+    }));
+    REQUIRE(PumpUntil(host, client, 3000, [&] {
+        const auto* actor = client.Replication().Find(trapId);
+        return actor != nullptr && actor->hasPlacedTrap &&
+               !actor->placedTrap.armed && actor->placedTrap.uses == 4;
+    }));
+    REQUIRE(client.SendCommand(facilityCommand(trapId, playerId), &error));
+    REQUIRE(PumpUntil(host, client, 3000, [&] {
+        const auto& state = registry.get<zl::ecs::PlacedTrap>(trap);
+        return state.armed && state.uses == 4;
+    }));
+
+    zl::game::NetworkClient intruder(clientOptions);
+    REQUIRE(intruder.Connect(&error));
+    REQUIRE(PumpUntil(host, client, intruder, 6000, [&] {
+        return intruder.IsConnected() && intruder.HasPlayer();
+    }));
+    const std::uint64_t intruderId = intruder.PlayerStableId();
+    REQUIRE(intruderId != 0);
+    REQUIRE(intruderId != playerId);
+    REQUIRE(TeleportServerPlayer(host, intruderId,
+                                 static_cast<float>(trapX) + 0.5f,
+                                 static_cast<float>(trapY) + 0.5f));
+    const std::uint64_t ownerRejectedBefore =
+        host.GetNetworkStats().ownershipRejected;
+    REQUIRE(intruder.SendCommand(facilityCommand(trapId, intruderId), &error));
+    REQUIRE(PumpUntil(host, client, intruder, 3000, [&] {
+        return host.GetNetworkStats().ownershipRejected >
+               ownerRejectedBefore;
+    }));
+    CHECK(registry.get<zl::ecs::PlacedTrap>(trap).armed);
+
+    zl::net::Command intruderDemolish;
+    intruderDemolish.type = zl::net::CommandType::DemolishStructure;
+    intruderDemolish.playerStableId = intruderId;
+    intruderDemolish.payload.x = static_cast<float>(trapX);
+    intruderDemolish.payload.y = static_cast<float>(trapY);
+    intruderDemolish.payload.flags = zl::net::kDemolishConfirmRequestFlag;
+    const std::uint64_t intruderDemolishRejectedBefore =
+        host.GetNetworkStats().ownershipRejected;
+    REQUIRE(intruder.SendCommand(intruderDemolish, &error));
+    REQUIRE(PumpUntil(host, client, intruder, 3000, [&] {
+        return host.GetNetworkStats().ownershipRejected >
+               intruderDemolishRejectedBefore;
+    }));
+    CHECK(host.Simulation().Ecs().Alive(trap));
+    intruder.Close();
+    REQUIRE(PumpUntil(host, client, 5000, [&] {
+        return host.SessionCount() == 1;
+    }));
+
+    host.RunForTicks(40);
+    client.Poll();
+    const int woodBeforeDemolish = zl::items::CountOf(serverBag, "wood");
+    zl::net::Command demolish;
+    demolish.type = zl::net::CommandType::DemolishStructure;
+    demolish.playerStableId = playerId;
+    demolish.payload.x = static_cast<float>(trapX);
+    demolish.payload.y = static_cast<float>(trapY);
+    demolish.payload.flags = zl::net::kDemolishConfirmRequestFlag;
+    REQUIRE(client.SendCommand(demolish, &error));
+    REQUIRE(PumpUntil(host, client, 3000, [&] {
+        return client.PlayerState().status.find("再次按 X 确认拆除") !=
+               std::string::npos;
+    }));
+    CHECK(host.Simulation().Ecs().Alive(trap));
+    demolish.payload.flags = zl::net::kDemolishConfirmAcceptFlag;
+    REQUIRE(client.SendCommand(demolish, &error));
+    REQUIRE(PumpUntil(host, client, 4000, [&] {
+        return !host.Simulation().Ecs().Alive(trap);
+    }));
+    CHECK(zl::items::CountOf(serverBag, "wood") == woodBeforeDemolish + 2);
+    CHECK(BagCount(client.PlayerState(), "bear_trap") == 0);
+    REQUIRE(PumpUntil(host, client, 5000, [&] {
+        return client.Replication().Find(trapId) == nullptr;
+    }));
+
+    client.Close();
     host.Shutdown();
 }

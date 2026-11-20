@@ -82,6 +82,8 @@ bool InventoryPanel::Init(Rml::Context& context, const std::string& path) {
     m_lootTitle = m_document->GetElementById("loot-title");
     m_lootStacks = m_document->GetElementById("loot-stack-count");
     m_storageActions = m_document->GetElementById("storage-actions");
+    m_storageVehicleMods =
+        m_document->GetElementById("storage-vehicle-mods");
     m_storageStoreAll = m_document->GetElementById("storage-store-all");
     m_storageTakeAll = m_document->GetElementById("storage-take-all");
     m_storageSort = m_document->GetElementById("storage-sort");
@@ -101,6 +103,8 @@ bool InventoryPanel::Init(Rml::Context& context, const std::string& path) {
             m_document->GetElementById("bag-name-" + suffix);
         m_bagCounts[static_cast<std::size_t>(i)] =
             m_document->GetElementById("bag-count-" + suffix);
+        m_bagThrows[static_cast<std::size_t>(i)] =
+            m_document->GetElementById("bag-throw-" + suffix);
     }
     for (int i = 0; i < kInventoryEquipmentSlots; ++i) {
         const std::string suffix = std::to_string(i);
@@ -110,6 +114,8 @@ bool InventoryPanel::Init(Rml::Context& context, const std::string& path) {
             m_document->GetElementById("equip-name-" + suffix);
         m_equipmentCounts[static_cast<std::size_t>(i)] =
             m_document->GetElementById("equip-count-" + suffix);
+        m_equipmentThrows[static_cast<std::size_t>(i)] =
+            m_document->GetElementById("equip-throw-" + suffix);
     }
     for (int i = 0; i < kInventoryLootSlots; ++i) {
         const std::string suffix = std::to_string(i);
@@ -119,6 +125,8 @@ bool InventoryPanel::Init(Rml::Context& context, const std::string& path) {
             m_document->GetElementById("loot-name-" + suffix);
         m_lootCounts[static_cast<std::size_t>(i)] =
             m_document->GetElementById("loot-count-" + suffix);
+        m_lootThrows[static_cast<std::size_t>(i)] =
+            m_document->GetElementById("loot-throw-" + suffix);
         if (m_lootSlots[static_cast<std::size_t>(i)] == nullptr ||
             m_lootNames[static_cast<std::size_t>(i)] == nullptr ||
             m_lootCounts[static_cast<std::size_t>(i)] == nullptr) {
@@ -131,6 +139,9 @@ bool InventoryPanel::Init(Rml::Context& context, const std::string& path) {
     }
 
     AddClickListener("inventory-close", [this] { Hide(); });
+    AddClickListener(
+        "storage-vehicle-mods",
+        [this] { TriggerStorageAction(InventoryActionType::OpenVehicleMods); });
     AddClickListener("storage-store-all",
                      [this] { TriggerStorageAction(InventoryActionType::StoreAll); });
     AddClickListener("storage-take-all",
@@ -208,6 +219,7 @@ void InventoryPanel::Shutdown() {
     m_lootTitle = nullptr;
     m_lootStacks = nullptr;
     m_storageActions = nullptr;
+    m_storageVehicleMods = nullptr;
     m_storageStoreAll = nullptr;
     m_storageTakeAll = nullptr;
     m_storageSort = nullptr;
@@ -294,6 +306,9 @@ void InventoryPanel::SetState(const InventoryState& state) {
         state.capacity != previous.capacity || state.bagStacks != previous.bagStacks ||
         state.lootStacks != previous.lootStacks || state.lootTitle != previous.lootTitle ||
         state.lootIsStorage != previous.lootIsStorage ||
+        state.lootIsVehicle != previous.lootIsVehicle ||
+        state.vehicleModsEnabled != previous.vehicleModsEnabled ||
+        state.vehicleModsReadOnly != previous.vehicleModsReadOnly ||
         state.lootCanTakeAll != previous.lootCanTakeAll ||
         state.lootEntityId != previous.lootEntityId ||
         state.status != previous.status ||
@@ -324,18 +339,22 @@ void InventoryPanel::RefreshSlot(InventoryArea area, int index, const InventoryS
     Rml::Element* element = nullptr;
     Rml::Element* name = nullptr;
     Rml::Element* count = nullptr;
+    Rml::Element* throwTag = nullptr;
     if (area == InventoryArea::Backpack) {
         element = m_bagSlots[static_cast<std::size_t>(index)];
         name = m_bagNames[static_cast<std::size_t>(index)];
         count = m_bagCounts[static_cast<std::size_t>(index)];
+        throwTag = m_bagThrows[static_cast<std::size_t>(index)];
     } else if (area == InventoryArea::Equipment) {
         element = m_equipmentSlots[static_cast<std::size_t>(index)];
         name = m_equipmentNames[static_cast<std::size_t>(index)];
         count = m_equipmentCounts[static_cast<std::size_t>(index)];
+        throwTag = m_equipmentThrows[static_cast<std::size_t>(index)];
     } else {
         element = m_lootSlots[static_cast<std::size_t>(index)];
         name = m_lootNames[static_cast<std::size_t>(index)];
         count = m_lootCounts[static_cast<std::size_t>(index)];
+        throwTag = m_lootThrows[static_cast<std::size_t>(index)];
     }
     if (element == nullptr) {
         return;
@@ -343,6 +362,7 @@ void InventoryPanel::RefreshSlot(InventoryArea area, int index, const InventoryS
     element->SetClass("filled", slot.filled);
     element->SetClass("usable", slot.filled && slot.usable);
     element->SetClass("equippable", slot.filled && slot.equippable);
+    element->SetClass("throwable", slot.filled && slot.throwable);
     element->SetAttribute("data-entity", std::to_string(slot.entityId));
     element->SetAttribute("data-count", std::to_string(slot.count));
 
@@ -366,6 +386,10 @@ void InventoryPanel::RefreshSlot(InventoryArea area, int index, const InventoryS
     if (count != nullptr) {
         SetText(count, slot.filled && slot.count > 1 ? std::to_string(slot.count) : "");
     }
+    if (throwTag != nullptr) {
+        SetText(throwTag, slot.filled ? slot.throwTag : std::string());
+        SetDisplay(throwTag, slot.filled && !slot.throwTag.empty());
+    }
 }
 
 void InventoryPanel::RefreshStaticText(const InventoryState& state) {
@@ -376,7 +400,14 @@ void InventoryPanel::RefreshStaticText(const InventoryState& state) {
     SetText(m_lootTitle, state.lootTitle);
     SetText(m_lootStacks, std::to_string(state.lootStacks) + " 堆");
     const bool showStorageActions = state.lootIsStorage || state.lootCanTakeAll;
+    const bool showVehicleMods =
+        state.lootIsVehicle && state.vehicleModsEnabled;
     SetDisplay(m_storageActions, showStorageActions);
+    SetDisplay(m_storageVehicleMods, showVehicleMods);
+    if (m_storageVehicleMods != nullptr) {
+        m_storageVehicleMods->SetProperty(
+            "opacity", state.vehicleModsReadOnly ? "0.55" : "1.0");
+    }
     SetDisplay(m_storageStoreAll, state.lootIsStorage);
     SetDisplay(m_storageTakeAll, showStorageActions);
     SetDisplay(m_storageSort, state.lootIsStorage);
@@ -648,7 +679,8 @@ void InventoryPanel::TriggerStorageAction(InventoryActionType type) {
     if (!m_actionHandler ||
         (type != InventoryActionType::StoreAll &&
          type != InventoryActionType::TakeAll &&
-         type != InventoryActionType::SortStorage)) {
+         type != InventoryActionType::SortStorage &&
+         type != InventoryActionType::OpenVehicleMods)) {
         return;
     }
     InventoryAction action;

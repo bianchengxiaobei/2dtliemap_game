@@ -96,6 +96,7 @@
                     <div class="settings-row"><span class="settings-label">装备</span><div id="bind-Equip" class="key-btn">R</div></div>
                     <div class="settings-row"><span class="settings-label">丢弃</span><div id="bind-Drop" class="key-btn">G</div></div>
                     <div class="settings-row"><span class="settings-label">暂停 / 倍速</span><div id="bind-Pause" class="key-btn">F1</div></div>
+                    <div class="settings-row"><span class="settings-label">潜行</span><div id="bind-Stealth" class="key-btn">N</div></div>
                 </div>
             </div>
 

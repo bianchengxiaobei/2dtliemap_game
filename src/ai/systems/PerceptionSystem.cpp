@@ -70,16 +70,28 @@ bool PerceptionSystem::LineOfSight(float px, float py, float tx, float ty) const
     return true;
 }
 
-bool PerceptionSystem::CanSee(const Facing* facing, float px, float py, float tx, float ty) const {
+bool PerceptionSystem::CanSee(const Facing* facing, float px, float py, float tx, float ty,
+                              float visibilityScale) const {
     const float dx = tx - px;
     const float dy = ty - py;
     const float distSq = dx * dx + dy * dy;
-    const float sightRadius = m_params.sightRadius * m_environmentSightScale;
-    if (distSq > sightRadius * sightRadius) {
-        return false;
+    const float weatherSightRadius = m_params.sightRadius * m_environmentSightScale;
+    if (distSq > weatherSightRadius * weatherSightRadius) {
+        return false;  // M20-F2 天气视距门控保持原语义
     }
     const bool close = distSq <= m_params.closeRadius * m_params.closeRadius;
     if (!close) {
+        // M34-F1-T3：有效视距 = 天气视距 × 目标潜行可视倍率。
+        // 非法/越界倍率回退到 1，避免损坏状态把潜行变成隐身。
+        float targetVisibility = visibilityScale;
+        if (!std::isfinite(targetVisibility) || targetVisibility < 0.05f ||
+            targetVisibility > 1.0f) {
+            targetVisibility = 1.0f;
+        }
+        const float sightRadius = weatherSightRadius * targetVisibility;
+        if (distSq > sightRadius * sightRadius) {
+            return false;
+        }
         // 视锥：以 Facing 四向为轴（无 Facing 默认向下，与动画默认一致）
         float fx = 0.0f;
         float fy = 1.0f;
@@ -126,6 +138,7 @@ void PerceptionSystem::Update(ecs::EcsWorld& world, float dt) {
 
     // 视觉目标（玩家）每 tick 收集一次：typically 1 个。
     // M5-T6：倒地/死亡玩家不再是视觉目标（HP<=0）——僵尸应立即失去追击对象
+    // M34-F1-T3：快照带潜行可视倍率；无 StealthState 的旧/远端实体按 1 处理。
     m_targetsScratch.clear();
     registry.view<ecs::PlayerTag, ecs::Position>().each(
         [&](const entt::entity pe, const ecs::Position& playerPos) {
@@ -133,8 +146,13 @@ void PerceptionSystem::Update(ecs::EcsWorld& world, float dt) {
             if (health != nullptr && health->current <= 0.0f) {
                 return;  // continue
             }
-            m_targetsScratch.push_back(
-                VisibleTarget{world.IdOf(pe).id, playerPos.x, playerPos.y});
+            float visibilityScale = 1.0f;
+            if (const auto* stealth = registry.try_get<ecs::StealthState>(pe);
+                stealth != nullptr) {
+                visibilityScale = stealth->visibilityScale;
+            }
+            m_targetsScratch.push_back(VisibleTarget{world.IdOf(pe).id, playerPos.x,
+                                                     playerPos.y, visibilityScale});
         });
 
     registry.view<ecs::AiState, ecs::Position, ecs::PerceptionState>().each(
@@ -158,7 +176,8 @@ void PerceptionSystem::Update(ecs::EcsWorld& world, float dt) {
             if (!gated) {
                 const auto* facing = registry.try_get<ecs::Facing>(e);
                 for (const VisibleTarget& target : m_targetsScratch) {
-                    if (CanSee(facing, position.x, position.y, target.x, target.y)) {
+                    if (CanSee(facing, position.x, position.y, target.x, target.y,
+                               target.visibilityScale)) {
                         seenId = target.id;
                         seenX = target.x;
                         seenY = target.y;

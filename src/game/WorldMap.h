@@ -71,6 +71,31 @@ struct WorldMapPoi {
     bool discovered = false;
     bool completed = false;
     bool disabled = false;
+    // M33-F5-T5：多阶段 POI 的地图状态与当前目标点。
+    bool staged = false;
+    int stageIndex = 0;
+    int stageCount = 0;
+    int completedStageCount = 0;
+    bool stageFailed = false;
+    bool stageAwaitingChoice = false;
+    float stageX = 0.0f;
+    float stageY = 0.0f;
+    std::string stageLabel;
+};
+
+// M33-F5-T5：世界地图只依赖该只读快照，不反向包含 Poi 运行时类型。
+struct WorldMapPoiProgress {
+    std::string id;
+    int stageIndex = 0;
+    int stageCount = 0;
+    int completedStageCount = 0;
+    bool failed = false;
+    bool awaitingChoice = false;
+    bool completed = false;
+    bool hasStagePoint = false;
+    float stageX = 0.0f;
+    float stageY = 0.0f;
+    std::string stageLabel;
 };
 
 struct WorldMapEventMarker {
@@ -227,7 +252,11 @@ WorldMapState BuildWorldMapState(
     const WorldMapRoute& route,
     const StrategicMapState* strategic = nullptr,
     const WorldMapTravelConfig& travel = {},
-    const WorldEventDirector* worldEvents = nullptr);
+    const WorldEventDirector* worldEvents = nullptr,
+    const std::vector<WorldMapPoiProgress>* poiProgress = nullptr);
+
+// M33-F5-T5：供地图 UI 与测试复用的 POI 标签；包含阶段与完成度。
+std::string WorldMapPoiLabel(const WorldMapPoi& poi);
 
 WorldMapRoute BuildWorldMapRoute(const world::WorldGraph& graph,
                                  glm::vec2 start, glm::vec2 goal,

@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <iomanip>
+#include <iterator>
+#include <limits>
 #include <random>
 #include <set>
 #include <sstream>
@@ -54,11 +56,15 @@
 #include "ecs/components/PhysicsComponents.h"
 #include "game/EventProbe.h"
 #include "game/ActionHints.h"
+#include "game/Companion.h"
+#include "game/CompanionInventory.h"
+#include "game/CompanionUi.h"
 #include "game/AnimalHarvest.h"
 #include "game/AnimalSystem.h"
 #include "game/Animals.h"
 #include "game/Armor.h"
 #include "game/BarricadeDefense.h"
+#include "game/BuildingEvents.h"
 #include "game/CameraFollow.h"
 #include "game/CombatAudio.h"
 #include "game/CombatPresentation.h"
@@ -71,7 +77,13 @@
 #include "game/PainStatus.h"
 #include "game/Poi.h"
 #include "game/PoiComponents.h"
+#include "game/PoiStageCombat.h"
+#include "game/StealthConfig.h"
+#include "game/TrapSystem.h"
+#include "game/Traps.h"
+#include "game/ZombieVariants.h"
 #include "game/PlayerCombat.h"
+#include "game/PlayerCommand.h"
 #include "game/ProgressionRules.h"
 #include "game/RandomEvents.h"
 #include "game/RegionEventDirector.h"
@@ -155,6 +167,7 @@ constexpr uint32_t kNoticeInfoColor = 0x0E;  // 黄
 constexpr uint32_t kNoticeOkColor = 0x0A;    // 绿
 constexpr uint32_t kNoticeFailColor = 0x0C;  // 红
 constexpr float kThreatFeedbackSeconds = 1.0f;
+constexpr float kPlayerFootstepBaseRadius = 2.5f;
 constexpr float kBaseHudRadius = 16.0f;
 constexpr float kBaseHudRefreshSeconds = 0.25f;
 constexpr const char* kHotbarActions[] = {"Hotbar1", "Hotbar2", "Hotbar3", "Hotbar4",
@@ -163,6 +176,26 @@ constexpr const char* kWorldEventChoiceActions[] = {
     "Hotbar1", "Hotbar2", "Hotbar3", "Hotbar4",
     "Hotbar5", "Hotbar6", "Hotbar7", "Hotbar8"};
 constexpr float kWorldEventChoiceRadius = 6.0f;
+
+const ReplicatedActor* FindNetworkOwnedCompanionActor(
+    const GameContext& context) {
+    if (context.networkClient == nullptr ||
+        !context.networkClient->HasPlayer()) {
+        return nullptr;
+    }
+    const std::uint64_t owner = context.networkClient->PlayerStableId();
+    if (owner == 0) {
+        return nullptr;
+    }
+    for (const auto& [stableId, actor] :
+         context.networkClient->Replication().Actors()) {
+        (void)stableId;
+        if (actor.hasCompanion && actor.ownerStableId == owner) {
+            return &actor;
+        }
+    }
+    return nullptr;
+}
 
 const game::WorldEventInstance* FindCurrentWorldEvent(
     const game::WorldEventDirector& director) {
@@ -396,6 +429,7 @@ void WorldDemoState::OnEnter() {
     core::Config& config = *m_ctx.config;
     m_networkMode = m_ctx.networkClient != nullptr;
     m_networkSleep = {};
+    m_worldLifecycle.Reset();
     StopVehicleAudio();
     m_vehicle = entt::null;
     m_vehicleMotion = {};
@@ -438,6 +472,11 @@ void WorldDemoState::OnEnter() {
     m_rangedWeapon = {};
     m_rangedReloadHitSerial = 0;
     m_rangedShotSerial = 0;
+    m_throwAim = {};
+    m_thrownProjectiles.clear();
+    m_throwCooldownLeft = 0.0f;
+    m_lastThrowResult.clear();
+    m_lastThrowRemaining = 0.0f;
     ZL_INFO("render", "进入 WorldDemo（{}）",
             m_networkMode ? "M13 网络客户端" : "M3 单机世界");
     m_autoSaveOnExit =
@@ -500,6 +539,7 @@ void WorldDemoState::OnEnter() {
     m_playerAttackWear =
         static_cast<float>(config.Get<double>("combat.playerWearPerHit", 0.0));
     m_progressionConfig = game::LoadProgressionConfig(config);
+    m_ctx.progressionConfig = &m_progressionConfig;
     m_baseWalkSpeed = std::clamp(
         static_cast<float>(config.Get<double>("player.walkSpeed", 4.0)), 0.5f,
         20.0f);
@@ -514,6 +554,13 @@ void WorldDemoState::OnEnter() {
     m_lastSurvivalXpMinute = -1.0;
     m_progressionPlayer = entt::null;
     m_characterOpen = false;
+    m_companionOpen = false;
+    m_vehicleModsOpen = false;
+    m_vehicleModsVehicle = entt::null;
+    m_vehicleModCandidates.fill(0);
+    m_vehicleModAction = {};
+    m_vehicleModsStatus.clear();
+    m_vehicleModsStatusTone = "info";
     m_siegeReportOpen = false;
     m_lastSettlementNoticeSerial = 0;
     m_networkSettlementReputation.clear();
@@ -573,6 +620,17 @@ void WorldDemoState::OnEnter() {
     // M6-T2：玩家背包容量（kg）
     m_playerCapacityKg =
         static_cast<float>(config.Get<double>("inventory.playerCapacityKg", 20.0));
+    m_stealthRules = game::LoadStealthRuleConfig(config);
+    ZL_INFO("stealth", "潜行配置：{}，速度 x{:.2f}，脚步噪声 x{:.2f}，可视距离 x{:.2f}",
+            m_stealthRules.enabled ? "启用" : "禁用",
+            static_cast<double>(m_stealthRules.crouchSpeedScale),
+            static_cast<double>(m_stealthRules.stepNoiseScale),
+            static_cast<double>(m_stealthRules.visibilityScale));
+    m_throwingConfig = game::LoadThrowingConfig(config);
+    ZL_INFO("throwing", "投掷配置：冷却 {:.2f}s，射程 {:.1f}～{:.1f} 格",
+            static_cast<double>(m_throwingConfig.cooldownSeconds),
+            static_cast<double>(m_throwingConfig.minRange),
+            static_cast<double>(m_throwingConfig.maxRange));
     // M6-T3：地面物品拾取半径（格）+ 每次进入状态重新散落
     m_pickupRadius = static_cast<float>(config.Get<double>("inventory.pickupRadius", 1.6));
     m_inventoryRange =
@@ -1061,6 +1119,54 @@ void WorldDemoState::OnEnter() {
         [this](const net::Command& command, std::string& error) {
             return ExecutePlayerCommand(command, error);
         };
+    m_ctx.submitPlayerCommand =
+        [this](const net::Command& command, bool& queued, std::string& error) {
+            return SubmitPlayerCommand(command, queued, error);
+        };
+    m_ctx.recipeKnown = [this](const std::string& recipeId) {
+        return RecipeKnown(recipeId);
+    };
+    m_ctx.craftStationNearby = [this](const items::RecipeDef& recipe) {
+        if (recipe.station.empty()) {
+            return true;
+        }
+        if (m_ctx.ecs == nullptr || m_player == entt::null) {
+            return false;
+        }
+        const auto* position =
+            m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+        return position != nullptr &&
+               StationNearby(recipe.station, position->x, position->y,
+                             position->z);
+    };
+    m_ctx.buildCanPlace = [this](const BuildableDef& def, int wx, int wy,
+                                 bool vertical,
+                                 std::string& error) -> bool {
+        if (m_runOutcome != RunOutcome::None) {
+            error = "当前无法建造";
+            return false;
+        }
+        if (vertical && !BuildableSupportsVertical(def)) {
+            error = "该建造项不支持竖向";
+            return false;
+        }
+        return CanPlaceBuild(def, wx, wy, &error);
+    };
+    m_ctx.buildPlace = [this](const BuildableDef& def, int wx, int wy,
+                              bool vertical,
+                              std::string& error) -> bool {
+        return TryPlaceBuildAt(def, wx, wy, vertical, error);
+    };
+    m_ctx.buildDemolish = [this](int wx, int wy, std::string& error) -> bool {
+        return TryDemolishBuildAt(wx, wy, error);
+    };
+    m_ctx.buildRepair = [this](int wx, int wy, std::string& error) -> bool {
+        return TryRepairBuildAt(wx, wy, error);
+    };
+    m_ctx.buildToggleDoor = [this](int wx, int wy,
+                                   std::string& error) -> bool {
+        return TryToggleDoorAt(wx, wy, error);
+    };
 
     m_loadedFromSave = !m_networkMode && !m_loadSaveId.empty() && LoadFromSave();
     if (!m_loadedFromSave && !m_networkMode && m_ctx.gameTime != nullptr) {
@@ -1087,6 +1193,11 @@ void WorldDemoState::OnEnter() {
                 HandleWorldMapStrategicAction(regionId, action);
             });
         m_ctx.ui->SetWorldMapState(m_worldMapState, false);
+        m_ctx.ui->SetVehicleModsActionHandler(
+            [this](const ui::VehicleModPanelAction& action) {
+                HandleVehicleModsAction(action);
+            });
+        m_ctx.ui->SetVehicleModsState({}, false);
         if (m_networkMode) {
             m_ctx.ui->SetSocialChatHandler(
                 [this](const std::string& text, std::string& error) {
@@ -1101,7 +1212,7 @@ void WorldDemoState::OnEnter() {
     }
     ConsumeSaveWarning();
 
-    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 轻击 | LSHIFT 重击 | LCTRL 格挡 | Z 闪避 | F 拾取 | E 使用/修理电台/床边睡觉/觅食 | R 装备/换弹（建造模式旋转优先） | G 丢弃 | C 角色 | I 背包（或右下角按钮） | Enter 上下车 | Y 聊天（联机） | F6 演示击杀 | F7 调试枪声（声音引怪） | V 远程开火/联机投射物 | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | F12 快速存档 | ESC 暂停菜单");
+    ZL_INFO("render", "按键：WASD 移动玩家 | 左键 点击移动 | SPACE 轻击 | LSHIFT 重击 | LCTRL 格挡 | Z 闪避 | F 拾取 | E 使用/修理电台/床边睡觉/觅食 | R 装备/换弹（建造模式旋转优先） | G 丢弃 | C 角色 | I 背包（或右下角按钮） | Enter 上下车 | Y 聊天（联机） | F6 演示击杀 | F7 调试枪声（声音引怪） | V 投掷/远程开火（投掷物优先） | F4 自由相机 | 方向键/右键拖拽 平移相机 | 滚轮 缩放 | F8 自动巡航 | F9 网格线 | F10 物理线框 | F1 暂停 | F2 倍速 | F5 热重载 | F12 快速存档 | ESC 暂停菜单");
 }
 
 bool WorldDemoState::LoadFromSave() {
@@ -1111,6 +1222,11 @@ bool WorldDemoState::LoadFromSave() {
         return false;
     }
     m_baseSiege.Abort({}, false);
+    m_throwAim = {};
+    m_thrownProjectiles.clear();
+    m_throwCooldownLeft = 0.0f;
+    m_lastThrowResult.clear();
+    m_lastThrowRemaining = 0.0f;
     m_crafting.Cancel();
     m_craftBatchTotal = 0;
     m_craftBatchCompleted = 0;
@@ -1405,6 +1521,20 @@ void WorldDemoState::RestoreRuntimeComponents(
         if (!registry.all_of<ecs::AttackIntent>(entity)) {
             registry.emplace<ecs::AttackIntent>(entity);
         }
+        if (registry.all_of<Companion>(entity)) {
+            (void)PrepareLoadedCompanion(*m_ctx.ecs, entity, m_ctx.items);
+            if (m_ctx.companions != nullptr) {
+                const auto* identity = registry.try_get<Companion>(entity);
+                auto* state = registry.try_get<CompanionState>(entity);
+                const CompanionDef* def =
+                    identity != nullptr
+                        ? m_ctx.companions->Find(identity->defId)
+                        : nullptr;
+                if (def != nullptr && state != nullptr) {
+                    RefreshCompanionQuestState(*def, state);
+                }
+            }
+        }
 
         if (isPlayer) {
             if (!registry.all_of<ecs::LocalControl>(entity)) {
@@ -1512,6 +1642,7 @@ void WorldDemoState::RequestQuickSave(bool withThumbnail) {
         m_baseSiege.Abort({}, false);
         ZL_INFO("siege", "保存前中止守夜并清理事件僵尸");
     }
+    SettleThrownProjectiles();
 
     UpdateMissions();
     SyncCraftingJobToEcs();
@@ -1520,6 +1651,7 @@ void WorldDemoState::RequestQuickSave(bool withThumbnail) {
     }
     StoreSettlementState();
     SyncVehicleStateToEcs();
+    m_ctx.ecs->Flush();
     save::EntitySnapshot entities;
     save::EntityBucketSet entityBuckets;
     std::string error;
@@ -1947,6 +2079,13 @@ void WorldDemoState::SyncNetworkReplicas(float alpha) {
                 registry.remove<ecs::VehicleDriver>(entity);
             }
         }
+        if (actor.hasVehicleMods) {
+            ecs::VehicleMods mods;
+            mods.defIds = actor.vehicleMods.defIds;
+            registry.emplace_or_replace<ecs::VehicleMods>(entity, mods);
+        } else if (registry.all_of<ecs::VehicleMods>(entity)) {
+            registry.remove<ecs::VehicleMods>(entity);
+        }
         if (actor.hasLoot) {
             registry.emplace_or_replace<ecs::LootContainer>(
                 entity, actor.lootContainer);
@@ -1972,6 +2111,13 @@ void WorldDemoState::SyncNetworkReplicas(float alpha) {
         if (actor.hasTrap) {
             registry.emplace_or_replace<ecs::SpikeTrap>(entity, actor.trap);
         }
+        if (actor.hasPlacedTrap) {
+            registry.emplace_or_replace<ecs::PlacedTrap>(
+                entity, actor.placedTrap);
+            registry.emplace_or_replace<ecs::NoCombatTarget>(entity);
+        } else if (registry.all_of<ecs::PlacedTrap>(entity)) {
+            registry.remove<ecs::PlacedTrap>(entity);
+        }
         if (actor.hasMerchantStock) {
             registry.emplace_or_replace<ecs::MerchantStock>(
                 entity, actor.merchantStock);
@@ -1979,6 +2125,17 @@ void WorldDemoState::SyncNetworkReplicas(float alpha) {
         if (actor.hasSettlementNpc) {
             registry.emplace_or_replace<SettlementNpc>(
                 entity, actor.settlementNpc);
+        }
+        if (actor.hasCompanion) {
+            registry.emplace_or_replace<ecs::FriendlyNpc>(entity);
+            registry.emplace_or_replace<ecs::NoCombatTarget>(entity);
+        }
+        if (actor.hasStealth && stableId != m_ctx.networkClient->PlayerStableId()) {
+            registry.emplace_or_replace<ecs::RemoteStealth>(
+                entity, ecs::RemoteStealth{actor.stealthCrouched,
+                                           actor.stealthMoving});
+        } else if (registry.all_of<ecs::RemoteStealth>(entity)) {
+            registry.remove<ecs::RemoteStealth>(entity);
         }
         if (actor.hasFire) {
             registry.emplace_or_replace<ecs::FireAnchor>(entity,
@@ -2059,6 +2216,12 @@ void WorldDemoState::SyncNetworkVehicleBinding() {
     }
     if (m_ctx.networkClient == nullptr ||
         !m_ctx.networkClient->IsConnected()) {
+        m_networkStealth = {};
+        if (m_player != entt::null && m_ctx.ecs->Alive(m_player)) {
+            auto& stealth =
+                m_ctx.ecs->Registry().get_or_emplace<ecs::StealthState>(m_player);
+            stealth = {};
+        }
         if (m_driving || m_riding) {
             m_networkDisconnectWasDriving = true;
         }
@@ -2237,6 +2400,8 @@ void WorldDemoState::UpdateNetworkVehiclePrediction(float frameDt) {
         VehicleSurfaceAt(m_vehicleMotion.x, m_vehicleMotion.y, m_vehicleMotion.z);
     const VehicleTuning networkTuning =
         VehicleTuningForType(m_vehicleMotion.type, m_vehicleTuning);
+    const VehicleModStats networkModStats =
+        VehicleModStatsForEntity(m_vehicle);
     const auto bodyBlocked = [this](float x, float y, int z, float radius) {
         bool hit = false;
         m_ctx.ecs->Registry()
@@ -2255,7 +2420,8 @@ void WorldDemoState::UpdateNetworkVehiclePrediction(float frameDt) {
         return hit;
     };
     (void)VehiclePredictStep(&m_vehicleMotion, inputX, inputY, dt, blocked,
-                             networkTuning, m_vehicleSurface, bodyBlocked);
+                             networkTuning, m_vehicleSurface, bodyBlocked,
+                             networkModStats);
     m_vehicleMotion.heading =
         VehicleNormalizeAngle(m_vehicleMotion.heading);
     VehicleHeadingVector(m_vehicleMotion, &m_vehicleHeadingX,
@@ -2520,6 +2686,11 @@ void WorldDemoState::ApplyNetworkWorldSounds() {
                                     localShake);
             ZL_INFO("net", "网络载具撞击：来自 {} 位置 ({:.1f}, {:.1f}, {})",
                     remote.sourcePlayerStableId, remote.x, remote.y, remote.z);
+        } else if (remote.type ==
+                   static_cast<std::uint8_t>(core::SoundType::Impact)) {
+            ZL_INFO("net", "网络落点音效：来自 {} 位置 ({:.1f}, {:.1f}, {})，半径 {:.1f}",
+                    remote.sourcePlayerStableId, remote.x, remote.y, remote.z,
+                    remote.radius);
         }
     }
 }
@@ -2533,6 +2704,8 @@ void WorldDemoState::ApplyNetworkPlayerState() {
     if (state.playerStableId != m_ctx.networkClient->PlayerStableId()) {
         return;
     }
+    const net::PlayerStealthState previousStealth = m_networkStealth;
+    m_networkStealth = state.stealth;
     m_networkVehicle = state.vehicle;
     if (state.vehicle.valid) {
         m_vehicleMotion.fuel = std::clamp(state.vehicle.fuel, 0.0f, 1.0f);
@@ -2607,6 +2780,13 @@ void WorldDemoState::ApplyNetworkPlayerState() {
                 : state.statusTone == 2 ? kNoticeFailColor
                                         : kNoticeInfoColor;
             SetNotice(state.status, color, 2.2f);
+            if (m_vehicleModsOpen) {
+                m_vehicleModsStatus = state.status;
+                m_vehicleModsStatusTone =
+                    state.statusTone == 1 ? "ok"
+                    : state.statusTone == 2 ? "fail"
+                                            : "info";
+            }
             if (state.status.rfind("守夜结束", 0) == 0 ||
                 state.status.rfind("守城战报", 0) == 0) {
                 const std::string tone = state.statusTone == 1 ? "ok"
@@ -2639,6 +2819,30 @@ void WorldDemoState::ApplyNetworkPlayerState() {
     }
 
     entt::registry& registry = m_ctx.ecs->Registry();
+    const bool networkCrouched =
+        m_networkStealth.valid && m_networkStealth.crouched &&
+        m_stealthRules.enabled;
+    auto& stealthState = registry.get_or_emplace<ecs::StealthState>(m_player);
+    stealthState.crouched = networkCrouched;
+    if (networkCrouched) {
+        const characters::StealthScales scales =
+            characters::StealthScalesFor(true, m_stealthRules);
+        stealthState.speedScale = scales.speedScale;
+        stealthState.noiseScale = std::clamp(
+            m_networkStealth.noiseRadius / kPlayerFootstepBaseRadius, 0.0f,
+            1.0f);
+        stealthState.visibilityScale =
+            std::clamp(m_networkStealth.visibilityScale, 0.1f, 1.0f);
+    } else {
+        stealthState.speedScale = 1.0f;
+        stealthState.noiseScale = 1.0f;
+        stealthState.visibilityScale = 1.0f;
+    }
+    if (previousStealth.valid && m_networkStealth.valid &&
+        previousStealth.crouched != m_networkStealth.crouched) {
+        SetNotice(m_networkStealth.crouched ? "潜行：开" : "潜行：关",
+                  kNoticeInfoColor, 1.2f);
+    }
     m_forageNodes.clear();
     m_fishingSpots.clear();
     if (!registry.all_of<ecs::ForageState>(m_player)) {
@@ -2818,6 +3022,7 @@ void WorldDemoState::ApplyNetworkPlayerState() {
 }
 
 void WorldDemoState::ApplyNetworkPoiAndMissions(const net::PlayerState& state) {
+    const auto previousPoiProgress = m_networkPoiProgress;
     m_networkPoiProgress.clear();
     for (const net::PlayerPoiProgress& poi : state.poiProgress) {
         NetworkPoiProgress progress;
@@ -2825,6 +3030,48 @@ void WorldDemoState::ApplyNetworkPoiAndMissions(const net::PlayerState& state) {
         progress.targetSearched = poi.targetSearched;
         progress.liveGuards = poi.liveGuards;
         m_networkPoiProgress[poi.id] = progress;
+    }
+    for (const net::PlayerPoiStageProgress& poi : state.poiStageProgress) {
+        NetworkPoiProgress& progress = m_networkPoiProgress[poi.id];
+        progress.stageIndex = poi.stageIndex;
+        progress.stageCount = poi.stageCount;
+        progress.completedStageCount = poi.completedStageCount;
+        progress.stageFlags = poi.flags;
+        progress.currentStage = poi.currentStage;
+        progress.chosenBranch = poi.chosenBranch;
+    }
+    for (const auto& [id, current] : m_networkPoiProgress) {
+        const auto old = previousPoiProgress.find(id);
+        if (old == previousPoiProgress.end()) {
+            continue;
+        }
+        const bool justCompleted =
+            current.completed && !old->second.completed;
+        const bool justFailed =
+            (current.stageFlags & net::kPlayerPoiStageFailed) != 0 &&
+            (old->second.stageFlags & net::kPlayerPoiStageFailed) == 0;
+        if (!justCompleted && !justFailed) {
+            continue;
+        }
+        const auto def = std::find_if(
+            m_poiConfig.defs.begin(), m_poiConfig.defs.end(),
+            [&](const PoiDef& poi) { return poi.id == id; });
+        if (def == m_poiConfig.defs.end() || def->stages.empty()) {
+            continue;
+        }
+        PoiProgress progress;
+        progress.poiId = id;
+        progress.currentStage = current.stageIndex;
+        progress.failedStage = current.stageIndex;
+        progress.completed = current.completed;
+        progress.failed = justFailed;
+        progress.awaitingChoice =
+            (current.stageFlags & net::kPlayerPoiStageAwaitingChoice) != 0;
+        progress.completedStages.resize(current.completedStageCount);
+        ShowPoiResult(
+            PoiStageResultTitle(*def, justCompleted),
+            PoiStageResultText(*def, progress, justCompleted),
+            justCompleted ? "ok" : "fail");
     }
     if (m_ctx.ecs == nullptr || m_player == entt::null) {
         return;
@@ -3094,8 +3341,9 @@ ecs::Entity WorldDemoState::SpawnLocalVehicle(int cellX, int cellY) {
 }
 
 void WorldDemoState::BindNearestLocalVehicle() {
-    if (m_networkMode || m_driving || m_ctx.ecs == nullptr ||
-        m_player == entt::null || !m_ctx.ecs->Alive(m_player) ||
+    if (m_networkMode || m_driving || m_vehicleModsOpen ||
+        m_ctx.ecs == nullptr || m_player == entt::null ||
+        !m_ctx.ecs->Alive(m_player) ||
         (m_ctx.ui != nullptr && m_ctx.ui->IsInventoryOpen())) {
         return;
     }
@@ -3116,6 +3364,38 @@ void WorldDemoState::BindNearestLocalVehicle() {
             m_ctx.ecs->IdOf(target).id, m_vehicleMotion.x, m_vehicleMotion.y);
 }
 
+VehicleModStats WorldDemoState::VehicleModStatsForEntity(
+    ecs::Entity entity) const {
+    if (m_ctx.ecs == nullptr || m_ctx.vehicleMods == nullptr ||
+        !m_ctx.vehicleMods->enabled || entity == entt::null) {
+        return {};
+    }
+    const auto* mods =
+        m_ctx.ecs->Registry().try_get<ecs::VehicleMods>(entity);
+    return mods != nullptr ? VehicleModStatsFor(*m_ctx.vehicleMods, *mods)
+                           : VehicleModStats{};
+}
+
+void WorldDemoState::SyncLocalVehicleModStorage(ecs::Entity entity) {
+    if (m_ctx.ecs == nullptr || entity == entt::null ||
+        !m_ctx.ecs->Alive(entity)) {
+        return;
+    }
+    auto* container =
+        m_ctx.ecs->Registry().try_get<ecs::Container>(entity);
+    if (container == nullptr) {
+        return;
+    }
+    const float before = container->capacityKg;
+    if (ApplyVehicleModTrunkCapacity(
+            VehicleModStatsForEntity(entity), m_vehicleTuning.trunkCapacityKg,
+            container)) {
+        ZL_INFO("vehicle",
+                "载具改装后备箱容量：stableId={}，{:.1f}kg → {:.1f}kg",
+                m_ctx.ecs->IdOf(entity).id, before, container->capacityKg);
+    }
+}
+
 void WorldDemoState::AdoptVehicleEntity(ecs::Entity entity) {
     if (m_ctx.ecs == nullptr || entity == entt::null ||
         !m_ctx.ecs->Alive(entity)) {
@@ -3127,6 +3407,14 @@ void WorldDemoState::AdoptVehicleEntity(ecs::Entity entity) {
         return;
     }
     m_vehicle = entity;
+    if (m_vehicleModsOpen) {
+        m_vehicleModsOpen = false;
+        m_vehicleModAction = {};
+        if (m_ctx.ui != nullptr) {
+            m_ctx.ui->SetVehicleModsState({}, false);
+        }
+    }
+    m_vehicleModCandidates.fill(0);
     m_vehicleMotion = VehicleMotion{};
     m_vehicleHeadingX = 0.0f;
     m_vehicleHeadingY = 1.0f;
@@ -3176,6 +3464,7 @@ void WorldDemoState::AdoptVehicleEntity(ecs::Entity entity) {
     if (!registry.all_of<ecs::Vehicle>(entity)) {
         registry.emplace<ecs::Vehicle>(entity, ecs::Vehicle{});
     }
+    SyncLocalVehicleModStorage(entity);
     SyncVehicleStateToEcs();
     m_vehicleFuelWarned = m_vehicleMotion.fuel <= 0.0f;
     const auto* container = registry.try_get<ecs::Container>(entity);
@@ -3206,7 +3495,8 @@ void WorldDemoState::SyncVehicleStateToEcs() {
 
 void WorldDemoState::ApplyLocalVehicleVehicleCollision(
     float impactSpeed, ecs::Entity target,
-    const VehicleMotion& previousMotion) {
+    const VehicleMotion& previousMotion,
+    const VehicleModStats& activeModStats) {
     if (m_ctx.ecs == nullptr || m_vehicle == entt::null ||
         target == entt::null || !m_ctx.ecs->Alive(m_vehicle) ||
         !m_ctx.ecs->Alive(target) || m_vehicleBodyCollisionCooldown > 0.0f) {
@@ -3222,12 +3512,16 @@ void WorldDemoState::ApplyLocalVehicleVehicleCollision(
     if (targetPosition == nullptr) {
         return;
     }
+    const VehicleModStats targetModStats =
+        VehicleModStatsForEntity(target);
     const std::uint64_t targetId = m_ctx.ecs->IdOf(target).id;
     const float targetDamage = VehicleCollisionConditionDamageForType(
-        impactSpeed, m_vehicleTuning, targetType);
+        impactSpeed, m_vehicleTuning, targetType,
+        VehicleModCrashWearScale(targetModStats));
     const float activeDamagePreview =
-        VehicleCollisionConditionDamageForType(impactSpeed, m_vehicleTuning,
-                                               m_vehicleMotion.type);
+        VehicleCollisionConditionDamageForType(
+            impactSpeed, m_vehicleTuning, m_vehicleMotion.type,
+            VehicleModCrashWearScale(activeModStats));
     float otherDamage = 0.0f;
     if (targetState != nullptr && targetDamage > 0.0f) {
         const float before = std::clamp(targetState->condition, 0.0f, 1.0f);
@@ -3237,7 +3531,8 @@ void WorldDemoState::ApplyLocalVehicleVehicleCollision(
     float activeDamage = 0.0f;
     if (activeDamagePreview > 0.0f) {
         activeDamage = VehicleApplyCollisionConditionDamageForType(
-            &m_vehicleMotion, impactSpeed, m_vehicleTuning);
+            &m_vehicleMotion, impactSpeed, m_vehicleTuning,
+            VehicleModCrashWearScale(activeModStats));
     }
     const bool hasDamage = activeDamage > 0.0f || otherDamage > 0.0f;
     const bool collisionSpeed =
@@ -3438,6 +3733,8 @@ void WorldDemoState::UpdateLocalParkedVehicleMotions(float tickDt) {
             std::isfinite(m_vehicleTuning.vehicleCoastBraking)
                 ? m_vehicleTuning.vehicleCoastBraking
                 : kVehicleCoastBraking;
+        const VehicleModStats parkedModStats =
+            VehicleModStatsForEntity(entity);
         if (!std::isfinite(motion.vx) || !std::isfinite(motion.vy) ||
             VehicleSpeed(motion) <= kVehicleCoastStopSpeed) {
             motion.vx = 0.0f;
@@ -3481,7 +3778,8 @@ void WorldDemoState::UpdateLocalParkedVehicleMotions(float tickDt) {
         };
         (void)VehiclePredictStep(
             &motion, 0.0f, 0.0f, tickDt, blocked, coastTuning,
-            VehicleSurfaceAt(motion.x, motion.y, motion.z), bodyBlocked);
+            VehicleSurfaceAt(motion.x, motion.y, motion.z), bodyBlocked,
+            parkedModStats);
         position->x = motion.x;
         position->y = motion.y;
         position->z = motion.z;
@@ -3581,7 +3879,8 @@ float WorldDemoState::PushLocalVehicleOnCollision(ecs::Entity target,
 }
 
 void WorldDemoState::ApplyLocalVehicleRam(
-    const VehicleMotion* previousMotion) {
+    const VehicleMotion* previousMotion,
+    const VehicleModStats& modStats) {
     if (m_ctx.ecs == nullptr || m_ctx.combat == nullptr ||
         m_vehicle == entt::null) {
         return;
@@ -3592,7 +3891,8 @@ void WorldDemoState::ApplyLocalVehicleRam(
             ? *previousMotion
             : m_vehicleMotion;
     const float speed = VehicleSpeed(ramMotion);
-    if (VehicleRamDamage(speed, m_vehicleTuning) <= 0.0f) {
+    const float ramDamageScale = VehicleModRamDamageScale(modStats);
+    if (VehicleRamDamage(speed, m_vehicleTuning, ramDamageScale) <= 0.0f) {
         return;
     }
     entt::registry& registry = m_ctx.ecs->Registry();
@@ -3633,7 +3933,8 @@ void WorldDemoState::ApplyLocalVehicleRam(
         ecs::DamageEvent event;
         event.sourceId = vehicleId;
         event.type = ecs::DamageType::Blunt;
-        event.amount = VehicleRamDamage(speed, m_vehicleTuning);
+        event.amount =
+            VehicleRamDamage(speed, m_vehicleTuning, ramDamageScale);
         event.dirX = dirX;
         event.dirY = dirY;
         event.knockback = VehicleRamKnockback(speed, m_vehicleTuning);
@@ -3707,7 +4008,8 @@ void WorldDemoState::ApplyLocalVehicleRam(
     if (rammed) {
         if (m_vehicleRamWearCooldown <= 0.0f) {
             const float wear = VehicleApplyRamConditionDamage(
-                &m_vehicleMotion, speed, m_vehicleTuning);
+                &m_vehicleMotion, speed, m_vehicleTuning,
+                VehicleModRamWearScale(modStats));
             if (wear > 0.0f) {
                 m_vehicleRamWearCooldown =
                     m_vehicleTuning.ramCooldownSeconds;
@@ -3729,7 +4031,8 @@ void WorldDemoState::ApplyLocalVehicleRam(
     }
 }
 
-void WorldDemoState::ApplyLocalVehicleAttacks() {
+void WorldDemoState::ApplyLocalVehicleAttacks(
+    const VehicleModStats& modStats) {
     if (!m_driving || m_ctx.ecs == nullptr || m_ctx.combat == nullptr ||
         m_player == entt::null || m_vehicle == entt::null ||
         !m_ctx.ecs->Alive(m_player)) {
@@ -3800,7 +4103,8 @@ void WorldDemoState::ApplyLocalVehicleAttacks() {
         return;
     }
     const float wear = VehicleApplyZombieAttackConditionDamage(
-        &m_vehicleMotion, m_vehicleTuning);
+        &m_vehicleMotion, m_vehicleTuning,
+        VehicleModZombieWearScale(modStats));
     if (wear <= 0.0f) {
         return;
     }
@@ -4454,8 +4758,9 @@ void WorldDemoState::UpdateVehicle(float tickDt) {
         std::max(0.0f, m_vehicleHornCooldown - tickDt);
     m_vehicleZombieAttackCooldown =
         std::max(0.0f, m_vehicleZombieAttackCooldown - tickDt);
+    const VehicleModStats modStats = VehicleModStatsForEntity(m_vehicle);
     UpdateLocalParkedVehicleMotions(tickDt);
-    ApplyLocalVehicleAttacks();
+    ApplyLocalVehicleAttacks(modStats);
     for (auto it = m_vehicleRamCooldowns.begin();
          it != m_vehicleRamCooldowns.end();) {
         it->second -= tickDt;
@@ -4517,12 +4822,12 @@ void WorldDemoState::UpdateVehicle(float tickDt) {
     const VehicleMotion previousMotion = m_vehicleMotion;
     const VehicleStepResult vehicleStep =
         VehicleStep(&m_vehicleMotion, inputX, inputY, tickDt, blocked,
-                    activeTuning, m_vehicleSurface, bodyBlocked);
+                    activeTuning, m_vehicleSurface, bodyBlocked, modStats);
     m_vehicleMotion.heading =
         VehicleNormalizeAngle(m_vehicleMotion.heading);
     VehicleHeadingVector(m_vehicleMotion, &m_vehicleHeadingX,
                          &m_vehicleHeadingY);
-    ApplyLocalVehicleRam(&previousMotion);
+    ApplyLocalVehicleRam(&previousMotion, modStats);
     EmitLocalVehicleNoise();
     const float conditionScale =
         VehicleConditionPerformanceScale(m_vehicleMotion.condition);
@@ -4552,7 +4857,7 @@ void WorldDemoState::UpdateVehicle(float tickDt) {
     if (vehicleStep.bodyCollision || vehicleStep.bodyContact) {
         ApplyLocalVehicleVehicleCollision(vehicleStep.impactSpeed,
                                           bodyCollisionTarget,
-                                          previousMotion);
+                                          previousMotion, modStats);
     }
 
     if (auto* vehiclePosition = m_ctx.ecs->Registry().try_get<ecs::Position>(m_vehicle);
@@ -5103,6 +5408,7 @@ void WorldDemoState::EnterVehicle() {
     if (vehiclePosition == nullptr) {
         return;
     }
+    ExitStealth(characters::StealthExitReason::Vehicle);
     m_vehicleMotion.x = vehiclePosition->x;
     m_vehicleMotion.y = vehiclePosition->y;
     m_vehicleMotion.z = vehiclePosition->z;
@@ -5401,7 +5707,7 @@ std::string WorldDemoState::VehicleHint() const {
         return text;
     }
     if (m_vehicleMotion.condition <= 0.0f) {
-        return "车辆损坏：按 E 维修（维修包） · I 后备箱";
+        return "车辆损坏：按 E 维修（维修包） · I 后备箱/改装";
     }
     std::string text =
         "皮卡（" + massLabel + "）：燃料 " + std::to_string(fuelPercent) +
@@ -5434,8 +5740,647 @@ std::string WorldDemoState::VehicleHint() const {
     } else {
         text += "E 维修/加油";
     }
-    text += " · I 后备箱";
+    text += " · I 后备箱/改装";
     return text;
+}
+
+bool WorldDemoState::IsVehicleModTargetValid(ecs::Entity vehicle) const {
+    if (m_ctx.ecs == nullptr || m_player == entt::null ||
+        vehicle == entt::null || !m_ctx.ecs->Alive(m_player) ||
+        !m_ctx.ecs->Alive(vehicle)) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* playerPosition = registry.try_get<ecs::Position>(m_player);
+    const auto* vehiclePosition = registry.try_get<ecs::Position>(vehicle);
+    if (playerPosition == nullptr || vehiclePosition == nullptr) {
+        return false;
+    }
+    return VehicleModTargetInRange(
+        playerPosition->x, playerPosition->y, playerPosition->z,
+        vehiclePosition->x, vehiclePosition->y, vehiclePosition->z,
+        m_vehicleTuning.enterRange + 0.75f, true,
+        registry.all_of<ecs::Vehicle>(vehicle));
+}
+
+ecs::Entity WorldDemoState::FindVehicleForMods() const {
+    if (m_ctx.ecs == nullptr || m_player == entt::null ||
+        !m_ctx.ecs->Alive(m_player)) {
+        return entt::null;
+    }
+    const float range = m_vehicleTuning.enterRange + 0.75f;
+    if (IsVehicleModTargetValid(m_vehicle)) {
+        return m_vehicle;
+    }
+    const ecs::Entity nearest = FindNearestVehicle(range);
+    return IsVehicleModTargetValid(nearest) ? nearest : entt::null;
+}
+
+const VehicleModDef* WorldDemoState::SelectedVehicleModCandidate(
+    int slot) const {
+    if (m_ctx.vehicleMods == nullptr || !m_ctx.vehicleMods->enabled ||
+        slot < 0 || slot >= static_cast<int>(ecs::kVehicleModSlotCount)) {
+        return nullptr;
+    }
+    const auto candidates = VehicleModCandidatesForSlot(
+        *m_ctx.vehicleMods, static_cast<VehicleModSlot>(slot));
+    if (candidates.empty()) {
+        return nullptr;
+    }
+    const std::size_t index =
+        static_cast<std::size_t>(m_vehicleModCandidates[
+            static_cast<std::size_t>(slot)]) %
+        candidates.size();
+    return candidates[index];
+}
+
+bool WorldDemoState::OpenVehicleModsPanel(ecs::Entity vehicle) {
+    if (m_ctx.vehicleMods == nullptr || !m_ctx.vehicleMods->enabled) {
+        SetNotice("车辆改装未启用", kNoticeInfoColor, 1.8f);
+        return false;
+    }
+    if (m_driving || m_riding) {
+        SetNotice("停车并下车后再改装", kNoticeInfoColor, 1.8f);
+        return false;
+    }
+    if (vehicle == entt::null) {
+        vehicle = FindVehicleForMods();
+    }
+    if (!IsVehicleModTargetValid(vehicle)) {
+        SetNotice("附近没有可改装的车辆", kNoticeFailColor, 1.8f);
+        return false;
+    }
+    if (m_vehicleModsOpen && m_vehicleModsVehicle == vehicle) {
+        return true;
+    }
+    if (m_ctx.ui != nullptr && m_ctx.ui->IsInventoryOpen()) {
+        m_ctx.ui->CloseInventory();
+    }
+    m_vehicleModsVehicle = vehicle;
+    m_vehicleModsOpen = true;
+    m_characterOpen = false;
+    m_companionOpen = false;
+    m_vehicleModCandidates.fill(0);
+    m_vehicleModsStatus.clear();
+    m_vehicleModsStatusTone = "info";
+    RefreshVehicleModsPanel();
+    ZL_INFO("vehicle", "打开车辆改装面板：stableId={}（{}）",
+            m_ctx.ecs->IdOf(vehicle).id,
+            m_networkMode ? "服务器权威改装" : "单机改装");
+    return true;
+}
+
+void WorldDemoState::CloseVehicleModsPanel() {
+    if (!m_vehicleModsOpen) {
+        return;
+    }
+    if (m_vehicleModAction.active) {
+        CancelVehicleModAction("面板关闭，改装中止", true);
+    }
+    m_vehicleModsOpen = false;
+    m_vehicleModsVehicle = entt::null;
+    if (m_ctx.ui != nullptr) {
+        m_ctx.ui->SetVehicleModsState({}, false);
+    }
+    ZL_INFO("vehicle", "关闭车辆改装面板");
+}
+
+void WorldDemoState::RefreshVehicleModsPanel() {
+    if (m_ctx.ui == nullptr || (!m_vehicleModsOpen &&
+                                !m_vehicleModAction.active)) {
+        return;
+    }
+    ui::VehicleModsUiState state;
+    state.open = m_vehicleModsOpen;
+    state.readOnly = false;
+    state.inProgress = m_vehicleModAction.active;
+    if (state.inProgress) {
+        state.progress =
+            m_vehicleModAction.duration > 0.0f
+                ? std::clamp(m_vehicleModAction.elapsed /
+                                 m_vehicleModAction.duration,
+                             0.0f, 1.0f)
+                : 0.0f;
+    }
+
+    static constexpr const char* kSlotNames[ecs::kVehicleModSlotCount] = {
+        "装甲", "载重", "撞击", "灯光", "发动机"};
+    ecs::Entity vehicle =
+        m_vehicleModAction.active
+            ? m_vehicleModAction.vehicle
+            : (IsVehicleModTargetValid(m_vehicleModsVehicle)
+                   ? m_vehicleModsVehicle
+                   : FindVehicleForMods());
+    const auto* vehicleState =
+        vehicle != entt::null && m_ctx.ecs != nullptr &&
+                m_ctx.ecs->Alive(vehicle)
+            ? m_ctx.ecs->Registry().try_get<ecs::Vehicle>(vehicle)
+            : nullptr;
+    const auto* mods =
+        vehicle != entt::null && m_ctx.ecs != nullptr &&
+                m_ctx.ecs->Alive(vehicle)
+            ? m_ctx.ecs->Registry().try_get<ecs::VehicleMods>(vehicle)
+            : nullptr;
+    const auto* bag =
+        m_ctx.ecs != nullptr && m_ctx.ecs->Alive(m_player)
+            ? m_ctx.ecs->Registry().try_get<ecs::Container>(m_player)
+            : nullptr;
+
+    state.valid = vehicle != entt::null && vehicleState != nullptr &&
+                  m_ctx.vehicleMods != nullptr &&
+                  m_ctx.vehicleMods->enabled;
+    if (state.valid) {
+        const ecs::VehicleType type =
+            VehicleTypeIsValid(vehicleState->type) ? vehicleState->type
+                                                   : ecs::VehicleType::Pickup;
+        state.title = "车辆改装";
+        state.subtitle =
+            std::string(VehicleTypeName(type)) + " · 车况 " +
+            std::to_string(static_cast<int>(std::lround(
+                std::clamp(vehicleState->condition, 0.0f, 1.0f) * 100.0f))) +
+            "%";
+    } else {
+        state.subtitle = "附近没有可改装的车辆";
+    }
+
+    ecs::VehicleMods emptyMods;
+    const ecs::VehicleMods& installed = mods != nullptr ? *mods : emptyMods;
+    if (state.valid && m_ctx.vehicleMods != nullptr) {
+        const VehicleModStats stats =
+            VehicleModStatsFor(*m_ctx.vehicleMods, installed);
+        state.summary = VehicleModStatsSummary(
+            stats, m_vehicleTuning.trunkCapacityKg);
+    }
+    for (int slot = 0; slot < static_cast<int>(ecs::kVehicleModSlotCount);
+         ++slot) {
+        ui::VehicleModSlotUi& entry =
+            state.slots[static_cast<std::size_t>(slot)];
+        entry.slotName = kSlotNames[slot];
+        const VehicleModSlot slotKind = static_cast<VehicleModSlot>(slot);
+        const std::string& currentId =
+            InstalledVehicleModId(installed, slotKind);
+        if (!currentId.empty()) {
+            entry.occupied = true;
+            const VehicleModDef* def =
+                m_ctx.vehicleMods != nullptr
+                    ? m_ctx.vehicleMods->Find(currentId)
+                    : nullptr;
+            entry.currentName =
+                def != nullptr ? def->name : "未知改装（" + currentId + "）";
+            if (def != nullptr) {
+                entry.currentEffect = VehicleModEffectSummary(*def);
+            }
+            entry.currentDetail =
+                def != nullptr
+                    ? "已安装 · 重量 " +
+                          std::to_string(static_cast<int>(
+                              std::lround(def->weightKg))) +
+                          " kg · 拆除 " +
+                          std::to_string(static_cast<int>(std::lround(
+                              VehicleModRemoveSeconds(*m_ctx.vehicleMods,
+                                                      *def)))) +
+                          " 秒 · 返还 " +
+                          std::to_string(static_cast<int>(std::lround(
+                              m_ctx.vehicleMods->removeRefundRatio *
+                              100.0f))) +
+                          "%"
+                    : "定义已从内容中移除，可拆除释放槽位";
+            entry.canRemove = !m_vehicleModAction.active;
+            continue;
+        }
+        if (m_ctx.vehicleMods == nullptr) {
+            continue;
+        }
+        const auto candidates =
+            VehicleModCandidatesForSlot(*m_ctx.vehicleMods, slotKind);
+        entry.candidateCount = static_cast<int>(candidates.size());
+        if (candidates.empty()) {
+            continue;
+        }
+        int& candidateIndex =
+            m_vehicleModCandidates[static_cast<std::size_t>(slot)];
+        candidateIndex %= static_cast<int>(candidates.size());
+        if (candidateIndex < 0) {
+            candidateIndex = 0;
+        }
+        const VehicleModDef* def =
+            candidates[static_cast<std::size_t>(candidateIndex)];
+        entry.hasCandidate = true;
+        entry.candidateIndex = candidateIndex;
+        entry.candidateName = def->name;
+        entry.candidateEffect = VehicleModEffectSummary(*def);
+        std::string materials;
+        bool hasMaterials = false;
+        if (bag != nullptr && m_ctx.items != nullptr) {
+            hasMaterials = VehicleModMaterialCountsMet(
+                *bag, *m_ctx.items, *def, &materials);
+        } else if (m_ctx.items != nullptr) {
+            const ecs::Container empty;
+            VehicleModMaterialCountsMet(empty, *m_ctx.items, *def,
+                                        &materials);
+        }
+        entry.materials = "材料：" + materials;
+        entry.duration =
+            "安装 " +
+            std::to_string(static_cast<int>(std::lround(def->installSeconds))) +
+            " 秒 · 重量 " +
+            std::to_string(static_cast<int>(std::lround(def->weightKg))) +
+            " kg";
+        std::string error;
+        entry.canInstall =
+            !m_vehicleModAction.active &&
+            CanInstallVehicleMod(*m_ctx.vehicleMods, installed, def->id,
+                                 &error) &&
+            hasMaterials;
+    }
+
+    if (m_vehicleModAction.active) {
+        const VehicleModDef* def =
+            m_ctx.vehicleMods != nullptr
+                ? m_ctx.vehicleMods->Find(m_vehicleModAction.defId)
+                : nullptr;
+        const std::string name =
+            def != nullptr ? def->name : m_vehicleModAction.defId;
+        const float remaining =
+            std::max(0.0f, m_vehicleModAction.duration -
+                               m_vehicleModAction.elapsed);
+        state.status =
+            std::string(m_vehicleModAction.install ? "安装中：" : "拆除中：") +
+            name + "（" +
+            std::to_string(static_cast<int>(std::lround(remaining))) +
+            " 秒）";
+        state.statusTone = "info";
+    } else if (!m_vehicleModsStatus.empty()) {
+        state.status = m_vehicleModsStatus;
+        state.statusTone = m_vehicleModsStatusTone;
+    } else if (m_networkMode) {
+        state.status = "联机模式：服务器校验距离、材料与槽位";
+        state.statusTone = "info";
+    } else if (state.valid) {
+        state.status = "选择改装安装或拆除；材料来自背包";
+        state.statusTone = "info";
+    } else {
+        state.status = "靠近车辆后打开改装面板";
+        state.statusTone = "warn";
+    }
+
+    m_ctx.ui->SetVehicleModsState(state, m_vehicleModsOpen);
+}
+
+void WorldDemoState::HandleVehicleModsAction(
+    const ui::VehicleModPanelAction& action) {
+    if (action.type == ui::VehicleModPanelActionType::Close) {
+        CloseVehicleModsPanel();
+        return;
+    }
+    if (!m_vehicleModsOpen) {
+        return;
+    }
+    if (action.slot < 0 ||
+        action.slot >= static_cast<int>(ecs::kVehicleModSlotCount)) {
+        return;
+    }
+    if (action.type == ui::VehicleModPanelActionType::CycleCandidate) {
+        if (m_ctx.vehicleMods == nullptr) {
+            return;
+        }
+        const auto candidates = VehicleModCandidatesForSlot(
+            *m_ctx.vehicleMods,
+            static_cast<VehicleModSlot>(action.slot));
+        if (candidates.size() > 1) {
+            int& index = m_vehicleModCandidates[
+                static_cast<std::size_t>(action.slot)];
+            index = (index + 1) % static_cast<int>(candidates.size());
+            m_vehicleModsStatus.clear();
+            m_vehicleModsStatusTone = "info";
+            RefreshVehicleModsPanel();
+        }
+        return;
+    }
+    if (m_networkMode) {
+        if (action.type == ui::VehicleModPanelActionType::Install) {
+            SubmitNetworkVehicleModAction(true, action.slot);
+        } else if (action.type ==
+                   ui::VehicleModPanelActionType::Remove) {
+            SubmitNetworkVehicleModAction(false, action.slot);
+        }
+        return;
+    }
+    if (action.type == ui::VehicleModPanelActionType::Install) {
+        StartVehicleModAction(true, action.slot);
+    } else if (action.type == ui::VehicleModPanelActionType::Remove) {
+        StartVehicleModAction(false, action.slot);
+    }
+}
+
+void WorldDemoState::SubmitNetworkVehicleModAction(bool install, int slot) {
+    if (m_ctx.ecs == nullptr || m_ctx.vehicleMods == nullptr ||
+        !m_ctx.vehicleMods->enabled || slot < 0 ||
+        slot >= static_cast<int>(ecs::kVehicleModSlotCount)) {
+        return;
+    }
+    ecs::Entity vehicle =
+        IsVehicleModTargetValid(m_vehicleModsVehicle)
+            ? m_vehicleModsVehicle
+            : FindVehicleForMods();
+    if (vehicle == entt::null) {
+        SetNotice("附近没有可改装的车辆", kNoticeFailColor, 1.8f);
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const VehicleModSlot slotKind = static_cast<VehicleModSlot>(slot);
+    const ecs::VehicleMods* mods =
+        registry.try_get<ecs::VehicleMods>(vehicle);
+    ecs::VehicleMods emptyMods;
+    const ecs::VehicleMods& installed =
+        mods != nullptr ? *mods : emptyMods;
+    const std::string& currentId =
+        InstalledVehicleModId(installed, slotKind);
+    const VehicleModDef* def = nullptr;
+    net::Command command = MakePlayerCommand(
+        install ? net::CommandType::InstallVehicleMod
+                : net::CommandType::RemoveVehicleMod);
+    command.payload.entityId = m_ctx.ecs->IdOf(vehicle).id;
+    command.payload.index = slot;
+    if (install) {
+        if (!currentId.empty()) {
+            SetNotice("该槽位已安装改装，请先拆除", kNoticeFailColor, 1.8f);
+            return;
+        }
+        def = SelectedVehicleModCandidate(slot);
+        if (def == nullptr) {
+            SetNotice("该槽位没有可用改装", kNoticeFailColor, 1.8f);
+            return;
+        }
+        const auto candidates = VehicleModCandidatesForSlot(
+            *m_ctx.vehicleMods, slotKind);
+        if (candidates.empty()) {
+            return;
+        }
+        int candidateIndex =
+            m_vehicleModCandidates[static_cast<std::size_t>(slot)] %
+            static_cast<int>(candidates.size());
+        if (candidateIndex < 0) {
+            candidateIndex = 0;
+        }
+        command.payload.targetIndex = candidateIndex;
+    } else {
+        if (currentId.empty()) {
+            SetNotice("该槽位没有可拆除的改装", kNoticeInfoColor, 1.5f);
+            return;
+        }
+        def = m_ctx.vehicleMods->Find(currentId);
+        command.payload.targetIndex = -1;
+    }
+
+    if (!SubmitPlayerCommand(command)) {
+        m_vehicleModsStatus = "改装命令发送失败";
+        m_vehicleModsStatusTone = "fail";
+        SetNotice(m_vehicleModsStatus, kNoticeFailColor, 2.0f);
+        RefreshVehicleModsPanel();
+        return;
+    }
+    const std::string name =
+        def != nullptr ? def->name : currentId;
+    m_vehicleModsStatus =
+        std::string(install ? "已请求服务器安装：" : "已请求服务器拆除：") +
+        name;
+    m_vehicleModsStatusTone = "info";
+    RefreshVehicleModsPanel();
+}
+
+void WorldDemoState::StartVehicleModAction(bool install, int slot) {
+    if (m_vehicleModAction.active) {
+        SetNotice("已有改装正在施工", kNoticeInfoColor, 1.5f);
+        return;
+    }
+    if (m_networkMode) {
+        SubmitNetworkVehicleModAction(install, slot);
+        return;
+    }
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
+        m_ctx.vehicleMods == nullptr || !m_ctx.vehicleMods->enabled ||
+        slot < 0 || slot >= static_cast<int>(ecs::kVehicleModSlotCount)) {
+        return;
+    }
+    ecs::Entity vehicle =
+        IsVehicleModTargetValid(m_vehicleModsVehicle)
+            ? m_vehicleModsVehicle
+            : FindVehicleForMods();
+    if (vehicle == entt::null) {
+        SetNotice("附近没有可改装的车辆", kNoticeFailColor, 1.8f);
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* bag = registry.try_get<ecs::Container>(m_player);
+    if (bag == nullptr) {
+        return;
+    }
+    const VehicleModSlot slotKind = static_cast<VehicleModSlot>(slot);
+    const ecs::VehicleMods* mods = registry.try_get<ecs::VehicleMods>(vehicle);
+    ecs::VehicleMods emptyMods;
+    const ecs::VehicleMods& installed = mods != nullptr ? *mods : emptyMods;
+    const std::string& currentId =
+        InstalledVehicleModId(installed, slotKind);
+    const VehicleModDef* def = nullptr;
+    if (install) {
+        if (!currentId.empty()) {
+            SetNotice("该槽位已安装改装，请先拆除", kNoticeFailColor, 1.8f);
+            return;
+        }
+        def = SelectedVehicleModCandidate(slot);
+        if (def == nullptr) {
+            SetNotice("该槽位没有可用改装", kNoticeFailColor, 1.8f);
+            return;
+        }
+        std::string error;
+        if (!CanInstallVehicleMod(*m_ctx.vehicleMods, installed, def->id,
+                                  &error)) {
+            SetNotice(error, kNoticeFailColor, 1.8f);
+            return;
+        }
+        if (!VehicleModMaterialCountsMet(*bag, *m_ctx.items, *def, nullptr)) {
+            std::string summary;
+            VehicleModMaterialCountsMet(*bag, *m_ctx.items, *def, &summary);
+            SetNotice("材料不足：" + summary, kNoticeFailColor, 2.0f);
+            return;
+        }
+    } else {
+        if (currentId.empty()) {
+            SetNotice("该槽位没有可拆除的改装", kNoticeInfoColor, 1.5f);
+            return;
+        }
+        def = m_ctx.vehicleMods->Find(currentId);
+    }
+
+    m_vehicleModAction.active = true;
+    m_vehicleModAction.install = install;
+    m_vehicleModAction.vehicle = vehicle;
+    m_vehicleModAction.defId = install ? def->id : currentId;
+    m_vehicleModAction.slot = slotKind;
+    m_vehicleModAction.elapsed = 0.0f;
+    m_vehicleModAction.duration =
+        install ? std::clamp(def->installSeconds, 0.1f, 600.0f)
+                : (def != nullptr
+                       ? VehicleModRemoveSeconds(*m_ctx.vehicleMods, *def)
+                       : 5.0f);
+    m_vehicleModsStatus.clear();
+    m_vehicleModsStatusTone = "info";
+    RefreshVehicleModsPanel();
+    ZL_INFO("vehicle", "开始{}车辆改装：stableId={}，槽位 {}，定义 {}", install ? "安装" : "拆除",
+            m_ctx.ecs->IdOf(vehicle).id, VehicleModSlotName(slotKind),
+            m_vehicleModAction.defId);
+}
+
+void WorldDemoState::CancelVehicleModAction(std::string_view reason,
+                                            bool notice) {
+    if (!m_vehicleModAction.active) {
+        return;
+    }
+    m_vehicleModAction = {};
+    m_vehicleModsStatus =
+        reason.empty() ? "改装中止" : std::string(reason);
+    m_vehicleModsStatusTone = "warn";
+    if (notice) {
+        SetNotice(m_vehicleModsStatus, kNoticeFailColor, 2.0f);
+    }
+    RefreshVehicleModsPanel();
+}
+
+void WorldDemoState::UpdateVehicleModAction(float tickDt) {
+    if (!m_vehicleModAction.active) {
+        return;
+    }
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
+        m_ctx.vehicleMods == nullptr || m_player == entt::null ||
+        !m_ctx.ecs->Alive(m_player) || m_vehicleModAction.vehicle == entt::null ||
+        !m_ctx.ecs->Alive(m_vehicleModAction.vehicle)) {
+        CancelVehicleModAction("改装目标不可用", true);
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    if (const auto* health = registry.try_get<ecs::Health>(m_player);
+        health != nullptr && health->current <= 0.0f) {
+        CancelVehicleModAction("玩家死亡，改装中止", false);
+        CloseVehicleModsPanel();
+        return;
+    }
+    const auto* playerPosition = registry.try_get<ecs::Position>(m_player);
+    const auto* vehiclePosition =
+        registry.try_get<ecs::Position>(m_vehicleModAction.vehicle);
+    if (playerPosition == nullptr || vehiclePosition == nullptr ||
+        !VehicleModTargetInRange(
+            playerPosition->x, playerPosition->y, playerPosition->z,
+            vehiclePosition->x, vehiclePosition->y, vehiclePosition->z,
+            m_vehicleTuning.enterRange + 1.5f, true,
+            registry.all_of<ecs::Vehicle>(m_vehicleModAction.vehicle))) {
+        CancelVehicleModAction("离开车辆，改装中止", true);
+        return;
+    }
+
+    m_vehicleModAction.elapsed += std::max(0.0f, tickDt);
+    if (m_vehicleModAction.elapsed < m_vehicleModAction.duration) {
+        RefreshVehicleModsPanel();
+        return;
+    }
+
+    auto* mods = registry.try_get<ecs::VehicleMods>(
+        m_vehicleModAction.vehicle);
+    auto* bag = registry.try_get<ecs::Container>(m_player);
+    if (bag == nullptr) {
+        CancelVehicleModAction("背包不可用，改装中止", true);
+        return;
+    }
+    if (mods == nullptr) {
+        mods = &registry.emplace<ecs::VehicleMods>(
+            m_vehicleModAction.vehicle);
+    }
+
+    if (m_vehicleModAction.install) {
+        const VehicleModDef* def =
+            m_ctx.vehicleMods->Find(m_vehicleModAction.defId);
+        if (def == nullptr) {
+            CancelVehicleModAction("改装定义不可用", true);
+            return;
+        }
+        std::string error;
+        if (!CanInstallVehicleMod(*m_ctx.vehicleMods, *mods, def->id,
+                                  &error)) {
+            CancelVehicleModAction(error, true);
+            return;
+        }
+        if (!VehicleModMaterialCountsMet(*bag, *m_ctx.items, *def, nullptr)) {
+            CancelVehicleModAction("材料不足，改装中止", true);
+            return;
+        }
+        if (!ConsumeVehicleModMaterials(*bag, *m_ctx.items, *def, &error)) {
+            CancelVehicleModAction("材料扣除失败：" + error, true);
+            return;
+        }
+        if (!InstallVehicleMod(*m_ctx.vehicleMods, mods, def->id, &error)) {
+            (void)AddVehicleModRefund(*bag, *m_ctx.items, *def, 1.0f);
+            CancelVehicleModAction("安装失败：" + error, true);
+            return;
+        }
+        SyncLocalVehicleModStorage(m_vehicleModAction.vehicle);
+        m_vehicleModsStatus = "已安装：" + def->name;
+        m_vehicleModsStatusTone = "ok";
+        SetNotice("已安装车辆改装：" + def->name, kNoticeOkColor, 2.5f);
+        ZL_INFO("vehicle", "安装车辆改装：stableId={}，槽位 {}，定义 {}",
+                m_ctx.ecs->IdOf(m_vehicleModAction.vehicle).id,
+                VehicleModSlotName(m_vehicleModAction.slot), def->id);
+    } else {
+        const std::string removedId = RemoveVehicleMod(
+            mods, m_vehicleModAction.slot);
+        if (removedId.empty()) {
+            CancelVehicleModAction("槽位已是空", true);
+            return;
+        }
+        const VehicleModDef* def = m_ctx.vehicleMods->Find(removedId);
+        std::string notice = "已拆除车辆改装：" +
+                             (def != nullptr ? def->name : removedId);
+        std::string refundText;
+        if (def != nullptr) {
+            const std::vector<VehicleModMaterial> refund =
+                VehicleModRefundMaterials(
+                    *def, m_ctx.vehicleMods->removeRefundRatio);
+            const std::vector<VehicleModMaterial> overflow =
+                AddVehicleModRefund(*bag, *m_ctx.items, *def,
+                                    m_ctx.vehicleMods->removeRefundRatio);
+            for (const VehicleModMaterial& material : overflow) {
+                (void)SpawnGroundItem(
+                    *m_ctx.ecs, *m_ctx.items,
+                    ecs::ItemInstance{material.item, material.count, 1.0f},
+                    playerPosition->x, playerPosition->y,
+                    playerPosition->z);
+            }
+            for (const VehicleModMaterial& material : refund) {
+                if (!refundText.empty()) {
+                    refundText += "、";
+                }
+                const items::ItemDef* item =
+                    m_ctx.items->Find(material.item);
+                refundText += (item != nullptr ? item->name : material.item) +
+                              " x" + std::to_string(material.count);
+            }
+        }
+        if (!refundText.empty()) {
+            notice += "（返还 " + refundText + "）";
+        }
+        m_vehicleModsStatus = notice;
+        m_vehicleModsStatusTone = "ok";
+        SetNotice(notice, kNoticeOkColor, 2.5f);
+        ZL_INFO("vehicle", "拆除车辆改装：stableId={}，槽位 {}，定义 {}",
+                m_ctx.ecs->IdOf(m_vehicleModAction.vehicle).id,
+                VehicleModSlotName(m_vehicleModAction.slot), removedId);
+        if (!VehicleModsHasAny(*mods)) {
+            registry.remove<ecs::VehicleMods>(m_vehicleModAction.vehicle);
+        }
+        SyncLocalVehicleModStorage(m_vehicleModAction.vehicle);
+    }
+
+    m_vehicleModAction = {};
+    RefreshVehicleModsPanel();
 }
 
 bool WorldDemoState::TryServiceVehicle() {
@@ -5615,14 +6560,166 @@ void WorldDemoState::RefreshRangedHud(ui::HudState& hud) {
     hud.rangedStatus = ui::RangedStatusText(hud, &hud.rangedTone);
 }
 
-void WorldDemoState::RefreshHud() {
+void WorldDemoState::RefreshStealthHud(ui::HudState& hud, bool networkState) {
+    if (!m_stealthRules.enabled || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* control = registry.try_get<ecs::LocalControl>(m_player);
+    const bool localStealthHud = !m_networkMode && control != nullptr;
+    const bool networkStealthHud = m_networkMode && networkState;
+    if (!localStealthHud && !networkStealthHud) {
+        return;
+    }
+    hud.stealthAwarenessValid = false;
+    hud.stealthNearbyAlertCount = 0;
+    hud.stealthBackstabAvailable = false;
+    hud.stealthPrompt.clear();
+    const auto* stealth = registry.try_get<ecs::StealthState>(m_player);
+    const bool crouched =
+        networkStealthHud
+            ? (m_networkStealth.valid && m_networkStealth.crouched)
+            : (stealth != nullptr && stealth->crouched);
+    const float speedScale =
+        crouched ? std::clamp(m_stealthRules.crouchSpeedScale, 0.1f, 1.0f)
+                 : 1.0f;
+    const float noiseScale =
+        crouched && stealth != nullptr && std::isfinite(stealth->noiseScale)
+            ? std::clamp(stealth->noiseScale, 0.0f, 1.0f)
+            : 1.0f;
+    const float walkSpeed =
+        control != nullptr && std::isfinite(control->walkSpeed)
+            ? std::max(0.0f, control->walkSpeed)
+            : m_baseWalkSpeed;
+    hud.stealthValid = true;
+    hud.stealthCrouched = crouched;
+    hud.stealthMoveSpeed = walkSpeed * speedScale;
+    hud.stealthFootstepRadius =
+        networkStealthHud && m_networkStealth.valid && crouched
+            ? std::clamp(m_networkStealth.noiseRadius, 0.0f, 10.0f)
+            : kPlayerFootstepBaseRadius * noiseScale;
+
+    // 附近警觉/背刺提示是本地表现信息；联机 AI 真值只在服务器，不能由
+    // 客户端从残缺副本推断，因此保持 awareness unknown。
+    if (localStealthHud) {
+        hud.stealthAwarenessValid = true;
+        constexpr float kAwarenessRadius = 8.0f;
+        constexpr float kAwarenessRadiusSq =
+            kAwarenessRadius * kAwarenessRadius;
+        const auto* playerPosition =
+            registry.try_get<ecs::Position>(m_player);
+        const auto* playerHealth = registry.try_get<ecs::Health>(m_player);
+        const bool canBackstab =
+            playerPosition != nullptr && playerHealth != nullptr &&
+            std::isfinite(playerHealth->current) &&
+            playerHealth->current > 0.0f && !m_driving && !m_riding &&
+            !registry.all_of<ecs::Dying>(m_player);
+
+        float backstabReach = 0.0f;
+        if (canBackstab && m_ctx.combat != nullptr) {
+            const items::ItemDef* weaponDef = nullptr;
+            bool weaponUsable = true;
+            if (const auto* equipment =
+                    registry.try_get<ecs::Equipment>(m_player);
+                equipment != nullptr) {
+                const auto& primary = equipment->slots[static_cast<std::size_t>(
+                    ecs::EquipSlot::PrimaryHand)];
+                if (primary.has_value()) {
+                    weaponUsable = primary->condition > 0.0f;
+                    if (weaponUsable && m_ctx.items != nullptr) {
+                        weaponDef = m_ctx.items->Find(primary->defId);
+                    }
+                }
+            }
+            if (weaponUsable) {
+                items::WeaponAttackParams base;
+                base.range = m_playerAttackRange;
+                const game::PlayerMeleeAttackPlan heavy =
+                    game::ResolvePlayerMeleeAttack(
+                        weaponDef, base, true,
+                        m_ctx.combat->GetCombatRules());
+                backstabReach = std::max(0.0f, heavy.params.range);
+            }
+        }
+
+        const float halfAngle =
+            std::clamp(m_stealthRules.backstabHalfAngleDegrees, 0.0f,
+                       180.0f);
+        const float thresholdSq = backstabReach * backstabReach;
+        registry.view<ecs::AiState, ecs::Position, ecs::Health>().each(
+            [&](const ecs::Entity entity, const ecs::AiState& ai,
+                const ecs::Position& position, const ecs::Health& health) {
+                if (!canBackstab || entity == m_player ||
+                    health.current <= 0.0f ||
+                    registry.any_of<ecs::PlayerTag, ecs::FriendlyNpc,
+                                    ecs::Animal, ecs::Dying>(entity)) {
+                    return;
+                }
+                const float dx = position.x - playerPosition->x;
+                const float dy = position.y - playerPosition->y;
+                const float distanceSq = dx * dx + dy * dy;
+                if (distanceSq > kAwarenessRadiusSq) {
+                    return;
+                }
+                const auto* perception =
+                    registry.try_get<ecs::PerceptionState>(entity);
+                const float alertness =
+                    perception != nullptr ? perception->alertness : 0.0f;
+                if (!characters::StealthTargetUnaware(ai.status, alertness)) {
+                    ++hud.stealthNearbyAlertCount;
+                }
+                if (hud.stealthBackstabAvailable || distanceSq > thresholdSq) {
+                    return;
+                }
+                const auto* targetFacing =
+                    registry.try_get<ecs::Facing>(entity);
+                if (targetFacing == nullptr) {
+                    return;
+                }
+                float facingX = 0.0f;
+                float facingY = 0.0f;
+                game::FacingAttackDirection(targetFacing->dir, &facingX,
+                                            &facingY);
+                const bool unaware =
+                    characters::StealthTargetUnaware(ai.status, alertness);
+                const bool behind = characters::StealthBehindTarget(
+                    facingX, facingY, -dx, -dy, halfAngle);
+                hud.stealthBackstabAvailable =
+                    unaware && behind &&
+                    characters::StealthBackstabDamageScale(
+                        true, m_stealthRules.backstabMultiplier) > 1.0f;
+            });
+    }
+
+    hud.stealthStatus = ui::StealthStatusText(hud, &hud.stealthTone);
+    if (hud.stealthCrouched && hud.stealthTone == "info") {
+        hud.stealthTone = "ok";
+    }
+    if (hud.stealthAwarenessValid && hud.stealthNearbyAlertCount > 0) {
+        hud.stealthTone = "warn";
+    }
+    const bool modalOpen =
+        m_buildMode || m_characterOpen || m_companionOpen ||
+        m_worldMapOpen || m_vehicleModsOpen || m_worldEventChoiceOpen ||
+        m_sleep.Active() || m_sleepSelecting || m_siegeReportOpen;
+    const bool promptSuppressed = ui::HudStealthPromptSuppressed(
+        m_ctx.ui != nullptr && m_ctx.ui->IsMenuOpen(),
+        m_ctx.ui != nullptr && m_ctx.ui->IsInventoryOpen(), m_tradeOpen,
+        m_dialogueOpen, modalOpen);
+    if (hud.stealthBackstabAvailable && !promptSuppressed) {
+        hud.stealthPrompt = "背刺可用 · SPACE";
+    }
+}
+
+void WorldDemoState::RefreshHud(double frameDt) {
     if (m_ctx.ui == nullptr || m_ctx.gameTime == nullptr) {
         return;
     }
     if (m_runOutcome != RunOutcome::None) {
         return;  // 结算页已接管；避免旧 HUD 状态覆盖/闪烁
     }
-    UpdatePoiTasks();
+    UpdatePoiTasks(static_cast<float>(frameDt));
     UpdateMissions();
     UpdateObjective();
     if (m_runOutcome != RunOutcome::None) {
@@ -5685,6 +6782,7 @@ void WorldDemoState::RefreshHud() {
             hud.stamina = (1.0f - std::clamp(needs->fatigue, 0.0f, 1.0f)) * 100.0f;
             hud.staminaMax = 100.0f;
         }
+        RefreshStealthHud(hud, networkState);
         if (const auto* needs = registry.try_get<ecs::Needs>(m_player); needs != nullptr) {
             char status[112];
             const char* prefix =
@@ -5813,6 +6911,11 @@ void WorldDemoState::RefreshHud() {
                                                 : nullptr;
                 hud.slots[i].label = def != nullptr ? def->name : entry.defId;
                 hud.slots[i].count = entry.count;
+                if (def != nullptr && def->throwable.has_value()) {
+                    hud.slots[i].throwable = true;
+                    hud.slots[i].throwTag =
+                        game::ThrowableHotbarTag(*def->throwable);
+                }
             }
         }
         if (!m_networkMode) {
@@ -5855,7 +6958,11 @@ void WorldDemoState::RefreshHud() {
             hud.basePowerLowFuel = m_baseHud.powerLowFuel;
             hud.basePowerOutage = m_baseHud.powerOutage;
             hud.baseStatus = ui::BaseStatusText(hud, &hud.baseTone);
-            RefreshPoiGuide(hud);
+            bool stagedPoiGuide = false;
+            RefreshPoiStageGuide(hud, &stagedPoiGuide);
+            if (!stagedPoiGuide) {
+                RefreshPoiGuide(hud);
+            }
             RefreshMissionGuide(hud);
             RefreshEventGuide(hud);
             RefreshRegionGuide(hud);
@@ -5868,6 +6975,15 @@ void WorldDemoState::RefreshHud() {
             hint.hasRangedWeapon = hud.rangedValid;
             hint.rangedEmpty = hud.rangedValid && hud.rangedLoaded <= 0;
             hint.rangedReloading = hud.rangedReloading;
+            if (const items::ItemDef* throwableDef = nullptr;
+                TryGetThrowableAimSource(&throwableDef, nullptr)) {
+                hint.hasThrowable = true;
+                hint.throwableName = throwableDef->name;
+            }
+            hint.throwAiming = m_throwAim.active;
+            hint.throwClamped = m_throwAim.clamped;
+            hint.throwWallClipped = m_throwAim.wallClipped;
+            hint.throwDistance = m_throwAim.distance;
             if (const auto* container = registry.try_get<ecs::Container>(m_player);
                 container != nullptr && m_ctx.items != nullptr) {
                 for (const ecs::ItemInstance& entry : container->items) {
@@ -6241,7 +7357,8 @@ void WorldDemoState::RefreshHud() {
                                facility.kind == HomesteadTargetKind::Farm ||
                                facility.kind == HomesteadTargetKind::Generator ||
                                facility.kind == HomesteadTargetKind::Floodlight ||
-                               facility.kind == HomesteadTargetKind::Trap) {
+                               facility.kind == HomesteadTargetKind::Trap ||
+                               facility.kind == HomesteadTargetKind::PlacedTrap) {
                         const std::uint64_t owner =
                             EntityOwnerStableId(facility.entity);
                         const std::uint64_t token =
@@ -6259,16 +7376,25 @@ void WorldDemoState::RefreshHud() {
                                 token);
                             const std::string suffix =
                                 StructureOwnerSuffix(owner);
-                            std::string label =
-                                facility.kind == HomesteadTargetKind::Farm
-                                    ? "农田"
-                                    : facility.kind ==
-                                              HomesteadTargetKind::Generator
-                                          ? "发电机"
-                                          : facility.kind ==
-                                                    HomesteadTargetKind::Floodlight
-                                                ? "泛光灯"
-                                                : "陷阱";
+                            std::string label;
+                            if (facility.kind == HomesteadTargetKind::Farm) {
+                                label = "农田";
+                            } else if (facility.kind ==
+                                       HomesteadTargetKind::Generator) {
+                                label = "发电机";
+                            } else if (facility.kind ==
+                                       HomesteadTargetKind::Floodlight) {
+                                label = "泛光灯";
+                            } else if (facility.kind ==
+                                       HomesteadTargetKind::PlacedTrap) {
+                                const BuildableDef* trapBuildable =
+                                    PlacedTrapBuildable(facility.entity);
+                                label = trapBuildable != nullptr
+                                            ? trapBuildable->name
+                                            : "陷阱";
+                            } else {
+                                label = "陷阱";
+                            }
                             if (!CanEditLocalStructure(owner)) {
                                 hud.actionHint +=
                                     " · 无法拆除" + label + suffix +
@@ -6442,7 +7568,11 @@ void WorldDemoState::RefreshHud() {
         hud.basePowerOutage = m_networkPower.outage;
         hud.baseStatus = ui::BaseStatusText(hud, &hud.baseTone);
         RefreshObjectiveHud(hud);
-        RefreshPoiGuide(hud);
+        bool stagedPoiGuide = false;
+        RefreshPoiStageGuide(hud, &stagedPoiGuide);
+        if (!stagedPoiGuide) {
+            RefreshPoiGuide(hud);
+        }
         RefreshMissionGuide(hud);
         RefreshEventGuide(hud);
         RefreshRegionGuide(hud);
@@ -6510,8 +7640,47 @@ void WorldDemoState::RefreshHud() {
         hint.hasRangedWeapon = hud.rangedValid;
         hint.rangedEmpty = hud.rangedValid && hud.rangedLoaded <= 0;
         hint.rangedReloading = hud.rangedReloading;
+        if (const items::ItemDef* throwableDef = nullptr;
+            TryGetThrowableAimSource(&throwableDef, nullptr)) {
+            hint.hasThrowable = true;
+            hint.throwableName = throwableDef->name;
+        }
         hud.actionHint = game::ActionHintText(hint, &hud.actionTone);
     }
+    if (m_throwAim.active) {
+        game::ActionHintState aimHint;
+        aimHint.hasThrowable = true;
+        aimHint.throwableName = m_throwAim.name;
+        aimHint.throwAiming = true;
+        aimHint.throwClamped = m_throwAim.clamped;
+        aimHint.throwWallClipped = m_throwAim.wallClipped;
+        aimHint.throwDistance = m_throwAim.distance;
+        hud.actionHint = game::ActionHintText(aimHint, &hud.actionTone);
+    }
+    hud.throwCooldownRemaining = std::max(0.0f, m_throwCooldownLeft);
+    hud.throwCooldownDuration =
+        std::max(0.1f, m_throwingConfig.cooldownSeconds);
+    if (m_lastThrowRemaining > 0.0f && !m_lastThrowResult.empty()) {
+        hud.throwLastResult = m_lastThrowResult;
+        hud.throwLastTone = m_lastThrowTone;
+    }
+    if (const items::ItemDef* throwableDef = nullptr;
+        TryGetThrowableAimSource(&throwableDef, nullptr) &&
+        throwableDef != nullptr && throwableDef->throwable.has_value()) {
+        const items::ThrowableDef& throwable = *throwableDef->throwable;
+        hud.throwValid = true;
+        hud.throwName = throwableDef->name;
+        hud.throwRange =
+            std::min(throwable.range, m_throwingConfig.maxRange);
+        hud.throwReturnable = throwable.returnable;
+        hud.throwBreakChance = throwable.breakChance;
+        hud.throwFire = throwable.fire.has_value();
+        if (throwable.fire.has_value()) {
+            hud.throwFireRadius = throwable.fire->radius;
+        }
+    }
+    hud.throwTone = "info";
+    hud.throwStatus = ui::ThrowStatusText(hud, &hud.throwTone);
     if (const ecs::Progression* progression = PlayerProgression();
         progression != nullptr && m_progressionConfig.enabled) {
         hud.progressionValid = true;
@@ -6565,8 +7734,28 @@ void WorldDemoState::RefreshHud() {
                 ? "warn"
                 : "info";
     }
+    if (!m_buildMode && !m_riding && !m_dialogueOpen && !m_tradeOpen &&
+        !hasBleeding && !inPain) {
+        const std::string settlementHint = SettlementNpcHint();
+        if (!settlementHint.empty()) {
+            hud.actionHint = settlementHint;
+            hud.actionTone = "info";
+        }
+    }
     RefreshWorldEventHud(hud);
     SyncDialogueHud(hud);
+    SyncCompanionHud(hud);
+    RefreshPoiStageHint(hud);
+    if (m_poiResultTimer > 0.0f) {
+        m_poiResultTimer = std::max(
+            0.0f, m_poiResultTimer - static_cast<float>(frameDt));
+    }
+    if (m_poiResultTimer > 0.0f && !m_poiResultTitle.empty()) {
+        hud.poiResultVisible = true;
+        hud.poiResultTitle = m_poiResultTitle;
+        hud.poiResultBody = m_poiResultBody;
+        hud.poiResultTone = m_poiResultTone;
+    }
     if (networkState && !m_networkPlayerAlive && m_noticeTimer <= 0.0f) {
         hud.notice = "等待复活";
         hud.noticeTone = "fail";
@@ -6623,6 +7812,14 @@ void WorldDemoState::RefreshInventory() {
     state.weight = items::TotalWeight(*container, *m_ctx.items);
     state.bagStacks = static_cast<int>(container->items.size());
 
+    const auto fillThrowInfo = [&](ui::InventorySlot& slot,
+                                   const items::ItemDef* def) {
+        if (def == nullptr || !def->throwable.has_value()) {
+            return;
+        }
+        slot.throwable = true;
+        slot.throwTag = game::ThrowableInventoryTag(*def->throwable);
+    };
     const int repairKits =
         m_repairKitDefId.empty() || m_repairKitCount <= 0
             ? 0
@@ -6650,6 +7847,7 @@ void WorldDemoState::RefreshInventory() {
             def->maxStack == 1 && entry.condition > 0.0f &&
             entry.condition < 1.0f;
         slot.repairAvailable = slot.damaged && repairKits >= m_repairKitCount;
+        fillThrowInfo(slot, def);
     }
 
     if (equipment != nullptr) {
@@ -6671,6 +7869,7 @@ void WorldDemoState::RefreshInventory() {
                  def->type == items::ItemType::Clothing) &&
                 def->maxStack == 1 && entry->condition > 0.0f &&
                 entry->condition < 1.0f;
+            fillThrowInfo(slot, def);
         }
     }
 
@@ -6813,6 +8012,11 @@ void WorldDemoState::RefreshInventory() {
                 state.lootEntityId = m_ctx.ecs->IdOf(storage).id;
                 const bool vehicleStorage =
                     registry.all_of<ecs::Vehicle>(storage);
+                state.lootIsVehicle = vehicleStorage;
+                state.vehicleModsEnabled =
+                    m_ctx.vehicleMods != nullptr &&
+                    m_ctx.vehicleMods->enabled;
+                state.vehicleModsReadOnly = false;
                 const int storageWeight = static_cast<int>(std::lround(
                     items::TotalWeight(*storageContainer, *m_ctx.items)));
                 const int storageCapacity = static_cast<int>(std::lround(
@@ -6854,6 +8058,7 @@ void WorldDemoState::RefreshInventory() {
                     slot.entityId = state.lootEntityId;
                     slot.condition = item.condition;
                     slot.perishable = def != nullptr && def->spoilDays > 0.0f;
+                    fillThrowInfo(slot, def);
                 }
             }
         } else {
@@ -6945,6 +8150,7 @@ void WorldDemoState::RefreshInventory() {
                         slot.entityId = state.lootEntityId;
                         slot.condition = item.condition;
                         slot.perishable = def != nullptr && def->spoilDays > 0.0f;
+                        fillThrowInfo(slot, def);
                     }
                 }
             } else {
@@ -6965,6 +8171,7 @@ void WorldDemoState::RefreshInventory() {
                     slot.entityId = m_ctx.ecs->IdOf(info.entity).id;
                     slot.condition = info.item.condition;
                     slot.perishable = def != nullptr && def->spoilDays > 0.0f;
+                    fillThrowInfo(slot, def);
                 }
             }
         }
@@ -7193,6 +8400,45 @@ void WorldDemoState::ApplyFoodUse(const items::ItemDef& def,
     (void)ApplyFoodConsumption(food, def, use.spoiled, m_foodSafety, seed);
 }
 
+void WorldDemoState::EmitItemUsed(std::string_view defId, bool spoiled,
+                                  int remaining) {
+    if (m_ctx.ecs == nullptr || m_ctx.events == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    m_ctx.events->EmitQueued(
+        core::kOnItemUsed,
+        core::ItemUsedEvent{m_ctx.ecs->IdOf(m_player).id, std::string(defId),
+                            spoiled, remaining});
+}
+
+void WorldDemoState::EmitCraftStart(const items::RecipeDef& recipe,
+                                    int batchCount) {
+    if (m_ctx.ecs == nullptr || m_ctx.events == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    m_ctx.events->EmitQueued(
+        core::kOnCraftStart,
+        core::CraftStartEvent{m_ctx.ecs->IdOf(m_player).id, recipe.id,
+                              recipe.outputDefId, recipe.outputCount, batchCount});
+}
+
+void WorldDemoState::EmitCraftFinished(std::string_view recipeId,
+                                       std::string_view outputDefId,
+                                       int outputCount, int batchCompleted,
+                                       bool failed) {
+    if (m_ctx.ecs == nullptr || m_ctx.events == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    m_ctx.events->EmitQueued(
+        core::kOnCraftFinished,
+        core::CraftFinishedEvent{m_ctx.ecs->IdOf(m_player).id,
+                                 std::string(recipeId), std::string(outputDefId),
+                                 outputCount, batchCompleted, failed});
+}
+
 bool WorldDemoState::ApplyUseInfectionRisk(float risk, std::string_view defId) {
     if (!(risk > 0.0f) || m_ctx.ecs == nullptr || m_player == entt::null) {
         return false;
@@ -7286,6 +8532,7 @@ void WorldDemoState::UseBagItem(int index) {
         painRelieved = characters::ApplyPainRelief(
             pain, use.effect.painRelief, use.effect.painReliefSeconds);
     }
+    EmitItemUsed(use.defId, use.spoiled, use.remaining);
     const std::string name = def != nullptr ? def->name : use.defId;
     if (ApplyUseInfectionRisk(use.effect.infectionRisk, use.defId)) {
         SetNotice("使用了 " + name + "：污染导致感染", kNoticeFailColor, 2.0f);
@@ -7379,6 +8626,12 @@ bool WorldDemoState::UseBlueprintItem(int index, const items::ItemDef& def) {
     std::sort(known->recipeIds.begin(), known->recipeIds.end());
     known->recipeIds.erase(std::unique(known->recipeIds.begin(), known->recipeIds.end()),
                            known->recipeIds.end());
+    int remaining = 0;
+    if (static_cast<std::size_t>(index) < container->items.size() &&
+        container->items[static_cast<std::size_t>(index)].defId == def.id) {
+        remaining = container->items[static_cast<std::size_t>(index)].count;
+    }
+    EmitItemUsed(def.id, false, remaining);
     SetNotice("学会了配方：" + labels, kNoticeOkColor, 2.8f);
     ZL_INFO("items", "使用蓝图/杂志 '{}'，学会配方：{}", def.name, labels);
     RefreshInventory();
@@ -7616,32 +8869,25 @@ net::Command WorldDemoState::MakePlayerCommand(net::CommandType type) const {
 }
 
 bool WorldDemoState::SubmitPlayerCommand(const net::Command& command) {
+    bool queued = false;
+    std::string error;
+    return SubmitPlayerCommand(command, queued, error);
+}
+
+bool WorldDemoState::SubmitPlayerCommand(const net::Command& command, bool& queued,
+                                         std::string& error) {
+    queued = false;
+    error.clear();
     if (m_ctx.ecs == nullptr || m_player == entt::null || !m_ctx.ecs->Alive(m_player) ||
         command.playerStableId == 0) {
+        error = "当前没有可用的玩家";
         return false;
     }
-    std::string error;
-    if (m_networkMode) {
-        if (m_ctx.networkClient == nullptr ||
-            !m_ctx.networkClient->SendCommand(command, &error)) {
-            if (!error.empty()) {
-                ZL_DEBUG("net", "玩家命令 {} 未发送：{}", net::CommandTypeName(command.type),
-                         error);
-            }
-            return false;
-        }
-        return true;
-    }
-    if (m_ctx.commands == nullptr) {
-        return false;
-    }
-    if (!m_ctx.commands->Submit(command, &error)) {
-        if (!error.empty()) {
-            ZL_WARN("net", "玩家命令 {} 未提交：{}", net::CommandTypeName(command.type), error);
-        }
-        return false;
-    }
-    return true;
+    const ::zl::game::PlayerCommandResult result =
+        ::zl::game::SubmitPlayerCommand(m_ctx, m_networkMode, command);
+    queued = result.queued;
+    error = result.error;
+    return result.ok;
 }
 
 void WorldDemoState::SubmitMoveCommand(float screenX, float screenY) {
@@ -7666,6 +8912,14 @@ void WorldDemoState::SubmitMoveCommand(float screenX, float screenY) {
 
 void WorldDemoState::SubmitInventoryAction(const ui::InventoryAction& action) {
     if (m_ctx.ecs == nullptr || m_player == entt::null || !m_ctx.ecs->Alive(m_player)) {
+        return;
+    }
+    if (action.type == ui::InventoryActionType::OpenVehicleMods) {
+        ecs::Entity vehicle =
+            action.fromEntityId != 0
+                ? m_ctx.ecs->FindById(action.fromEntityId)
+                : entt::null;
+        (void)OpenVehicleModsPanel(vehicle);
         return;
     }
     net::Command command = MakePlayerCommand(net::CommandType::InventoryAction);
@@ -7764,6 +9018,10 @@ bool WorldDemoState::ExecutePlayerCommand(const net::Command& command, std::stri
             PlayerAttack(command.payload.entityId,
                          (command.payload.flags & net::kAttackHeavyFlag) != 0);
             return true;
+        case net::CommandType::SetStealth:
+            SetLocalStealth((command.payload.flags &
+                             net::kStealthCrouchFlag) != 0);
+            return true;
         case net::CommandType::PickupNearest:
             PickupNearestItem();
             return true;
@@ -7848,6 +9106,8 @@ bool WorldDemoState::ExecutePlayerCommand(const net::Command& command, std::stri
                 return true;
             }
             return TryInteractHomestead();
+        case net::CommandType::PoiInteract:
+            return true;
         case net::CommandType::TradeOffer:
             // 商人交易由服务器权威执行；本地不重复扣物/加物。
             return true;
@@ -7907,6 +9167,7 @@ bool WorldDemoState::StartCraftBatch(const items::RecipeDef& recipe, int request
     m_craftBatchCompleted = 0;
     m_crafting.Start(recipe.id, seconds, efficiency);
     actual = possible;
+    EmitCraftStart(recipe, possible);
     return true;
 }
 
@@ -8272,10 +9533,21 @@ void WorldDemoState::HandleInventoryAction(const ui::InventoryAction& action) {
             const int completed = m_craftBatchCompleted;
             const int total = m_craftBatchTotal;
             const int queued = static_cast<int>(m_craftQueue.size());
+            const bool wasActive = m_crafting.active;
+            const items::RecipeDef* cancelledRecipe =
+                m_ctx.recipes != nullptr ? m_ctx.recipes->Find(recipeId) : nullptr;
             m_crafting.Cancel();
             m_craftBatchTotal = 0;
             m_craftBatchCompleted = 0;
             m_craftQueue.clear();
+            if (wasActive) {
+                EmitCraftFinished(
+                    recipeId,
+                    cancelledRecipe != nullptr ? cancelledRecipe->outputDefId
+                                               : std::string(),
+                    cancelledRecipe != nullptr ? cancelledRecipe->outputCount : 0,
+                    completed, true);
+            }
             if (queued > 0) {
                 if (completed > 0) {
                     SetNotice("已取消制作队列（当前已完成 " +
@@ -8396,13 +9668,21 @@ void WorldDemoState::UpdateCrafting(float tickDt) {
     }
     const std::string recipeId = m_crafting.recipeId;
     m_crafting.Cancel();
-    const auto finishFailure = [this](const std::string& reason) {
+    const items::RecipeDef* failedRecipe =
+        m_ctx.recipes != nullptr ? m_ctx.recipes->Find(recipeId) : nullptr;
+    const auto finishFailure = [this, &recipeId, failedRecipe](
+                                   const std::string& reason) {
         const int completed = m_craftBatchCompleted;
         const int total = m_craftBatchTotal;
         const int queued = static_cast<int>(m_craftQueue.size());
         m_craftBatchTotal = 0;
         m_craftBatchCompleted = 0;
         m_craftQueue.clear();
+        EmitCraftFinished(
+            recipeId, failedRecipe != nullptr ? failedRecipe->outputDefId
+                                              : std::string(),
+            failedRecipe != nullptr ? failedRecipe->outputCount : 0, completed,
+            true);
         const std::string queueSuffix =
             queued > 0 ? "；队列 " + std::to_string(queued) + " 项已清空"
                        : std::string();
@@ -8422,9 +9702,15 @@ void WorldDemoState::UpdateCrafting(float tickDt) {
     if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_ctx.recipes == nullptr ||
         m_player == entt::null || !m_ctx.ecs->Alive(m_player)) {
         const int queued = static_cast<int>(m_craftQueue.size());
+        const int completed = m_craftBatchCompleted;
         m_craftBatchTotal = 0;
         m_craftBatchCompleted = 0;
         m_craftQueue.clear();
+        EmitCraftFinished(
+            recipeId, failedRecipe != nullptr ? failedRecipe->outputDefId
+                                              : std::string(),
+            failedRecipe != nullptr ? failedRecipe->outputCount : 0, completed,
+            true);
         ZL_WARN("items", "制作中断：玩家或注册表不可用（配方 {}，清空队列 {} 项）",
                 recipeId, queued);
         return;
@@ -8515,6 +9801,8 @@ void WorldDemoState::UpdateCrafting(float tickDt) {
         ZL_INFO("items", "制作成功：{} ×{}（配方 {}，批次 {}/{}）；工具损坏：{}",
                 label, result.outputCount, recipe->id, completed, total, brokenTools);
     }
+    EmitCraftFinished(recipe->id, result.outputDefId, result.outputCount,
+                      completed, false);
     if (!m_craftQueue.empty()) {
         StartNextQueuedCraft(completion + "；");
         return;
@@ -8958,6 +10246,13 @@ void WorldDemoState::PlayerAttack(std::uint64_t targetStableId, bool heavy) {
     attack->windupLeft = attack->windupSeconds;
     attack->poiseDamage = std::max(0.0f, params.poiseDamage);
     attack->staminaCost = std::max(0.0f, params.staminaCost);
+    // M34-F1-T4：背刺倍率锁进本次挥击，命中结算时只消费一次；
+    // 关闭 stealth 时显式写 1.0，旧行为不变。
+    const characters::StealthRuleConfig stealthRules =
+        characters::SanitizeStealthRuleConfig(m_stealthRules);
+    attack->backstabMultiplier =
+        stealthRules.enabled ? stealthRules.backstabMultiplier : 1.0f;
+    attack->backstabHalfAngleDegrees = stealthRules.backstabHalfAngleDegrees;
     attack->pending = true;  // 下一 tick CombatSystem 推进前摇并结算
     float cooldownSeconds = std::max(0.0f, params.cooldownSeconds);
     if (const auto* pain = registry.try_get<ecs::Pain>(m_player); pain != nullptr) {
@@ -8965,6 +10260,7 @@ void WorldDemoState::PlayerAttack(std::uint64_t targetStableId, bool heavy) {
     }
     cooldownSeconds *= progressionCooldownScale;
     m_attackCooldownLeft = cooldownSeconds;
+    ExitStealth(characters::StealthExitReason::Attack);
     if (auto* facing = registry.try_get<ecs::Facing>(m_player); facing != nullptr) {
         facing->dir = characters::AnimationSystem::FacingFromVelocity(dx, dy);  // 挥击朝向反馈
     }
@@ -9253,6 +10549,754 @@ bool WorldDemoState::TryGetEquippedRangedWeapon(
     return true;
 }
 
+bool WorldDemoState::TryGetThrowableAimSource(
+    const items::ItemDef** outDef, ecs::ItemInstance** outItem,
+    int* outSourceIndex) {
+    if (outDef != nullptr) {
+        *outDef = nullptr;
+    }
+    if (outItem != nullptr) {
+        *outItem = nullptr;
+    }
+    if (outSourceIndex != nullptr) {
+        *outSourceIndex = -1;
+    }
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr || m_player == entt::null) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto source = [&](ecs::ItemInstance& item, int index) {
+        const items::ItemDef* def = m_ctx.items->Find(item.defId);
+        if (def == nullptr || !def->throwable.has_value() || item.count <= 0) {
+            return false;
+        }
+        if (outDef != nullptr) {
+            *outDef = def;
+        }
+        if (outItem != nullptr) {
+            *outItem = &item;
+        }
+        if (outSourceIndex != nullptr) {
+            *outSourceIndex = index;
+        }
+        return true;
+    };
+
+    if (auto* equipment = registry.try_get<ecs::Equipment>(m_player);
+        equipment != nullptr) {
+        auto& primary =
+            equipment->slots[static_cast<std::size_t>(ecs::EquipSlot::PrimaryHand)];
+        if (primary.has_value() && source(*primary, -1)) {
+            return true;
+        }
+    }
+    if (auto* container = registry.try_get<ecs::Container>(m_player);
+        container != nullptr) {
+        const int index = std::clamp(m_hotbarSelected, 0, 4);
+        if (index < static_cast<int>(container->items.size()) &&
+            source(container->items[static_cast<std::size_t>(index)], index)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool WorldDemoState::ThrowTargetCellValid(int cellX, int cellY) const {
+    if (m_ctx.chunkManager == nullptr) {
+        return false;
+    }
+    const world::ChunkCoord coord = world::ChunkOf(cellX, cellY);
+    const world::Chunk* chunk = FindChunk(coord.cx, coord.cy);
+    return chunk != nullptr && chunk->State() == world::ChunkState::Loaded;
+}
+
+ThrowAimBlockReason WorldDemoState::CurrentThrowAimBlock() {
+    ThrowAimRequest request;
+    request.hasThrowable = TryGetThrowableAimSource(nullptr, nullptr);
+    request.buildMode = m_buildMode;
+    request.dead = m_runOutcome != RunOutcome::None;
+    request.inVehicle = m_driving || m_riding || m_vehicleModsOpen;
+    request.modalOpen = m_dialogueOpen || m_tradeOpen || m_characterOpen ||
+                        m_companionOpen || m_worldEventChoiceOpen ||
+                        m_siegeReportOpen || m_worldMapOpen ||
+                        m_sleep.Active() || m_sleepSelecting;
+    if (m_ctx.ui != nullptr) {
+        request.uiPointerOver = m_ctx.ui->IsPointerOverUi();
+        request.inventoryOpen = m_ctx.ui->IsInventoryOpen();
+        request.menuOpen = m_ctx.ui->IsMenuOpen();
+    }
+    if (m_ctx.ecs != nullptr && m_player != entt::null) {
+        const entt::registry& registry = m_ctx.ecs->Registry();
+        if (!m_ctx.ecs->Alive(m_player) ||
+            registry.all_of<ecs::Dying, ecs::VehicleOccupant>(m_player)) {
+            request.dead = true;
+        }
+        if (const auto* health = registry.try_get<ecs::Health>(m_player);
+            health != nullptr && health->current <= 0.0f) {
+            request.dead = true;
+        }
+        request.inVehicle =
+            request.inVehicle || registry.all_of<ecs::VehicleOccupant>(m_player);
+    } else {
+        request.dead = true;
+    }
+    request.targetValid = true;
+    return ThrowAimBlockReasonFor(request);
+}
+
+ThrowPathResult WorldDemoState::ClipThrowPathToWorld(
+    float startX, float startY, float targetX, float targetY, int z) const {
+    if (m_ctx.world == nullptr) {
+        return ClipThrowPath(startX, startY, targetX, targetY, {});
+    }
+    return ClipThrowPath(startX, startY, targetX, targetY,
+                         [this, z](int x, int y) {
+                             return IsSquareBlocked(*m_ctx.world, x, y, z);
+                         });
+}
+
+void WorldDemoState::ApplyThrowAimPath(const ThrowAimEvaluation& evaluation,
+                                       int z) {
+    if (!evaluation.valid || m_ctx.ecs == nullptr || m_player == entt::null) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    const ThrowPathResult path = ClipThrowPathToWorld(
+        position->x, position->y, evaluation.targetX, evaluation.targetY, z);
+    m_throwAim.targetX = path.valid ? path.x : evaluation.targetX;
+    m_throwAim.targetY = path.valid ? path.y : evaluation.targetY;
+    m_throwAim.distance = path.valid ? path.distance : evaluation.distance;
+    m_throwAim.wallClipped = path.valid && path.hitWall;
+    m_throwAim.targetCellX = static_cast<int>(std::floor(m_throwAim.targetX));
+    m_throwAim.targetCellY = static_cast<int>(std::floor(m_throwAim.targetY));
+}
+
+bool WorldDemoState::TryBeginThrowAim(const glm::vec2& mousePx) {
+    if (m_throwCooldownLeft > 0.0f) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "投掷冷却中：%.1fs",
+                      static_cast<double>(m_throwCooldownLeft));
+        SetNotice(text, kNoticeInfoColor, 1.2f);
+        return false;
+    }
+    const items::ItemDef* def = nullptr;
+    ecs::ItemInstance* item = nullptr;
+    int sourceIndex = -1;
+    if (!TryGetThrowableAimSource(&def, &item, &sourceIndex) || def == nullptr ||
+        item == nullptr || !def->throwable.has_value()) {
+        return false;
+    }
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return false;
+    }
+    const auto* playerPosition =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (playerPosition == nullptr) {
+        return false;
+    }
+
+    const render::GridPick pick = PickMouseCell(mousePx);
+    ThrowAimRequest request;
+    request.hasThrowable = true;
+    request.buildMode = m_buildMode;
+    request.dead = m_runOutcome != RunOutcome::None;
+    request.inVehicle = m_driving || m_riding || m_vehicleModsOpen;
+    request.modalOpen = m_dialogueOpen || m_tradeOpen || m_characterOpen ||
+                        m_companionOpen || m_worldEventChoiceOpen ||
+                        m_siegeReportOpen || m_worldMapOpen ||
+                        m_sleep.Active() || m_sleepSelecting;
+    if (m_ctx.ui != nullptr) {
+        request.uiPointerOver = m_ctx.ui->IsPointerOverUi();
+        request.inventoryOpen = m_ctx.ui->IsInventoryOpen();
+        request.menuOpen = m_ctx.ui->IsMenuOpen();
+    }
+    if (const auto* health =
+            m_ctx.ecs->Registry().try_get<ecs::Health>(m_player);
+        health != nullptr && health->current <= 0.0f) {
+        request.dead = true;
+    }
+    request.targetValid = ThrowTargetCellValid(pick.x, pick.y);
+    request.playerX = playerPosition->x;
+    request.playerY = playerPosition->y;
+    request.targetX = static_cast<float>(pick.x) + 0.5f;
+    request.targetY = static_cast<float>(pick.y) + 0.5f;
+    request.itemRange = def->throwable->range;
+    request.config = m_throwingConfig;
+
+    const ThrowAimEvaluation result = EvaluateThrowAim(request);
+    if (!result.valid) {
+        std::string reason = "投掷瞄准失败";
+        switch (result.block) {
+            case ThrowAimBlockReason::UiPointer:
+                reason = "光标在界面元素上";
+                break;
+            case ThrowAimBlockReason::BuildMode:
+                reason = "建造模式中";
+                break;
+            case ThrowAimBlockReason::InventoryOpen:
+                reason = "背包已打开";
+                break;
+            case ThrowAimBlockReason::MenuOpen:
+                reason = "菜单已打开";
+                break;
+            case ThrowAimBlockReason::OtherUi:
+                reason = "其他界面已打开";
+                break;
+            case ThrowAimBlockReason::Dead:
+                reason = "当前状态不可投掷";
+                break;
+            case ThrowAimBlockReason::InVehicle:
+                reason = "载具中不可投掷";
+                break;
+            case ThrowAimBlockReason::InvalidTarget:
+                reason = "目标不在已加载区域";
+                break;
+            case ThrowAimBlockReason::TooClose:
+                reason = "目标过近";
+                break;
+            case ThrowAimBlockReason::NoThrowable:
+                reason = "没有可投掷物品";
+                break;
+            case ThrowAimBlockReason::None:
+                break;
+        }
+        ZL_INFO("throwing", "投掷瞄准被拒绝：{}（目标格 {},{}）", reason, pick.x,
+                pick.y);
+        SetNotice(reason, kNoticeFailColor, 1.5f);
+        return false;
+    }
+
+    m_throwAim = {};
+    m_throwAim.active = true;
+    m_throwAim.sourceIndex = sourceIndex;
+    m_throwAim.defId = def->id;
+    m_throwAim.name = def->name;
+    m_throwAim.itemRange = def->throwable->range;
+    m_throwAim.range = result.range;
+    m_throwAim.impactRadius = def->throwable->impactRadius;
+    m_throwAim.arcHeight = def->throwable->arcHeight;
+    m_throwAim.damage = def->throwable->damage;
+    m_throwAim.noiseRadius = def->throwable->noiseRadius;
+    if (def->throwable->fire.has_value()) {
+        m_throwAim.fireRadius = def->throwable->fire->radius;
+        m_throwAim.fireMinutes = def->throwable->fire->minutes;
+    }
+    m_throwAim.breakChance = def->throwable->breakChance;
+    m_throwAim.returnable = def->throwable->returnable;
+    m_throwAim.directionX = result.directionX;
+    m_throwAim.directionY = result.directionY;
+    m_throwAim.clamped = result.clamped;
+    ApplyThrowAimPath(result, playerPosition->z);
+    ExitStealth(characters::StealthExitReason::Throw);
+    if (auto* facing = m_ctx.ecs->Registry().try_get<ecs::Facing>(m_player);
+        facing != nullptr) {
+        facing->dir = characters::AnimationSystem::FacingFromVelocity(
+            result.directionX, result.directionY);
+    }
+    char text[160];
+    std::snprintf(text, sizeof(text),
+                  "投掷瞄准：%s · 落点 %.1f 格%s%s · 松开 V 投掷 · ESC 取消",
+                  def->name.c_str(), static_cast<double>(m_throwAim.distance),
+                  result.clamped ? "（已夹到最大射程）" : "",
+                  m_throwAim.wallClipped ? "（墙前落点）" : "");
+    SetNotice(text, kNoticeInfoColor, 1.5f);
+    ZL_INFO("throwing",
+            "投掷瞄准：{}（{}），来源 {}，目标 ({:.1f},{:.1f})，距离 {:.2f}/{:.1f}，夹取={}，墙前={}",
+            def->name, def->id,
+            sourceIndex < 0 ? "主手" : "快捷栏 " + std::to_string(sourceIndex + 1),
+            static_cast<double>(m_throwAim.targetX),
+            static_cast<double>(m_throwAim.targetY),
+            static_cast<double>(m_throwAim.distance),
+            static_cast<double>(result.range), result.clamped,
+            m_throwAim.wallClipped);
+    return true;
+}
+
+void WorldDemoState::UpdateThrowAimTarget(const glm::vec2& mousePx,
+                                          bool announce) {
+    if (!m_throwAim.active) {
+        return;
+    }
+    const ThrowAimBlockReason block = CurrentThrowAimBlock();
+    if (block != ThrowAimBlockReason::None) {
+        CancelThrowAim(block == ThrowAimBlockReason::NoThrowable
+                           ? "投掷物已不在主手/快捷栏"
+                           : "界面或状态变化",
+                       announce);
+        return;
+    }
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        CancelThrowAim("玩家状态失效", announce);
+        return;
+    }
+    const auto* playerPosition =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (playerPosition == nullptr) {
+        CancelThrowAim("玩家位置失效", announce);
+        return;
+    }
+    const render::GridPick pick = PickMouseCell(mousePx);
+    ThrowAimRequest request;
+    request.hasThrowable = true;
+    request.targetValid = ThrowTargetCellValid(pick.x, pick.y);
+    request.playerX = playerPosition->x;
+    request.playerY = playerPosition->y;
+    request.targetX = static_cast<float>(pick.x) + 0.5f;
+    request.targetY = static_cast<float>(pick.y) + 0.5f;
+    request.itemRange = m_throwAim.itemRange;
+    request.config = m_throwingConfig;
+    const ThrowAimEvaluation result = EvaluateThrowAim(request);
+    if (!result.valid) {
+        CancelThrowAim(result.block == ThrowAimBlockReason::TooClose
+                           ? "目标过近"
+                           : "无效落点",
+                       announce);
+        return;
+    }
+    m_throwAim.directionX = result.directionX;
+    m_throwAim.directionY = result.directionY;
+    m_throwAim.clamped = result.clamped;
+    ApplyThrowAimPath(result, playerPosition->z);
+    if (auto* facing = m_ctx.ecs->Registry().try_get<ecs::Facing>(m_player);
+        facing != nullptr) {
+        facing->dir = characters::AnimationSystem::FacingFromVelocity(
+            result.directionX, result.directionY);
+    }
+}
+
+void WorldDemoState::ReleaseThrowAim() {
+    if (!m_throwAim.active) {
+        return;
+    }
+    const ThrowAimBlockReason block = CurrentThrowAimBlock();
+    if (block != ThrowAimBlockReason::None) {
+        CancelThrowAim(block == ThrowAimBlockReason::NoThrowable
+                           ? "投掷物已不在主手/快捷栏"
+                           : "界面或状态变化",
+                       true);
+        return;
+    }
+    if (m_throwCooldownLeft > 0.0f) {
+        CancelThrowAim("投掷冷却中", true);
+        return;
+    }
+    if (m_networkMode) {
+        if (m_ctx.ecs == nullptr || m_player == entt::null ||
+            !m_ctx.ecs->Alive(m_player)) {
+            CancelThrowAim("当前状态不可投掷", true);
+            return;
+        }
+        entt::registry& registry = m_ctx.ecs->Registry();
+        const auto* position = registry.try_get<ecs::Position>(m_player);
+        if (position == nullptr) {
+            CancelThrowAim("玩家位置失效", true);
+            return;
+        }
+        const ThrowAimRuntime aim = m_throwAim;
+        net::Command command = MakePlayerCommand(net::CommandType::ThrowItem);
+        command.payload.index = aim.sourceIndex;
+        command.payload.x = aim.targetX;
+        command.payload.y = aim.targetY;
+        if (!SubmitPlayerCommand(command)) {
+            CancelThrowAim("投掷请求发送失败", true);
+            return;
+        }
+        m_throwAim = {};
+
+        ThrownProjectile visual;
+        visual.visualOnly = true;
+        visual.ownerStableId = m_ctx.ecs->IdOf(m_player).id;
+        visual.sourceIndex = aim.sourceIndex;
+        visual.defId = aim.defId;
+        visual.name = aim.name;
+        visual.z = position->z;
+        visual.startX = position->x;
+        visual.startY = position->y;
+        visual.targetX = aim.targetX;
+        visual.targetY = aim.targetY;
+        visual.directionX = aim.directionX;
+        visual.directionY = aim.directionY;
+        visual.arcHeight = aim.arcHeight;
+        visual.duration = ThrowFlightSeconds(aim.distance);
+        visual.impactRadius = aim.impactRadius;
+        visual.noiseRadius = aim.noiseRadius;
+        visual.fireRadius = aim.fireRadius;
+        visual.fireMinutes = aim.fireMinutes;
+        visual.returnable = aim.returnable;
+        visual.breakChance = aim.breakChance;
+        visual.wallClipped = aim.wallClipped;
+        m_thrownProjectiles.push_back(visual);
+        m_throwCooldownLeft =
+            std::max(0.1f, m_throwingConfig.cooldownSeconds);
+        m_lastThrowResult = "请求已发送";
+        m_lastThrowTone = "info";
+        m_lastThrowRemaining = 1.5f;
+        SetNotice("投掷请求已发送", kNoticeInfoColor, 1.2f);
+        ZL_INFO("throwing",
+                "联机投掷请求：{}（{}），来源 {}，落点 ({:.2f},{:.2f})，距离 {:.2f}，等待服务器结算",
+                aim.name, aim.defId,
+                aim.sourceIndex < 0
+                    ? "主手"
+                    : "背包 " + std::to_string(aim.sourceIndex),
+                static_cast<double>(aim.targetX),
+                static_cast<double>(aim.targetY),
+                static_cast<double>(aim.distance));
+        return;
+    }
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
+        m_player == entt::null || !m_ctx.ecs->Alive(m_player)) {
+        CancelThrowAim("当前状态不可投掷", true);
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* position = registry.try_get<ecs::Position>(m_player);
+    auto* equipment = registry.try_get<ecs::Equipment>(m_player);
+    auto* container = registry.try_get<ecs::Container>(m_player);
+    if (position == nullptr) {
+        CancelThrowAim("玩家位置失效", true);
+        return;
+    }
+
+    const ThrowAimRuntime aim = m_throwAim;
+    ecs::ItemInstance thrown;
+    if (!ConsumeThrowableSource(equipment, container, aim.sourceIndex, aim.defId,
+                                &thrown)) {
+        CancelThrowAim("投掷物已变化或数量不足", true);
+        return;
+    }
+    m_throwAim = {};
+
+    ThrownProjectile projectile;
+    projectile.ownerStableId = m_ctx.ecs->IdOf(m_player).id;
+    projectile.sourceIndex = aim.sourceIndex;
+    projectile.defId = aim.defId;
+    projectile.name = aim.name;
+    projectile.z = position->z;
+    projectile.startX = position->x;
+    projectile.startY = position->y;
+    projectile.targetX = aim.targetX;
+    projectile.targetY = aim.targetY;
+    projectile.directionX = aim.directionX;
+    projectile.directionY = aim.directionY;
+    projectile.arcHeight = aim.arcHeight;
+    projectile.duration = ThrowFlightSeconds(aim.distance);
+    projectile.damage = aim.damage;
+    projectile.impactRadius = aim.impactRadius;
+    projectile.noiseRadius = aim.noiseRadius;
+    projectile.fireRadius = aim.fireRadius;
+    projectile.fireMinutes = aim.fireMinutes;
+    projectile.returnable = aim.returnable;
+    projectile.breakChance = aim.breakChance;
+    projectile.itemCondition = thrown.condition;
+    projectile.wallClipped = aim.wallClipped;
+    m_thrownProjectiles.push_back(projectile);
+    m_throwCooldownLeft =
+        std::max(0.1f, m_throwingConfig.cooldownSeconds);
+    m_lastThrowResult.clear();
+    m_lastThrowTone = "info";
+    m_lastThrowRemaining = 0.0f;
+
+    char text[192];
+    std::snprintf(text, sizeof(text),
+                  "投掷：%s → (%.1f, %.1f)，%.1f 格%s%s",
+                  aim.name.c_str(), static_cast<double>(aim.targetX),
+                  static_cast<double>(aim.targetY),
+                  static_cast<double>(aim.distance),
+                  aim.clamped ? "，已夹到最大射程" : "",
+                  aim.wallClipped ? "，墙前落点" : "");
+    SetNotice(text, kNoticeInfoColor, 1.8f);
+    ZL_INFO("throwing",
+            "投掷开始：{}（{}），来源 {}，起点 ({:.2f},{:.2f})，落点 ({:.2f},{:.2f})，距离 {:.2f}，飞行 {:.2f}s，夹取={}，墙前={}，扣除 1 件",
+            aim.name, aim.defId,
+            aim.sourceIndex < 0 ? "主手"
+                                : "快捷栏 " + std::to_string(aim.sourceIndex + 1),
+            static_cast<double>(position->x), static_cast<double>(position->y),
+            static_cast<double>(aim.targetX), static_cast<double>(aim.targetY),
+            static_cast<double>(aim.distance),
+            static_cast<double>(projectile.duration), aim.clamped,
+            aim.wallClipped);
+}
+
+void WorldDemoState::CancelThrowAim(std::string_view reason, bool notice) {
+    if (!m_throwAim.active) {
+        return;
+    }
+    const std::string name = m_throwAim.name;
+    m_throwAim = {};
+    if (notice) {
+        std::string text = "投掷取消";
+        if (!reason.empty()) {
+            text += "：";
+            text += reason;
+        }
+        SetNotice(std::move(text), kNoticeInfoColor, 1.4f);
+    }
+    ZL_INFO("throwing", "取消投掷瞄准：{}（{}）", name,
+            reason.empty() ? "主动取消" : std::string(reason));
+}
+
+void WorldDemoState::UpdateThrownProjectiles(float tickDt) {
+    if (m_ctx.ecs == nullptr || m_thrownProjectiles.empty() ||
+        !(tickDt > 0.0f)) {
+        return;
+    }
+    for (std::size_t i = m_thrownProjectiles.size(); i-- > 0;) {
+        ThrownProjectile& projectile = m_thrownProjectiles[i];
+        if (!AdvanceThrownProjectile(projectile, tickDt)) {
+            continue;
+        }
+        const ThrownProjectile landed = projectile;
+        m_thrownProjectiles.erase(m_thrownProjectiles.begin() +
+                                   static_cast<std::ptrdiff_t>(i));
+        if (!landed.visualOnly) {
+            ResolveThrownProjectile(landed);
+        }
+    }
+}
+
+void WorldDemoState::SettleThrownProjectiles() {
+    if (m_thrownProjectiles.empty()) {
+        return;
+    }
+    std::vector<ThrownProjectile> pending;
+    pending.swap(m_thrownProjectiles);
+    std::size_t settled = 0;
+    for (ThrownProjectile& projectile : pending) {
+        if (projectile.visualOnly) {
+            continue;
+        }
+        if (ForceSettleThrownProjectile(projectile)) {
+            ResolveThrownProjectile(projectile);
+            ++settled;
+        }
+    }
+    if (settled > 0) {
+        ZL_INFO("throwing", "存档/退出前结算在飞投掷物：{} 件（不保存飞行中实体）",
+                settled);
+    }
+}
+
+void WorldDemoState::ResolveThrownProjectile(
+    const ThrownProjectile& projectile) {
+    if (m_ctx.ecs == nullptr) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    std::vector<ThrowTargetCandidate> candidates;
+    registry.view<ecs::Health, ecs::Position>().each(
+        [&](const ecs::Entity entity, const ecs::Health& health,
+            const ecs::Position& position) {
+            if (!m_ctx.ecs->Alive(entity) || entity == m_player ||
+                health.current <= 0.0f || position.z != projectile.z ||
+                registry.any_of<ecs::PlayerTag, ecs::NoCombatTarget,
+                                ecs::FriendlyNpc>(entity)) {
+                return;
+            }
+            candidates.push_back(ThrowTargetCandidate{
+                m_ctx.ecs->IdOf(entity).id, position.x, position.y, position.z});
+        });
+    const std::uint64_t targetId =
+        SelectThrowTarget(candidates, projectile.targetX, projectile.targetY,
+                          projectile.z, projectile.impactRadius,
+                          projectile.ownerStableId);
+
+    bool damaged = false;
+    if (targetId != 0 && m_ctx.combat != nullptr) {
+        const ecs::Entity target = m_ctx.ecs->FindById(targetId);
+        if (m_ctx.ecs->Alive(target)) {
+            ecs::DamageEvent event;
+            event.sourceId = projectile.ownerStableId;
+            event.type = ecs::DamageType::Blunt;
+            event.amount = projectile.damage;
+            event.dirX = projectile.directionX;
+            event.dirY = projectile.directionY;
+            event.knockback = 0.0f;
+            event.staggerSeconds = 0.0f;
+            damaged = m_ctx.combat->ApplyDamage(*m_ctx.ecs, target, event);
+        }
+    }
+
+    if (projectile.noiseRadius > 0.0f && m_ctx.events != nullptr) {
+        core::SoundEvent noise;
+        noise.x = projectile.targetX;
+        noise.y = projectile.targetY;
+        noise.radius = projectile.noiseRadius;
+        noise.type = core::SoundType::Impact;
+        noise.clip = audio::kImpact;
+        if (m_ctx.audio != nullptr) {
+            m_ctx.audio->EmitWorldSound(std::move(noise));
+        } else {
+            m_ctx.events->EmitQueued(core::kOnSound, std::move(noise));
+        }
+    }
+
+    SpawnRangedEffect(projectile.targetX, projectile.targetY, projectile.z,
+                      0.35f, 2, 0xFFFFE060u);
+
+    const bool fireRequested =
+        projectile.fireRadius > 0.0f && projectile.fireMinutes > 0.0f;
+    std::size_t fireCellCount = 0;
+    std::size_t fireIgnited = 0;
+    std::size_t fireExisting = 0;
+    float fireBurnSeconds = 0.0f;
+    std::string fireError;
+    if (fireRequested) {
+        game::FireSystem* fire =
+            m_ctx.simulation != nullptr ? m_ctx.simulation->Fire() : nullptr;
+        if (fire == nullptr || m_ctx.world == nullptr) {
+            fireError = "火焰系统不可用";
+        } else {
+            double dayLengthMinutes = 60.0;
+            if (m_ctx.config != nullptr) {
+                dayLengthMinutes = m_ctx.config->Get<double>(
+                    "game.dayLengthMinutes", dayLengthMinutes);
+            }
+            const float gameMinutesPerRealSecond =
+                std::isfinite(dayLengthMinutes) && dayLengthMinutes > 0.0
+                    ? static_cast<float>(1440.0 /
+                                         (dayLengthMinutes * 60.0))
+                    : 0.4f;
+            fireBurnSeconds = ThrowFireBurnSeconds(
+                projectile.fireMinutes, gameMinutesPerRealSecond);
+            const std::vector<ThrowFireCell> cells = ThrowFireAreaCells(
+                projectile.targetX, projectile.targetY, projectile.fireRadius);
+            fireCellCount = cells.size();
+            const float wetness =
+                m_ctx.simulation->CurrentWeather().wetnessIntensity;
+            for (const ThrowFireCell& cell : cells) {
+                std::string error;
+                const game::FireIgnitionResult result = fire->IgniteAt(
+                    *m_ctx.ecs, *m_ctx.world, cell.cellX, cell.cellY,
+                    projectile.z, wetness, &error, projectile.ownerStableId);
+                if (result == game::FireIgnitionResult::Ignited) {
+                    ++fireIgnited;
+                    ecs::FireSource* source = fire->FindAt(
+                        *m_ctx.ecs, cell.cellX, cell.cellY, projectile.z);
+                    if (source != nullptr && fireBurnSeconds > 0.0f) {
+                        source->burnDuration = fireBurnSeconds;
+                        source->burnRemaining = fireBurnSeconds;
+                    }
+                } else if (result == game::FireIgnitionResult::AlreadyActive) {
+                    ++fireExisting;
+                } else if (!error.empty()) {
+                    fireError = std::move(error);
+                }
+            }
+            if (fireError.empty() && fireIgnited == 0 && fireExisting == 0) {
+                fireError = "落点没有可燃物";
+            }
+            const std::string fireFailure =
+                fireError.empty() ? std::string() : "，失败：" + fireError;
+            ZL_INFO("throwing",
+                    "投掷火焰：范围 {:.1f} 格，持续 {:.1f} 游戏分钟（{:.1f}s），点燃 {}/{} 格，已存在 {}{}",
+                    static_cast<double>(projectile.fireRadius),
+                    static_cast<double>(projectile.fireMinutes),
+                    static_cast<double>(fireBurnSeconds), fireIgnited,
+                    fireCellCount, fireExisting, fireFailure);
+        }
+        if (fireIgnited == 0 && fireExisting == 0 && !fireError.empty()) {
+            ZL_WARN("throwing", "投掷未能点燃：{}", fireError);
+        }
+    }
+
+    const float roll =
+        std::uniform_real_distribution<float>(0.0f, 1.0f)(m_throwRng);
+    const ThrowLandingOutcome outcome =
+        ResolveThrowLanding(projectile.returnable, projectile.breakChance, roll);
+    ecs::Entity ground = entt::null;
+    if (outcome == ThrowLandingOutcome::Recovered && m_ctx.items != nullptr) {
+        const ecs::ItemInstance landed{projectile.defId, 1,
+                                       projectile.itemCondition, 0};
+        ground = SpawnGroundItem(*m_ctx.ecs, *m_ctx.items, landed,
+                                 projectile.targetX, projectile.targetY,
+                                 projectile.z);
+        if (ground != entt::null && m_ctx.events != nullptr) {
+            m_ctx.events->EmitQueued(
+                core::kOnItemDrop,
+                core::ItemEvent{m_ctx.ecs->IdOf(ground).id, projectile.defId, 1});
+        }
+    }
+
+    const char* outcomeLabel = "消耗";
+    switch (outcome) {
+        case ThrowLandingOutcome::Recovered:
+            outcomeLabel = "回收";
+            break;
+        case ThrowLandingOutcome::Broken:
+            outcomeLabel = "损坏";
+            break;
+        case ThrowLandingOutcome::Consumed:
+            outcomeLabel = "消耗";
+            break;
+    }
+    m_lastThrowResult =
+        std::string(targetId != 0 ? "命中" : "落空") + " · " + outcomeLabel;
+    if (fireRequested) {
+        m_lastThrowResult +=
+            (fireIgnited > 0 || fireExisting > 0) ? " · 已点燃" : " · 未点燃";
+    }
+    m_lastThrowTone = outcome == ThrowLandingOutcome::Broken
+                          ? "fail"
+                          : targetId != 0 ? "ok" : "info";
+    m_lastThrowRemaining = 4.0f;
+
+    std::string text = targetId != 0 ? "投掷命中：" : "投掷落空：";
+    text += projectile.name;
+    if (projectile.wallClipped) {
+        text += "（墙前）";
+    }
+    text += " · ";
+    text += outcomeLabel;
+    if (outcome == ThrowLandingOutcome::Recovered && ground == entt::null) {
+        text += "失败";
+    }
+    if (fireRequested) {
+        text += (fireIgnited > 0 || fireExisting > 0) ? " · 已点燃"
+                                                      : " · 未点燃";
+    }
+    const uint32_t color =
+        outcome == ThrowLandingOutcome::Broken ? kNoticeFailColor
+        : targetId != 0 ? kNoticeOkColor
+                        : kNoticeInfoColor;
+    SetNotice(std::move(text), color, 2.0f);
+    ZL_INFO("throwing",
+            "投掷落地：{}（{}），落点 ({:.2f},{:.2f})，z={}，墙前={}，目标 {}，伤害 {:.0f}，结算={}，地面物品 {}，火焰 {}/{}，roll={:.3f}",
+            projectile.name, projectile.defId,
+            static_cast<double>(projectile.targetX),
+            static_cast<double>(projectile.targetY), projectile.z,
+            projectile.wallClipped, targetId,
+            static_cast<double>(projectile.damage), outcomeLabel,
+            ground != entt::null ? m_ctx.ecs->IdOf(ground).id : 0,
+            fireIgnited + fireExisting, fireCellCount,
+            static_cast<double>(roll));
+}
+
+void WorldDemoState::DrawThrownProjectiles(render::SpriteBatch& batch) {
+    if (m_thrownProjectiles.empty()) {
+        return;
+    }
+    for (const ThrownProjectile& projectile : m_thrownProjectiles) {
+        const float duration = std::max(0.01f, projectile.duration);
+        const float t = std::clamp(projectile.elapsed / duration, 0.0f, 1.0f);
+        const float x =
+            projectile.startX + (projectile.targetX - projectile.startX) * t;
+        const float y =
+            projectile.startY + (projectile.targetY - projectile.startY) * t;
+        const glm::vec2 ground = render::ToScreen(x, y, projectile.z);
+        const float lift =
+            std::sin(t * 3.14159265359f) *
+            std::clamp(projectile.arcHeight, 0.0f, 3.0f) * 72.0f;
+        const glm::vec2 center = ground - glm::vec2(0.0f, lift);
+        batch.DrawLine(ground, center, 1.0f, 0x60706040u);
+        batch.DrawRectFill(center.x - 4.0f, center.y - 4.0f, 8.0f, 8.0f,
+                           0xFFFFE060u);
+    }
+}
+
 bool WorldDemoState::TryGetAimDirection(const glm::vec2& mousePx, float* dirX,
                                         float* dirY) const {
     if (dirX == nullptr || dirY == nullptr || m_ctx.ecs == nullptr ||
@@ -9315,6 +11359,7 @@ void WorldDemoState::PlayerRangedAttack(const glm::vec2& mousePx) {
         return;
     }
 
+    ExitStealth(characters::StealthExitReason::Attack);
     const items::RangedCombat& ranged = *def->ranged;
     --weapon->loadedAmmo;
     m_rangedWeapon.cooldownLeft = std::max(0.0f, ranged.cooldownSeconds);
@@ -9805,7 +11850,718 @@ void WorldDemoState::EnsureHouseLootContainers() {
 
 void WorldDemoState::InitializePoiRuntime() {
     m_poiRuntime.clear();
+    m_poiBossResetTimers.clear();
     m_poiNearId.clear();
+    m_poiResultTitle.clear();
+    m_poiResultBody.clear();
+    m_poiResultTone = "info";
+    m_poiResultTimer = 0.0f;
+}
+
+ecs::PoiWorldProgress* WorldDemoState::PoiWorldProgressState() {
+    if (m_ctx.ecs == nullptr) {
+        return nullptr;
+    }
+    ecs::Entity entity =
+        m_ctx.ecs->FindById(ecs::kPoiWorldProgressStableId);
+    if (entity == entt::null) {
+        entity =
+            m_ctx.ecs->CreateWithStableId(ecs::kPoiWorldProgressStableId);
+    }
+    if (entity == entt::null) {
+        return nullptr;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* progress = registry.try_get<ecs::PoiWorldProgress>(entity);
+    if (progress == nullptr) {
+        progress = &registry.emplace<ecs::PoiWorldProgress>(entity);
+    }
+    return progress;
+}
+
+bool WorldDemoState::FindPoiStartCandidate(const PoiDef& poi, float x,
+                                           float y,
+                                           const PoiEntryDef** entry) const {
+    if (entry != nullptr) {
+        *entry = nullptr;
+    }
+    const float markerDx = poi.markerX - x;
+    const float markerDy = poi.markerY - y;
+    if (markerDx * markerDx + markerDy * markerDy <= 16.0f * 16.0f) {
+        return true;
+    }
+    const PoiEntryDef* best = nullptr;
+    float bestDistance = m_poiEntryRange * m_poiEntryRange;
+    for (const PoiEntryDef& candidate : poi.entries) {
+        const float dx = candidate.x - x;
+        const float dy = candidate.y - y;
+        const float distance = dx * dx + dy * dy;
+        if (distance > bestDistance) {
+            continue;
+        }
+        if (!candidate.requiredKey.empty()) {
+            const PoiKeyDef* key = FindPoiKey(poi, candidate.requiredKey);
+            if (key == nullptr || !PlayerHasPoiKeyItem(*key)) {
+                continue;
+            }
+        }
+        bestDistance = distance;
+        best = &candidate;
+    }
+    if (entry != nullptr) {
+        *entry = best;
+    }
+    return best != nullptr;
+}
+
+bool WorldDemoState::PlayerHasPoiKeyItem(const PoiKeyDef& key) const {
+    if (m_ctx.ecs == nullptr || m_player == entt::null ||
+        key.item.empty()) {
+        return false;
+    }
+    if (m_ctx.items == nullptr || m_ctx.items->Find(key.item) == nullptr) {
+        return true;
+    }
+    const auto* container =
+        m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
+    return container != nullptr && items::CountOf(*container, key.item) > 0;
+}
+
+bool WorldDemoState::ConsumePoiKeyItem(const PoiKeyDef& key) {
+    if (m_ctx.ecs == nullptr || m_player == entt::null ||
+        key.item.empty()) {
+        return false;
+    }
+    if (m_ctx.items == nullptr || m_ctx.items->Find(key.item) == nullptr) {
+        ZL_WARN("poi", "钥匙物品未注册，跳过消耗：{}（{}）", key.item, key.id);
+        return true;
+    }
+    auto* container =
+        m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
+    return container != nullptr &&
+           items::RemoveItem(*container, key.item, 1) == 1;
+}
+
+bool WorldDemoState::CheckPoiStageKeys(const PoiDef& poi,
+                                       const PoiProgress& progress,
+                                       const PoiStageDef& stage,
+                                       std::string* reason) const {
+    std::unordered_map<std::string, int> consumed;
+    for (const std::string& keyId : stage.requiredKeys) {
+        const PoiKeyDef* key = FindPoiKey(poi, keyId);
+        if (key == nullptr) {
+            if (reason != nullptr) {
+                *reason = "阶段钥匙配置无效：" + keyId;
+            }
+            return false;
+        }
+        if (!PlayerHasPoiKeyItem(*key)) {
+            if (reason != nullptr) {
+                *reason = "缺少钥匙：" + PoiKeyDisplayName(*key);
+            }
+            return false;
+        }
+        if (key->consumed) {
+            ++consumed[key->item];
+        }
+    }
+    static_cast<void>(progress);
+    const auto* container =
+        m_ctx.ecs != nullptr && m_player != entt::null
+            ? m_ctx.ecs->Registry().try_get<ecs::Container>(m_player)
+            : nullptr;
+    for (const auto& [item, count] : consumed) {
+        if (m_ctx.items != nullptr && m_ctx.items->Find(item) != nullptr &&
+            (container == nullptr || items::CountOf(*container, item) < count)) {
+            if (reason != nullptr) {
+                *reason = "钥匙数量不足";
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+bool WorldDemoState::ConsumePoiStageKeys(const PoiDef& poi,
+                                         PoiProgress* progress,
+                                         const PoiStageDef& stage) {
+    if (progress == nullptr) {
+        return false;
+    }
+    for (const std::string& keyId : stage.requiredKeys) {
+        const PoiKeyDef* key = FindPoiKey(poi, keyId);
+        if (key == nullptr) {
+            return false;
+        }
+        if (key->consumed && !ConsumePoiKeyItem(*key)) {
+            return false;
+        }
+        MarkPoiKeyAcquired(&progress->acquiredKeys, key->id);
+    }
+    return true;
+}
+
+void WorldDemoState::GrantPoiStageKeys(const PoiDef& poi,
+                                       const PoiStageDef& stage) {
+    if (m_ctx.items == nullptr) {
+        return;
+    }
+    std::string names;
+    bool dropped = false;
+    for (const PoiKeyDef* key : PoiStageKeyAwards(poi, stage.id)) {
+        if (key == nullptr || key->item.empty()) {
+            continue;
+        }
+        if (m_ctx.items->Find(key->item) == nullptr) {
+            ZL_WARN("poi", "钥匙物品未注册，无法发放：{}（{}）", key->item,
+                    key->id);
+            continue;
+        }
+        if (!names.empty()) {
+            names += "、";
+        }
+        names += PoiKeyDisplayName(*key);
+        ReturnOrDropItem(ecs::ItemInstance{key->item, 1, 1.0f}, &dropped);
+    }
+    if (!names.empty()) {
+        SetNotice("获得钥匙：" + names +
+                      (dropped ? "（背包已满，钥匙掉落脚下）" : ""),
+                  kNoticeOkColor, 4.0f);
+        ZL_INFO("poi", "发放阶段钥匙：{} · {} → {}", poi.id, stage.id,
+                names);
+    }
+}
+
+void WorldDemoState::ApplyPoiStageUpdate(const PoiDef& poi,
+                                         const PoiStageUpdate& update,
+                                         ecs::PoiTasks* tasks,
+                                         int attempts) {
+    if (update.stageCompleted && !update.stageId.empty()) {
+        const PoiStageDef* stage = FindPoiStage(poi, update.stageId);
+        if (stage != nullptr) {
+            GrantPoiStageKeys(poi, *stage);
+            if (update.rewardAvailable) {
+                GrantPoiStageReward(poi, *stage, tasks);
+            }
+        }
+        ClearPoiStageEnemies(poi.id, update.stageId);
+        m_poiBossResetTimers.erase(poi.id);
+    }
+    if (update.poiCompleted) {
+        ClearPoiStageEnemies(poi.id);
+        m_poiBossResetTimers.erase(poi.id);
+        MarkPoiCompleted(&tasks->completed, poi.id);
+        SetNotice("POI 阶段探索完成：" + poi.name, kNoticeOkColor, 5.0f);
+        PoiProgress completed;
+        completed.completed = true;
+        ShowPoiResult(PoiStageResultTitle(poi, true),
+                      PoiStageResultText(poi, completed, true), "ok");
+        ZL_INFO("poi", "阶段探索完成：{}（{}），尝试 {}", poi.name, poi.id,
+                std::max(1, attempts));
+    } else if (update.awaitingChoice) {
+        SetNotice("POI 路线选择：" + poi.name, kNoticeInfoColor, 4.0f);
+    }
+}
+void WorldDemoState::ShowPoiResult(std::string title, std::string body,
+                                   std::string tone, float seconds) {
+    m_poiResultTitle = std::move(title);
+    m_poiResultBody = std::move(body);
+    m_poiResultTone = std::move(tone);
+    m_poiResultTimer = std::max(0.1f, seconds);
+}
+
+void WorldDemoState::GrantPoiStageReward(const PoiDef& poi,
+                                         const PoiStageDef& stage,
+                                         ecs::PoiTasks* tasks) {
+    if (tasks == nullptr ||
+        !ClaimPoiStageReward(&tasks->rewardClaims, poi.id, stage.id)) {
+        return;
+    }
+    if (stage.reward.xp > 0.0f) {
+        GrantProgressionXp(ecs::SkillKind::Survival, stage.reward.xp,
+                           "POI 阶段");
+    }
+    bool dropped = false;
+    if (!stage.reward.item.empty() && m_ctx.items != nullptr &&
+        m_ctx.items->Find(stage.reward.item) != nullptr) {
+        ReturnOrDropItem(ecs::ItemInstance{
+                             stage.reward.item,
+                             std::max(1, stage.reward.count), 1.0f},
+                         &dropped);
+    }
+    SetNotice("POI 阶段完成：" + poi.name + " · " + stage.id +
+                  (dropped ? "（背包已满，奖励掉落脚下）" : ""),
+              kNoticeOkColor, 4.0f);
+}
+
+void WorldDemoState::UpdateStagedPoi(const PoiDef& poi,
+                                     ecs::PoiWorldProgress* world,
+                                     ecs::PoiTasks* tasks, float dt) {
+    if (world == nullptr || tasks == nullptr || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    PoiProgress* progress = FindPoiProgress(&world->pois, poi.id);
+    const PoiEntryDef* startEntry = nullptr;
+    if (progress == nullptr) {
+        if (!FindPoiStartCandidate(poi, position->x, position->y,
+                                   &startEntry)) {
+            return;
+        }
+        progress = &EnsurePoiProgress(&world->pois, poi.id);
+    }
+    if (progress->completed) {
+        MarkPoiCompleted(&tasks->completed, poi.id);
+        return;
+    }
+    if (progress->failed) {
+        if (!PoiPlayerNearStart(poi, position->x, position->y) ||
+            !RetryPoiProgress(poi, progress)) {
+            return;
+        }
+        ClearPoiStageEnemies(poi.id);
+        m_poiBossResetTimers.erase(poi.id);
+        SetNotice("POI 阶段重试：" + poi.name, kNoticeInfoColor, 4.0f);
+        ZL_INFO("poi", "阶段重试：{}（{}），第 {} 次", poi.name, poi.id,
+                progress->attempts);
+        if (progress->completed || progress->currentStage < 0) {
+            return;
+        }
+    }
+    if (progress->currentStage < 0) {
+        if (startEntry == nullptr &&
+            !FindPoiStartCandidate(poi, position->x, position->y,
+                                   &startEntry)) {
+            return;
+        }
+        const bool entered = startEntry != nullptr;
+        if (entered && !startEntry->stage.empty()) {
+            if (!StartPoiProgressAtStage(poi, progress, startEntry->stage)) {
+                return;
+            }
+        } else if (!StartPoiProgress(poi, progress)) {
+            return;
+        }
+        if (entered && !startEntry->requiredKey.empty()) {
+            const PoiKeyDef* key =
+                FindPoiKey(poi, startEntry->requiredKey);
+            if (key != nullptr) {
+                if (key->consumed && !ConsumePoiKeyItem(*key)) {
+                    ZL_WARN("poi", "入口钥匙消耗失败：{}（{}）", poi.id,
+                            key->id);
+                }
+                MarkPoiKeyAcquired(&progress->acquiredKeys, key->id);
+            }
+        }
+        ClearPoiStageEnemies(poi.id);
+        m_poiBossResetTimers.erase(poi.id);
+        progress->lastLiveGuards = 0;
+        ZL_INFO("poi", "开始阶段探索：{}（{} 阶段，入口 {}）", poi.name,
+                poi.stages.size(),
+                entered ? startEntry->id : "主入口");
+    }
+
+    const PoiStageDef* current = CurrentPoiStage(poi, *progress);
+    PoiStageUpdate update;
+    int liveStageTargets = 0;
+    if (current != nullptr && current->kind == PoiStageKind::Kill) {
+        EnsurePoiStageEnemies(poi, progress);
+        UpdatePoiBossMechanics(poi, *progress, dt);
+        entt::registry& registry = m_ctx.ecs->Registry();
+        liveStageTargets =
+            CountPoiStageTargets(registry, poi.id, current->id);
+        if (PoiStageHasBoss(poi, *current) && liveStageTargets > 0) {
+            const float dx = position->x - current->x;
+            const float dy = position->y - current->y;
+            const float range = m_poiConfig.boss.resetRange;
+            float& timer = m_poiBossResetTimers[poi.id];
+            if (dx * dx + dy * dy > range * range) {
+                timer += std::max(0.0f, dt);
+                if (timer >= m_poiConfig.boss.resetSeconds) {
+                    if (FailPoiProgress(progress)) {
+                        ClearPoiStageEnemies(poi.id);
+                        m_poiBossResetTimers.erase(poi.id);
+                        SetNotice("Boss 战失败：离开区域过久，返回可重试",
+                                  kNoticeFailColor, 5.0f);
+                        ShowPoiResult(PoiStageResultTitle(poi, false),
+                                      PoiStageResultText(poi, *progress, false),
+                                      "fail");
+                        ZL_INFO("poi", "Boss 战失败：{}（{}），玩家脱战",
+                                poi.name, poi.id);
+                    }
+                    return;
+                }
+            } else {
+                timer = 0.0f;
+            }
+        }
+        if (progress->lastLiveGuards > 0 &&
+            liveStageTargets < progress->lastLiveGuards) {
+            update = SignalPoiStage(poi, progress, PoiStageSignal::Kill,
+                                    progress->lastLiveGuards -
+                                        liveStageTargets);
+        }
+        progress->lastLiveGuards = liveStageTargets;
+    } else if (current != nullptr) {
+        progress->lastLiveGuards = 0;
+    }
+    if (!update.stageCompleted && !update.awaitingChoice) {
+        update = TickPoiStage(poi, progress, position->x, position->y);
+    }
+    current = CurrentPoiStage(poi, *progress);
+    if (!update.stageCompleted && current != nullptr &&
+        current->kind == PoiStageKind::Loot) {
+        int owned = 0;
+        const auto& registry = m_ctx.ecs->Registry();
+        if (const auto* container =
+                registry.try_get<ecs::Container>(m_player);
+            container != nullptr) {
+            for (const ecs::ItemInstance& item : container->items) {
+                if (item.defId == current->target) {
+                    owned += std::max(1, item.count);
+                }
+            }
+        }
+        if (const auto* equipment =
+                registry.try_get<ecs::Equipment>(m_player);
+            equipment != nullptr) {
+            for (const auto& slot : equipment->slots) {
+                if (slot.has_value() && slot->defId == current->target) {
+                    owned += std::max(1, slot->count);
+                }
+            }
+        }
+        if (owned >= current->count) {
+            update = SignalPoiStage(poi, progress, PoiStageSignal::Loot,
+                                    owned);
+        }
+    }
+    ApplyPoiStageUpdate(poi, update, tasks, progress->attempts);
+}
+
+bool WorldDemoState::TryInteractPoi() {
+    if (m_runOutcome != RunOutcome::None || !m_poiConfig.enabled ||
+        m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
+        m_player == entt::null) {
+        return false;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return false;
+    }
+    const std::string fuelItem = m_homesteadConfig.power.fuelItem;
+    const std::string fuelName = [&]() {
+        const items::ItemDef* def = m_ctx.items->Find(fuelItem);
+        return def != nullptr ? def->name : fuelItem;
+    }();
+    const auto fuelBlocked = [&]() {
+        if (!m_homesteadConfig.power.enabled) {
+            return false;
+        }
+        const auto* container =
+            m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
+        return container == nullptr ||
+               items::CountOf(*container, fuelItem) < 1;
+    };
+
+    if (m_networkMode) {
+        const PoiDef* bestPoi = nullptr;
+        const PoiStageDef* bestStage = nullptr;
+        int bestIndex = -1;
+        float bestDistance = std::numeric_limits<float>::max();
+        for (const PoiDef& poi : m_poiConfig.defs) {
+            if (poi.stages.empty()) {
+                continue;
+            }
+            const auto found = m_networkPoiProgress.find(poi.id);
+            if (found == m_networkPoiProgress.end() ||
+                found->second.completed || (found->second.stageFlags & net::kPlayerPoiStageFailed) != 0) {
+                continue;
+            }
+            const PoiStageDef* stage =
+                FindPoiStage(poi, found->second.currentStage);
+            if (stage == nullptr &&
+                found->second.stageIndex < poi.stages.size()) {
+                stage = &poi.stages[found->second.stageIndex];
+            }
+            if (stage == nullptr ||
+                (stage->kind != PoiStageKind::Interact &&
+                 stage->kind != PoiStageKind::Power)) {
+                continue;
+            }
+            const float dx = stage->x - position->x;
+            const float dy = stage->y - position->y;
+            const float range = std::max(2.5f, stage->radius + 1.5f);
+            const float distance = dx * dx + dy * dy;
+            if (distance > range * range || distance >= bestDistance) {
+                continue;
+            }
+            bestPoi = &poi;
+            bestStage = stage;
+            bestIndex = static_cast<int>(
+                &poi - m_poiConfig.defs.data());
+            bestDistance = distance;
+        }
+        if (bestPoi == nullptr || bestStage == nullptr) {
+            return false;
+        }
+        PoiProgress mirror;
+        mirror.currentStage = static_cast<int>(
+            bestStage - bestPoi->stages.data());
+        std::string reason;
+        if (!CheckPoiStageKeys(*bestPoi, mirror, *bestStage, &reason)) {
+            SetNotice(reason, kNoticeFailColor, 3.0f);
+            return true;
+        }
+        if (bestStage->kind == PoiStageKind::Power && fuelBlocked()) {
+            SetNotice("发电机需要 " + fuelName, kNoticeFailColor, 3.0f);
+            return true;
+        }
+        net::Command command =
+            MakePlayerCommand(net::CommandType::PoiInteract);
+        command.payload.index = static_cast<std::int32_t>(bestIndex);
+        command.payload.targetIndex = -1;
+        if (!SubmitPlayerCommand(command)) {
+            return false;
+        }
+        SubmitMoveCommand(0.0f, 0.0f);
+        return true;
+    }
+
+    ecs::PoiWorldProgress* world = PoiWorldProgressState();
+    if (world == nullptr) {
+        return false;
+    }
+    const PoiDef* bestPoi = nullptr;
+    PoiProgress* bestProgress = nullptr;
+    const PoiStageDef* bestStage = nullptr;
+    float bestDistance = std::numeric_limits<float>::max();
+    for (const PoiDef& poi : m_poiConfig.defs) {
+        if (poi.stages.empty()) {
+            continue;
+        }
+        PoiProgress* progress = FindPoiProgress(&world->pois, poi.id);
+        if (progress == nullptr || progress->completed ||
+            progress->failed || progress->awaitingChoice) {
+            continue;
+        }
+        const PoiStageDef* stage = CurrentPoiStage(poi, *progress);
+        if (stage == nullptr ||
+            (stage->kind != PoiStageKind::Interact &&
+             stage->kind != PoiStageKind::Power)) {
+            continue;
+        }
+        const float dx = stage->x - position->x;
+        const float dy = stage->y - position->y;
+        const float range = std::max(2.5f, stage->radius + 1.5f);
+        const float distance = dx * dx + dy * dy;
+        if (distance > range * range || distance >= bestDistance) {
+            continue;
+        }
+        bestPoi = &poi;
+        bestProgress = progress;
+        bestStage = stage;
+        bestDistance = distance;
+    }
+    if (bestPoi == nullptr || bestProgress == nullptr ||
+        bestStage == nullptr) {
+        return false;
+    }
+    std::string reason;
+    if (!CheckPoiStageKeys(*bestPoi, *bestProgress, *bestStage, &reason)) {
+        SetNotice(reason, kNoticeFailColor, 3.0f);
+        return true;
+    }
+    if (bestStage->kind == PoiStageKind::Power && fuelBlocked()) {
+        SetNotice("发电机需要 " + fuelName, kNoticeFailColor, 3.0f);
+        return true;
+    }
+    if (bestStage->kind == PoiStageKind::Power &&
+        m_homesteadConfig.power.enabled) {
+        auto* container =
+            m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
+        if (container == nullptr ||
+            items::RemoveItem(*container, fuelItem, 1) != 1) {
+            SetNotice("燃料扣除失败", kNoticeFailColor, 2.0f);
+            return true;
+        }
+    }
+    if (!ConsumePoiStageKeys(*bestPoi, bestProgress, *bestStage)) {
+        SetNotice("钥匙扣除失败", kNoticeFailColor, 2.0f);
+        return true;
+    }
+    if (bestStage->kind == PoiStageKind::Power &&
+        m_homesteadConfig.power.enabled) {
+        const float range =
+            std::max(8.0f, bestStage->radius + 4.0f);
+        m_ctx.ecs->Registry()
+            .view<ecs::Generator, ecs::Position>()
+            .each([&](const ecs::Entity, ecs::Generator& generator,
+                      const ecs::Position& generatorPosition) {
+                const float gx = generatorPosition.x - bestStage->x;
+                const float gy = generatorPosition.y - bestStage->y;
+                if (gx * gx + gy * gy > range * range) {
+                    return;
+                }
+                generator.fuelMinutes +=
+                    m_homesteadConfig.power.fuelMinutesPerCan;
+                generator.running = true;
+            });
+    }
+    const PoiStageUpdate update = SignalPoiStage(
+        *bestPoi, bestProgress,
+        bestStage->kind == PoiStageKind::Power
+            ? PoiStageSignal::Power
+            : PoiStageSignal::Interact);
+    if (update.blocked) {
+        SetNotice("阶段条件未满足", kNoticeFailColor, 3.0f);
+        return true;
+    }
+    auto* tasks = m_ctx.ecs->Registry().try_get<ecs::PoiTasks>(m_player);
+    if (tasks == nullptr) {
+        tasks = &m_ctx.ecs->Registry().emplace<ecs::PoiTasks>(m_player);
+    }
+    ApplyPoiStageUpdate(*bestPoi, update, tasks, bestProgress->attempts);
+    SetNotice(bestStage->kind == PoiStageKind::Power
+                  ? "发电机已启动：" + bestPoi->name + " · 供电恢复"
+                  : "门禁已打开：" + bestPoi->name,
+              kNoticeOkColor, 3.0f);
+    SubmitMoveCommand(0.0f, 0.0f);
+    return true;
+}
+
+bool WorldDemoState::TryChoosePoiBranchInput(core::Input& input) {
+    if (m_buildMode || m_runOutcome != RunOutcome::None ||
+        !m_poiConfig.enabled || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return false;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return false;
+    }
+    const auto branchPressed = [&](int index) {
+        return index >= 0 &&
+               index < static_cast<int>(std::size(kHotbarActions)) &&
+               input.IsActionPressed(kHotbarActions[index]);
+    };
+    if (m_networkMode) {
+        for (std::size_t i = 0; i < m_poiConfig.defs.size(); ++i) {
+            const PoiDef& poi = m_poiConfig.defs[i];
+            if (poi.stages.empty()) {
+                continue;
+            }
+            const auto found = m_networkPoiProgress.find(poi.id);
+            if (found == m_networkPoiProgress.end() ||
+                found->second.completed || (found->second.stageFlags & net::kPlayerPoiStageFailed) != 0) {
+                continue;
+            }
+            const PoiStageDef* stage =
+                FindPoiStage(poi, found->second.currentStage);
+            if (stage == nullptr &&
+                found->second.stageIndex < poi.stages.size()) {
+                stage = &poi.stages[found->second.stageIndex];
+            }
+            if (stage == nullptr ||
+                (stage->kind != PoiStageKind::Choice &&
+                 (found->second.stageFlags &
+                  net::kPlayerPoiStageAwaitingChoice) == 0)) {
+                continue;
+            }
+            const float dx = poi.markerX - position->x;
+            const float dy = poi.markerY - position->y;
+            if (dx * dx + dy * dy > 16.0f * 16.0f) {
+                continue;
+            }
+            PoiProgress mirror;
+            mirror.currentStage = static_cast<int>(
+                stage - poi.stages.data());
+            const auto branches = PoiAvailableBranches(poi, mirror);
+            for (int branch = 0; branch < 2; ++branch) {
+                if (!branchPressed(branch) ||
+                    branch >= static_cast<int>(branches.size())) {
+                    continue;
+                }
+                net::Command command =
+                    MakePlayerCommand(net::CommandType::PoiInteract);
+                command.payload.index = static_cast<std::int32_t>(i);
+                command.payload.targetIndex = branch;
+                if (!SubmitPlayerCommand(command)) {
+                    return false;
+                }
+                SubmitMoveCommand(0.0f, 0.0f);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    ecs::PoiWorldProgress* world = PoiWorldProgressState();
+    if (world == nullptr) {
+        return false;
+    }
+    for (const PoiDef& poi : m_poiConfig.defs) {
+        if (poi.stages.empty()) {
+            continue;
+        }
+        PoiProgress* progress = FindPoiProgress(&world->pois, poi.id);
+        if (progress == nullptr || progress->completed ||
+            progress->failed) {
+            continue;
+        }
+        const PoiStageDef* stage = CurrentPoiStage(poi, *progress);
+        if (stage == nullptr ||
+            (stage->kind != PoiStageKind::Choice &&
+             !progress->awaitingChoice)) {
+            continue;
+        }
+        const float dx = poi.markerX - position->x;
+        const float dy = poi.markerY - position->y;
+        if (dx * dx + dy * dy > 16.0f * 16.0f) {
+            continue;
+        }
+        const auto branches = PoiAvailableBranches(poi, *progress);
+        for (int branch = 0; branch < 2; ++branch) {
+            if (!branchPressed(branch) ||
+                branch >= static_cast<int>(branches.size())) {
+                continue;
+            }
+            std::string reason;
+            if (!CheckPoiStageKeys(poi, *progress, *stage, &reason)) {
+                SetNotice(reason, kNoticeFailColor, 3.0f);
+                return true;
+            }
+            if (!ConsumePoiStageKeys(poi, progress, *stage)) {
+                SetNotice("钥匙扣除失败", kNoticeFailColor, 2.0f);
+                return true;
+            }
+            const PoiStageUpdate update = ChoosePoiBranch(
+                poi, progress,
+                branches[static_cast<std::size_t>(branch)]->id);
+            auto* tasks =
+                m_ctx.ecs->Registry().try_get<ecs::PoiTasks>(m_player);
+            if (tasks == nullptr) {
+                tasks = &m_ctx.ecs->Registry().emplace<ecs::PoiTasks>(
+                    m_player);
+            }
+            ApplyPoiStageUpdate(poi, update, tasks, progress->attempts);
+            SetNotice(
+                "路线选择：" +
+                    (branches[static_cast<std::size_t>(branch)]->name.empty()
+                         ? branches[static_cast<std::size_t>(branch)]->id
+                         : branches[static_cast<std::size_t>(branch)]->name),
+                kNoticeOkColor, 3.0f);
+            return true;
+        }
+    }
+    return false;
 }
 
 void WorldDemoState::EnsurePoiContent() {
@@ -9814,7 +12570,10 @@ void WorldDemoState::EnsurePoiContent() {
         return;
     }
     const ecs::PoiTasks* tasks = PlayerPoiTasks();
+    const ecs::PoiWorldProgress* world = PoiWorldProgressState();
     for (const PoiDef& poi : m_poiConfig.defs) {
+        const PoiProgress* staged =
+            world != nullptr ? FindPoiProgress(world->pois, poi.id) : nullptr;
         const world::ChunkCoord coord =
             world::ChunkOf(static_cast<int>(std::floor(poi.markerX)),
                            static_cast<int>(std::floor(poi.markerY)));
@@ -9846,7 +12605,9 @@ void WorldDemoState::EnsurePoiContent() {
             continue;
         }
         runtime.guardsSpawned = true;
-        if (tasks != nullptr && game::IsPoiCompleted(tasks->completed, poi.id)) {
+        if ((tasks != nullptr &&
+             game::IsPoiCompleted(tasks->completed, poi.id)) ||
+            (staged != nullptr && staged->completed)) {
             continue;
         }
         if (poi.enemies.count > 0 && CountPoiGuards(poi.id) == 0) {
@@ -9925,6 +12686,322 @@ bool WorldDemoState::FindPoiGuardCell(const PoiDef& poi, int index, int* wx,
     return false;
 }
 
+bool WorldDemoState::FindPoiStageEnemyCell(const PoiDef& poi,
+                                           const PoiStageDef& stage, int index,
+                                           float originX, float originY,
+                                           int* wx, int* wy) const {
+    if (wx == nullptr || wy == nullptr || m_ctx.world == nullptr) {
+        return false;
+    }
+    const float baseX = std::isfinite(originX) ? originX : stage.x;
+    const float baseY = std::isfinite(originY) ? originY : stage.y;
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        const float angle =
+            (static_cast<float>(index) * 2.3999631f) +
+            (static_cast<float>(attempt) * 0.6180339f);
+        const float radius =
+            1.5f + static_cast<float>((index + attempt) % 4) * 0.8f;
+        const int x = static_cast<int>(
+            std::floor(baseX + std::cos(angle) * radius));
+        const int y = static_cast<int>(
+            std::floor(baseY + std::sin(angle) * radius));
+        const world::ChunkCoord coord = world::ChunkOf(x, y);
+        const world::Chunk* chunk = FindChunk(coord.cx, coord.cy);
+        if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded ||
+            IsSquareBlocked(*m_ctx.world, x, y, 0)) {
+            continue;
+        }
+        *wx = x;
+        *wy = y;
+        return true;
+    }
+    static_cast<void>(poi);
+    return false;
+}
+
+ecs::Entity WorldDemoState::SpawnPoiStageEnemy(
+    const PoiDef& poi, const PoiStageDef& stage, PoiStageEnemyRole role,
+    PoiGuardKind kind, int index, float originX, float originY) {
+    if (m_ctx.simulation == nullptr || m_ctx.ecs == nullptr) {
+        return entt::null;
+    }
+    int wx = 0;
+    int wy = 0;
+    if (!FindPoiStageEnemyCell(poi, stage, index, originX, originY, &wx,
+                               &wy)) {
+        return entt::null;
+    }
+    ecs::ZombieVariantKind variant = ecs::ZombieVariantKind::Normal;
+    switch (kind) {
+        case PoiGuardKind::Fast:
+            variant = ecs::ZombieVariantKind::Fast;
+            break;
+        case PoiGuardKind::Strong:
+            variant = ecs::ZombieVariantKind::Strong;
+            break;
+        case PoiGuardKind::Armored:
+            variant = ecs::ZombieVariantKind::Armored;
+            break;
+        case PoiGuardKind::Mixed:
+        case PoiGuardKind::Normal:
+        default:
+            variant = ecs::ZombieVariantKind::Normal;
+            break;
+    }
+    const ecs::Entity zombie = m_ctx.simulation->SpawnZombieAt(
+        static_cast<float>(wx) + 0.5f, static_cast<float>(wy) + 0.5f,
+        variant);
+    if (zombie == entt::null) {
+        return entt::null;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    registry.emplace_or_replace<ecs::PoiGuard>(zombie, ecs::PoiGuard{poi.id});
+    registry.emplace_or_replace<ecs::PoiStageEnemy>(
+        zombie, ecs::PoiStageEnemy{poi.id, stage.id, role});
+    if (role == PoiStageEnemyRole::Boss) {
+        if (auto* health = registry.try_get<ecs::Health>(zombie);
+            health != nullptr) {
+            health->max = std::max(
+                1.0f, health->max * m_poiConfig.boss.healthScale);
+            health->current = health->max;
+        }
+        const PoiBossMechanic mechanic =
+            PoiBossMechanicFor(poi.boss.mechanic);
+        if (mechanic == PoiBossMechanic::Fortify) {
+            ecs::ZombieSpecial special;
+            special.kind = ecs::ZombieSpecialKind::Breaker;
+            registry.emplace_or_replace<ecs::ZombieSpecial>(zombie, special);
+        } else if (mechanic == PoiBossMechanic::Summon ||
+                   mechanic == PoiBossMechanic::Charge) {
+            ecs::PoiBossRuntime runtime;
+            runtime.baseSpeedScale =
+                ZombieVariantProfileFor(variant).speedScale;
+            runtime.abilityCooldown =
+                mechanic == PoiBossMechanic::Summon
+                    ? m_poiConfig.boss.summonIntervalSeconds
+                    : m_poiConfig.boss.chargeIntervalSeconds;
+            registry.emplace_or_replace<ecs::PoiBossRuntime>(zombie,
+                                                             runtime);
+        }
+    }
+    return zombie;
+}
+
+void WorldDemoState::EnsurePoiStageEnemies(const PoiDef& poi,
+                                           PoiProgress* progress) {
+    if (progress == nullptr || m_ctx.ecs == nullptr) {
+        return;
+    }
+    const PoiStageDef* stage = CurrentPoiStage(poi, *progress);
+    if (stage == nullptr || stage->kind != PoiStageKind::Kill) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    if (HasPoiStageEnemyRecords(registry, poi.id, stage->id)) {
+        return;
+    }
+    const std::vector<PoiStageEnemySpec> plan =
+        BuildPoiStageEnemyPlan(poi, *stage);
+    if (plan.empty()) {
+        return;
+    }
+    int spawned = 0;
+    for (const PoiStageEnemySpec& spec : plan) {
+        if (SpawnPoiStageEnemy(poi, *stage, spec.role, spec.kind, spec.index,
+                               stage->x, stage->y) != entt::null) {
+            ++spawned;
+        }
+    }
+    if (spawned <= 0) {
+        return;
+    }
+    if (PoiStageHasBoss(poi, *stage)) {
+        SetNotice("Boss 现身：" + poi.boss.name + "（" +
+                      PoiBossMechanicText(
+                          PoiBossMechanicFor(poi.boss.mechanic)) +
+                      "）",
+                  kNoticeFailColor, 5.0f);
+    }
+    ZL_INFO("poi", "阶段敌人生成：{} · {}（{}/{}，boss={}）", poi.name,
+            stage->id, spawned, plan.size(),
+            PoiStageHasBoss(poi, *stage) ? "是" : "否");
+}
+
+void WorldDemoState::UpdatePoiBossMechanics(const PoiDef& poi,
+                                            const PoiProgress& progress,
+                                            float dt) {
+    if (m_ctx.ecs == nullptr || dt <= 0.0f) {
+        return;
+    }
+    const PoiStageDef* stage = CurrentPoiStage(poi, progress);
+    if (stage == nullptr || !PoiStageHasBoss(poi, *stage)) {
+        return;
+    }
+    const PoiBossMechanic mechanic = PoiBossMechanicFor(poi.boss.mechanic);
+    if (mechanic == PoiBossMechanic::None) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    std::vector<ecs::Entity> bosses;
+    registry.view<ecs::PoiStageEnemy, ecs::Health>().each(
+        [&](const ecs::Entity entity, const ecs::PoiStageEnemy& enemy,
+            const ecs::Health& health) {
+            if (enemy.poiId == poi.id && enemy.stageId == stage->id &&
+                enemy.role == PoiStageEnemyRole::Boss &&
+                health.current > 0.0f && registry.valid(entity)) {
+                bosses.push_back(entity);
+            }
+        });
+    if (bosses.empty()) {
+        return;
+    }
+
+    if (mechanic == PoiBossMechanic::Fortify) {
+        for (const ecs::Entity entity : bosses) {
+            if (registry.try_get<ecs::ZombieSpecial>(entity) == nullptr) {
+                ecs::ZombieSpecial special;
+                special.kind = ecs::ZombieSpecialKind::Breaker;
+                registry.emplace<ecs::ZombieSpecial>(entity, special);
+            }
+        }
+        return;
+    }
+
+    const auto* playerPosition =
+        registry.try_get<ecs::Position>(m_player);
+    for (const ecs::Entity entity : bosses) {
+        auto* variant = registry.try_get<ecs::ZombieVariant>(entity);
+        bool createdRuntime = false;
+        auto* runtime = registry.try_get<ecs::PoiBossRuntime>(entity);
+        if (runtime == nullptr) {
+            ecs::PoiBossRuntime created;
+            created.baseSpeedScale =
+                variant != nullptr
+                    ? ZombieVariantProfileFor(variant->kind).speedScale
+                    : 1.0f;
+            created.abilityCooldown =
+                mechanic == PoiBossMechanic::Summon
+                    ? m_poiConfig.boss.summonIntervalSeconds
+                    : m_poiConfig.boss.chargeIntervalSeconds;
+            runtime =
+                &registry.emplace<ecs::PoiBossRuntime>(entity, created);
+            createdRuntime = true;
+        }
+        if (variant != nullptr && createdRuntime) {
+            variant->speedScale = runtime->baseSpeedScale;
+        }
+        const float baseSpeed =
+            runtime->baseSpeedScale > 0.0f
+                ? runtime->baseSpeedScale
+                : (variant != nullptr
+                       ? ZombieVariantProfileFor(variant->kind).speedScale
+                       : 1.0f);
+        if (mechanic == PoiBossMechanic::Summon) {
+            runtime->abilityCooldown -= dt;
+            if (runtime->abilityCooldown > 0.0f) {
+                continue;
+            }
+            const int liveAdds =
+                CountPoiStageSummons(registry, poi.id, stage->id);
+            if (runtime->summoned < m_poiConfig.boss.summonTotal &&
+                liveAdds < m_poiConfig.boss.summonMax) {
+                const auto* position =
+                    registry.try_get<ecs::Position>(entity);
+                const float originX =
+                    position != nullptr ? position->x : stage->x;
+                const float originY =
+                    position != nullptr ? position->y : stage->y;
+                int added = 0;
+                for (int i = 0;
+                     i < m_poiConfig.boss.summonCount &&
+                     runtime->summoned < m_poiConfig.boss.summonTotal;
+                     ++i) {
+                    if (SpawnPoiStageEnemy(
+                            poi, *stage, PoiStageEnemyRole::Summon,
+                            PoiGuardKind::Fast, runtime->summoned + i,
+                            originX, originY) != entt::null) {
+                        ++added;
+                        ++runtime->summoned;
+                    }
+                }
+                if (added > 0) {
+                    SetNotice("Boss 召唤增援：" + poi.boss.name,
+                              kNoticeFailColor, 4.0f);
+                }
+            }
+            runtime->abilityCooldown =
+                m_poiConfig.boss.summonIntervalSeconds;
+            continue;
+        }
+
+        if (runtime->chargeRemaining > 0.0f) {
+            runtime->chargeRemaining =
+                std::max(0.0f, runtime->chargeRemaining - dt);
+            if (variant != nullptr) {
+                variant->speedScale =
+                    runtime->chargeRemaining > 0.0f
+                        ? baseSpeed * m_poiConfig.boss.chargeSpeedScale
+                        : baseSpeed;
+            }
+            continue;
+        }
+        runtime->abilityCooldown -= dt;
+        if (runtime->abilityCooldown > 0.0f || playerPosition == nullptr) {
+            continue;
+        }
+        const auto* position = registry.try_get<ecs::Position>(entity);
+        if (position == nullptr) {
+            continue;
+        }
+        const float dx = playerPosition->x - position->x;
+        const float dy = playerPosition->y - position->y;
+        if (dx * dx + dy * dy > 14.0f * 14.0f) {
+            continue;
+        }
+        runtime->chargeRemaining = m_poiConfig.boss.chargeSeconds;
+        runtime->abilityCooldown =
+            m_poiConfig.boss.chargeIntervalSeconds;
+        if (variant != nullptr) {
+            variant->speedScale =
+                baseSpeed * m_poiConfig.boss.chargeSpeedScale;
+        }
+        SetNotice("Boss 冲锋：" + poi.boss.name + "（走位/格挡）",
+                  kNoticeFailColor, 3.0f);
+    }
+}
+
+void WorldDemoState::ClearPoiStageEnemies(std::string_view poiId,
+                                          std::string_view stageId) {
+    if (m_ctx.ecs == nullptr || m_ctx.simulation == nullptr) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const std::vector<ecs::Entity> enemies =
+        CollectPoiStageEnemies(registry, poiId, stageId);
+    for (const ecs::Entity entity : enemies) {
+        if (entity != entt::null && registry.valid(entity)) {
+            m_ctx.simulation->DespawnEntity(entity);
+        }
+    }
+}
+
+bool WorldDemoState::PoiPlayerNearStart(const PoiDef& poi, float x,
+                                        float y) const {
+    const float markerDx = poi.markerX - x;
+    const float markerDy = poi.markerY - y;
+    if (markerDx * markerDx + markerDy * markerDy <= 16.0f * 16.0f) {
+        return true;
+    }
+    for (const PoiEntryDef& entry : poi.entries) {
+        const float dx = entry.x - x;
+        const float dy = entry.y - y;
+        if (dx * dx + dy * dy <= 6.0f * 6.0f) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int WorldDemoState::CountPoiGuards(std::string_view poiId) const {
     if (m_ctx.ecs == nullptr) {
         return 0;
@@ -9965,7 +13042,7 @@ bool WorldDemoState::PoiTargetSearched(const PoiDef& poi) const {
     return found;
 }
 
-void WorldDemoState::UpdatePoiTasks() {
+void WorldDemoState::UpdatePoiTasks(float dt) {
     if (m_networkMode || !m_poiConfig.enabled || m_ctx.ecs == nullptr ||
         m_player == entt::null || m_runOutcome != RunOutcome::None) {
         return;
@@ -9974,7 +13051,12 @@ void WorldDemoState::UpdatePoiTasks() {
     if (tasks == nullptr) {
         tasks = &m_ctx.ecs->Registry().emplace<ecs::PoiTasks>(m_player);
     }
+    ecs::PoiWorldProgress* world = PoiWorldProgressState();
     for (const PoiDef& poi : m_poiConfig.defs) {
+        if (!poi.stages.empty()) {
+            UpdateStagedPoi(poi, world, tasks, dt);
+            continue;
+        }
         if (game::IsPoiCompleted(tasks->completed, poi.id)) {
             continue;
         }
@@ -10074,6 +13156,341 @@ void WorldDemoState::RefreshObjectiveHud(ui::HudState& hud) {
     }
 }
 
+void WorldDemoState::RefreshPoiStageGuide(ui::HudState& hud,
+                                          bool* handled) {
+    if (handled != nullptr) {
+        *handled = false;
+    }
+    if (!m_poiConfig.enabled || m_ctx.ecs == nullptr ||
+        m_player == entt::null) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    ecs::PoiWorldProgress* world =
+        m_networkMode ? nullptr : PoiWorldProgressState();
+    const PoiDef* nearest = nullptr;
+    const PoiProgress* nearestSingle = nullptr;
+    const NetworkPoiProgress* nearestNetwork = nullptr;
+    float nearestDistance = std::numeric_limits<float>::max();
+    for (const PoiDef& poi : m_poiConfig.defs) {
+        if (poi.stages.empty()) {
+            continue;
+        }
+        const PoiProgress* progress = nullptr;
+        const NetworkPoiProgress* network = nullptr;
+        if (m_networkMode) {
+            const auto found = m_networkPoiProgress.find(poi.id);
+            if (found != m_networkPoiProgress.end()) {
+                network = &found->second;
+            }
+        } else if (world != nullptr) {
+            progress = FindPoiProgress(world->pois, poi.id);
+        }
+        if (progress != nullptr && progress->completed) {
+            continue;
+        }
+        if (network != nullptr && network->completed) {
+            continue;
+        }
+        const float dx = poi.markerX - position->x;
+        const float dy = poi.markerY - position->y;
+        const float distance = dx * dx + dy * dy;
+        if (distance >= nearestDistance) {
+            continue;
+        }
+        nearestDistance = distance;
+        nearest = &poi;
+        nearestSingle = progress;
+        nearestNetwork = network;
+    }
+    if (nearest == nullptr) {
+        return;
+    }
+    const float distance = std::sqrt(nearestDistance);
+    if (distance > m_poiConfig.guideRange) {
+        return;
+    }
+    PoiProgress temp;
+    const PoiProgress* progress = nearestSingle;
+    if (progress == nullptr && nearestNetwork != nullptr &&
+        !nearestNetwork->currentStage.empty()) {
+        temp.currentStage = nearestNetwork->stageIndex;
+        temp.awaitingChoice =
+            (nearestNetwork->stageFlags &
+             net::kPlayerPoiStageAwaitingChoice) != 0;
+        temp.failed =
+            (nearestNetwork->stageFlags & net::kPlayerPoiStageFailed) != 0;
+        temp.powered =
+            (nearestNetwork->stageFlags & net::kPlayerPoiStagePowered) != 0;
+        temp.chosenBranch = nearestNetwork->chosenBranch;
+        progress = &temp;
+    }
+    const PoiStageDef* stage = nullptr;
+    if (progress != nullptr && progress->currentStage >= 0 &&
+        progress->currentStage < static_cast<int>(nearest->stages.size())) {
+        stage = &nearest->stages[static_cast<std::size_t>(
+            progress->currentStage)];
+    }
+
+    const float dx = nearest->markerX - position->x;
+    const float dy = nearest->markerY - position->y;
+    std::ostringstream out;
+    out << "POI · " << nearest->name;
+    std::string tone = "info";
+    if (progress != nullptr && progress->failed) {
+        out << " · 阶段探索失败";
+        tone = "fail";
+    } else if (progress != nullptr && stage != nullptr) {
+        out << " · 阶段 " << (progress->currentStage + 1) << "/"
+            << nearest->stages.size() << " · "
+            << PoiStageObjectiveText(*nearest, *progress, *stage);
+        const bool choosing =
+            progress->awaitingChoice ||
+            stage->kind == PoiStageKind::Choice;
+        if (choosing) {
+            const std::string choices =
+                PoiChoiceText(*nearest, *progress);
+            if (!choices.empty()) {
+                out << " · " << choices;
+                tone = "warn";
+            }
+        } else {
+            const std::string keys = PoiStageRequiredKeysText(
+                *nearest, *progress, *stage);
+            if (!keys.empty()) {
+                out << " · 需要 " << keys;
+                tone = "warn";
+            }
+        }
+        if (progress->powered) {
+            out << " · 已供电";
+        }
+    } else {
+        out << " · 阶段探索";
+        for (const PoiEntryDef& entry : nearest->entries) {
+            const float ex = entry.x - position->x;
+            const float ey = entry.y - position->y;
+            if (ex * ex + ey * ey > m_poiEntryRange * m_poiEntryRange) {
+                continue;
+            }
+            out << " · 入口 "
+                << (entry.label.empty() ? entry.id : entry.label);
+            if (!entry.requiredKey.empty()) {
+                const PoiKeyDef* key =
+                    FindPoiKey(*nearest, entry.requiredKey);
+                out << "（需要 "
+                    << (key != nullptr ? PoiKeyDisplayName(*key)
+                                       : entry.requiredKey)
+                    << "）";
+            }
+            break;
+        }
+    }
+    out << " · " << PoiDirectionLabel(dx, dy) << ' ' << std::fixed
+        << std::setprecision(0) << std::max(0.0f, distance) << "格";
+    hud.poiGuide = out.str();
+    hud.poiGuideTone = tone;
+
+    hud.poiStageVisible = true;
+    hud.poiStageTitle = nearest->name + " · " +
+                        (progress != nullptr
+                             ? PoiStageProgressText(*nearest, *progress)
+                             : "阶段探索 · 未开始");
+    hud.poiStageObjective =
+        progress != nullptr ? PoiStageHudObjective(*nearest, *progress)
+                            : "接近入口开始阶段探索";
+    hud.poiStageMeta =
+        progress != nullptr ? PoiStageHudRequirements(*nearest, *progress)
+                            : "靠近 POI 标记或入口";
+    hud.poiStageNarrative =
+        stage != nullptr
+            ? PoiStageNarrativeText(*nearest, stage->id)
+            : (!nearest->stages.empty()
+                   ? PoiStageNarrativeText(*nearest, nearest->stages.front().id)
+                   : std::string());
+    if (progress != nullptr && progress->failed) {
+        hud.poiStageTone = "fail";
+    } else if (progress != nullptr &&
+               (progress->awaitingChoice ||
+                (stage != nullptr &&
+                 (!PoiStageRequiredKeysText(*nearest, *progress, *stage).empty() ||
+                  stage->kind == PoiStageKind::Power)))) {
+        hud.poiStageTone = "warn";
+    } else {
+        hud.poiStageTone = "info";
+    }
+    if (handled != nullptr) {
+        *handled = true;
+    }
+    if (distance <= 12.0f && m_poiNearId != nearest->id) {
+        m_poiNearId = nearest->id;
+        ZL_INFO("poi", "进入阶段 POI：{}（{} 阶段）", nearest->name,
+                nearest->stages.size());
+    }
+}
+
+void WorldDemoState::RefreshPoiStageHint(ui::HudState& hud) {
+    if (m_buildMode || m_riding || m_driving || m_dialogueOpen ||
+        m_tradeOpen || m_sleep.Active() || m_sleepSelecting ||
+        (m_networkMode && m_networkSleep.phase != 0) ||
+        m_ctx.ecs == nullptr || m_player == entt::null) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    ecs::PoiWorldProgress* world =
+        m_networkMode ? nullptr : PoiWorldProgressState();
+    const PoiDef* bestPoi = nullptr;
+    const PoiStageDef* bestStage = nullptr;
+    PoiProgress bestMirror;
+    const PoiProgress* bestProgress = nullptr;
+    float bestDistance = std::numeric_limits<float>::max();
+    const auto consider = [&](const PoiDef& poi, const PoiProgress* progress,
+                              int stageIndex) {
+        const PoiStageDef* stage = nullptr;
+        if (progress != nullptr) {
+            stage = CurrentPoiStage(poi, *progress);
+        }
+        if (stage == nullptr && stageIndex >= 0 &&
+            stageIndex < static_cast<int>(poi.stages.size())) {
+            stage = &poi.stages[static_cast<std::size_t>(stageIndex)];
+        }
+        if (stage == nullptr) {
+            return;
+        }
+        const bool choosing =
+            (progress != nullptr && progress->awaitingChoice) ||
+            stage->kind == PoiStageKind::Choice;
+        if (!choosing && stage->kind != PoiStageKind::Interact &&
+            stage->kind != PoiStageKind::Power) {
+            return;
+        }
+        const float dx = stage->x - position->x;
+        const float dy = stage->y - position->y;
+        const float distance = dx * dx + dy * dy;
+        const float range =
+            choosing ? 16.0f : std::max(2.5f, stage->radius + 1.5f);
+        if (distance > range * range || distance >= bestDistance) {
+            return;
+        }
+        bestDistance = distance;
+        bestPoi = &poi;
+        bestStage = stage;
+    };
+    if (m_networkMode) {
+        for (const PoiDef& poi : m_poiConfig.defs) {
+            if (poi.stages.empty()) {
+                continue;
+            }
+            const auto found = m_networkPoiProgress.find(poi.id);
+            if (found == m_networkPoiProgress.end() ||
+                found->second.completed || (found->second.stageFlags & net::kPlayerPoiStageFailed) != 0 ||
+                found->second.currentStage.empty()) {
+                continue;
+            }
+            PoiProgress candidate;
+            candidate.currentStage = found->second.stageIndex;
+            candidate.awaitingChoice =
+                (found->second.stageFlags &
+                 net::kPlayerPoiStageAwaitingChoice) != 0;
+            candidate.powered =
+                (found->second.stageFlags &
+                 net::kPlayerPoiStagePowered) != 0;
+            const PoiDef* previous = bestPoi;
+            consider(poi, &candidate,
+                     static_cast<int>(found->second.stageIndex));
+            if (bestPoi != previous && bestPoi == &poi) {
+                bestMirror = candidate;
+                bestProgress = &bestMirror;
+            }
+        }
+    } else if (world != nullptr) {
+        for (const PoiDef& poi : m_poiConfig.defs) {
+            if (poi.stages.empty()) {
+                continue;
+            }
+            const PoiProgress* progress =
+                FindPoiProgress(world->pois, poi.id);
+            if (progress == nullptr || progress->completed ||
+                progress->failed) {
+                continue;
+            }
+            const PoiDef* previous = bestPoi;
+            consider(poi, progress, progress->currentStage);
+            if (bestPoi != previous && bestPoi == &poi) {
+                bestProgress = progress;
+            }
+        }
+    }
+    if (bestPoi == nullptr || bestStage == nullptr) {
+        return;
+    }
+    PoiProgress temp;
+    const PoiProgress* progress = bestProgress;
+    if (progress == nullptr) {
+        progress = &temp;
+    }
+    if ((progress->awaitingChoice ||
+         bestStage->kind == PoiStageKind::Choice)) {
+        const std::string choices = PoiChoiceText(*bestPoi, *progress);
+        hud.actionHint = "POI 路线选择：" +
+                         (choices.empty() ? "按 1/2" : choices);
+        hud.actionTone = "info";
+        return;
+    }
+    std::string reason;
+    if (!CheckPoiStageKeys(*bestPoi, *progress, *bestStage, &reason)) {
+        hud.actionHint = "POI " + reason;
+        hud.actionTone = "fail";
+        return;
+    }
+    if (bestStage->kind == PoiStageKind::Power &&
+        m_homesteadConfig.power.enabled) {
+        const auto* container =
+            m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
+        if (container == nullptr ||
+            items::CountOf(*container, m_homesteadConfig.power.fuelItem) <
+                1) {
+            const items::ItemDef* fuel =
+                m_ctx.items != nullptr
+                    ? m_ctx.items->Find(
+                          m_homesteadConfig.power.fuelItem)
+                    : nullptr;
+            hud.actionHint =
+                "发电机需要 " +
+                (fuel != nullptr ? fuel->name
+                                 : m_homesteadConfig.power.fuelItem);
+            hud.actionTone = "fail";
+            return;
+        }
+        hud.actionHint = "按 E 启动发电机：" + bestPoi->name +
+                         "（消耗 " +
+                         (m_ctx.items != nullptr &&
+                                  m_ctx.items->Find(
+                                      m_homesteadConfig.power.fuelItem) !=
+                                      nullptr
+                              ? m_ctx.items
+                                    ->Find(m_homesteadConfig.power.fuelItem)
+                                    ->name
+                              : m_homesteadConfig.power.fuelItem) +
+                         "）";
+        hud.actionTone = "info";
+        return;
+    }
+    hud.actionHint = "按 E 打开门禁：" + bestPoi->name +
+                     (bestStage->target.empty()
+                          ? ""
+                          : " · " + bestStage->target);
+    hud.actionTone = "info";
+}
+
 void WorldDemoState::RefreshPoiGuide(ui::HudState& hud) {
     if (!m_poiConfig.enabled || m_ctx.ecs == nullptr ||
         m_player == entt::null) {
@@ -10161,6 +13578,10 @@ int WorldDemoState::CurrentMissionDay() const {
     }
     return 1 + static_cast<int>(m_ctx.gameTime->TotalGameMinutes() /
                                 (24.0 * 60.0));
+}
+
+std::string WorldDemoState::CurrentSaveId() const {
+    return !m_saveId.empty() ? m_saveId : m_ctx.activeSaveId;
 }
 
 ecs::MissionLog* WorldDemoState::PlayerMissions() {
@@ -12217,6 +15638,60 @@ void WorldDemoState::RefreshWorldMapState() {
                     m_ctx.gameTime->TotalGameMinutes())));
         }
     }
+    std::vector<game::WorldMapPoiProgress> poiProgress;
+    const ecs::PoiWorldProgress* worldProgress =
+        m_networkMode ? nullptr : PoiWorldProgressState();
+    for (const PoiDef& def : m_poiConfig.defs) {
+        if (def.stages.empty()) {
+            continue;
+        }
+        PoiProgress mirror;
+        const PoiProgress* source = nullptr;
+        if (m_networkMode) {
+            const auto found = m_networkPoiProgress.find(def.id);
+            if (found == m_networkPoiProgress.end()) {
+                continue;
+            }
+            mirror.currentStage = found->second.stageIndex;
+            mirror.failedStage = found->second.stageIndex;
+            mirror.completed = found->second.completed;
+            mirror.failed =
+                (found->second.stageFlags & net::kPlayerPoiStageFailed) != 0;
+            mirror.awaitingChoice =
+                (found->second.stageFlags &
+                 net::kPlayerPoiStageAwaitingChoice) != 0;
+            mirror.completedStages.resize(
+                found->second.completedStageCount);
+            if (const PoiStageDef* stage =
+                    FindPoiStage(def, found->second.currentStage);
+                stage != nullptr) {
+                mirror.currentStage = static_cast<int>(
+                    stage - def.stages.data());
+            }
+            source = &mirror;
+        } else if (worldProgress != nullptr) {
+            source = FindPoiProgress(worldProgress->pois, def.id);
+        }
+        if (source == nullptr) {
+            continue;
+        }
+        game::WorldMapPoiProgress entry;
+        entry.id = def.id;
+        entry.stageCount = static_cast<int>(def.stages.size());
+        entry.stageIndex = std::clamp(
+            source->currentStage >= 0 ? source->currentStage
+                                      : source->failedStage,
+            0, entry.stageCount - 1);
+        entry.completedStageCount = static_cast<int>(
+            std::min(source->completedStages.size(), def.stages.size()));
+        entry.failed = source->failed;
+        entry.awaitingChoice = source->awaitingChoice;
+        entry.completed = source->completed;
+        entry.stageLabel = PoiStageMapStatusText(def, *source);
+        entry.hasStagePoint =
+            PoiStageMapPoint(def, *source, &entry.stageX, &entry.stageY);
+        poiProgress.push_back(std::move(entry));
+    }
     m_worldMapState = game::BuildWorldMapState(
         *m_ctx.worldGraph, m_poiConfig, playerX, playerY, playerValid,
         m_discoveredRegions, m_discoveredPois, completedPois,
@@ -12226,7 +15701,8 @@ void WorldDemoState::RefreshWorldMapState() {
         strategic.enabled ? &strategic : nullptr, travel,
         !m_networkMode && m_ctx.simulation != nullptr
             ? m_ctx.simulation->WorldEvents()
-            : nullptr);
+            : nullptr,
+        &poiProgress);
     if (m_networkMode && m_ctx.networkClient != nullptr &&
         m_ctx.networkClient->HasWorldEventState()) {
         const net::WorldEventSnapshot& snapshot =
@@ -12319,6 +15795,7 @@ void WorldDemoState::OpenWorldMap() {
     if (m_ctx.ui->IsInventoryOpen()) {
         m_ctx.ui->CloseInventory();
     }
+    m_companionOpen = false;
     m_worldMapOpen = true;
     m_worldMapState = {};
     if (!m_networkMode && m_ctx.gameTime != nullptr) {
@@ -12615,6 +16092,13 @@ void WorldDemoState::SearchNearbyLootContainer() {
     }
     if (!result.searchedNow) {
         return;
+    }
+    if (m_ctx.events != nullptr) {
+        m_ctx.events->EmitQueued(
+            core::kOnLootSearched,
+            core::LootSearchedEvent{m_ctx.ecs->IdOf(m_player).id,
+                                    m_ctx.ecs->IdOf(container).id,
+                                    result.tableId, result.totalItems});
     }
     float lootXp = m_progressionConfig.lootXpPerContainer;
     if (const ecs::Progression* progression = PlayerProgression();
@@ -14258,6 +17742,17 @@ bool WorldDemoState::CanPlaceBuild(const BuildableDef& def, int wx, int wy,
     if (def.id == "spike_trap" && !m_homesteadConfig.trap.enabled) {
         return fail("陷阱系统已关闭");
     }
+    const TrapDef* trapDef =
+        m_ctx.traps != nullptr ? m_ctx.traps->FindByBuilding(def.id)
+                               : nullptr;
+    const bool trapBuilding =
+        trapDef != nullptr || def.id == "bear_trap" ||
+        def.id == "tripwire_alarm" || def.id == "fuel_trap";
+    if (trapBuilding &&
+        (m_ctx.traps == nullptr || !m_ctx.traps->enabled ||
+         trapDef == nullptr)) {
+        return fail("陷阱数据不可用");
+    }
     if (!def.requiresMission.empty()) {
         const ecs::MissionLog* log = PlayerMissions();
         const ecs::MissionRunState* state =
@@ -14548,6 +18043,10 @@ bool WorldDemoState::TryRepairNearestBarricade() {
             return false;
         }
         health->current = newHp;
+        EmitBuildRepaired(m_ctx.events, m_ctx.ecs->IdOf(m_player).id,
+                          static_cast<int>(std::floor(position->x)),
+                          static_cast<int>(std::floor(position->y)),
+                          position->z);
         m_buildActionCooldown = m_buildActionCooldownSeconds;
         SetNotice("维修 泛光灯：HP " +
                       std::to_string(static_cast<int>(std::lround(newHp))) +
@@ -14632,6 +18131,8 @@ bool WorldDemoState::TryRepairNearestBarricade() {
         m_barricades[BuildCellKey(target.wx, target.wy)] =
             BuiltBarricade{object.sprite, newHp, target.def->maxHp};
     }
+    EmitBuildRepaired(m_ctx.events, m_ctx.ecs->IdOf(m_player).id, target.wx,
+                      target.wy, 0);
     m_buildActionCooldown = m_buildActionCooldownSeconds;
     SetNotice("维修 " + target.def->name + "：HP " +
                   std::to_string(static_cast<int>(std::lround(newHp))) + "/" +
@@ -14819,6 +18320,8 @@ bool WorldDemoState::TryRepairAllStructures() {
                 BuiltBarricade{object.sprite, candidate.newHp,
                                candidate.def->maxHp};
         }
+        EmitBuildRepaired(m_ctx.events, m_ctx.ecs->IdOf(m_player).id,
+                          candidate.wx, candidate.wy, 0);
         ++repaired;
     }
     m_buildActionCooldown = m_buildActionCooldownSeconds;
@@ -14981,7 +18484,8 @@ bool WorldDemoState::TryDemolishNearestStructure() {
             if (homestead.kind == HomesteadTargetKind::Farm ||
                 homestead.kind == HomesteadTargetKind::Generator ||
                 homestead.kind == HomesteadTargetKind::Floodlight ||
-                homestead.kind == HomesteadTargetKind::Trap) {
+                homestead.kind == HomesteadTargetKind::Trap ||
+                homestead.kind == HomesteadTargetKind::PlacedTrap) {
                 const auto* position =
                     m_ctx.ecs->Registry().try_get<ecs::Position>(
                         homestead.entity);
@@ -14991,18 +18495,29 @@ bool WorldDemoState::TryDemolishNearestStructure() {
                     kind = PendingDemolishKind::Entity;
                     token = m_ctx.ecs->IdOf(homestead.entity).id;
                     owner = EntityOwnerStableId(homestead.entity);
-                    const char* id =
-                        homestead.kind == HomesteadTargetKind::Farm
-                            ? "farm_plot"
-                            : homestead.kind ==
-                                      HomesteadTargetKind::Generator
-                                  ? "generator"
-                                  : homestead.kind ==
-                                            HomesteadTargetKind::Floodlight
-                                        ? "floodlight"
-                                        : "spike_trap";
-                    const BuildableDef* facilityDef = BuildableById(id);
-                    name = facilityDef != nullptr ? facilityDef->name : id;
+                    std::string id;
+                    if (homestead.kind == HomesteadTargetKind::Farm) {
+                        id = "farm_plot";
+                    } else if (homestead.kind ==
+                               HomesteadTargetKind::Generator) {
+                        id = "generator";
+                    } else if (homestead.kind ==
+                               HomesteadTargetKind::Floodlight) {
+                        id = "floodlight";
+                    } else if (homestead.kind ==
+                               HomesteadTargetKind::PlacedTrap) {
+                        const BuildableDef* trapBuildable =
+                            PlacedTrapBuildable(homestead.entity);
+                        if (trapBuildable != nullptr) {
+                            id = trapBuildable->id;
+                        }
+                    } else {
+                        id = "spike_trap";
+                    }
+                    const BuildableDef* facilityDef =
+                        id.empty() ? nullptr : BuildableById(id);
+                    name = facilityDef != nullptr ? facilityDef->name
+                                                  : (id.empty() ? "陷阱" : id);
                     found = true;
                 }
             } else if (const ecs::Entity storage = FindNearbyStorage(false);
@@ -15150,6 +18665,8 @@ bool WorldDemoState::TryDemolishNearestStructure() {
     if (refund > 0) {
         notice += "（返还 " + std::to_string(refund) + " 木材）";
     }
+    EmitBuildDemolished(m_ctx.events, m_ctx.ecs->IdOf(m_player).id,
+                        target.def->id, target.wx, target.wy, 0);
     SetNotice(std::move(notice), kNoticeOkColor, 2.0f);
     ZL_INFO("building", "拆除 {}：({}, {})，返还 {} 木材", target.def->id,
             target.wx, target.wy, refund);
@@ -15167,11 +18684,7 @@ ecs::Entity WorldDemoState::FindNearbyStorage(bool includeVehicle) const {
     }
     ecs::Entity vehicle = m_vehicle;
     if (!m_driving && !m_riding) {
-        const ecs::Entity nearest =
-            FindNearestVehicle(m_vehicleTuning.enterRange);
-        if (nearest != entt::null) {
-            vehicle = nearest;
-        }
+        vehicle = FindNearestVehicle(m_vehicleTuning.enterRange);
     }
     if (includeVehicle && !m_driving && vehicle != entt::null &&
         m_ctx.ecs->Alive(vehicle) &&
@@ -15467,6 +18980,9 @@ bool WorldDemoState::TryDemolishStorage(ecs::Entity storage) {
         wood.count = refund;
         ReturnOrDropItem(wood);
     }
+    EmitBuildDemolished(m_ctx.events, m_ctx.ecs->IdOf(m_player).id,
+                        def != nullptr ? def->id : "storage", wx, wy,
+                        storageZ);
     m_buildActionCooldown = m_buildActionCooldownSeconds;
     std::string notice = "拆除 " + name;
     if (refund > 0) {
@@ -15475,6 +18991,506 @@ bool WorldDemoState::TryDemolishStorage(ecs::Entity storage) {
     SetNotice(std::move(notice), kNoticeOkColor, 2.0f);
     ZL_INFO("building", "拆除仓库：({}, {})，返还 {} 木材，掉落 {} 堆",
             storageX, storageY, refund, static_cast<int>(contents.size()));
+    return true;
+}
+
+bool WorldDemoState::BuildCellInActionRange(int wx, int wy,
+                                            std::string& error) const {
+    error.clear();
+    if (m_runOutcome != RunOutcome::None) {
+        error = "当前无法操作建造";
+        return false;
+    }
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        error = "玩家尚未生成";
+        return false;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        error = "玩家位置不可用";
+        return false;
+    }
+    const float distance = std::hypot(
+        position->x - (static_cast<float>(wx) + 0.5f),
+        position->y - (static_cast<float>(wy) + 0.5f));
+    if (distance > m_buildActionRange) {
+        error = "距离过远";
+        return false;
+    }
+    return true;
+}
+
+bool WorldDemoState::FindPlayerBuiltStructureAt(
+    int wx, int wy, PlayerBuildTarget* out) const {
+    if (out == nullptr || m_ctx.world == nullptr) {
+        return false;
+    }
+    const world::ChunkCoord coord = world::ChunkOf(wx, wy);
+    const world::Chunk* chunk = FindChunk(coord.cx, coord.cy);
+    if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
+        return false;
+    }
+    const world::SquareLocal local = world::SquareLocalOf(wx, wy);
+    const world::GridSquare& square = chunk->Square(local.lx, local.ly, 0);
+    constexpr std::array<world::SquareLayer, 3> kLayers{
+        world::SquareLayer::Wall, world::SquareLayer::Furniture,
+        world::SquareLayer::Floor};
+    for (const world::SquareLayer layer : kLayers) {
+        const auto& objects = square.Layer(layer);
+        for (std::size_t i = 0; i < objects.size(); ++i) {
+            const world::SquareObject& object = objects[i];
+            if (!object.playerBuilt) {
+                continue;
+            }
+            const BuildableDef* def = BuildableForSprite(object.sprite);
+            if (def == nullptr) {
+                continue;
+            }
+            out->wx = wx;
+            out->wy = wy;
+            out->objectIndex = i;
+            out->layer = layer;
+            out->def = def;
+            out->sprite = object.sprite;
+            out->hp = def->maxHp > 0.0f
+                          ? ResolveBarricadeHp(object, def->maxHp)
+                          : 0.0f;
+            out->structureId = object.structureId;
+            out->ownerStableId = object.ownerStableId;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool WorldDemoState::FindPlayerBuiltEntityAt(
+    int wx, int wy, ecs::Entity* out, const BuildableDef** def) const {
+    if (out == nullptr || def == nullptr || m_ctx.ecs == nullptr) {
+        return false;
+    }
+    *out = entt::null;
+    *def = nullptr;
+    entt::registry& registry = m_ctx.ecs->Registry();
+    registry.view<ecs::Position, ecs::SpriteRef>().each(
+        [&](const ecs::Entity entity, const ecs::Position& position,
+            const ecs::SpriteRef& sprite) {
+            if (*out != entt::null || position.z != 0 ||
+                static_cast<int>(std::floor(position.x)) != wx ||
+                static_cast<int>(std::floor(position.y)) != wy ||
+                registry.all_of<ecs::PlayerTag>(entity) ||
+                registry.all_of<ecs::AiState>(entity) ||
+                registry.all_of<ecs::ItemInstance>(entity) ||
+                registry.all_of<ecs::Projectile>(entity) ||
+                registry.all_of<ecs::TransientEffect>(entity) ||
+                registry.all_of<ecs::Vehicle>(entity)) {
+                return;
+            }
+            if (registry.all_of<ecs::PlacedTrap>(entity)) {
+                if (const BuildableDef* trapBuildable =
+                        PlacedTrapBuildable(entity);
+                    trapBuildable != nullptr) {
+                    *out = entity;
+                    *def = trapBuildable;
+                    return;
+                }
+            }
+            const bool buildEntity =
+                registry.all_of<ecs::PlayerStorage>(entity) ||
+                registry.all_of<ecs::FarmPlot>(entity) ||
+                registry.all_of<ecs::Generator>(entity) ||
+                registry.all_of<ecs::ColdStorage>(entity) ||
+                registry.all_of<ecs::Floodlight>(entity) ||
+                registry.all_of<ecs::SpikeTrap>(entity) ||
+                registry.all_of<ecs::PlacedTrap>(entity);
+            if (!buildEntity) {
+                return;
+            }
+            for (const BuildableDef& candidate : m_buildables) {
+                if (ecs::HashName(candidate.sprite) == sprite.sprite ||
+                    (!candidate.spriteVertical.empty() &&
+                     ecs::HashName(candidate.spriteVertical) ==
+                         sprite.sprite)) {
+                    *out = entity;
+                    *def = &candidate;
+                    return;
+                }
+            }
+        });
+    return *out != entt::null;
+}
+
+bool WorldDemoState::TryPlaceBuildAt(const BuildableDef& def, int wx, int wy,
+                                     bool vertical, std::string& error) {
+    error.clear();
+    if (m_runOutcome != RunOutcome::None) {
+        error = "当前无法建造";
+        return false;
+    }
+    if (vertical && !BuildableSupportsVertical(def)) {
+        error = "该建造项不支持竖向";
+        return false;
+    }
+    std::string reason;
+    if (!CanPlaceBuild(def, wx, wy, &reason)) {
+        error = reason.empty() ? "无法在该位置建造" : reason;
+        SetNotice("无法建造：" + error, kNoticeFailColor, 2.0f);
+        return false;
+    }
+    int index = -1;
+    for (std::size_t i = 0; i < m_buildables.size(); ++i) {
+        if (m_buildables[i].id == def.id) {
+            index = static_cast<int>(i);
+            break;
+        }
+    }
+    if (index < 0) {
+        error = "建造项不存在";
+        return false;
+    }
+    const int oldIndex = m_buildIndex;
+    const bool oldMode = m_buildMode;
+    const bool oldVertical = m_buildOrientationVertical;
+    m_buildIndex = index;
+    m_buildMode = true;
+    m_buildOrientationVertical =
+        vertical && BuildableSupportsVertical(def);
+    const bool ok = TryPlaceSelectedBuild(wx, wy);
+    m_buildIndex = oldIndex;
+    m_buildMode = oldMode;
+    m_buildOrientationVertical = oldVertical;
+    if (!ok && error.empty()) {
+        error = "建造失败";
+    }
+    return ok;
+}
+
+bool WorldDemoState::TryDemolishBuildAt(int wx, int wy, std::string& error) {
+    error.clear();
+    if (!BuildCellInActionRange(wx, wy, error)) {
+        return false;
+    }
+    PlayerBuildTarget target;
+    if (FindPlayerBuiltStructureAt(wx, wy, &target)) {
+        if (!CanEditLocalStructure(target.ownerStableId)) {
+            error = "该结构属于 " +
+                    StructureOwnerLabel(target.ownerStableId) +
+                    "，只有所有者可拆除";
+            SetNotice(error, kNoticeFailColor, 1.8f);
+            return false;
+        }
+        const world::ChunkCoord coord = world::ChunkOf(wx, wy);
+        world::Chunk* chunk = FindChunk(coord.cx, coord.cy);
+        if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
+            error = "目标区域未加载";
+            return false;
+        }
+        const world::SquareLocal local = world::SquareLocalOf(wx, wy);
+        world::GridSquare& square = chunk->Square(local.lx, local.ly, 0);
+        auto& objects = square.Layer(target.layer);
+        if (target.objectIndex >= objects.size()) {
+            error = "目标结构不存在";
+            return false;
+        }
+        const world::SquareObject& object = objects[target.objectIndex];
+        if (!object.playerBuilt ||
+            !BuildableMatchesSprite(*target.def, object.sprite)) {
+            error = "目标结构已变化";
+            return false;
+        }
+        const int refund =
+            BuildWoodRefund(target.def->woodCost, m_demolishRefundRatio);
+        const bool blocksMovement = object.blocksMovement;
+        const std::string underlay = object.underlay;
+        objects.erase(objects.begin() +
+                      static_cast<std::ptrdiff_t>(target.objectIndex));
+        if (target.layer == world::SquareLayer::Floor) {
+            square.SetFloor(world::SquareObject{
+                underlay.empty() ? std::string("tile.floor.grass") : underlay,
+                0, 0, false});
+        } else if (blocksMovement) {
+            RebuildChunkCollision(coord.cx, coord.cy);
+        }
+        m_barricades.erase(BuildCellKey(wx, wy));
+        if (refund > 0) {
+            ReturnOrDropItem(
+                ecs::ItemInstance{m_buildWoodItem, refund, 1.0f});
+        }
+        m_buildActionCooldown = m_buildActionCooldownSeconds;
+        EmitBuildDemolished(m_ctx.events, m_ctx.ecs->IdOf(m_player).id,
+                            target.def->id, wx, wy, 0);
+        std::string notice = "拆除 " + target.def->name;
+        if (refund > 0) {
+            notice += "（返还 " + std::to_string(refund) + " 木材）";
+        }
+        SetNotice(std::move(notice), kNoticeOkColor, 2.0f);
+        ZL_INFO("building", "脚本拆除 {}：({}, {})", target.def->id, wx, wy);
+        return true;
+    }
+
+    ecs::Entity entity = entt::null;
+    const BuildableDef* def = nullptr;
+    if (!FindPlayerBuiltEntityAt(wx, wy, &entity, &def)) {
+        error = "目标没有可拆除的己方结构";
+        SetNotice(error, kNoticeFailColor, 1.5f);
+        return false;
+    }
+    const std::uint64_t owner = EntityOwnerStableId(entity);
+    if (!CanEditLocalStructure(owner)) {
+        error = "该结构属于 " + StructureOwnerLabel(owner) +
+                "，只有所有者可拆除";
+        SetNotice(error, kNoticeFailColor, 1.8f);
+        return false;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(entity);
+    if (position == nullptr) {
+        error = "目标位置不可用";
+        return false;
+    }
+    const float dropX = position->x;
+    const float dropY = position->y;
+    const int dropZ = position->z;
+    std::vector<ecs::ItemInstance> contents;
+    if (game::IsPlayerStorage(*m_ctx.ecs, entity)) {
+        if (m_ctx.items == nullptr) {
+            error = "物品系统不可用";
+            return false;
+        }
+        contents = game::DetachPlayerStorageContents(*m_ctx.ecs, entity);
+    }
+    const int refund =
+        def != nullptr ? BuildWoodRefund(def->woodCost, m_demolishRefundRatio)
+                       : 0;
+    const std::string id = def != nullptr ? def->id : "structure";
+    const std::string name = def != nullptr ? def->name : "结构";
+    m_ctx.ecs->Destroy(entity);
+    auto* playerContainer =
+        m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
+    for (const ecs::ItemInstance& item : contents) {
+        if (!item.Valid()) {
+            continue;
+        }
+        int added = 0;
+        if (playerContainer != nullptr && m_ctx.items != nullptr) {
+            added = items::AddItem(*playerContainer, *m_ctx.items, item);
+        }
+        if (added < item.count && m_ctx.items != nullptr) {
+            ecs::ItemInstance remainder = item;
+            remainder.count -= added;
+            game::SpawnGroundItem(*m_ctx.ecs, *m_ctx.items, remainder, dropX,
+                                  dropY, dropZ);
+        }
+    }
+    if (refund > 0) {
+        ReturnOrDropItem(ecs::ItemInstance{m_buildWoodItem, refund, 1.0f});
+    }
+    m_buildActionCooldown = m_buildActionCooldownSeconds;
+    EmitBuildDemolished(m_ctx.events, m_ctx.ecs->IdOf(m_player).id, id, wx, wy,
+                        dropZ);
+    std::string notice = "拆除 " + name;
+    if (refund > 0) {
+        notice += "（返还 " + std::to_string(refund) + " 木材）";
+    }
+    SetNotice(std::move(notice), kNoticeOkColor, 2.0f);
+    ZL_INFO("building", "脚本拆除设施 {}：({}, {})", id, wx, wy);
+    return true;
+}
+
+bool WorldDemoState::TryRepairBuildAt(int wx, int wy, std::string& error) {
+    error.clear();
+    if (!BuildCellInActionRange(wx, wy, error)) {
+        return false;
+    }
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
+        m_player == entt::null) {
+        error = "维修系统不可用";
+        return false;
+    }
+    auto* container =
+        m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
+    if (container == nullptr) {
+        error = "玩家背包不可用";
+        return false;
+    }
+    PlayerBuildTarget target;
+    if (FindPlayerBuiltStructureAt(wx, wy, &target) &&
+        target.def != nullptr && target.def->maxHp > 0.0f) {
+        if (!CanEditLocalStructure(target.ownerStableId)) {
+            error = "该结构属于 " +
+                    StructureOwnerLabel(target.ownerStableId) +
+                    "，只有所有者可维修";
+            SetNotice(error, kNoticeFailColor, 1.8f);
+            return false;
+        }
+        const world::ChunkCoord coord = world::ChunkOf(wx, wy);
+        world::Chunk* chunk = FindChunk(coord.cx, coord.cy);
+        if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
+            error = "目标区域未加载";
+            return false;
+        }
+        const world::SquareLocal local = world::SquareLocalOf(wx, wy);
+        auto& objects =
+            chunk->Square(local.lx, local.ly, 0).Layer(target.layer);
+        if (target.objectIndex >= objects.size()) {
+            error = "目标结构不存在";
+            return false;
+        }
+        world::SquareObject& object = objects[target.objectIndex];
+        if (!object.playerBuilt ||
+            !BuildableMatchesSprite(*target.def, object.sprite)) {
+            error = "目标结构已变化";
+            return false;
+        }
+        const float oldHp = ResolveBarricadeHp(object, target.def->maxHp);
+        if (oldHp >= target.def->maxHp - 0.01f) {
+            error = "结构耐久已满";
+            SetNotice("结构耐久已满", kNoticeInfoColor, 1.2f);
+            return false;
+        }
+        if (items::CountOf(*container, m_buildWoodItem) < m_repairWoodCost ||
+            items::RemoveItem(*container, m_buildWoodItem,
+                              m_repairWoodCost) != m_repairWoodCost) {
+            error = "维修木材不足";
+            SetNotice("维修需要" + std::to_string(m_repairWoodCost) + " 木材",
+                      kNoticeFailColor, 1.8f);
+            return false;
+        }
+        const float newHp =
+            RepairBarricadeHp(oldHp, target.def->maxHp,
+                              RepairAmountForPlayer());
+        object.hp = newHp;
+        if (object.blocksMovement) {
+            m_barricades[BuildCellKey(wx, wy)] = BuiltBarricade{
+                object.sprite, newHp, target.def->maxHp};
+        }
+        m_buildActionCooldown = m_buildActionCooldownSeconds;
+        EmitBuildRepaired(m_ctx.events, m_ctx.ecs->IdOf(m_player).id, wx, wy,
+                          0);
+        SetNotice("维修 " + target.def->name + "：HP " +
+                      std::to_string(static_cast<int>(std::lround(newHp))) +
+                      "/" +
+                      std::to_string(static_cast<int>(
+                          std::lround(target.def->maxHp))),
+                  kNoticeOkColor, 2.0f);
+        ZL_INFO("building", "脚本维修 {}：({}, {}) HP {:.0f}/{:.0f}",
+                target.def->id, wx, wy, newHp, target.def->maxHp);
+        return true;
+    }
+
+    ecs::Entity light = entt::null;
+    m_ctx.ecs->Registry().view<ecs::Floodlight, ecs::Position>().each(
+        [&](const ecs::Entity entity, const ecs::Floodlight&,
+            const ecs::Position& position) {
+            if (light == entt::null && position.z == 0 &&
+                static_cast<int>(std::floor(position.x)) == wx &&
+                static_cast<int>(std::floor(position.y)) == wy) {
+                light = entity;
+            }
+        });
+    if (light == entt::null) {
+        error = "目标没有可维修的己方结构";
+        SetNotice(error, kNoticeFailColor, 1.5f);
+        return false;
+    }
+    const std::uint64_t owner = EntityOwnerStableId(light);
+    if (!CanEditLocalStructure(owner)) {
+        error = "该设施属于 " + StructureOwnerLabel(owner) +
+                "，只有所有者可维修";
+        SetNotice(error, kNoticeFailColor, 1.8f);
+        return false;
+    }
+    auto* health = m_ctx.ecs->Registry().try_get<ecs::Health>(light);
+    if (health == nullptr || health->max <= 0.0f) {
+        error = "该设施不可维修";
+        return false;
+    }
+    if (health->current >= health->max - 0.01f) {
+        error = "设施耐久已满";
+        SetNotice("泛光灯耐久已满", kNoticeInfoColor, 1.2f);
+        return false;
+    }
+    if (items::CountOf(*container, m_buildWoodItem) < m_repairWoodCost ||
+        items::RemoveItem(*container, m_buildWoodItem, m_repairWoodCost) !=
+            m_repairWoodCost) {
+        error = "维修木材不足";
+        SetNotice("维修需要" + std::to_string(m_repairWoodCost) + " 木材",
+                  kNoticeFailColor, 1.8f);
+        return false;
+    }
+    health->current =
+        std::min(health->max, health->current + RepairAmountForPlayer());
+    m_buildActionCooldown = m_buildActionCooldownSeconds;
+    EmitBuildRepaired(m_ctx.events, m_ctx.ecs->IdOf(m_player).id, wx, wy, 0);
+    SetNotice("维修 泛光灯：HP " +
+                  std::to_string(static_cast<int>(std::lround(health->current))) +
+                  "/" +
+                  std::to_string(static_cast<int>(std::lround(health->max))),
+              kNoticeOkColor, 2.0f);
+    ZL_INFO("homestead", "脚本维修泛光灯：({}, {})", wx, wy);
+    return true;
+}
+
+bool WorldDemoState::TryToggleDoorAt(int wx, int wy, std::string& error) {
+    error.clear();
+    if (!BuildCellInActionRange(wx, wy, error)) {
+        return false;
+    }
+    PlayerBuildTarget target;
+    if (!FindPlayerBuiltStructureAt(wx, wy, &target) || target.def == nullptr ||
+        !target.def->door) {
+        error = "目标没有可开启的己方门";
+        SetNotice(error, kNoticeFailColor, 1.5f);
+        return false;
+    }
+    if (!CanEditLocalStructure(target.ownerStableId)) {
+        error = "该门属于 " + StructureOwnerLabel(target.ownerStableId) +
+                "，只有所有者可开关";
+        SetNotice(error, kNoticeFailColor, 1.8f);
+        return false;
+    }
+    const world::ChunkCoord coord = world::ChunkOf(wx, wy);
+    world::Chunk* chunk = FindChunk(coord.cx, coord.cy);
+    if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
+        error = "目标区域未加载";
+        return false;
+    }
+    const world::SquareLocal local = world::SquareLocalOf(wx, wy);
+    auto& objects = chunk->Square(local.lx, local.ly, 0).Layer(target.layer);
+    if (target.objectIndex >= objects.size()) {
+        error = "目标门不存在";
+        return false;
+    }
+    world::SquareObject& object = objects[target.objectIndex];
+    if (!object.playerBuilt ||
+        !BuildableMatchesSprite(*target.def, object.sprite)) {
+        error = "目标门已变化";
+        return false;
+    }
+    const bool vertical = IsVerticalBuildSprite(*target.def, object.sprite);
+    const bool open = IsOpenDoorSprite(*target.def, object.sprite);
+    if (open && IsCellOccupiedByLiving(wx, wy)) {
+        error = "门口被挡住，无法关门";
+        SetNotice(error, kNoticeFailColor, 1.5f);
+        return false;
+    }
+    object.sprite =
+        std::string(BuildableSprite(*target.def, vertical, !open));
+    object.blocksMovement = open;
+    if (object.blocksMovement) {
+        m_barricades[BuildCellKey(wx, wy)] = BuiltBarricade{
+            object.sprite,
+            ResolveBarricadeHp(object, target.def->maxHp),
+            target.def->maxHp};
+    } else {
+        m_barricades.erase(BuildCellKey(wx, wy));
+    }
+    RebuildChunkCollision(coord.cx, coord.cy);
+    m_buildActionCooldown = 0.25f;
+    SetNotice(std::string(open ? "关门：" : "开门：") + target.def->name,
+              kNoticeOkColor, 1.4f);
+    ZL_INFO("building", "脚本{} {}（{}, {}）", open ? "关门" : "开门",
+            target.def->id, wx, wy);
     return true;
 }
 
@@ -15529,6 +19545,8 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
                   kNoticeOkColor, 2.0f);
         GrantProgressionXp(ecs::SkillKind::Building,
                            m_progressionConfig.buildXpPerStructure, "建造");
+        EmitBuildPlaced(m_ctx.events, m_ctx.ecs->IdOf(m_player).id, def->id,
+                        wx, wy, 0, false);
         ZL_INFO("homestead", "建造{} {}：({}, {})", logLabel, def->id, wx, wy);
         return true;
     };
@@ -15592,6 +19610,24 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
         }
         return finishFacility("冷藏柜");
     }
+    if (const TrapDef* trapDef =
+            m_ctx.traps != nullptr ? m_ctx.traps->FindByBuilding(def->id)
+                                   : nullptr;
+        trapDef != nullptr) {
+        if (!m_ctx.traps->enabled) {
+            refundWood();
+            SetNotice("陷阱数据不可用", kNoticeFailColor, 2.0f);
+            return false;
+        }
+        if (SpawnPlacedTrap(*m_ctx.ecs, static_cast<float>(wx) + 0.5f,
+                            static_cast<float>(wy) + 0.5f, 0, *trapDef, *def,
+                            m_ctx.ecs->IdOf(m_player).id) == entt::null) {
+            refundWood();
+            SetNotice("无法建造：陷阱创建失败", kNoticeFailColor, 2.0f);
+            return false;
+        }
+        return finishFacility("陷阱");
+    }
     if (def->id == "spike_trap") {
         if (!m_homesteadConfig.trap.enabled) {
             refundWood();
@@ -15626,6 +19662,8 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
                   kNoticeOkColor, 2.0f);
         GrantProgressionXp(ecs::SkillKind::Building,
                            m_progressionConfig.buildXpPerStructure, "建造");
+        EmitBuildPlaced(m_ctx.events, m_ctx.ecs->IdOf(m_player).id, def->id,
+                        wx, wy, 0, false);
         ZL_INFO("building", "建造仓库 {}：({}, {})，容量 {:.1f}kg/{} 堆",
                 def->id, wx, wy, def->storageKg, def->storageSlots);
         return true;
@@ -15638,8 +19676,9 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
     }
     const world::SquareLocal local = world::SquareLocalOf(wx, wy);
     world::GridSquare& square = chunk->Square(local.lx, local.ly, 0);
-    world::SquareObject built =
-        MakeBuiltObject(*def, m_buildOrientationVertical);
+    const bool vertical =
+        BuildableSupportsVertical(*def) && m_buildOrientationVertical;
+    world::SquareObject built = MakeBuiltObject(*def, vertical);
     if (def->layer == world::SquareLayer::Floor) {
         if (const world::SquareObject* floor = square.Floor();
             floor != nullptr) {
@@ -15664,6 +19703,8 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
               kNoticeOkColor, 2.0f);
     GrantProgressionXp(ecs::SkillKind::Building,
                        m_progressionConfig.buildXpPerStructure, "建造");
+    EmitBuildPlaced(m_ctx.events, m_ctx.ecs->IdOf(m_player).id, def->id, wx,
+                    wy, 0, vertical);
     ZL_INFO("building", "建造 {}：({}, {})，剩余木材 {}", def->id, wx, wy,
             items::CountOf(*container, m_buildWoodItem));
     return true;
@@ -16034,7 +20075,6 @@ void WorldDemoState::UpdateBaseSiege(float tickDt) {
     if (!m_baseSiege.Active()) {
         return;
     }
-    UpdateTraps(tickDt);
     DriveBaseSiegeZombies();
 }
 
@@ -16123,10 +20163,179 @@ void WorldDemoState::UpdateElectricFences(float tickDt) {
 }
 
 void WorldDemoState::UpdateTraps(float tickDt) {
-    if (!m_homesteadConfig.trap.enabled || m_ctx.ecs == nullptr) {
+    if (m_ctx.ecs == nullptr) {
         return;
     }
     entt::registry& registry = m_ctx.ecs->Registry();
+    if (m_ctx.traps != nullptr && m_ctx.traps->enabled) {
+        bool anyReady = false;
+        registry.view<ecs::PlacedTrap>().each(
+            [&](const ecs::Entity entity, ecs::PlacedTrap& trap) {
+                (void)AdvancePlacedTrapCooldown(trap, tickDt);
+                if (AdvancePlacedTrapArming(trap, tickDt)) {
+                    ZL_INFO("traps", "陷阱布防完成：{}（{}）", trap.defId,
+                            m_ctx.ecs->IdOf(entity).id);
+                }
+                const TrapDef* def = m_ctx.traps->Find(trap.defId);
+                if (def != nullptr && TrapCanActivate(trap, *def)) {
+                    anyReady = true;
+                }
+            });
+
+        struct PendingPlacedHit {
+            ecs::Entity trap = entt::null;
+            ecs::Entity target = entt::null;
+            TrapTargetKind kind = TrapTargetKind::None;
+            const TrapDef* def = nullptr;
+        };
+        std::vector<PendingPlacedHit> pending;
+        std::vector<TrapTargetCandidate> targets;
+        if (anyReady) {
+            targets = CollectTrapTargets(*m_ctx.ecs);
+        }
+        registry.view<ecs::PlacedTrap, ecs::Position>().each(
+            [&](const ecs::Entity entity, const ecs::PlacedTrap& trap,
+                const ecs::Position& position) {
+                const TrapDef* def = m_ctx.traps->Find(trap.defId);
+                if (def == nullptr || !TrapCanActivate(trap, *def)) {
+                    return;
+                }
+                TrapTargetKind kind = TrapTargetKind::None;
+                const ecs::Entity target =
+                    FindTrapTarget(targets, position, *def, &kind);
+                if (target != ecs::EcsWorld::kNull) {
+                    pending.push_back(
+                        PendingPlacedHit{entity, target, kind, def});
+                }
+            });
+
+        for (const PendingPlacedHit& hit : pending) {
+            auto* trap = registry.try_get<ecs::PlacedTrap>(hit.trap);
+            const auto* trapPosition =
+                registry.try_get<ecs::Position>(hit.trap);
+            const auto* targetPosition =
+                registry.try_get<ecs::Position>(hit.target);
+            const auto* targetHealth = registry.try_get<ecs::Health>(hit.target);
+            if (trap == nullptr || trapPosition == nullptr ||
+                targetPosition == nullptr || targetHealth == nullptr ||
+                targetHealth->current <= 0.0f || hit.def == nullptr ||
+                !TrapCanActivate(*trap, *hit.def)) {
+                continue;
+            }
+            bool applied = false;
+            if (hit.def->damage > 0.0f) {
+                ecs::DamageEvent event;
+                event.type = ecs::DamageType::Blunt;
+                event.amount = hit.def->damage;
+                event.knockback = 0.0f;
+                event.staggerSeconds = hit.def->staggerSeconds;
+                event.sourceId = trap->owner;
+                const float dx = targetPosition->x - trapPosition->x;
+                const float dy = targetPosition->y - trapPosition->y;
+                const float length = std::sqrt(dx * dx + dy * dy);
+                if (length > 0.0001f) {
+                    event.dirX = dx / length;
+                    event.dirY = dy / length;
+                }
+                if (m_ctx.combat != nullptr) {
+                    applied =
+                        m_ctx.combat->ApplyDamage(*m_ctx.ecs, hit.target, event);
+                } else if (auto* health =
+                               registry.try_get<ecs::Health>(hit.target);
+                           health != nullptr) {
+                    health->current =
+                        std::max(0.0f, health->current - hit.def->damage);
+                    applied = true;
+                }
+            }
+            if (hit.def->noiseRadius > 0.0f) {
+                core::SoundEvent noise;
+                noise.x = trapPosition->x;
+                noise.y = trapPosition->y;
+                noise.radius = hit.def->noiseRadius;
+                noise.type = core::SoundType::Impact;
+                noise.clip = audio::kImpact;
+                if (m_ctx.audio != nullptr) {
+                    m_ctx.audio->EmitWorldSound(std::move(noise));
+                } else if (m_ctx.events != nullptr) {
+                    m_ctx.events->EmitQueued(core::kOnSound,
+                                             std::move(noise));
+                }
+                applied = true;
+            }
+            std::size_t fireCells = 0;
+            if (hit.def->fire.has_value()) {
+                game::FireSystem* fire = m_ctx.simulation != nullptr
+                                             ? m_ctx.simulation->Fire()
+                                             : nullptr;
+                if (fire != nullptr && m_ctx.world != nullptr) {
+                    double dayLengthMinutes = 60.0;
+                    if (m_ctx.config != nullptr) {
+                        dayLengthMinutes = m_ctx.config->Get<double>(
+                            "game.dayLengthMinutes", dayLengthMinutes);
+                    }
+                    const float gameMinutesPerRealSecond =
+                        std::isfinite(dayLengthMinutes) &&
+                                dayLengthMinutes > 0.0
+                            ? static_cast<float>(1440.0 /
+                                                 (dayLengthMinutes * 60.0))
+                            : 0.4f;
+                    const float burnSeconds = TrapFireDurationSeconds(
+                        hit.def->fire->minutes, gameMinutesPerRealSecond);
+                    const std::vector<TrapFireCell> cells = TrapFireAreaCells(
+                        trapPosition->x, trapPosition->y,
+                        hit.def->fire->radius);
+                    for (const TrapFireCell& cell : cells) {
+                        if (fire->IgniteForcedAt(
+                                *m_ctx.ecs, *m_ctx.world, cell.cellX,
+                                cell.cellY, trapPosition->z, burnSeconds,
+                                hit.def->fire->radius, trap->owner)) {
+                            ++fireCells;
+                        }
+                    }
+                    if (fireCells > 0) {
+                        applied = true;
+                    }
+                }
+            }
+            if (!applied) {
+                continue;
+            }
+            (void)ConsumePlacedTrapUse(*trap, *hit.def);
+            std::string message = hit.def->name + "触发";
+            if (hit.def->damage > 0.0f) {
+                message += "：造成 " +
+                           std::to_string(static_cast<int>(
+                               std::lround(hit.def->damage))) +
+                           " 伤害";
+            } else if (hit.def->noiseRadius > 0.0f) {
+                message += "：发出 " +
+                           std::to_string(static_cast<int>(
+                               std::lround(hit.def->noiseRadius))) +
+                           " 格噪声";
+            } else if (hit.def->fire.has_value()) {
+                message += "：点燃 " +
+                           std::to_string(static_cast<int>(fireCells)) +
+                           " 格火焰";
+            }
+            message += "（剩余 " + std::to_string(trap->uses) + " 次）";
+            SetNotice(message, kNoticeOkColor, 1.8f);
+            ZL_INFO("traps",
+                    "陷阱 {} 触发 {}（{}），剩余 {} 次，冷却 {:.1f}s，火焰 {}/{} 格",
+                    m_ctx.ecs->IdOf(hit.trap).id,
+                    TrapTargetKindName(hit.kind),
+                    m_ctx.ecs->IdOf(hit.target).id, trap->uses,
+                    static_cast<double>(trap->cooldown),
+                    static_cast<std::size_t>(fireCells),
+                    hit.def->fire.has_value()
+                        ? TrapFireAreaCells(trapPosition->x, trapPosition->y,
+                                            hit.def->fire->radius).size()
+                        : 0u);
+        }
+    }
+    if (!m_homesteadConfig.trap.enabled || !m_baseSiege.Active()) {
+        return;
+    }
     registry.view<ecs::SpikeTrap, ecs::Position>().each(
         [&](const ecs::Entity trapEntity, ecs::SpikeTrap& trap,
             const ecs::Position& trapPosition) {
@@ -17271,6 +21480,30 @@ bool WorldDemoState::TryInteractHomestead() {
                   trap->armed ? kNoticeOkColor : kNoticeInfoColor, 1.5f);
         return true;
     }
+
+    if (target.kind == HomesteadTargetKind::PlacedTrap) {
+        auto* trap = registry.try_get<ecs::PlacedTrap>(target.entity);
+        if (trap == nullptr || m_ctx.traps == nullptr) {
+            return true;
+        }
+        const BuildableDef* buildable = PlacedTrapBuildable(target.entity);
+        const std::string name =
+            buildable != nullptr ? buildable->name : "陷阱";
+        if (!TrapCanToggle(*trap)) {
+            SetNotice(name + "已耗尽，需要拆除重建", kNoticeFailColor, 1.8f);
+            return true;
+        }
+        const bool arm = !trap->armed;
+        if (!SetPlacedTrapArmed(*trap, arm)) {
+            SetNotice(name + "无法布防", kNoticeFailColor, 1.5f);
+            return true;
+        }
+        SetNotice(name + (arm ? "已布防" : "已解除"),
+                  arm ? kNoticeOkColor : kNoticeInfoColor, 1.5f);
+        ZL_INFO("traps", "{}：{}，剩余 {} 次", arm ? "布防" : "解除",
+                trap->defId, trap->uses);
+        return true;
+    }
     return false;
 }
 
@@ -17491,6 +21724,7 @@ bool WorldDemoState::OpenTrade(ecs::Entity merchant) {
         }
         merchantName = settlement->name + "商人";
     }
+    m_companionOpen = false;
     m_tradeOpen = true;
     m_tradeNpc = merchant;
     m_tradeSettlementId = std::move(settlementId);
@@ -17754,11 +21988,15 @@ bool WorldDemoState::DialogueNpcInRange() const {
 
 void WorldDemoState::CloseSettlementDialogue() {
     m_dialogueOpen = false;
+    m_dialogueCompanion = false;
     m_dialogueNpc = entt::null;
     m_dialogueSettlementId.clear();
     m_dialogueNodeId.clear();
     m_dialogueIndex = 0;
     m_dialogueTree = {};
+    m_dialogueCompanionState = {};
+    m_dialogueCompanionDef = nullptr;
+    m_dialogueCompanionHealth = {};
 }
 
 void WorldDemoState::OpenSettlementDialogue(ecs::Entity npc) {
@@ -17785,7 +22023,9 @@ void WorldDemoState::OpenSettlementDialogue(ecs::Entity npc) {
         CloseSettlementDialogue();
         return;
     }
+    m_companionOpen = false;
     m_dialogueOpen = true;
+    m_dialogueCompanion = false;
     m_dialogueNpc = npc;
     m_dialogueSettlementId = settlement->id;
     m_dialogueNodeId = root->id;
@@ -17821,6 +22061,7 @@ DialogueContext WorldDemoState::MakeDialogueContext() const {
     DialogueContext context;
     context.settlement = m_settlementConfig.Find(m_dialogueSettlementId);
     context.missions = &m_missionConfig;
+    context.companions = m_ctx.companions;
     context.missionLog = PlayerMissions();
     if (context.settlement != nullptr) {
         context.settlementReputation = SettlementReputationForHud(
@@ -17829,6 +22070,34 @@ DialogueContext WorldDemoState::MakeDialogueContext() const {
     if (m_ctx.ecs != nullptr && m_player != entt::null) {
         context.inventory =
             m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
+        const ecs::Entity owned = FindOwnedCompanion(
+            *m_ctx.ecs, m_ctx.ecs->IdOf(m_player).id);
+        if (owned != entt::null && m_ctx.ecs->Alive(owned)) {
+            const auto* companion =
+                m_ctx.ecs->Registry().try_get<Companion>(owned);
+            const auto* state =
+                m_ctx.ecs->Registry().try_get<CompanionState>(owned);
+            if (companion != nullptr && state != nullptr) {
+                context.hasCompanion = true;
+                context.companionStandby = state->standby;
+                context.companionHomeSettlementId =
+                    companion->homeSettlementId;
+                if (m_ctx.companions != nullptr) {
+                    context.companionDef =
+                        m_ctx.companions->Find(companion->defId);
+                }
+                context.companionState = state;
+                context.companionHealth =
+                    m_ctx.ecs->Registry().try_get<ecs::Health>(owned);
+            }
+        }
+    }
+    if (m_dialogueCompanion && m_dialogueCompanionDef != nullptr) {
+        context.hasCompanion = true;
+        context.companionStandby = m_dialogueCompanionState.standby;
+        context.companionDef = m_dialogueCompanionDef;
+        context.companionState = &m_dialogueCompanionState;
+        context.companionHealth = &m_dialogueCompanionHealth;
     }
     context.items = m_ctx.items;
     context.day = CurrentMissionDay();
@@ -17898,6 +22167,883 @@ bool WorldDemoState::AcceptSettlementMissionFromDialogue() {
     return true;
 }
 
+bool WorldDemoState::RecruitCompanionFromDialogue() {
+    const SettlementDef* settlement =
+        m_settlementConfig.Find(m_dialogueSettlementId);
+    if (settlement == nullptr || m_ctx.companions == nullptr ||
+        !m_ctx.companions->enabled) {
+        SetNotice("当前聚落没有可招募的同伴", kNoticeInfoColor, 1.8f);
+        return false;
+    }
+    if (m_networkMode) {
+        if (m_ctx.ecs == nullptr || m_dialogueNpc == entt::null ||
+            !m_ctx.ecs->Alive(m_dialogueNpc)) {
+            SetNotice("对话目标已失效", kNoticeInfoColor, 1.8f);
+            return false;
+        }
+        net::Command command =
+            MakePlayerCommand(net::CommandType::RecruitCompanion);
+        command.payload.entityId = m_ctx.ecs->IdOf(m_dialogueNpc).id;
+        SubmitMoveCommand(0.0f, 0.0f);
+        if (!SubmitPlayerCommand(command)) {
+            SetNotice("招募请求发送失败", kNoticeFailColor, 1.8f);
+            return false;
+        }
+        SetNotice("已发送招募请求", kNoticeInfoColor, 1.8f);
+        return true;
+    }
+    if (m_ctx.ecs == nullptr || m_ctx.simulation == nullptr ||
+        m_player == entt::null || m_dialogueNpc == entt::null ||
+        !m_ctx.ecs->Alive(m_player) || !m_ctx.ecs->Alive(m_dialogueNpc)) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const std::uint64_t ownerStableId = m_ctx.ecs->IdOf(m_player).id;
+    const ecs::Entity existing =
+        FindOwnedCompanion(*m_ctx.ecs, ownerStableId);
+    if (existing != entt::null) {
+        auto* companion = registry.try_get<Companion>(existing);
+        auto* state = registry.try_get<CompanionState>(existing);
+        if (companion == nullptr || state == nullptr) {
+            SetNotice("同伴状态无效", kNoticeFailColor, 2.0f);
+            return false;
+        }
+        if (state->dead) {
+            SetNotice("同伴已死亡，无法再次招募", kNoticeFailColor, 2.0f);
+            return false;
+        }
+        if (!state->standby) {
+            SetNotice("你已经有一名活动同伴", kNoticeInfoColor, 2.0f);
+            return false;
+        }
+        if (companion->homeSettlementId != settlement->id) {
+            SetNotice("同伴在其他聚落待命", kNoticeInfoColor, 2.0f);
+            return false;
+        }
+        if (!SettlementCanUseService(*settlement,
+                                     m_settlementConfig.reputation,
+                                     SettlementService::Recruit,
+                                     SettlementReputationForHud(
+                                         settlement->id,
+                                         settlement->startingReputation))) {
+            SetNotice("当前声望不允许召回同伴", kNoticeFailColor, 2.0f);
+            return false;
+        }
+        const auto* playerPosition =
+            registry.try_get<ecs::Position>(m_player);
+        if (playerPosition == nullptr ||
+            !m_ctx.simulation->TeleportCompanion(
+                existing, playerPosition->x + 0.8f, playerPosition->y)) {
+            SetNotice("同伴归队位置不可用", kNoticeFailColor, 2.0f);
+            return false;
+        }
+        state->standby = false;
+        state->command = CompanionCommand::Follow;
+        const CompanionDef* def = m_ctx.companions->Find(companion->defId);
+        const std::string name =
+            def != nullptr ? def->name : companion->defId;
+        SetNotice("同伴已归队：" + name, kNoticeOkColor, 2.5f);
+        return true;
+    }
+
+    const int score = SettlementReputationForHud(
+        settlement->id, settlement->startingReputation);
+    const auto* log = PlayerMissions();
+    const auto* inventory = registry.try_get<ecs::Container>(m_player);
+    const CompanionRecruitCheck check = EvaluateCompanionRecruitment(
+        *m_ctx.companions, *settlement, m_settlementConfig.reputation, score,
+        log, inventory, false);
+    if (check.status != CompanionRecruitStatus::Ready ||
+        check.def == nullptr) {
+        std::string message = CompanionRecruitStatusText(check.status);
+        if (check.status == CompanionRecruitStatus::MissionRequired &&
+            check.def != nullptr) {
+            message += "：" + check.def->recruit.requiredMission;
+        } else if (check.status ==
+                       CompanionRecruitStatus::ItemRequired &&
+                   check.def != nullptr) {
+            message += "：" + check.def->recruit.requiredItem + " ×" +
+                       std::to_string(check.def->recruit.requiredItemCount) +
+                       "（当前 " + std::to_string(check.itemCount) + "）";
+        }
+        SetNotice(message, kNoticeFailColor, 2.5f);
+        return false;
+    }
+    if (inventory == nullptr) {
+        SetNotice("同伴招募需要玩家背包", kNoticeFailColor, 2.0f);
+        return false;
+    }
+    const auto* npcPosition = registry.try_get<ecs::Position>(m_dialogueNpc);
+    if (npcPosition == nullptr) {
+        return false;
+    }
+    ecs::Container next = *inventory;
+    if (!ConsumeCompanionRecruitItems(&next, *check.def)) {
+        SetNotice("招募物资扣除失败", kNoticeFailColor, 2.0f);
+        return false;
+    }
+    const ecs::Entity companion = m_ctx.simulation->SpawnCompanionAt(
+        *check.def, ownerStableId, settlement->id, npcPosition->x + 1.0f,
+        npcPosition->y);
+    if (companion == entt::null) {
+        SetNotice("同伴生成位置不可用", kNoticeFailColor, 2.0f);
+        return false;
+    }
+    auto* target = registry.try_get<ecs::Container>(m_player);
+    if (target == nullptr) {
+        SetNotice("同伴招募需要玩家背包", kNoticeFailColor, 2.0f);
+        return false;
+    }
+    *target = std::move(next);
+    SetNotice("已招募同伴：" + check.def->name, kNoticeOkColor, 2.5f);
+    return true;
+}
+
+bool WorldDemoState::DismissCompanionFromDialogue() {
+    const SettlementDef* settlement =
+        m_settlementConfig.Find(m_dialogueSettlementId);
+    if (settlement == nullptr || m_ctx.companions == nullptr ||
+        !m_ctx.companions->enabled) {
+        SetNotice("当前聚落没有同伴可待命", kNoticeInfoColor, 1.8f);
+        return false;
+    }
+    if (m_networkMode) {
+        if (m_ctx.ecs == nullptr || m_dialogueNpc == entt::null ||
+            !m_ctx.ecs->Alive(m_dialogueNpc)) {
+            SetNotice("对话目标已失效", kNoticeInfoColor, 1.8f);
+            return false;
+        }
+        net::Command command =
+            MakePlayerCommand(net::CommandType::DismissCompanion);
+        command.payload.entityId = m_ctx.ecs->IdOf(m_dialogueNpc).id;
+        SubmitMoveCommand(0.0f, 0.0f);
+        if (!SubmitPlayerCommand(command)) {
+            SetNotice("解散请求发送失败", kNoticeFailColor, 1.8f);
+            return false;
+        }
+        SetNotice("已发送解散请求", kNoticeInfoColor, 1.8f);
+        return true;
+    }
+    if (m_ctx.ecs == nullptr || m_ctx.simulation == nullptr ||
+        m_player == entt::null || !m_ctx.ecs->Alive(m_player)) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const ecs::Entity owned = FindOwnedCompanion(
+        *m_ctx.ecs, m_ctx.ecs->IdOf(m_player).id);
+    auto* companion =
+        owned != entt::null ? registry.try_get<Companion>(owned) : nullptr;
+    auto* state = owned != entt::null
+                      ? registry.try_get<CompanionState>(owned)
+                      : nullptr;
+    if (owned == entt::null || companion == nullptr || state == nullptr) {
+        SetNotice("当前没有可解散的同伴", kNoticeInfoColor, 2.0f);
+        return false;
+    }
+    if (companion->homeSettlementId != settlement->id) {
+        SetNotice("只能让同伴回到所属聚落待命", kNoticeInfoColor, 2.0f);
+        return false;
+    }
+    if (state->dead) {
+        SetNotice("同伴已死亡", kNoticeFailColor, 2.0f);
+        return false;
+    }
+    if (state->downed) {
+        SetNotice("同伴已倒地，需先救援", kNoticeFailColor, 2.0f);
+        return false;
+    }
+    if (state->standby) {
+        SetNotice("同伴已经在聚落待命", kNoticeInfoColor, 2.0f);
+        return false;
+    }
+    if (!m_ctx.simulation->TeleportCompanion(
+            owned, settlement->centerX, settlement->centerY)) {
+        SetNotice("聚落待命位置不可用", kNoticeFailColor, 2.0f);
+        return false;
+    }
+    state->standby = true;
+    state->command = CompanionCommand::Stay;
+    const CompanionDef* def = m_ctx.companions->Find(companion->defId);
+    const std::string name =
+        def != nullptr ? def->name : companion->defId;
+    SetNotice("同伴已回聚落待命：" + name, kNoticeOkColor, 2.5f);
+    return true;
+}
+
+bool WorldDemoState::FindOwnedCompanionEntity(ecs::Entity* out) const {
+    if (out != nullptr) {
+        *out = entt::null;
+    }
+    if (m_ctx.ecs == nullptr || m_player == entt::null ||
+        !m_ctx.ecs->Alive(m_player)) {
+        return false;
+    }
+    const ecs::Entity companion =
+        FindOwnedCompanion(*m_ctx.ecs, m_ctx.ecs->IdOf(m_player).id);
+    if (out != nullptr) {
+        *out = companion;
+    }
+    return companion != entt::null && m_ctx.ecs->Alive(companion);
+}
+
+bool WorldDemoState::BuildCompanionUiSnapshot(
+    ui::CompanionUiState* out) const {
+    if (out == nullptr) {
+        return false;
+    }
+    *out = {};
+    if (m_ctx.companions == nullptr || !m_ctx.companions->enabled) {
+        return false;
+    }
+    if (m_networkMode) {
+        const ReplicatedActor* actor = FindNetworkOwnedCompanionActor(m_ctx);
+        if (actor == nullptr || !actor->hasCompanion || !actor->hasPosition ||
+            !actor->hasHealth) {
+            return false;
+        }
+        const CompanionDef* def =
+            m_ctx.companions->Find(actor->companion.defId);
+        if (def == nullptr) {
+            return false;
+        }
+        CompanionState state;
+        state.loyalty = actor->companion.loyalty;
+        state.command = actor->companion.command;
+        state.standby = actor->companion.standby;
+        state.downed = actor->companion.downed;
+        state.dead = actor->companion.dead;
+        state.downedRemaining = actor->companion.downedRemaining;
+        state.personalStatus = actor->companion.questStatus;
+        state.personalStage = actor->companion.questStage;
+        state.personalProgress = actor->companion.questProgress;
+        state.personalRewardMask = actor->companion.rewardMask;
+        state.equipment.slots = actor->equipment;
+        float px = 0.0f;
+        float py = 0.0f;
+        bool havePlayer = false;
+        if (m_ctx.ecs != nullptr && m_player != entt::null) {
+            if (const auto* position =
+                    m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+                position != nullptr) {
+                px = position->x;
+                py = position->y;
+                havePlayer = true;
+            }
+        }
+        if (!havePlayer && m_ctx.networkClient != nullptr) {
+            if (const ReplicatedActor* self =
+                    m_ctx.networkClient->Replication().Find(
+                        m_ctx.networkClient->PlayerStableId());
+                self != nullptr && self->hasPosition) {
+                px = self->position.x;
+                py = self->position.y;
+                havePlayer = true;
+            }
+        }
+        const float dx = actor->position.x - px;
+        const float dy = actor->position.y - py;
+        const float distance =
+            havePlayer ? std::sqrt(dx * dx + dy * dy) : 0.0f;
+        CompanionUiInput input;
+        input.def = def;
+        input.state = &state;
+        input.health = &actor->health;
+        input.items = m_ctx.items;
+        input.ownerDistance = distance;
+        input.networkSummary = true;
+        *out = BuildCompanionUi(input);
+        return out->valid;
+    }
+
+    ecs::Entity companion = entt::null;
+    if (!FindOwnedCompanionEntity(&companion) || m_ctx.ecs == nullptr) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* identity = registry.try_get<Companion>(companion);
+    const auto* state = registry.try_get<CompanionState>(companion);
+    const auto* health = registry.try_get<ecs::Health>(companion);
+    if (identity == nullptr || state == nullptr || health == nullptr) {
+        return false;
+    }
+    const CompanionDef* def = m_ctx.companions->Find(identity->defId);
+    if (def == nullptr) {
+        return false;
+    }
+    float distance = 0.0f;
+    if (const auto* playerPosition =
+            registry.try_get<ecs::Position>(m_player);
+        playerPosition != nullptr) {
+        if (const auto* companionPosition =
+                registry.try_get<ecs::Position>(companion);
+            companionPosition != nullptr) {
+            const float dx = companionPosition->x - playerPosition->x;
+            const float dy = companionPosition->y - playerPosition->y;
+            distance = std::sqrt(dx * dx + dy * dy);
+        }
+    }
+    bool stuck = false;
+    if (const auto* follow = registry.try_get<ecs::PathFollow>(companion);
+        follow != nullptr) {
+        stuck = follow->status == ecs::PathStatus::Failed;
+    }
+    CompanionUiInput input;
+    input.def = def;
+    input.state = state;
+    input.health = health;
+    input.items = m_ctx.items;
+    input.ownerDistance = distance;
+    input.stuck = stuck;
+    *out = BuildCompanionUi(input);
+    return out->valid;
+}
+
+void WorldDemoState::SyncCompanionHud(ui::HudState& hud) const {
+    ui::CompanionUiState companion;
+    (void)BuildCompanionUiSnapshot(&companion);
+    companion.open = m_companionOpen && companion.valid;
+    if (companion.valid && companion.canGift) {
+        const int slot = std::clamp(m_hotbarSelected, 0, 4);
+        std::string gift = " · 赠礼：快捷栏 " + std::to_string(slot + 1);
+        const std::string& label =
+            hud.slots[static_cast<std::size_t>(slot)].label;
+        if (!label.empty() && label != "空") {
+            gift += " · " + label;
+        }
+        companion.hint += gift;
+    }
+    hud.companion = std::move(companion);
+}
+
+void WorldDemoState::CloseCompanionPanel() {
+    m_companionOpen = false;
+}
+
+void WorldDemoState::ToggleCompanionPanel() {
+    if (m_companionOpen) {
+        CloseCompanionPanel();
+        ZL_INFO("companions", "同伴面板：关闭");
+        return;
+    }
+    ui::CompanionUiState snapshot;
+    if (!BuildCompanionUiSnapshot(&snapshot)) {
+        SetNotice("当前没有同伴", kNoticeInfoColor, 1.8f);
+        return;
+    }
+    m_companionOpen = true;
+    m_characterOpen = false;
+    if (m_ctx.ui != nullptr) {
+        m_ctx.ui->CloseInventory();
+    }
+    SubmitMoveCommand(0.0f, 0.0f);
+    m_scrollAccum = 0.0f;
+    ZL_INFO("companions", "同伴面板：打开（{}）", snapshot.name);
+}
+
+void WorldDemoState::HandleCompanionPanelInput(core::Input& input) {
+    SubmitMoveCommand(0.0f, 0.0f);
+    if (input.IsActionPressed("CompanionPanel") ||
+        input.IsActionPressed("Quit")) {
+        CloseCompanionPanel();
+        return;
+    }
+    ui::CompanionUiState snapshot;
+    if (!BuildCompanionUiSnapshot(&snapshot)) {
+        CloseCompanionPanel();
+        return;
+    }
+    if (snapshot.canRescue) {
+        if (input.IsActionPressed("Use")) {
+            (void)TryRescueDownedCompanion();
+        }
+        return;
+    }
+    if (!snapshot.canCommand) {
+        return;
+    }
+    if (input.IsActionPressed(kHotbarActions[0])) {
+        (void)SetOwnedCompanionCommand(CompanionCommand::Follow);
+        return;
+    }
+    if (input.IsActionPressed(kHotbarActions[1])) {
+        (void)SetOwnedCompanionCommand(CompanionCommand::Stay);
+        return;
+    }
+    if (input.IsActionPressed(kHotbarActions[2])) {
+        (void)SetOwnedCompanionCommand(CompanionCommand::Retreat);
+        return;
+    }
+    if (input.IsActionPressed(kHotbarActions[3])) {
+        (void)GiftToOwnedCompanionFromUi();
+        return;
+    }
+    if (input.IsActionPressed("Use")) {
+        if (TryInteractCompanion()) {
+            CloseCompanionPanel();
+        } else {
+            SetNotice("需要靠近同伴才能交谈", kNoticeInfoColor, 1.8f);
+        }
+    }
+}
+
+bool WorldDemoState::OpenCompanionDialogue(ecs::Entity companion) {
+    if (m_ctx.companions == nullptr || m_ctx.ecs == nullptr ||
+        !m_ctx.ecs->Alive(companion)) {
+        return false;
+    }
+    CompanionState state;
+    const CompanionDef* def = nullptr;
+    if (m_networkMode) {
+        const ReplicatedActor* actor = FindNetworkOwnedCompanionActor(m_ctx);
+        if (actor == nullptr || !actor->hasCompanion || !actor->hasHealth) {
+            return false;
+        }
+        def = m_ctx.companions->Find(actor->companion.defId);
+        if (def == nullptr) {
+            return false;
+        }
+        state.loyalty = actor->companion.loyalty;
+        state.command = actor->companion.command;
+        state.standby = actor->companion.standby;
+        state.downed = actor->companion.downed;
+        state.dead = actor->companion.dead;
+        state.downedRemaining = actor->companion.downedRemaining;
+        state.personalStatus = actor->companion.questStatus;
+        state.personalStage = actor->companion.questStage;
+        state.personalProgress = actor->companion.questProgress;
+        state.personalRewardMask = actor->companion.rewardMask;
+        state.equipment.slots = actor->equipment;
+        m_dialogueCompanionHealth = actor->health;
+    } else {
+        const auto* identity =
+            m_ctx.ecs->Registry().try_get<Companion>(companion);
+        const auto* health =
+            m_ctx.ecs->Registry().try_get<ecs::Health>(companion);
+        const auto* liveState =
+            m_ctx.ecs->Registry().try_get<CompanionState>(companion);
+        if (identity == nullptr || health == nullptr || liveState == nullptr) {
+            return false;
+        }
+        def = m_ctx.companions->Find(identity->defId);
+        if (def == nullptr) {
+            return false;
+        }
+        state = *liveState;
+        m_dialogueCompanionHealth = *health;
+    }
+
+    m_dialogueTree = MakeCompanionDialogue(*def, state,
+                                          m_dialogueCompanionHealth);
+    const DialogueNode* root =
+        m_dialogueTree.FindNode(m_dialogueTree.startNode);
+    if (root == nullptr) {
+        CloseSettlementDialogue();
+        return false;
+    }
+    m_companionOpen = false;
+    m_dialogueOpen = true;
+    m_dialogueCompanion = true;
+    m_dialogueNpc = companion;
+    m_dialogueSettlementId.clear();
+    m_dialogueCompanionDef = def;
+    m_dialogueCompanionState = std::move(state);
+    m_dialogueNodeId = root->id;
+    m_dialogueIndex = 0;
+    m_scrollAccum = 0.0f;
+    CloseTrade();
+    SubmitMoveCommand(0.0f, 0.0f);
+    if (m_ctx.ui != nullptr) {
+        m_ctx.ui->CloseInventory();
+    }
+    SetNotice("交谈：" + def->name, kNoticeInfoColor, 1.5f);
+    ZL_INFO("dialogue", "打开同伴对话：{}", def->id);
+    return true;
+}
+
+bool WorldDemoState::RescueOwnedCompanion() {
+    if (m_networkMode) {
+        if (m_ctx.networkClient == nullptr) {
+            return false;
+        }
+        net::Command command =
+            MakePlayerCommand(net::CommandType::RescueCompanion);
+        SubmitMoveCommand(0.0f, 0.0f);
+        if (!SubmitPlayerCommand(command)) {
+            SetNotice("救援请求发送失败", kNoticeFailColor, 1.8f);
+            return false;
+        }
+        SetNotice("已发送救援请求", kNoticeInfoColor, 1.8f);
+        return true;
+    }
+    ecs::Entity companion = entt::null;
+    if (m_ctx.simulation == nullptr || m_player == entt::null ||
+        !FindOwnedCompanionEntity(&companion)) {
+        SetNotice("当前没有可救援的同伴", kNoticeInfoColor, 1.8f);
+        return false;
+    }
+    std::string error;
+    if (!m_ctx.simulation->RescueCompanion(companion, m_player, &error)) {
+        SetNotice(error.empty() ? "救援失败" : error, kNoticeFailColor, 2.0f);
+        return false;
+    }
+    SetNotice("已救起同伴", kNoticeOkColor, 2.2f);
+    return true;
+}
+
+bool WorldDemoState::TryRescueDownedCompanion() {
+    constexpr float kRescueRange = 3.0f;
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return false;
+    }
+    if (m_networkMode) {
+        const ReplicatedActor* actor = FindNetworkOwnedCompanionActor(m_ctx);
+        if (actor == nullptr || !actor->hasCompanion ||
+            !actor->companion.downed || actor->companion.dead) {
+            return false;
+        }
+        float px = 0.0f;
+        float py = 0.0f;
+        if (const auto* position =
+                m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+            position != nullptr) {
+            px = position->x;
+            py = position->y;
+        } else if (m_ctx.networkClient != nullptr) {
+            const ReplicatedActor* self =
+                m_ctx.networkClient->Replication().Find(
+                    m_ctx.networkClient->PlayerStableId());
+            if (self == nullptr || !self->hasPosition) {
+                return false;
+            }
+            px = self->position.x;
+            py = self->position.y;
+        }
+        const float dx = actor->position.x - px;
+        const float dy = actor->position.y - py;
+        if (dx * dx + dy * dy > kRescueRange * kRescueRange) {
+            SetNotice("需要靠近倒地同伴才能救援", kNoticeInfoColor, 1.8f);
+            return true;
+        }
+        return RescueOwnedCompanion();
+    }
+
+    ecs::Entity companion = entt::null;
+    if (!FindOwnedCompanionEntity(&companion)) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* state = registry.try_get<CompanionState>(companion);
+    if (state == nullptr || !state->downed || state->dead) {
+        return false;
+    }
+    const auto* playerPosition =
+        registry.try_get<ecs::Position>(m_player);
+    const auto* companionPosition =
+        registry.try_get<ecs::Position>(companion);
+    if (playerPosition == nullptr || companionPosition == nullptr ||
+        playerPosition->z != companionPosition->z) {
+        return false;
+    }
+    const float dx = companionPosition->x - playerPosition->x;
+    const float dy = companionPosition->y - playerPosition->y;
+    if (dx * dx + dy * dy > kRescueRange * kRescueRange) {
+        SetNotice("需要靠近倒地同伴才能救援", kNoticeInfoColor, 1.8f);
+        return true;
+    }
+    return RescueOwnedCompanion();
+}
+
+bool WorldDemoState::TryInteractCompanion() {
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return false;
+    }
+    const float range = m_buildActionRange + 1.0f;
+    if (m_networkMode) {
+        const ReplicatedActor* actor = FindNetworkOwnedCompanionActor(m_ctx);
+        if (actor == nullptr || !actor->hasCompanion || !actor->hasPosition ||
+            actor->companion.downed || actor->companion.dead) {
+            return false;
+        }
+        float px = 0.0f;
+        float py = 0.0f;
+        if (const auto* position =
+                m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+            position != nullptr) {
+            px = position->x;
+            py = position->y;
+        } else if (m_ctx.networkClient != nullptr) {
+            const ReplicatedActor* self =
+                m_ctx.networkClient->Replication().Find(
+                    m_ctx.networkClient->PlayerStableId());
+            if (self == nullptr || !self->hasPosition) {
+                return false;
+            }
+            px = self->position.x;
+            py = self->position.y;
+        }
+        const float dx = actor->position.x - px;
+        const float dy = actor->position.y - py;
+        if (dx * dx + dy * dy > range * range) {
+            return false;
+        }
+        const ecs::Entity replica =
+            m_ctx.ecs->FindById(actor->stableId);
+        return replica != entt::null &&
+               OpenCompanionDialogue(replica);
+    }
+
+    ecs::Entity companion = entt::null;
+    if (!FindOwnedCompanionEntity(&companion)) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* state = registry.try_get<CompanionState>(companion);
+    const auto* playerPosition =
+        registry.try_get<ecs::Position>(m_player);
+    const auto* companionPosition =
+        registry.try_get<ecs::Position>(companion);
+    if (state == nullptr || state->downed || state->dead ||
+        playerPosition == nullptr || companionPosition == nullptr ||
+        playerPosition->z != companionPosition->z) {
+        return false;
+    }
+    const float dx = companionPosition->x - playerPosition->x;
+    const float dy = companionPosition->y - playerPosition->y;
+    if (dx * dx + dy * dy > range * range) {
+        return false;
+    }
+    return OpenCompanionDialogue(companion);
+}
+
+bool WorldDemoState::SetOwnedCompanionCommand(CompanionCommand command) {
+    if (command != CompanionCommand::Follow &&
+        command != CompanionCommand::Stay &&
+        command != CompanionCommand::Retreat) {
+        return false;
+    }
+    if (m_networkMode) {
+        net::Command packet =
+            MakePlayerCommand(net::CommandType::SetCompanionCommand);
+        packet.payload.flags = static_cast<std::uint16_t>(command);
+        SubmitMoveCommand(0.0f, 0.0f);
+        if (!SubmitPlayerCommand(packet)) {
+            SetNotice("同伴指令发送失败", kNoticeFailColor, 1.8f);
+            return false;
+        }
+        SetNotice(std::string("已发送同伴指令：") +
+                      CompanionCommandName(command),
+                  kNoticeInfoColor, 1.6f);
+        return true;
+    }
+    ecs::Entity companion = entt::null;
+    if (!FindOwnedCompanionEntity(&companion) || m_ctx.ecs == nullptr) {
+        SetNotice("当前没有同伴", kNoticeInfoColor, 1.8f);
+        return false;
+    }
+    auto* state =
+        m_ctx.ecs->Registry().try_get<CompanionState>(companion);
+    if (state == nullptr || state->dead) {
+        SetNotice("同伴已死亡", kNoticeFailColor, 1.8f);
+        return false;
+    }
+    if (state->downed) {
+        SetNotice("同伴已倒地，需先救援", kNoticeFailColor, 1.8f);
+        return false;
+    }
+    if (state->standby) {
+        SetNotice("同伴在聚落待命，需先召回", kNoticeInfoColor, 1.8f);
+        return false;
+    }
+    state->command = command;
+    SetNotice(std::string("同伴指令：") + CompanionCommandName(command),
+              kNoticeOkColor, 1.8f);
+    ZL_INFO("companions", "同伴指令：{}", CompanionCommandName(command));
+    return true;
+}
+
+bool WorldDemoState::GiftToOwnedCompanionFromUi() {
+    const int index = std::clamp(m_hotbarSelected, 0, 4);
+    if (m_networkMode) {
+        net::Command packet =
+            MakePlayerCommand(net::CommandType::GiftToCompanion);
+        packet.payload.index = index;
+        SubmitMoveCommand(0.0f, 0.0f);
+        if (!SubmitPlayerCommand(packet)) {
+            SetNotice("赠礼请求发送失败", kNoticeFailColor, 1.8f);
+            return false;
+        }
+        SetNotice("已发送赠礼请求", kNoticeInfoColor, 1.6f);
+        return true;
+    }
+    ecs::Entity companion = entt::null;
+    if (m_ctx.ecs == nullptr || m_ctx.items == nullptr ||
+        !FindOwnedCompanionEntity(&companion)) {
+        SetNotice("当前没有同伴", kNoticeInfoColor, 1.8f);
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* identity = registry.try_get<Companion>(companion);
+    auto* donor = registry.try_get<ecs::Container>(m_player);
+    if (identity == nullptr || donor == nullptr || m_ctx.companions == nullptr) {
+        return false;
+    }
+    const CompanionDef* def = m_ctx.companions->Find(identity->defId);
+    if (def == nullptr) {
+        return false;
+    }
+    if (index < 0 || static_cast<std::size_t>(index) >= donor->items.size()) {
+        SetNotice("当前快捷栏没有可赠送物品", kNoticeInfoColor, 1.8f);
+        return false;
+    }
+    std::string error;
+    if (!GiftToCompanion(*m_ctx.ecs, companion, *def, *m_ctx.items, donor,
+                         static_cast<std::size_t>(index), 1, &error)) {
+        SetNotice(error.empty() ? "赠礼失败" : error, kNoticeFailColor, 2.0f);
+        return false;
+    }
+    if (m_dialogueCompanion) {
+        if (const auto* updated =
+                m_ctx.ecs->Registry().try_get<CompanionState>(companion);
+            updated != nullptr) {
+            m_dialogueCompanionState = *updated;
+        }
+    }
+    SetNotice("已赠礼：" + def->name, kNoticeOkColor, 2.2f);
+    return true;
+}
+
+bool WorldDemoState::AcceptCompanionQuestFromDialogue() {
+    if (m_networkMode) {
+        net::Command packet =
+            MakePlayerCommand(net::CommandType::AcceptCompanionQuest);
+        SubmitMoveCommand(0.0f, 0.0f);
+        if (!SubmitPlayerCommand(packet)) {
+            SetNotice("接取同伴委托请求发送失败", kNoticeFailColor, 1.8f);
+            return false;
+        }
+        SetNotice("已发送接取同伴委托请求", kNoticeInfoColor, 1.8f);
+        return true;
+    }
+    ecs::Entity companion = entt::null;
+    if (m_ctx.ecs == nullptr || m_ctx.companions == nullptr ||
+        !FindOwnedCompanionEntity(&companion)) {
+        SetNotice("当前没有同伴", kNoticeInfoColor, 1.8f);
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* identity = registry.try_get<Companion>(companion);
+    auto* state = registry.try_get<CompanionState>(companion);
+    const CompanionDef* def =
+        identity != nullptr ? m_ctx.companions->Find(identity->defId)
+                            : nullptr;
+    std::string error;
+    if (def == nullptr || state == nullptr ||
+        !StartCompanionQuest(*def, state, &error)) {
+        SetNotice(error.empty() ? "当前无法接取同伴委托" : error,
+                  kNoticeFailColor, 2.2f);
+        return false;
+    }
+    m_dialogueCompanionState = *state;
+    SetNotice("已接取同伴委托", kNoticeOkColor, 2.0f);
+    return true;
+}
+
+bool WorldDemoState::AbandonCompanionQuestFromDialogue() {
+    if (m_networkMode) {
+        net::Command packet =
+            MakePlayerCommand(net::CommandType::AbandonCompanionQuest);
+        SubmitMoveCommand(0.0f, 0.0f);
+        if (!SubmitPlayerCommand(packet)) {
+            SetNotice("放弃同伴委托请求发送失败", kNoticeFailColor, 1.8f);
+            return false;
+        }
+        SetNotice("已发送放弃同伴委托请求", kNoticeInfoColor, 1.8f);
+        return true;
+    }
+    ecs::Entity companion = entt::null;
+    if (m_ctx.ecs == nullptr || m_ctx.companions == nullptr ||
+        !FindOwnedCompanionEntity(&companion)) {
+        return false;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* identity = registry.try_get<Companion>(companion);
+    auto* state = registry.try_get<CompanionState>(companion);
+    const CompanionDef* def =
+        identity != nullptr ? m_ctx.companions->Find(identity->defId)
+                            : nullptr;
+    std::string error;
+    if (def == nullptr || state == nullptr ||
+        !FailCompanionQuest(*def, state, &error)) {
+        SetNotice(error.empty() ? "当前没有可放弃的同伴委托" : error,
+                  kNoticeFailColor, 2.0f);
+        return false;
+    }
+    m_dialogueCompanionState = *state;
+    SetNotice("已放一放同伴委托", kNoticeInfoColor, 2.0f);
+    return true;
+}
+
+std::string WorldDemoState::CompanionRecruitRequirementText() const {
+    if (m_ctx.companions == nullptr || !m_ctx.companions->enabled) {
+        return {};
+    }
+    ui::CompanionUiState owned;
+    if (BuildCompanionUiSnapshot(&owned)) {
+        return "已有同伴：" + owned.name + "（" + owned.status + "）";
+    }
+    const SettlementDef* settlement = CurrentSettlementForHud();
+    if (settlement == nullptr ||
+        !HasSettlementService(*settlement, SettlementService::Recruit)) {
+        return {};
+    }
+    const CompanionDef* def =
+        FindSettlementCompanion(*m_ctx.companions, *settlement);
+    if (def == nullptr) {
+        return {};
+    }
+    const int score = SettlementReputationForHud(
+        settlement->id, settlement->startingReputation);
+    const SettlementReputationTierDef* current =
+        SettlementReputationTierForScore(m_settlementConfig.reputation, score);
+    const SettlementReputationTierDef* required =
+        FindSettlementReputationTier(m_settlementConfig.reputation,
+                                     def->recruit.minReputationTier);
+    std::string text = "招募条件：声望 " +
+                       (required != nullptr ? required->name
+                                            : std::string("中立")) +
+                       "（当前 " +
+                       (current != nullptr ? current->name
+                                           : std::string("中立")) +
+                       " " + std::to_string(score) + "）";
+    if (!def->recruit.requiredMission.empty()) {
+        text += " · 完成 " + def->recruit.requiredMission;
+    }
+    if (!def->recruit.requiredItem.empty() &&
+        def->recruit.requiredItemCount > 0) {
+        std::string itemName = def->recruit.requiredItem;
+        if (m_ctx.items != nullptr) {
+            if (const items::ItemDef* item =
+                    m_ctx.items->Find(def->recruit.requiredItem);
+                item != nullptr) {
+                itemName = item->name;
+            }
+        }
+        int count = 0;
+        if (m_ctx.ecs != nullptr && m_player != entt::null) {
+            if (const auto* container =
+                    m_ctx.ecs->Registry().try_get<ecs::Container>(m_player);
+                container != nullptr) {
+                count = items::CountOf(*container,
+                                       def->recruit.requiredItem);
+            }
+        }
+        text += " · " + itemName + "×" +
+                std::to_string(def->recruit.requiredItemCount) + "（当前 " +
+                std::to_string(count) + "）";
+    }
+    return text;
+}
+
 bool WorldDemoState::FocusSettlementMissionFromDialogue() {
     const SettlementDef* settlement =
         m_settlementConfig.Find(m_dialogueSettlementId);
@@ -17945,6 +23091,25 @@ void WorldDemoState::ExecuteDialogueOption(const DialogueOption& option) {
         case DialogueResultKind::FocusSettlementMission:
             (void)FocusSettlementMissionFromDialogue();
             CloseSettlementDialogue();
+            return;
+        case DialogueResultKind::RecruitCompanion:
+            (void)RecruitCompanionFromDialogue();
+            CloseSettlementDialogue();
+            return;
+        case DialogueResultKind::DismissCompanion:
+            (void)DismissCompanionFromDialogue();
+            CloseSettlementDialogue();
+            return;
+        case DialogueResultKind::AcceptCompanionQuest:
+            (void)AcceptCompanionQuestFromDialogue();
+            CloseSettlementDialogue();
+            return;
+        case DialogueResultKind::AbandonCompanionQuest:
+            (void)AbandonCompanionQuestFromDialogue();
+            CloseSettlementDialogue();
+            return;
+        case DialogueResultKind::GiftToCompanion:
+            (void)GiftToOwnedCompanionFromUi();
             return;
     }
 }
@@ -18026,6 +23191,14 @@ void WorldDemoState::SyncDialogueHud(ui::HudState& hud) {
             options[static_cast<std::size_t>(i)]->text;
     }
     hud.dialogueHint = "1-5 选择 · 滚轮定位 · E 确认 · ESC 关闭";
+    if (m_dialogueCompanion) {
+        hud.dialogueHint = "1-5 选择 · E 确认 · ESC 关闭";
+    } else {
+        const std::string recruit = CompanionRecruitRequirementText();
+        if (!recruit.empty()) {
+            hud.dialogueHint += " · " + recruit;
+        }
+    }
     hud.actionHint.clear();
 }
 
@@ -18103,6 +23276,14 @@ std::string WorldDemoState::SettlementNpcHint() const {
         hint += " · 交易/消息";
     } else if (component->kind == SettlementNpcKind::Requester) {
         hint += " · 委托";
+        if (settlement != nullptr &&
+            HasSettlementService(*settlement, SettlementService::Recruit)) {
+            hint += "/同伴";
+            const std::string recruit = CompanionRecruitRequirementText();
+            if (!recruit.empty()) {
+                hint += " · " + recruit;
+            }
+        }
     } else {
         hint += " · 营地状态";
     }
@@ -18175,6 +23356,9 @@ WorldDemoState::HomesteadTarget WorldDemoState::FindNearestHomesteadTarget() con
     if (m_homesteadConfig.trap.enabled) {
         consider(HomesteadTargetKind::Trap, FindNearbyTrap());
     }
+    if (m_ctx.traps != nullptr && m_ctx.traps->enabled) {
+        consider(HomesteadTargetKind::PlacedTrap, FindNearbyPlacedTrap());
+    }
     return target;
 }
 
@@ -18210,6 +23394,27 @@ ecs::Entity WorldDemoState::FindNearbyTrap() const {
                                                         m_buildActionRange);
 }
 
+ecs::Entity WorldDemoState::FindNearbyPlacedTrap() const {
+    if (m_ctx.ecs == nullptr) {
+        return entt::null;
+    }
+    return FindNearestComponentEntity<ecs::PlacedTrap>(
+        *m_ctx.ecs, m_player, m_buildActionRange);
+}
+
+const BuildableDef* WorldDemoState::PlacedTrapBuildable(
+    ecs::Entity entity) const {
+    if (m_ctx.ecs == nullptr || m_ctx.traps == nullptr) {
+        return nullptr;
+    }
+    const auto* trap = m_ctx.ecs->Registry().try_get<ecs::PlacedTrap>(entity);
+    if (trap == nullptr) {
+        return nullptr;
+    }
+    const TrapDef* trapDef = m_ctx.traps->Find(trap->defId);
+    return trapDef != nullptr ? BuildableById(trapDef->buildingId) : nullptr;
+}
+
 ecs::Entity WorldDemoState::FindNearbyMerchant() const {
     if (m_ctx.ecs == nullptr) {
         return entt::null;
@@ -18243,13 +23448,22 @@ bool WorldDemoState::TryDemolishHomestead() {
         const float dy = position->y - playerPosition->y;
         const float distance = dx * dx + dy * dy;
         if (best.entity == entt::null || distance < best.distance) {
-            best = Candidate{entity, std::string(id), distance};
+            std::string buildingId(id);
+            if (buildingId.empty()) {
+                const BuildableDef* trapBuildable =
+                    PlacedTrapBuildable(entity);
+                buildingId = trapBuildable != nullptr ? trapBuildable->id : "";
+            }
+            best = Candidate{entity, std::move(buildingId), distance};
         }
     };
     consider(FindNearbyFarmPlot(), "farm_plot");
     consider(FindNearbyGenerator(), "generator");
     consider(FindNearbyFloodlight(), "floodlight");
     consider(FindNearbyTrap(), "spike_trap");
+    if (m_ctx.traps != nullptr && m_ctx.traps->enabled) {
+        consider(FindNearbyPlacedTrap(), {});
+    }
     if (best.entity == entt::null) {
         return false;
     }
@@ -18269,6 +23483,7 @@ bool WorldDemoState::TryDemolishHomestead() {
     const std::string name = def != nullptr ? def->name : best.id;
     const int wx = static_cast<int>(std::floor(position->x));
     const int wy = static_cast<int>(std::floor(position->y));
+    const int wz = position->z;
     const std::uint64_t token = m_ctx.ecs->IdOf(best.entity).id;
     if (!BeginOrConfirmDemolish(PendingDemolishKind::Entity, wx, wy, 0, token,
                                 name)) {
@@ -18282,6 +23497,8 @@ bool WorldDemoState::TryDemolishHomestead() {
         ecs::ItemInstance wood{m_buildWoodItem, refund, 1.0f};
         ReturnOrDropItem(wood);
     }
+    EmitBuildDemolished(m_ctx.events, m_ctx.ecs->IdOf(m_player).id, best.id,
+                        wx, wy, wz);
     m_buildActionCooldown = m_buildActionCooldownSeconds;
     std::string notice = "拆除 " + (def != nullptr ? def->name : best.id);
     if (refund > 0) {
@@ -18503,6 +23720,38 @@ std::string WorldDemoState::HomesteadHint() const {
                 const bool canEdit = CanEditLocalStructure(owner);
                 return "陷阱：剩余 " + std::to_string(trap->uses) + " 次 · " +
                        (trap->armed ? "已布置" : "已解除") +
+                       (canEdit ? " · E 切换" : " · 仅所有者可操作") +
+                       StructureOwnerSuffix(owner);
+            }
+        }
+    }
+    if (target.kind == HomesteadTargetKind::PlacedTrap) {
+        if (m_ctx.ecs != nullptr) {
+            if (const auto* trap = m_ctx.ecs->Registry().try_get<ecs::PlacedTrap>(
+                    target.entity);
+                trap != nullptr) {
+                const std::uint64_t owner =
+                    EntityOwnerStableId(target.entity);
+                const bool canEdit = CanEditLocalStructure(owner);
+                const BuildableDef* buildable =
+                    PlacedTrapBuildable(target.entity);
+                const std::string name =
+                    buildable != nullptr ? buildable->name : "陷阱";
+                std::string status;
+                if (trap->uses <= 0) {
+                    status = "已耗尽";
+                } else if (trap->armed) {
+                    status = "已布防";
+                } else if (trap->armRemaining > 0.0f) {
+                    char buffer[64];
+                    std::snprintf(buffer, sizeof(buffer), "布防中 %.1fs",
+                                  static_cast<double>(trap->armRemaining));
+                    status = buffer;
+                } else {
+                    status = "已解除";
+                }
+                return name + "：剩余 " + std::to_string(trap->uses) +
+                       " 次 · " + status +
                        (canEdit ? " · E 切换" : " · 仅所有者可操作") +
                        StructureOwnerSuffix(owner);
             }
@@ -20010,6 +25259,7 @@ void WorldDemoState::UseConsumableItem() {
                 registry.try_get<ecs::Wounds>(m_player));
         }
     }
+    EmitItemUsed(use.defId, use.spoiled, use.remaining);
     if (ApplyUseInfectionRisk(use.effect.infectionRisk, use.defId)) {
         SetNotice("Used " + use.defId + " (infected)", kNoticeFailColor, 2.0f);
         return;
@@ -20415,14 +25665,25 @@ void WorldDemoState::HandleMenuAction(ui::MenuActionType action) {
 }
 
 void WorldDemoState::OnExit() {
+    m_worldLifecycle.Exit(m_ctx.events, CurrentSaveId());
     if (m_worldMapOpen) {
         CloseWorldMap();
     }
     // 退出前自动存档：先采集快照/提交后台，再销毁实体；GameApp 会在关闭时等待 zl-save
+    SettleThrownProjectiles();
     m_baseSiege.Abort({}, false);
     m_ctx.executePlayerCommand = {};
+    m_ctx.submitPlayerCommand = {};
+    m_ctx.recipeKnown = {};
+    m_ctx.craftStationNearby = {};
+    m_ctx.buildCanPlace = {};
+    m_ctx.buildPlace = {};
+    m_ctx.buildDemolish = {};
+    m_ctx.buildRepair = {};
+    m_ctx.buildToggleDoor = {};
     m_ctx.onSaveFinished = {};
     m_ctx.quickSave = {};
+    m_ctx.progressionConfig = nullptr;
     if (m_autoSaveOnExit && m_runOutcome == RunOutcome::None &&
         m_player != entt::null && m_ctx.ecs != nullptr &&
         m_ctx.ecs->Alive(m_player) && m_ctx.saveService != nullptr) {
@@ -20556,12 +25817,24 @@ void WorldDemoState::UpdateAudio(double frameDt) {
                 }
             }
         }
+        float noiseScale = 1.0f;
+        if (const auto* stealth = registry.try_get<ecs::StealthState>(m_player);
+            stealth != nullptr && stealth->crouched) {
+            noiseScale = std::isfinite(stealth->noiseScale)
+                             ? std::clamp(stealth->noiseScale, 0.0f, 1.0f)
+                             : 1.0f;
+        }
         core::SoundEvent step;
         step.x = position->x;
         step.y = position->y;
-        step.radius = 2.5f;
+        step.radius = kPlayerFootstepBaseRadius * noiseScale;
         step.type = core::SoundType::Footstep;
         step.clip = std::string(audio::FootstepClipForFloor(floorSprite));
+        if (noiseScale < 1.0f) {
+            ZL_DEBUG("stealth", "潜行脚步噪声：{:.2f} 格（x{:.2f}）",
+                     static_cast<double>(step.radius),
+                     static_cast<double>(noiseScale));
+        }
         if (m_ctx.audio != nullptr) {
             m_ctx.audio->EmitWorldSound(std::move(step));
         } else if (m_ctx.events != nullptr) {
@@ -20740,6 +26013,9 @@ void WorldDemoState::UpdateCombatFeedback(double frameDt) {
                 continue;
             }
             SpawnMeleeHitSparks(hit.target, hit.poiseBroken);
+            if (hit.backstab) {
+                SetNotice("背刺！", kNoticeOkColor, 1.2f);
+            }
             if (hit.poiseBroken) {
                 SetNotice("破防！目标硬直", kNoticeOkColor, 1.2f);
             }
@@ -20759,6 +26035,7 @@ void WorldDemoState::UpdateCombatFeedback(double frameDt) {
         return;
     }
     m_lastPlayerHitSerial = hit->hitSerial;
+    ExitStealth(characters::StealthExitReason::Damage);
     if (playerDefenseFeedback) {
         return;  // 普通格挡仍会扣血：用格挡反馈替代同帧“受击”提示
     }
@@ -20880,6 +26157,15 @@ void WorldDemoState::SpawnMeleeHitSparks(ecs::Entity target, bool poiseBroken) {
 }
 
 void WorldDemoState::OnTick(double tickDt) {
+    if (!m_worldLifecycle.Started() && m_ctx.events != nullptr &&
+        m_ctx.ecs != nullptr && m_player != entt::null &&
+        m_ctx.ecs->Alive(m_player)) {
+        m_worldLifecycle.Start(
+            m_ctx.events,
+            WorldStartInfo{CurrentSaveId(),
+                           !m_networkMode && !m_loadedFromSave,
+                           CurrentMissionDay(), m_ctx.ecs->IdOf(m_player).id});
+    }
     UpdateDemolishConfirm(static_cast<float>(tickDt));
     if (!m_networkMode &&
         (m_dynamicContentApplied != m_ctx.dynamicContentCount ||
@@ -20891,11 +26177,22 @@ void WorldDemoState::OnTick(double tickDt) {
         m_attackCooldownLeft =
             std::max(0.0f, m_attackCooldownLeft - static_cast<float>(tickDt));
     }
+    if (m_throwCooldownLeft > 0.0f) {
+        m_throwCooldownLeft =
+            std::max(0.0f, m_throwCooldownLeft - static_cast<float>(tickDt));
+    }
+    if (m_lastThrowRemaining > 0.0f) {
+        m_lastThrowRemaining =
+            std::max(0.0f,
+                     m_lastThrowRemaining - static_cast<float>(tickDt));
+    }
     if (!m_networkMode) {
         UpdateRangedWeapon(static_cast<float>(tickDt));
         UpdateRangedPresentation(static_cast<float>(tickDt));
         UpdateRangedProjectiles(static_cast<float>(tickDt));
+        UpdateThrownProjectiles(static_cast<float>(tickDt));
         UpdateVehicle(static_cast<float>(tickDt));
+        UpdateVehicleModAction(static_cast<float>(tickDt));
         UpdateCrafting(static_cast<float>(tickDt));
     } else if (m_ctx.networkClient != nullptr && m_ctx.networkClient->HasPlayer() &&
                m_moveCommandValid && !m_driving) {
@@ -20919,6 +26216,7 @@ void WorldDemoState::OnTick(double tickDt) {
         UpdateRunStats(tickDt);
         UpdateBuilding(static_cast<float>(tickDt));
         UpdateHomestead(static_cast<float>(tickDt));
+        UpdateTraps(static_cast<float>(tickDt));
         UpdateSleep(static_cast<float>(tickDt));
         UpdateBaseSiege(static_cast<float>(tickDt));
         PollLocalRegionalSiegeReport();
@@ -21179,7 +26477,9 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
             LogPerfSample("cruise");
         }
     }
-    RefreshHud();
+    RefreshVehicleModsPanel();
+    UpdateStealthState();
+    RefreshHud(frameDt);
     RefreshInventory();
 }
 
@@ -21275,13 +26575,155 @@ void WorldDemoState::HandleSleepInput(core::Input& input) {
     }
 }
 
+bool WorldDemoState::CanToggleStealth() const {
+    if (!m_stealthRules.enabled || m_ctx.ecs == nullptr) {
+        return false;
+    }
+    if (m_networkMode &&
+        (m_ctx.networkClient == nullptr || !m_ctx.networkClient->IsConnected())) {
+        return false;
+    }
+    if (m_player == entt::null || !m_ctx.ecs->Alive(m_player)) {
+        return false;
+    }
+    if (m_runOutcome != RunOutcome::None) {
+        return false;
+    }
+    if (m_ctx.ui != nullptr &&
+        (m_ctx.ui->IsMenuOpen() || m_ctx.ui->IsInventoryOpen())) {
+        return false;
+    }
+    if (m_driving || m_riding || m_vehicleModsOpen || m_dialogueOpen ||
+        m_tradeOpen || m_characterOpen || m_companionOpen ||
+        m_worldEventChoiceOpen || m_siegeReportOpen || m_sleep.Active() ||
+        m_sleepSelecting) {
+        return false;
+    }
+    const entt::registry& registry = m_ctx.ecs->Registry();
+    if (registry.all_of<ecs::Dying, ecs::VehicleOccupant>(m_player)) {
+        return false;
+    }
+    if (const auto* health = registry.try_get<ecs::Health>(m_player);
+        health != nullptr && health->current <= 0.0f) {
+        return false;
+    }
+    return true;
+}
+
+void WorldDemoState::ToggleStealth() {
+    if (!CanToggleStealth()) {
+        return;
+    }
+    if (m_networkMode) {
+        const bool next = !(m_networkStealth.valid &&
+                            m_networkStealth.crouched);
+        net::Command command = MakePlayerCommand(net::CommandType::SetStealth);
+        if (next) {
+            command.payload.flags |= net::kStealthCrouchFlag;
+        }
+        if (!SubmitPlayerCommand(command)) {
+            SetNotice("潜行切换发送失败", kNoticeFailColor, 1.8f);
+        }
+        return;
+    }
+    const auto* state = m_ctx.ecs->Registry().try_get<ecs::StealthState>(m_player);
+    SetLocalStealth(state == nullptr || !state->crouched);
+}
+
+void WorldDemoState::SetLocalStealth(bool crouched) {
+    if (m_networkMode || !m_stealthRules.enabled || m_ctx.ecs == nullptr ||
+        m_player == entt::null || !m_ctx.ecs->Alive(m_player)) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* state = registry.try_get<ecs::StealthState>(m_player);
+    if (state == nullptr) {
+        state = &registry.emplace<ecs::StealthState>(m_player);
+    }
+    state->crouched = crouched;
+    const characters::StealthScales scales =
+        characters::StealthScalesFor(crouched, m_stealthRules);
+    state->speedScale = scales.speedScale;
+    state->noiseScale = scales.noiseScale;
+    state->visibilityScale = scales.visibilityScale;
+    ZL_INFO("stealth", "潜行切换：{}（速度 x{:.2f}，噪声 x{:.2f}，可视 x{:.2f}）",
+            crouched ? "开" : "关", static_cast<double>(state->speedScale),
+            static_cast<double>(state->noiseScale),
+            static_cast<double>(state->visibilityScale));
+    SetNotice(crouched ? "潜行：开" : "潜行：关", kNoticeInfoColor, 1.2f);
+}
+
+void WorldDemoState::ExitStealth(characters::StealthExitReason reason) {
+    if (m_networkMode || m_ctx.ecs == nullptr || m_player == entt::null ||
+        !m_ctx.ecs->Alive(m_player)) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    auto* state = registry.try_get<ecs::StealthState>(m_player);
+    if (state == nullptr ||
+        !characters::StealthExitRequired(state->crouched, reason)) {
+        return;
+    }
+    state->crouched = false;
+    state->speedScale = 1.0f;
+    state->noiseScale = 1.0f;
+    state->visibilityScale = 1.0f;
+    const char* label = "状态变化";
+    switch (reason) {
+        case characters::StealthExitReason::Attack:
+            label = "攻击";
+            break;
+        case characters::StealthExitReason::Throw:
+            label = "投掷";
+            break;
+        case characters::StealthExitReason::Damage:
+            label = "受到伤害";
+            break;
+        case characters::StealthExitReason::Vehicle:
+            label = "进入载具";
+            break;
+        case characters::StealthExitReason::Downed:
+            label = "倒地/死亡";
+            break;
+    }
+    ZL_INFO("stealth", "退出潜行：{}（速度/噪声/可视恢复）", label);
+}
+
+void WorldDemoState::UpdateStealthState() {
+    if (m_networkMode || m_ctx.ecs == nullptr || m_player == entt::null ||
+        !m_ctx.ecs->Alive(m_player)) {
+        return;
+    }
+    const auto* state = m_ctx.ecs->Registry().try_get<ecs::StealthState>(m_player);
+    if (state == nullptr || !state->crouched) {
+        return;
+    }
+    entt::registry& registry = m_ctx.ecs->Registry();
+    const auto* health = registry.try_get<ecs::Health>(m_player);
+    const bool downed = registry.all_of<ecs::Dying>(m_player) ||
+                        (health != nullptr && health->current <= 0.0f);
+    if (downed) {
+        ExitStealth(characters::StealthExitReason::Downed);
+        return;
+    }
+    if (m_driving || m_riding ||
+        registry.all_of<ecs::VehicleOccupant>(m_player)) {
+        ExitStealth(characters::StealthExitReason::Vehicle);
+    }
+}
+
 void WorldDemoState::HandleFrameInput(double frameDt) {
     core::Input& input = *m_ctx.input;
     core::EventBus& events = *m_ctx.events;
     render::Camera& camera = *m_ctx.camera;
 
+    if (m_throwAim.active &&
+        CurrentThrowAimBlock() != ThrowAimBlockReason::None) {
+        CancelThrowAim("界面或状态变化", false);
+    }
     if (m_ctx.ui != nullptr && m_ctx.ui->IsMenuOpen()) {
         m_characterOpen = false;
+        m_companionOpen = false;
         SubmitMoveCommand(0.0f, 0.0f);
         return;
     }
@@ -21294,6 +26736,7 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
         return;
     }
     if (input.IsActionPressed("WorldMap")) {
+        CloseCompanionPanel();
         OpenWorldMap();
         return;
     }
@@ -21313,6 +26756,7 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
         }
     }
     if (m_siegeReportOpen) {
+        m_companionOpen = false;
         if (input.IsActionPressed("Quit")) {
             m_siegeReportOpen = false;
             ZL_INFO("siege", "关闭战报面板");
@@ -21323,6 +26767,7 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     }
     if (m_networkMode && m_networkSleep.phase != 0) {
         m_characterOpen = false;
+        m_companionOpen = false;
         SubmitMoveCommand(0.0f, 0.0f);
         HaltPlayerForSleep();
         HandleNetworkSleepInput(input);
@@ -21330,21 +26775,25 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     }
     if (m_sleep.Active() || m_sleepSelecting) {
         m_characterOpen = false;
+        m_companionOpen = false;
         HandleSleepInput(input);
         return;
     }
     if (m_dialogueOpen) {
         m_characterOpen = false;
+        m_companionOpen = false;
         HandleDialogueInput(input);
         return;
     }
     if (m_tradeOpen) {
         m_characterOpen = false;
+        m_companionOpen = false;
         HandleTradeInput(input);
         return;
     }
     if (m_ctx.ui != nullptr && m_ctx.ui->IsInventoryOpen()) {
         m_characterOpen = false;
+        m_companionOpen = false;
         if (m_forageAction.active) {
             CancelForageSearch("打开背包", true);
         }
@@ -21360,10 +26809,22 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
         }
     }
 
+    if (input.IsActionPressed("CompanionPanel")) {
+        if (m_ctx.ui != nullptr && m_ctx.ui->IsInventoryOpen()) {
+            m_ctx.ui->CloseInventory();
+        }
+        ToggleCompanionPanel();
+        return;
+    }
+    if (m_companionOpen) {
+        HandleCompanionPanelInput(input);
+        return;
+    }
     if (input.IsActionPressed("CharacterPanel")) {
         if (m_ctx.ui != nullptr && m_ctx.ui->IsInventoryOpen()) {
             m_ctx.ui->CloseInventory();
         }
+        m_companionOpen = false;
         m_characterOpen = !m_characterOpen;
         SubmitMoveCommand(0.0f, 0.0f);
         m_scrollAccum = 0.0f;
@@ -21410,7 +26871,9 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
                 net::Command command =
                     MakePlayerCommand(net::CommandType::SelectHotbar);
                 command.payload.index = i;
-                SubmitPlayerCommand(command);
+                if (SubmitPlayerCommand(command)) {
+                    m_hotbarSelected = i;
+                }
             }
         }
         if (input.IsActionPressed("Use")) {
@@ -21472,6 +26935,12 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
         }
         return;
     }
+    if (input.IsActionPressed("Stealth")) {
+        if (m_throwAim.active) {
+            CancelThrowAim("潜行切换", true);
+        }
+        ToggleStealth();
+    }
     if (PendingPerkPoints() > 0) {
         for (int i = 0; i < 3; ++i) {
             if (input.IsActionPressed(kHotbarActions[i])) {
@@ -21507,15 +26976,29 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     }
     SubmitMoveCommand(moveScreen.x, moveScreen.y);
 
+    if (TryChoosePoiBranchInput(input)) {
+        SubmitMoveCommand(0.0f, 0.0f);
+        return;
+    }
+
     for (int i = 0; i < 5; ++i) {
         if (input.IsActionPressed(kHotbarActions[i]) && m_hotbarSelected != i) {
             net::Command command = MakePlayerCommand(net::CommandType::SelectHotbar);
             command.payload.index = i;
-            SubmitPlayerCommand(command);
+            if (SubmitPlayerCommand(command)) {
+                m_hotbarSelected = i;
+            }
         }
     }
 
+    if (m_throwAim.active && input.IsActionPressed("Quit")) {
+        CancelThrowAim("主动取消", true);
+        return;
+    }
     if (input.IsActionPressed("BuildMode")) {
+        if (m_throwAim.active) {
+            CancelThrowAim("进入建造模式", true);
+        }
         events.Emit(EventProbe::kInputActionEvent, std::string("BuildMode"));
         ToggleBuildMode();
     }
@@ -21688,7 +27171,16 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
             PlayerBuildTarget doorTarget;
             const bool hasBed = FindNearbyBed(&bedTarget);
             const bool hasDoor = FindNearbyDoor(&doorTarget);
-            bool handled = !m_buildMode && TryInteractSettlementNpc();
+            bool handled = !m_buildMode && TryRescueDownedCompanion();
+            if (!handled) {
+                handled = !m_buildMode && TryInteractSettlementNpc();
+            }
+            if (!handled) {
+                handled = !m_buildMode && TryInteractCompanion();
+            }
+            if (!handled) {
+                handled = TryInteractPoi();
+            }
             if (!handled) {
                 handled = TryInteractStrategicRecovery();
             }
@@ -21760,20 +27252,40 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
     if (input.IsActionPressed("DemoGunshot")) {
         SubmitPlayerCommand(MakePlayerCommand(net::CommandType::Gunshot));
     }
+    const glm::vec2 throwMouse(input.MouseX(), input.MouseY());
+    if (m_throwAim.active) {
+        if (input.IsActionDown("DemoProjectile")) {
+            UpdateThrowAimTarget(throwMouse, true);
+        } else if (input.IsActionReleased("DemoProjectile")) {
+            ReleaseThrowAim();
+        } else {
+            CancelThrowAim("V 已松开", false);
+        }
+    }
     if (input.IsActionPressed("DemoProjectile")) {
-        if (!m_networkMode) {
-            if (TryGetEquippedRangedWeapon(nullptr, nullptr)) {
-                PlayerRangedAttack(glm::vec2(input.MouseX(), input.MouseY()));
+        const items::ItemDef* throwableDef = nullptr;
+        ecs::ItemInstance* throwableItem = nullptr;
+        const bool hasThrowable =
+            TryGetThrowableAimSource(&throwableDef, &throwableItem, nullptr);
+        const bool hasRanged = TryGetEquippedRangedWeapon(nullptr, nullptr);
+        const ThrowAimAction action =
+            ResolveThrowAimAction(hasThrowable, false, hasRanged);
+        if (action == ThrowAimAction::Throwable) {
+            if (!m_throwAim.active) {
+                (void)TryBeginThrowAim(throwMouse);
+            }
+        } else if (!m_networkMode) {
+            if (hasRanged) {
+                PlayerRangedAttack(throwMouse);
             } else {
                 SetNotice("fire: no ranged weapon equipped", kNoticeFailColor, 1.5f);
             }
         } else {
             float dx = 0.0f;
             float dy = 0.0f;
-            if (!TryGetEquippedRangedWeapon(nullptr, nullptr)) {
+            if (!hasRanged) {
                 SetNotice("fire: no ranged weapon equipped", kNoticeFailColor, 1.5f);
-            } else if (TryGetAimDirection(glm::vec2(input.MouseX(), input.MouseY()),
-                                          &dx, &dy)) {
+            } else if (TryGetAimDirection(throwMouse, &dx, &dy)) {
                 net::Command command =
                     MakePlayerCommand(net::CommandType::FireRanged);
                 command.payload.x = dx;
@@ -21889,6 +27401,8 @@ void WorldDemoState::HandleFrameInput(double frameDt) {
         ZL_INFO("building", "建造左键：格 ({}, {})", pick.x, pick.y);
         TryPlaceSelectedBuild(pick.x, pick.y);
     } else if (input.IsMouseButtonPressed(0) &&
+               (m_ctx.ui == nullptr || !m_ctx.ui->IsPointerOverUi()) &&
+               !m_throwAim.active &&
                !(m_cruiseEnabled && !m_cruiseFinished) && m_player != entt::null &&
                !m_forageAction.active && !m_fishingAction.active &&
                !m_animalHarvestAction.active) {
@@ -22227,14 +27741,10 @@ void WorldDemoState::DrawVehicleHeadlights(render::SpriteBatch& batch) {
     };
     constexpr int kRays = 18;
     constexpr float kHalfAngle = 0.38f;
-    const std::uint32_t rayColor =
-        withAlpha(0x3030E0FFu, 0.060f * strength);
-    const std::uint32_t arcColor =
-        withAlpha(0x3030E0FFu, 0.28f * strength);
-    const std::uint32_t lampColor =
-        withAlpha(0xFF30E0FFu, 0.55f + 0.45f * strength);
+    const std::uint32_t lampBase = 0xFF30E0FFu;
     const auto drawLights = [&](const ecs::Position& position,
-                                float headingX, float headingY) {
+                                float headingX, float headingY,
+                                float rangeScale, float brightnessScale) {
         const float headingLength =
             std::sqrt(headingX * headingX + headingY * headingY);
         if (!std::isfinite(headingLength) || headingLength < 0.0001f) {
@@ -22244,13 +27754,24 @@ void WorldDemoState::DrawVehicleHeadlights(render::SpriteBatch& batch) {
             headingX /= headingLength;
             headingY /= headingLength;
         }
+        const float range = 6.2f * std::clamp(rangeScale, 0.5f, 3.0f);
+        const float brightness =
+            std::clamp(brightnessScale, 0.5f, 3.0f);
+        const std::uint32_t ray =
+            withAlpha(0x3030E0FFu, 0.060f * strength * brightness);
+        const std::uint32_t arc =
+            withAlpha(0x3030E0FFu, 0.28f * strength * brightness);
+        const std::uint32_t lamp =
+            withAlpha(lampBase,
+                      0.55f + 0.45f * std::clamp(strength * brightness,
+                                                  0.0f, 1.0f));
         const glm::vec2 origin =
             render::ToScreen(position.x + headingX * 0.55f,
                              position.y + headingY * 0.55f, position.z) -
             glm::vec2(0.0f, 18.0f);
         const glm::vec2 farPoint =
-            render::ToScreen(position.x + headingX * 6.2f,
-                             position.y + headingY * 6.2f, position.z) -
+            render::ToScreen(position.x + headingX * range,
+                             position.y + headingY * range, position.z) -
             glm::vec2(0.0f, 18.0f);
         const glm::vec2 centerDir = farPoint - origin;
         const float length = glm::length(centerDir);
@@ -22267,20 +27788,21 @@ void WorldDemoState::DrawVehicleHeadlights(render::SpriteBatch& batch) {
             const glm::vec2 point =
                 origin + dir * (length * std::cos(angle)) +
                 side * (length * std::sin(angle));
-            batch.DrawLine(origin, point, 10.0f, rayColor);
+            batch.DrawLine(origin, point, 10.0f * brightness, ray);
             if (i > 0) {
-                batch.DrawLine(previous, point, 2.0f, arcColor);
+                batch.DrawLine(previous, point, 2.0f * brightness, arc);
             }
             previous = point;
         }
-        const glm::vec2 lamp =
+        const glm::vec2 lampPosition =
             render::ToScreen(position.x + headingX * 0.35f,
                              position.y + headingY * 0.35f, position.z) -
             glm::vec2(0.0f, 16.0f);
         for (const float offset : {-7.0f, 7.0f}) {
-            const glm::vec2 dot = lamp + side * offset;
-            batch.DrawRectFill(dot.x - 4.0f, dot.y - 3.0f, 8.0f, 6.0f,
-                               lampColor);
+            const glm::vec2 dot = lampPosition + side * offset;
+            batch.DrawRectFill(dot.x - 4.0f * brightness,
+                               dot.y - 3.0f * brightness,
+                               8.0f * brightness, 6.0f * brightness, lamp);
         }
     };
     registry.view<ecs::Position, ecs::Vehicle>().each(
@@ -22318,7 +27840,11 @@ void WorldDemoState::DrawVehicleHeadlights(render::SpriteBatch& batch) {
                         : VehicleVisualDirection::South,
                     &headingX, &headingY);
             }
-            drawLights(position, headingX, headingY);
+            const VehicleModStats modStats =
+                VehicleModStatsForEntity(entity);
+            drawLights(position, headingX, headingY,
+                       VehicleModHeadlightRangeScale(modStats),
+                       VehicleModHeadlightBrightnessScale(modStats));
         });
 }
 
@@ -22377,6 +27903,7 @@ void WorldDemoState::DrawCombatOverlay(render::SpriteBatch& batch) {
     }
     DrawLocalCombatOverlay(batch);
     DrawRemoteCombatOverlay(batch);
+    DrawRemoteStealthOverlay(batch);
 }
 
 void WorldDemoState::DrawLocalCombatOverlay(render::SpriteBatch& batch) {
@@ -22636,6 +28163,45 @@ void WorldDemoState::DrawMeleeSwingOverlay(
                    withAlpha(0xFFFFFFFFu, presentation.alpha * 0.9f));
     batch.DrawLine(tip, tip + normal * 7.0f, 2.0f,
                    withAlpha(color, presentation.alpha * 0.7f));
+}
+
+void WorldDemoState::DrawRemoteStealthOverlay(render::SpriteBatch& batch) {
+    if (!m_networkMode || m_ctx.networkClient == nullptr) {
+        return;
+    }
+    const std::uint64_t localPlayerId =
+        m_ctx.networkClient->PlayerStableId();
+    const std::uint32_t color = 0xFFE0D040u;
+    for (const auto& [stableId, actor] :
+         m_ctx.networkClient->Replication().Actors()) {
+        if (stableId == 0 || stableId == localPlayerId ||
+            !actor.hasPosition || !actor.hasStealth ||
+            !actor.stealthCrouched) {
+            continue;
+        }
+        if (actor.hasHealth && actor.health.current <= 0.0f) {
+            continue;
+        }
+        if (!m_view.Contains(actor.position.x, actor.position.y)) {
+            continue;
+        }
+        const glm::vec2 ground =
+            render::ToScreen(actor.position.x, actor.position.y, actor.position.z);
+        const glm::vec2 center = ground + glm::vec2(0.0f, -46.0f);
+        for (int i = 0; i < 2; ++i) {
+            const float y = center.y + static_cast<float>(i) * 5.0f;
+            batch.DrawLine(center + glm::vec2(-8.0f, y + 4.0f),
+                           center + glm::vec2(0.0f, y), 2.5f, color);
+            batch.DrawLine(center + glm::vec2(0.0f, y),
+                           center + glm::vec2(8.0f, y + 4.0f), 2.5f, color);
+        }
+        if (actor.stealthMoving) {
+            batch.DrawLine(center + glm::vec2(-12.0f, 14.0f),
+                           center + glm::vec2(-6.0f, 14.0f), 2.0f, color);
+            batch.DrawLine(center + glm::vec2(6.0f, 14.0f),
+                           center + glm::vec2(12.0f, 14.0f), 2.0f, color);
+        }
+    }
 }
 
 void WorldDemoState::DrawRemoteCombatOverlay(render::SpriteBatch& batch) {
@@ -23182,10 +28748,64 @@ void WorldDemoState::DrawForageOverlay(render::SpriteBatch& batch) {
     }
 }
 
+void WorldDemoState::DrawThrowAimOverlay(render::SpriteBatch& batch) {
+    if (!m_throwAim.active || m_ctx.ecs == nullptr || m_player == entt::null) {
+        return;
+    }
+    const auto* position =
+        m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (position == nullptr) {
+        return;
+    }
+    const int z = position->z;
+    const std::uint32_t color =
+        (m_throwAim.clamped || m_throwAim.wallClipped) ? 0xff40e0ffu
+                                                       : 0xff50ff60u;
+    const std::uint32_t rangeColor = 0x6040d0ffu;
+    const auto drawRing = [&](float cx, float cy, float radius,
+                              std::uint32_t tint, float thickness) {
+        constexpr int kSegments = 32;
+        const float safeRadius = std::max(0.05f, radius);
+        glm::vec2 previous =
+            render::ToScreen(cx + safeRadius, cy, z);
+        for (int i = 1; i <= kSegments; ++i) {
+            const float angle = 6.28318530718f * static_cast<float>(i) /
+                                static_cast<float>(kSegments);
+            const glm::vec2 point = render::ToScreen(
+                cx + std::cos(angle) * safeRadius,
+                cy + std::sin(angle) * safeRadius, z);
+            batch.DrawLine(previous, point, thickness, tint);
+            previous = point;
+        }
+    };
+
+    drawRing(position->x, position->y, m_throwAim.range, rangeColor, 1.5f);
+    drawRing(m_throwAim.targetX, m_throwAim.targetY,
+             std::max(0.35f, m_throwAim.impactRadius), color, 2.8f);
+
+    const glm::vec2 start = render::ToScreen(position->x, position->y, z);
+    const glm::vec2 end = render::ToScreen(m_throwAim.targetX, m_throwAim.targetY, z);
+    const float lift =
+        std::clamp(m_throwAim.arcHeight, 0.0f, 3.0f) * 72.0f;
+    constexpr int kArcSegments = 24;
+    glm::vec2 previous = start;
+    for (int i = 1; i <= kArcSegments; ++i) {
+        const float t = static_cast<float>(i) /
+                        static_cast<float>(kArcSegments);
+        const glm::vec2 ground = glm::mix(start, end, t);
+        const glm::vec2 point =
+            ground - glm::vec2(0.0f, std::sin(t * 3.14159265359f) * lift);
+        batch.DrawLine(previous, point, 2.4f, color);
+        previous = point;
+    }
+    batch.DrawLine(end, end - glm::vec2(0.0f, 18.0f), 2.0f, color);
+}
+
 void WorldDemoState::DrawDebugOverlay() {
     if (!m_showGrid && !m_hoverHit && m_poiConfig.defs.empty() &&
         m_poweredFloodlights.empty() && m_poweredFenceCells.empty() &&
         m_forageNodes.empty() && m_fishingSpots.empty() &&
+        !m_throwAim.active && m_thrownProjectiles.empty() &&
         !HasSiegeMarkers()) {
         return;
     }
@@ -23200,6 +28820,7 @@ void WorldDemoState::DrawDebugOverlay() {
     const bool hasWorldMarkers =
         !m_poweredFloodlights.empty() || !m_poweredFenceCells.empty() ||
         HasSiegeMarkers() || m_markerPathActive || m_markerTimer > 0.0f ||
+        m_throwAim.active || !m_thrownProjectiles.empty() ||
         ((!m_forageNodes.empty() || !m_fishingSpots.empty()) &&
          poiOverlayVisible) ||
         (!m_poiConfig.defs.empty() && poiOverlayVisible);
@@ -23211,6 +28832,8 @@ void WorldDemoState::DrawDebugOverlay() {
         DrawPowerOverlay(batch);
         DrawForageOverlay(batch);
         DrawSiegeOverlay(batch);
+        DrawThrowAimOverlay(batch);
+        DrawThrownProjectiles(batch);
         // M4-T7：寻路目标标记（黄=进行中常显；绿/红=到达/不可达 限时）
         if (m_markerPathActive || m_markerTimer > 0.0f) {
             const glm::vec2 center =

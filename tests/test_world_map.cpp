@@ -228,3 +228,62 @@ TEST_CASE("M32-T9 争夺层：河谷大桥在争夺时保持通行，沦陷后�
     REQUIRE(bridge != map.roads.end());
     CHECK_FALSE(bridge->vehiclePassable);
 }
+TEST_CASE("M33-F5-T5 世界地图 POI 阶段标记与完成度") {
+    world::WorldDefinition definition;
+    std::string error;
+    REQUIRE(world::LoadWorldDefinition(kM31Dir, &definition, &error) ==
+            world::WorldDefinitionStatus::Loaded);
+    const world::WorldGraph graph(definition);
+    REQUIRE(graph.Valid());
+    game::PoiConfig pois = TestPoiConfig();
+    pois.defs[0].stages.resize(3);
+    for (int i = 0; i < 3; ++i) {
+        pois.defs[0].stages[static_cast<std::size_t>(i)].id =
+            "stage" + std::to_string(i);
+        pois.defs[0].stages[static_cast<std::size_t>(i)].kind =
+            game::PoiStageKind::Reach;
+        pois.defs[0].stages[static_cast<std::size_t>(i)].x =
+            150.0f + static_cast<float>(i);
+        pois.defs[0].stages[static_cast<std::size_t>(i)].y = 64.0f;
+    }
+    std::unordered_set<std::string> regions{"north_fields"};
+    std::unordered_set<std::string> discovered{"clinic"};
+    std::unordered_set<std::string> completed;
+    game::WorldMapPoiProgress progress;
+    progress.id = "clinic";
+    progress.stageIndex = 1;
+    progress.stageCount = 3;
+    progress.completedStageCount = 1;
+    progress.stageLabel = "阶段 2/3 · 已完成 1/3";
+    progress.hasStagePoint = true;
+    progress.stageX = 151.0f;
+    progress.stageY = 64.0f;
+    std::vector<game::WorldMapPoiProgress> progressList{progress};
+    const game::WorldMapState state = game::BuildWorldMapState(
+        graph, pois, 70.0f, 24.0f, true, regions, discovered, completed,
+        nullptr, {}, {}, nullptr, {}, nullptr, &progressList);
+    const auto clinic = std::find_if(
+        state.pois.begin(), state.pois.end(),
+        [](const game::WorldMapPoi& poi) { return poi.id == "clinic"; });
+    REQUIRE(clinic != state.pois.end());
+    CHECK(clinic->discovered);
+    CHECK(clinic->staged);
+    CHECK(clinic->stageIndex == 1);
+    CHECK(clinic->stageCount == 3);
+    CHECK(clinic->completedStageCount == 1);
+    CHECK(clinic->stageX == doctest::Approx(151.0f));
+    CHECK(game::WorldMapPoiLabel(*clinic) ==
+          "诊所（阶段 2/3 · 已完成 1/3）");
+
+    progressList[0].failed = true;
+    const game::WorldMapState failed = game::BuildWorldMapState(
+        graph, pois, 70.0f, 24.0f, true, regions, discovered, completed,
+        nullptr, {}, {}, nullptr, {}, nullptr, &progressList);
+    const auto failedClinic = std::find_if(
+        failed.pois.begin(), failed.pois.end(),
+        [](const game::WorldMapPoi& poi) { return poi.id == "clinic"; });
+    REQUIRE(failedClinic != failed.pois.end());
+    CHECK(failedClinic->stageFailed);
+    CHECK(game::WorldMapPoiLabel(*failedClinic) ==
+          "诊所（阶段 2/3 · 失败可重试）");
+}

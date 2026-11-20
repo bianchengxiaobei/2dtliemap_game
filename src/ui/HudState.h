@@ -7,11 +7,16 @@
 #include <string>
 #include <string_view>
 
+#include "ui/CompanionUi.h"
+
 namespace zl::ui {
 
 struct HudSlot {
     std::string label;
     int count = 0;
+    // M34-F2-T6：快捷栏投掷标记（空槽为 false/空）。
+    bool throwable = false;
+    std::string throwTag;
 };
 
 inline constexpr std::size_t kMaxModHudFields = 8;
@@ -40,6 +45,18 @@ struct HudState {
     // M30-T6：联机服务器权威姿态（单机留空）。
     std::string combatStatus;
     std::string combatTone = "info";
+    // M34-F1-T2：单机潜行/站立、当前移速与脚步噪声半径。
+    bool stealthValid = false;
+    bool stealthCrouched = false;
+    float stealthMoveSpeed = 0.0f;
+    float stealthFootstepRadius = 0.0f;
+    // M34-F1-T6：附近警觉/背刺提示仅单机本地扫描；联机保持 unknown。
+    bool stealthAwarenessValid = false;
+    int stealthNearbyAlertCount = 0;
+    bool stealthBackstabAvailable = false;
+    std::string stealthStatus;
+    std::string stealthTone = "info";
+    std::string stealthPrompt;
     // M23-F1-T8：主手远程武器 HUD（单机本地状态/联机 owner-only 镜像）。
     bool rangedValid = false;
     std::string rangedName;
@@ -51,6 +68,20 @@ struct HudState {
     float rangedReloadRemaining = 0.0f;
     std::string rangedStatus;
     std::string rangedTone = "info";
+    // M34-F2-T6：投掷射程/回收提示、冷却与最近一次结果（单机）。
+    bool throwValid = false;
+    std::string throwName;
+    float throwRange = 0.0f;
+    bool throwReturnable = false;
+    float throwBreakChance = 0.0f;
+    bool throwFire = false;
+    float throwFireRadius = 0.0f;
+    float throwCooldownRemaining = 0.0f;
+    float throwCooldownDuration = 0.0f;
+    std::string throwLastResult;
+    std::string throwLastTone = "info";
+    std::string throwTone = "info";
+    std::string throwStatus;
     // M23-F2a-T5：附近资源节点/当前采集状态（单机）。
     bool forageValid = false;
     std::string forageName;
@@ -99,6 +130,17 @@ struct HudState {
     std::string objectiveHint;
     std::string poiGuide;
     std::string poiGuideTone = "info";
+    // M33-F5-T5：多阶段 POI 的结构化 HUD、叙事与完成/失败面板。
+    bool poiStageVisible = false;
+    std::string poiStageTitle;
+    std::string poiStageObjective;
+    std::string poiStageMeta;
+    std::string poiStageNarrative;
+    std::string poiStageTone = "info";
+    bool poiResultVisible = false;
+    std::string poiResultTitle;
+    std::string poiResultBody;
+    std::string poiResultTone = "info";
     std::string missionGuide;
     std::string missionTone = "info";
     std::string eventGuide;
@@ -181,6 +223,8 @@ struct HudState {
     int progressionChoiceCount = 0;
     std::string perkPrompt;
     bool characterOpen = false;
+    // M33-F3-T7：同伴只读面板/HUD 告警。
+    CompanionUiState companion;
     bool dialogueOpen = false;
     std::string dialogueSpeaker;
     std::string dialogueText;
@@ -201,6 +245,12 @@ struct HudState {
 inline bool HudNoticeSuppressed(bool inventoryOpen, bool tradeOpen,
                                 bool dialogueOpen) {
     return inventoryOpen || tradeOpen || dialogueOpen;
+}
+
+inline bool HudStealthPromptSuppressed(bool menuOpen, bool inventoryOpen,
+                                       bool tradeOpen, bool dialogueOpen,
+                                       bool modalOpen) {
+    return menuOpen || inventoryOpen || tradeOpen || dialogueOpen || modalOpen;
 }
 
 inline std::string TrimHudText(std::string_view text) {
@@ -316,6 +366,41 @@ inline const char* SiegeReportToneForRating(std::string_view rating) {
         return "fail";
     }
     return "info";
+}
+
+inline std::string StealthStatusText(const HudState& state,
+                                     std::string* tone = nullptr) {
+    if (tone != nullptr) {
+        *tone = "info";
+    }
+    if (!state.stealthValid) {
+        return {};
+    }
+    const float speed =
+        std::isfinite(state.stealthMoveSpeed)
+            ? std::max(0.0f, state.stealthMoveSpeed)
+            : 0.0f;
+    const float footstep =
+        std::isfinite(state.stealthFootstepRadius)
+            ? std::max(0.0f, state.stealthFootstepRadius)
+            : 0.0f;
+    char text[96];
+    std::snprintf(text, sizeof(text), "%s · %.1f 格/s · 脚步 %.1f 格",
+                  state.stealthCrouched ? "潜行" : "站立",
+                  static_cast<double>(speed),
+                  static_cast<double>(footstep));
+    std::string status = text;
+    if (state.stealthAwarenessValid) {
+        status += " · 附近警觉 " +
+                  std::to_string(std::max(0, state.stealthNearbyAlertCount));
+        if (state.stealthBackstabAvailable) {
+            status += " · 可背刺";
+        }
+    }
+    if (tone != nullptr && state.stealthCrouched) {
+        *tone = "ok";
+    }
+    return status;
 }
 
 inline std::string RangedStatusText(const HudState& state,
@@ -451,6 +536,67 @@ inline std::string FishingStatusText(const HudState& state,
     std::snprintf(duration, sizeof(duration), "%.1f",
                   static_cast<double>(state.fishingSeconds));
     return "可钓鱼 · " + name + "（" + duration + " 秒）";
+}
+
+inline std::string ThrowStatusText(const HudState& state,
+                                   std::string* tone = nullptr) {
+    if (tone != nullptr) {
+        *tone = "info";
+    }
+    if (!state.throwValid && state.throwCooldownRemaining <= 0.0f &&
+        state.throwLastResult.empty()) {
+        return {};
+    }
+    const auto number = [](float value) {
+        char text[32];
+        std::snprintf(text, sizeof(text), "%.1f",
+                      static_cast<double>(std::isfinite(value) ? value : 0.0f));
+        std::string out = text;
+        if (out.size() >= 2 && out.substr(out.size() - 2) == ".0") {
+            out.resize(out.size() - 2);
+        }
+        return out;
+    };
+    std::string text;
+    if (state.throwValid) {
+        text = "可投掷：" +
+               (state.throwName.empty() ? std::string("投掷物")
+                                        : state.throwName) +
+               " · 射程 " + number(state.throwRange) + " 格";
+        if (state.throwFire) {
+            text += " · 火焰 " + number(state.throwFireRadius) + " 格";
+        } else if (state.throwReturnable) {
+            const float chance =
+                std::clamp(state.throwBreakChance, 0.0f, 1.0f);
+            const int percent = static_cast<int>(
+                std::lround((1.0f - chance) * 100.0f));
+            text += " · 回收 " + std::to_string(percent) + "%";
+        } else {
+            text += " · 消耗";
+        }
+    }
+    if (state.throwCooldownRemaining > 0.0f) {
+        if (text.empty()) {
+            text = "投掷";
+        }
+        text += " · 冷却 " + number(state.throwCooldownRemaining) + "s";
+        if (state.throwCooldownDuration > 0.0f) {
+            text += "/" + number(state.throwCooldownDuration) + "s";
+        }
+        if (tone != nullptr) {
+            *tone = "warn";
+        }
+    }
+    if (!state.throwLastResult.empty()) {
+        if (!text.empty()) {
+            text += " · ";
+        }
+        text += "上次：" + state.throwLastResult;
+        if (tone != nullptr && state.throwCooldownRemaining <= 0.0f) {
+            *tone = state.throwLastTone.empty() ? "info" : state.throwLastTone;
+        }
+    }
+    return text;
 }
 
 inline std::string BaseStatusText(const HudState& state,

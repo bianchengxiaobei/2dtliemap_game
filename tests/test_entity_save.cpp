@@ -1,4 +1,4 @@
-﻿#include <cstdint>
+#include <cstdint>
 #include <cstddef>
 #include <limits>
 #include <string>
@@ -29,6 +29,7 @@
 #include "save/BinaryWriter.h"
 #include "save/ComponentRegistry.h"
 #include "save/EntityStore.h"
+#include "script/ModDataComponents.h"
 
 using namespace zl;
 
@@ -39,7 +40,7 @@ save::ComponentRegistry MakeRegistry() {
     std::string error;
     REQUIRE(save::RegisterBuiltinComponents(registry, &error));
     CHECK(error.empty());
-    CHECK(registry.Size() == 46u);
+    CHECK(registry.Size() == 53u);
     return registry;
 }
 
@@ -1653,4 +1654,281 @@ TEST_CASE("M25-T4-V2 旧 v1 车辆存档默认关闭车灯") {
     CHECK(state->condition == doctest::Approx(0.35f));
     CHECK(state->fuel == doctest::Approx(0.72f));
     CHECK_FALSE(state->headlights);
+}
+
+TEST_CASE("M33-F4-T2 车辆改装组件存档往返与旧档") {
+    const save::ComponentRegistry components = MakeRegistry();
+
+    ecs::EcsWorld source;
+    const ecs::Entity vehicle = source.Create();
+    const std::uint64_t vehicleId = source.IdOf(vehicle).id;
+    entt::registry& registry = source.Registry();
+    registry.emplace<ecs::Position>(vehicle, ecs::Position{80.5f, 30.5f, 0});
+    registry.emplace<ecs::Vehicle>(vehicle, ecs::Vehicle{});
+    ecs::VehicleMods mods;
+    mods.defIds[0] = "vehicle_armor_plate";
+    mods.defIds[1] = "vehicle_storage_rack";
+    mods.defIds[3] = "vehicle_searchlight";
+    registry.emplace<ecs::VehicleMods>(vehicle, mods);
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+
+    ecs::EcsWorld target;
+    std::vector<ecs::Entity> loaded;
+    REQUIRE(save::LoadEntities(decoded, target, components, &loaded, &error));
+    const ecs::Entity restored = target.FindById(vehicleId);
+    REQUIRE(restored != ecs::EcsWorld::kNull);
+    const auto* restoredMods =
+        target.Registry().try_get<ecs::VehicleMods>(restored);
+    REQUIRE(restoredMods != nullptr);
+    CHECK(restoredMods->defIds[0] == "vehicle_armor_plate");
+    CHECK(restoredMods->defIds[1] == "vehicle_storage_rack");
+    CHECK(restoredMods->defIds[2].empty());
+    CHECK(restoredMods->defIds[3] == "vehicle_searchlight");
+    CHECK(restoredMods->defIds[4].empty());
+
+    save::SavedEntity oldVehicle;
+    oldVehicle.stableId = 952;
+    oldVehicle.components.push_back(MakeComponent(
+        save::kSaveComponentVehicle, 3,
+        [](save::BinaryWriter& writer) {
+            return writer.Write(0.8f) && writer.Write(0.5f) &&
+                   writer.Write(static_cast<std::uint8_t>(0)) &&
+                   writer.Write(static_cast<std::uint8_t>(1)) &&
+                   writer.Write(1.5f);
+        }));
+    ecs::EcsWorld oldTarget;
+    const ecs::Entity oldEntity = oldTarget.CreateWithStableId(952);
+    REQUIRE(oldEntity != ecs::EcsWorld::kNull);
+    error.clear();
+    REQUIRE(save::ApplyEntity(oldVehicle, oldTarget, oldEntity, components,
+                             &error));
+    CHECK(oldTarget.Registry().try_get<ecs::Vehicle>(oldEntity) != nullptr);
+    CHECK(oldTarget.Registry().try_get<ecs::VehicleMods>(oldEntity) ==
+          nullptr);
+}
+
+TEST_CASE("M33-F5-T2 世界阶段进度与奖励幂等键存档往返") {
+    const save::ComponentRegistry components = MakeRegistry();
+    ecs::EcsWorld source;
+    const ecs::Entity poiWorld =
+        source.CreateWithStableId(ecs::kPoiWorldProgressStableId);
+    ecs::PoiWorldProgress progress;
+    game::PoiProgress poi;
+    poi.poiId = "staged_hospital";
+    poi.currentStage = 2;
+    poi.completedStages = {"approach", "find_key"};
+    poi.chosenBranch = "morgue_route";
+    poi.acquiredKeys = {"front"};
+    poi.powered = true;
+    poi.awaitingChoice = true;
+    poi.attempts = 2;
+    poi.stageKills = 1;
+    poi.lastLiveGuards = 3;
+    progress.pois.push_back(poi);
+    source.Registry().emplace<ecs::PoiWorldProgress>(poiWorld,
+                                                     std::move(progress));
+
+    std::string error;
+    save::EntitySnapshot snapshot;
+    REQUIRE(save::CaptureEntities(source, components, &snapshot, {}, &error));
+    REQUIRE(snapshot.entities.size() == 1u);
+    REQUIRE(FindComponent(snapshot.entities[0],
+                          save::kSaveComponentPoiWorldProgress) != nullptr);
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(snapshot, &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+    const auto* loadedProgress =
+        target.Registry().try_get<ecs::PoiWorldProgress>(loaded);
+    REQUIRE(loadedProgress != nullptr);
+    REQUIRE(loadedProgress->pois.size() == 1u);
+    CHECK(loadedProgress->pois[0].poiId == "staged_hospital");
+    CHECK(loadedProgress->pois[0].currentStage == 2);
+    CHECK(loadedProgress->pois[0].completedStages ==
+          std::vector<std::string>({"approach", "find_key"}));
+    CHECK(loadedProgress->pois[0].chosenBranch == "morgue_route");
+    CHECK(loadedProgress->pois[0].acquiredKeys ==
+          std::vector<std::string>({"front"}));
+    CHECK(loadedProgress->pois[0].powered);
+    CHECK(loadedProgress->pois[0].awaitingChoice);
+    CHECK(loadedProgress->pois[0].attempts == 2);
+    CHECK(loadedProgress->pois[0].stageKills == 1);
+
+    const ecs::Entity player = source.Create();
+    AddPlayerComponents(source, player);
+    auto* tasks = source.Registry().try_get<ecs::PoiTasks>(player);
+    REQUIRE(tasks != nullptr);
+    tasks->rewardClaims = {"staged_hospital.find_key"};
+    save::SavedEntity savedPlayer;
+    REQUIRE(save::CapturePlayer(source, components, &savedPlayer, &error));
+    const std::vector<std::uint8_t> playerBytes =
+        save::EncodeEntitySnapshot(SnapshotOf(savedPlayer), &error);
+    REQUIRE_FALSE(playerBytes.empty());
+    save::EntitySnapshot decodedPlayer;
+    REQUIRE(save::DecodeEntitySnapshot(playerBytes, &decodedPlayer, &error));
+    ecs::EcsWorld playerTarget;
+    const ecs::Entity loadedPlayer =
+        playerTarget.CreateWithStableId(decodedPlayer.entities[0].stableId);
+    REQUIRE(save::ApplyEntity(decodedPlayer.entities[0], playerTarget,
+                              loadedPlayer, components, &error));
+    const auto* loadedTasks =
+        playerTarget.Registry().try_get<ecs::PoiTasks>(loadedPlayer);
+    REQUIRE(loadedTasks != nullptr);
+    REQUIRE(loadedTasks->rewardClaims.size() == 1u);
+    CHECK(loadedTasks->rewardClaims[0] == "staged_hospital.find_key");
+}
+
+TEST_CASE("M35-F4-T1 ModData 单例、存档往返与上限") {
+    const save::ComponentRegistry components = MakeRegistry();
+
+    ecs::EcsWorld source;
+    CHECK(ecs::FindModDataEntity(source) == ecs::EcsWorld::kNull);
+    ecs::ModData& data = ecs::EnsureModData(source);
+    const ecs::Entity entity = ecs::FindModDataEntity(source);
+    REQUIRE(entity != ecs::EcsWorld::kNull);
+    CHECK(source.Registry().all_of<ecs::ModDataTag>(entity));
+    CHECK_FALSE(source.Registry().all_of<ecs::Position>(entity));
+    CHECK(&ecs::EnsureModData(source) == &data);
+    CHECK(source.AliveCount() == 1u);
+    CHECK(data.mods.empty());
+
+    std::string error;
+    save::SavedEntity emptySaved;
+    REQUIRE(save::CaptureEntity(source, entity, components, &emptySaved,
+                                &error));
+    CHECK(error.empty());
+    const save::SavedComponent* emptyComponent =
+        FindComponent(emptySaved, save::kSaveComponentModData);
+    REQUIRE(emptyComponent != nullptr);
+    CHECK(emptyComponent->version == 1u);
+
+    const std::vector<std::uint8_t> emptyBytes =
+        save::EncodeEntitySnapshot(SnapshotOf(emptySaved), &error);
+    REQUIRE_FALSE(emptyBytes.empty());
+    save::EntitySnapshot emptyDecoded;
+    REQUIRE(save::DecodeEntitySnapshot(emptyBytes, &emptyDecoded, &error));
+    ecs::EcsWorld emptyTarget;
+    const ecs::Entity emptyLoaded = emptyTarget.CreateWithStableId(
+        emptyDecoded.entities[0].stableId);
+    REQUIRE(emptyLoaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(emptyDecoded.entities[0], emptyTarget,
+                              emptyLoaded, components, &error));
+    const auto* loadedEmpty =
+        emptyTarget.Registry().try_get<ecs::ModData>(emptyLoaded);
+    REQUIRE(loadedEmpty != nullptr);
+    CHECK(loadedEmpty->mods.empty());
+    CHECK(emptyTarget.Registry().all_of<ecs::ModDataTag>(emptyLoaded));
+    CHECK(ecs::FindModDataEntity(emptyTarget) == emptyLoaded);
+    CHECK(emptyTarget.AliveCount() == 1u);
+
+    data.mods.push_back(
+        {"alpha", {{"score", "42"}, {"empty", ""}}});
+    data.mods.push_back(
+        {"测试", {{"标题", "你好"}, {"json", R"({"a":1})"}}});
+
+    save::SavedEntity saved;
+    REQUIRE(save::CaptureEntity(source, entity, components, &saved, &error));
+    CHECK(error.empty());
+    const std::vector<std::uint8_t> bytes =
+        save::EncodeEntitySnapshot(SnapshotOf(saved), &error);
+    REQUIRE_FALSE(bytes.empty());
+    save::EntitySnapshot decoded;
+    REQUIRE(save::DecodeEntitySnapshot(bytes, &decoded, &error));
+    ecs::EcsWorld target;
+    const ecs::Entity loaded =
+        target.CreateWithStableId(decoded.entities[0].stableId);
+    REQUIRE(loaded != ecs::EcsWorld::kNull);
+    REQUIRE(save::ApplyEntity(decoded.entities[0], target, loaded, components,
+                              &error));
+    CHECK(error.empty());
+    const auto* loadedData = target.Registry().try_get<ecs::ModData>(loaded);
+    REQUIRE(loadedData != nullptr);
+    REQUIRE(loadedData->mods.size() == 2u);
+    CHECK(loadedData->mods[0].first == "alpha");
+    REQUIRE(loadedData->mods[0].second.size() == 2u);
+    CHECK(loadedData->mods[0].second[0].key == "score");
+    CHECK(loadedData->mods[0].second[0].value == "42");
+    CHECK(loadedData->mods[0].second[1].key == "empty");
+    CHECK(loadedData->mods[0].second[1].value.empty());
+    CHECK(loadedData->mods[1].first == "测试");
+    REQUIRE(loadedData->mods[1].second.size() == 2u);
+    CHECK(loadedData->mods[1].second[0].key == "标题");
+    CHECK(loadedData->mods[1].second[0].value == "你好");
+    CHECK(loadedData->mods[1].second[1].value == R"({"a":1})");
+    CHECK(&ecs::EnsureModData(target) == loadedData);
+    CHECK(target.AliveCount() == 1u);
+
+    const auto validMods = data.mods;
+    data.mods = {{"alpha", {}}};
+    for (int i = 0; i < 65; ++i) {
+        data.mods[0].second.push_back(
+            ecs::ModDataEntry{"k" + std::to_string(i), "v"});
+    }
+    save::SavedEntity tooMany;
+    CHECK_FALSE(save::CaptureEntity(source, entity, components, &tooMany,
+                                    &error));
+    CHECK(error.find("ModData") != std::string::npos);
+
+    data.mods = {{"alpha",
+                  {{"value", std::string(ecs::kMaxModDataValueBytes + 1,
+                                         'x')}}}};
+    save::SavedEntity tooLong;
+    error.clear();
+    CHECK_FALSE(save::CaptureEntity(source, entity, components, &tooLong,
+                                    &error));
+    CHECK(error.find("ModData") != std::string::npos);
+
+    data.mods = {{"alpha", {}}};
+    for (int i = 0; i < 33; ++i) {
+        data.mods[0].second.push_back(ecs::ModDataEntry{
+            "k" + std::to_string(i),
+            std::string(ecs::kMaxModDataValueBytes, 'x')});
+    }
+    save::SavedEntity tooLarge;
+    error.clear();
+    CHECK_FALSE(save::CaptureEntity(source, entity, components, &tooLarge,
+                                    &error));
+    CHECK(error.find("ModData") != std::string::npos);
+
+    data.mods = validMods;
+    const save::SavedComponent malformed = MakeComponent(
+        save::kSaveComponentModData, 1, [](save::BinaryWriter& writer) {
+            return writer.Write(static_cast<std::uint32_t>(1)) &&
+                   writer.WriteString("alpha",
+                                      ecs::kMaxModDataModIdBytes) &&
+                   writer.Write(static_cast<std::uint32_t>(65));
+        });
+    save::SavedEntity malformedEntity;
+    malformedEntity.stableId = 900;
+    malformedEntity.components.push_back(malformed);
+    ecs::EcsWorld malformedTarget;
+    const ecs::Entity malformedLoaded =
+        malformedTarget.CreateWithStableId(malformedEntity.stableId);
+    REQUIRE(malformedLoaded != ecs::EcsWorld::kNull);
+    error.clear();
+    CHECK_FALSE(save::ApplyEntity(malformedEntity, malformedTarget,
+                                  malformedLoaded, components, &error));
+    CHECK(error.find("ModData") != std::string::npos);
+    CHECK_FALSE(malformedTarget.Registry().all_of<ecs::ModData>(
+        malformedLoaded));
+
+    source.Registry().remove<ecs::ModData>(entity);
+    save::SavedEntity legacy;
+    error.clear();
+    REQUIRE(save::CaptureEntity(source, entity, components, &legacy, &error));
+    CHECK(FindComponent(legacy, save::kSaveComponentModData) == nullptr);
 }

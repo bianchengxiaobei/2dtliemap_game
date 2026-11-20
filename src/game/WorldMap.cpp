@@ -67,7 +67,8 @@ WorldMapState BuildWorldMapState(
     const RegionEventDirector* events, const WorldMapObjectiveInput& objective,
     const WorldMapRoute& route, const StrategicMapState* strategic,
     const WorldMapTravelConfig& travel,
-    const WorldEventDirector* worldEvents) {
+    const WorldEventDirector* worldEvents,
+    const std::vector<WorldMapPoiProgress>* poiProgress) {
     WorldMapState state;
     if (!graph.Valid()) {
         return state;
@@ -194,6 +195,27 @@ WorldMapState BuildWorldMapState(
         poi.threat = threat;
         poi.discovered = InSet(discoveredPois, id);
         poi.completed = InSet(completedPois, id);
+        if (poiProgress != nullptr) {
+            const auto found = std::find_if(
+                poiProgress->begin(), poiProgress->end(),
+                [&](const WorldMapPoiProgress& item) {
+                    return item.id == id;
+                });
+            if (found != poiProgress->end() && found->stageCount > 0) {
+                poi.staged = true;
+                poi.stageIndex = found->stageIndex;
+                poi.stageCount = found->stageCount;
+                poi.completedStageCount = found->completedStageCount;
+                poi.stageFailed = found->failed;
+                poi.stageAwaitingChoice = found->awaitingChoice;
+                poi.stageX = found->hasStagePoint ? found->stageX : x;
+                poi.stageY = found->hasStagePoint ? found->stageY : y;
+                poi.stageLabel = found->stageLabel;
+                if (found->completed) {
+                    poi.completed = true;
+                }
+            }
+        }
         const StrategicMapRegion* region = strategicRegionAt(x, y);
         poi.disabled =
             region != nullptr && region->owner == StrategicOwner::Infested;
@@ -277,6 +299,34 @@ WorldMapState BuildWorldMapState(
     state.route = route;
     state.routeCost = EstimateWorldMapTravel(route.distance, travel);
     return state;
+}
+
+std::string WorldMapPoiLabel(const WorldMapPoi& poi) {
+    if (!poi.discovered) {
+        return "未知地点";
+    }
+    std::string label = poi.name;
+    if (poi.disabled) {
+        return label + "（沦陷）";
+    }
+    if (poi.completed) {
+        return label + "（完成）";
+    }
+    if (poi.staged && poi.stageCount > 0) {
+        label += "（";
+        if (poi.stageFailed) {
+            label += "阶段 " + std::to_string(poi.stageIndex + 1) + "/" +
+                     std::to_string(poi.stageCount) + " · 失败可重试";
+        } else {
+            label += poi.stageLabel.empty()
+                         ? "阶段 " + std::to_string(poi.stageIndex + 1) +
+                               "/" + std::to_string(poi.stageCount)
+                         : poi.stageLabel;
+        }
+        label += "）";
+        return label;
+    }
+    return label;
 }
 
 WorldMapRoute BuildWorldMapRoute(const world::WorldGraph& graph,

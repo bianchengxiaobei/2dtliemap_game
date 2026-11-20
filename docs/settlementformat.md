@@ -1,6 +1,6 @@
 ﻿# 聚落与 NPC 数据格式（settlements-v1）
 
-> 适用版本：M23-F4-T1~T8（2026-11-02）、M33-F1-T1/T2/T3/T4/T5/T6/T7（2026-11-13）。实现位于 `src/game/Settlement.*`、`src/game/SettlementNpc.*`、`src/game/SettlementReputation.*`、`src/game/Dialogue.*`；契约测试为 `tests/test_settlements.cpp`、`tests/test_settlement_integration.cpp`、`tests/test_settlement_npc.cpp`、`tests/test_settlement_defense.cpp`、`tests/test_settlement_network.cpp`、`tests/test_entity_save.cpp`、`tests/test_player_state.cpp` 与 `tools/tests/test_settlement_data.py`。
+> 适用版本：M23-F4-T1~T8（2026-11-02）、M33-F1-T1/T2/T3/T4/T5/T6/T7、M33-F3-T7（2026-11-14）。实现位于 `src/game/Settlement.*`、`src/game/SettlementNpc.*`、`src/game/SettlementReputation.*`、`src/game/Dialogue.*`；契约测试为 `tests/test_settlements.cpp`、`tests/test_settlement_integration.cpp`、`tests/test_settlement_npc.cpp`、`tests/test_settlement_defense.cpp`、`tests/test_settlement_network.cpp`、`tests/test_entity_save.cpp`、`tests/test_player_state.cpp` 与 `tools/tests/test_settlement_data.py`。
 
 本文是聚落数据、运行时行为、存档/联机边界和 mod 扩展流程的完整参考。玩家 mod 的通用内容合并规则见 [modding.md](modding.md) 的 3.6 节。
 
@@ -68,7 +68,7 @@
 - 根节点必须是对象，`format` 必须精确为 `settlements-v1`，`defs` 必须是非空数组；否则整份文件失败。
 - 聚落 `id` 与基础或更早 mod 重复时跳过该条；单条字段非法时跳过该条。
 - 一个 mod 文件全部条目都无效时，该文件视为失败，不改变已有定义。
-- 基础与 mod 聚落都会进入内容指纹 v15（M33-F2-T3 起整体为 v17）；联机客户端/服务器必须加载相同定义。
+- 基础与 mod 聚落都会进入内容指纹 v15（M33-F3-T5 起整体为 v19，M33-F4-T1 起为 v20）；联机客户端/服务器必须加载相同定义。
 - 解析器忽略未知字段，未知字段不会进入指纹，也不能被运行时识别。
 
 ## 2. 聚落字段
@@ -218,16 +218,16 @@
 - 任务完成/失败/放弃的键形如 `mission:<settlementId>:<missionId>:<day>:<complete|fail|abandon>`；守城键为 `defense:<settlementId>:<regionId>:<attack>:<resolved>:<defend|reclaim>`。重复键不再加声望。
 - 交易不要求客户端提供事件 id；按 `trade:<settlementId>:<day>:<n>` 记录，并受 `dailyTradeGainLimit` 限制。
 - `MissionRunState.settlementId` 记录接取委托的来源聚落，随 `MissionLog v2` 存档；旧 v1 MissionLog 读取为空来源。
-- 服务器玩家档案保存 `PlayerState v21` 的 owner-only `PlayerSettlementReputation{id,score}` 摘要；重连/复活时先恢复实体快照，再把摘要中缺失条目合并回 ECS。v20/旧负载摘要为空。
+- 服务器玩家档案保存 `PlayerState v21`（M33-F5-T2 起整体 v22）的 owner-only `PlayerSettlementReputation{id,score}` 摘要；重连/复活时先恢复实体快照，再把摘要中缺失条目合并回 ECS。v20/旧负载摘要为空。
 
 ### 4.3 声望后果与服务限制（M33-F1-T5）
 
 - 价格：`SettlementBuyPrice(base, score)` 按当前等级 `buy` 倍率取整（四舍五入、最少 1）；`SettlementSellPrice` 同理使用 `sell`。单机购买、交易面板和服务器 `TradeOffer` 使用同一函数，客户端不能自报价格。
 - 任务：`MissionDef.minSettlementReputation` 可选，范围 -100~100，缺省 -100；`FindAvailableSettlementMission`、对话 `MissionAvailable/MissionNone/MissionLocked` 和服务器接取都要求当前聚落分数达到任务门槛。内置聚落池门槛为 `settlement_help=-39`、`settlement_escort=0`、`settlement_clear=20`、`settlement_supply=30`；F1-T6 新任务 `north_blood_drive=-39`、`south_harvest_help=0`、`river_fish_supply=-39`；战略触发的 `refugee_relief` 保持默认 -100。
 - 对话：`MakeSettlementDialogue` 接收当前分数，按 Hostile/Wary/Neutral/Friendly/Trusted 生成不同态度文本；任务被声望锁定时显示“声望不足？”分支，而不是伪装成“没有委托”。F1-T6 起内置 `dialogueProfile` 会在根节点追加聚落口吻（村庄广场、诊所消毒水、农场谷仓/泥土、桥头河风），未知 profile 回退通用文本。
-- `services`：交易/委托入口按服务位隐藏；未启用 `defense` 时聚落不会自动触发夜袭或让守卫迎战（`SettlementProvidesDefense`），但战略失守/恢复状态仍可记录；`recruit` 入口留给 F3 同伴系统。Hostile 只拒绝交易/委托/招募，防御仍可参与。
+- `services`：交易/委托入口按服务位隐藏；未启用 `defense` 时聚落不会自动触发夜袭或让守卫迎战（`SettlementProvidesDefense`），但战略失守/恢复状态仍可记录；M33-F3-T2 起 `recruit` 控制求助者对话中的同伴招募/归队/解散待命入口。Hostile 只拒绝交易/委托/招募，防御仍可参与。
 - Hostile 服务拒绝原因：单机/服务器分别提示 `声望敌视：商人拒绝交易`、`声望敌视：拒绝委托` 或 `该聚落不提供交易/委托`。不做声望高自动送装备。
-- 内容指纹 v15（M33-F2-T3 起整体为 v17）：任务 `minSettlementReputation` 与既有聚落声望配置共同参与指纹，联机双方不一致时握手拒绝。
+- 内容指纹 v15（M33-F3-T5 起整体为 v19，M33-F4-T1 起为 v20）：任务 `minSettlementReputation` 与既有聚落声望配置共同参与指纹，联机双方不一致时握手拒绝。
 
 ## 5. `missionPool` 与求助者对话
 
@@ -240,6 +240,8 @@
 - `missionPool` 中不存在或不可激活的任务在运行时被忽略；建议在 mod 测试中校验引用。
 - M33-F1-T6 起四个内置聚落使用独立池：村庄 `settlement_help/escort/clear/supply`；北部 `north_blood_drive`；南部 `south_harvest_help`；河畔 `river_fish_supply`。新任务均带 2–3 天时限与 1 天重试。
 - `AcceptSettlementMission=39` 只携带求助者 StableId，不携带任务 id；服务器重新计算可接任务，客户端不能指定任意任务。
+- M33-F3-T2 起求助者根节点还提供同伴入口：聚落有 `recruit` 服务且无同伴时显示“招募一名同伴”，有活动同伴时显示“让同伴留在聚落待命”，有本聚落待命同伴时显示“让同伴归队”。条件为 `recruit.minReputationTier`、前置任务 Completed、配置物资；失败不扣物。
+- 伙伴归属由 `recruit.requiredMission` 是否属于该聚落 `missionPool` 决定；内置林医生归村庄营地、阿默归南部农场，北部诊所/河畔营地不提供招募。
 - 推荐聚落任务使用 `source: "npc"`、`autoActivate: false`、`kind: "once"`，并设置 `timeLimitDays`/`retryDays`；否则可能与自动接取/每日刷新冲突。
 
 内置对话树是固定节点/条件/选项，口吻开场由 `dialogueProfile` 选择；`settlement.name` 只进入说话人后缀。当前不提供对话 JSON，mod 不能新增节点、改写选项或增加新的对话结果类型，这些需要扩展 C++ `game::Dialogue`。
@@ -302,7 +304,8 @@
 - 玩家任务进度由 `MissionLog` 保存；M33-F1-T4 起 `MissionLog v2` 追加任务来源 `settlementId`。
 - `PlayerState` v16 追加 owner-only `PlayerSettlementProgress{id,fallen,raidActive,guardHealth,guardHealthMax}` 与聚落提示；v21 追加 `PlayerSettlementReputation{id,score}` 声望摘要。用于 HUD/对话/交易拦截与联机分数显示。
 - `AcceptSettlementMission=39` 和 `TradeOffer=21` 都由服务器校验距离、实体、类型、失守/夜袭和任务可用性；客户端不本地扣物、发奖或接取。
-- 聚落字段（含 `regionId/services/startingReputation/dialogueProfile/defense` 与声望配置）及任务 `minSettlementReputation` 进入内容指纹 v15（M33-F2-T3 起整体为 v17）；联机双方定义不一致会在握手阶段拒绝。
+- M33-F3-T2 新增 `RecruitCompanion=51`/`DismissCompanion=52`，同样携带求助者 StableId 并由服务器复核范围、聚落状态、声望/任务/物资或同伴归属。同伴按 `ownerStableId` 唯一；解散只改 `CompanionState.standby` 并回到聚落，不新建实体。M33-F3-T3 起单机/服务器同伴自动跟随 owner、在 owner 受威胁时参战并可低血撤退；T4 起生成时带初始装备/背包，主手武器与躯干护甲影响战斗，倒地可救援/死亡后装备转入尸体容器，`Companion`/`CompanionState` 进入世界存档；T5 起信任随击杀/赠礼/个人委托阶段变化，`companions-v1` 的 `personalQuest[]` 提供两段个人委托、额外特长/装备/对话状态，`CompanionState` 存档 v3 保存信任/阶段/进度/防重复奖励标记；T6 起 `ZLR1 CMPN` 复制同伴 defId/指令/待命/倒地/死亡/信任/委托进度与 owner，客户端只读，旧负载安全回退；玩家断线、死亡或同身份接管时服务器让同伴回聚落待命并保留 StableId/owner，重连不复制，服务器重启从世界存档恢复。T7 起同伴面板（P）显示生命/状态/信任/装备/背包/委托，面板 1/2/3 发送跟随/停留/撤退、4 赠礼当前快捷栏物品、E 交谈/救援；聚落求助者提示与对话 hint 显示招募声望/前置委托/物资条件，HUD 显示同伴倒地/低血/远离/卡住提示。T8 起 `config/game.json` 的 `companions.ai.*` 配置跟随/leash/攻击/倒地/救援参数，主手武器伤害/冷却按 0.38/1.20 缩放，内置同伴同武器 DPS 为玩家的 31.67%，空手回退 35.29%，落在 30–50%；已招募时求助者提示显示“已有同伴：名字（状态）”，对话按医疗/斥候 profile 区分闲聊。联机仍只同步装备摘要，不显示完整背包。完整同伴平衡见 [docs/19-M33同伴数据与平衡.md](19-M33同伴数据与平衡.md)。
+- 聚落字段（含 `regionId/services/startingReputation/dialogueProfile/defense` 与声望配置）及任务 `minSettlementReputation` 进入内容指纹 v15（M33-F3-T5 起整体为 v19，M33-F4-T1 起为 v20）；联机双方定义不一致会在握手阶段拒绝。
 
 ## 9. Mod 扩展流程
 
@@ -383,6 +386,6 @@ M33-F1-T2 起追加聚落会自动获得独立商人/守卫/求助者与库存�
 
 - 双客户端跨聚落用例：两个玩家分别在 `village_haven` 与 `north_fields` 交易、接取并完成 `settlement_help`/`north_blood_drive`；验证各聚落库存独立、交易 +1、任务 +10、最终声望各 11 且对方聚落为 0，服务器重启后声望、任务完成状态和库存恢复；用例位于 `tests/test_settlement_network.cpp`。
 - 旧档/旧客户端：`SettlementReputation` 缺失按空/初始值，`MissionLog v1` 无来源仍可读且 `rewardClaimed` 不被重置，`PlayerState v20` 聚落声望摘要默认空；覆盖见 `tests/test_entity_save.cpp`、`tests/test_player_state.cpp`、`tests/test_settlement_integration.cpp`。
-- 2026-11-13 基线：`M33-F1*` 26/26（657 assertions）、`M23-F4-*` 27/27（559 assertions）；M33-F2-T7 后全量 Debug **980/980（140222 assertions）**、Release **980/980（140236 assertions）**、Python **104/104**；1280 烟测沿用 `build/m33_f1_t6_smoke/`、`build/m33_f2_t7_dual_smoke/`；F2-T5/T7 联机行为见 `tests/test_world_event_network.cpp`。
-- 限制仍为：交易 UI 只有买入、报价固定 5 档、`dialogueProfile` 仅内置口吻、`merchantStock` 不能改商品表、`recruit` 留给 F3、无防御聚落不自动夜袭。
+- 2026-11-14 基线：`M33-F1*` 25/25（654 assertions）、`M33-F3-*` 31/31（792 assertions），其中 `M33-F3-T8*` 3/3（56 assertions）；全量 Debug **1010/1010（141028 assertions）**、Release **1010/1010（141042 assertions）**、Python **108/108**；1280 烟测沿用 `build/m33_f1_t6_smoke/`、`build/m33_f2_t7_dual_smoke/`，同伴面板见 `build/m33_f3_t7_smoke/`，T8 双客户端 15 分钟见 `build/m33_f3_t8_dual_smoke/`；F2-T5/T7 联机行为见 `tests/test_world_event_network.cpp`，F3-T2/T3/T4/T7/T8 双客户端与真实同伴战斗见 `tests/test_companion_network.cpp`，界面见 `tests/test_companion_ui.cpp`，装备/背包/倒地/存档见 `tests/test_companion_state.cpp`。
+- 限制仍为：交易 UI 只有买入、报价固定 5 档、`dialogueProfile` 仅内置口吻、`merchantStock` 不能改商品表、`recruit` 已由 F3-T2~T8 实现、无防御聚落不自动夜袭。
 

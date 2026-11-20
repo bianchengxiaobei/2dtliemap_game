@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "characters/components/CharacterComponents.h"
+#include "game/Companion.h"
 #include "game/MissionComponents.h"
 #include "game/Missions.h"
 #include "items/InventoryOps.h"
@@ -110,6 +112,12 @@ DialogueCondition MissionCondition(DialogueConditionKind kind,
     DialogueCondition condition;
     condition.kind = kind;
     condition.negate = negate;
+    return condition;
+}
+
+DialogueCondition CompanionCondition(DialogueConditionKind kind) {
+    DialogueCondition condition;
+    condition.kind = kind;
     return condition;
 }
 
@@ -226,6 +234,72 @@ bool EvaluateDialogueCondition(const DialogueCondition& condition,
                 result = items::CountOf(*context.inventory, condition.id) >=
                          std::max(1, condition.count);
             }
+            break;
+        case DialogueConditionKind::CompanionRecruitOffered:
+            if (context.settlement != nullptr &&
+                context.companions != nullptr) {
+                result = !context.hasCompanion &&
+                         FindSettlementCompanion(*context.companions,
+                                                 *context.settlement) !=
+                             nullptr;
+            }
+            break;
+        case DialogueConditionKind::CompanionRecallAvailable:
+            result = context.hasCompanion && context.companionStandby &&
+                     context.settlement != nullptr &&
+                     context.companionHomeSettlementId ==
+                         context.settlement->id;
+            break;
+        case DialogueConditionKind::CompanionDismissAvailable:
+            result = context.hasCompanion && !context.companionStandby &&
+                     context.settlement != nullptr &&
+                     context.companionHomeSettlementId ==
+                         context.settlement->id;
+            break;
+        case DialogueConditionKind::CompanionQuestAvailable:
+            result = context.companionDef != nullptr &&
+                     context.companionState != nullptr &&
+                     CompanionQuestStatusFor(*context.companionDef,
+                                             *context.companionState) ==
+                         CompanionQuestStatus::Available;
+            break;
+        case DialogueConditionKind::CompanionQuestActive:
+            result = context.companionDef != nullptr &&
+                     context.companionState != nullptr &&
+                     CompanionQuestStatusFor(*context.companionDef,
+                                             *context.companionState) ==
+                         CompanionQuestStatus::Active;
+            break;
+        case DialogueConditionKind::CompanionQuestCompleted:
+            result = context.companionDef != nullptr &&
+                     context.companionState != nullptr &&
+                     CompanionQuestStatusFor(*context.companionDef,
+                                             *context.companionState) ==
+                         CompanionQuestStatus::Completed;
+            break;
+        case DialogueConditionKind::CompanionQuestFailed:
+            result = context.companionDef != nullptr &&
+                     context.companionState != nullptr &&
+                     CompanionQuestStatusFor(*context.companionDef,
+                                             *context.companionState) ==
+                         CompanionQuestStatus::Failed;
+            break;
+        case DialogueConditionKind::CompanionLowHealth:
+            if (context.companionHealth != nullptr &&
+                context.companionHealth->max > 0.0f) {
+                result = context.companionHealth->current > 0.0f &&
+                         context.companionHealth->current <=
+                             context.companionHealth->max * 0.3f;
+            }
+            break;
+        case DialogueConditionKind::CompanionDowned:
+            result = context.companionState != nullptr &&
+                     context.companionState->downed;
+            break;
+        case DialogueConditionKind::CompanionTrustAtLeast:
+            result = context.companionState != nullptr &&
+                     context.companionState->loyalty >=
+                         std::max(0, condition.count);
             break;
     }
     return condition.negate ? !result : result;
@@ -524,6 +598,18 @@ DialogueTree BuildSettlementDialogue(
         rootOptions.push_back(MakeOption("有什么委托？",
                                          DialogueResultKind::Goto, "work"));
     }
+    rootOptions.push_back(MakeOption(
+        "招募一名同伴。", DialogueResultKind::RecruitCompanion, {},
+        CompanionCondition(
+            DialogueConditionKind::CompanionRecruitOffered)));
+    rootOptions.push_back(MakeOption(
+        "让同伴归队。", DialogueResultKind::RecruitCompanion, {},
+        CompanionCondition(
+            DialogueConditionKind::CompanionRecallAvailable)));
+    rootOptions.push_back(MakeOption(
+        "让同伴留在聚落待命。", DialogueResultKind::DismissCompanion, {},
+        CompanionCondition(
+            DialogueConditionKind::CompanionDismissAvailable)));
     rootOptions.push_back(
         MakeOption("我只是路过。", DialogueResultKind::Close));
     tree.nodes.push_back(MakeNode(
@@ -579,6 +665,189 @@ DialogueTree MakeSettlementDialogue(const SettlementDef& settlement,
                                     const SettlementReputationConfig& reputation,
                                     int score) {
     return BuildSettlementDialogue(settlement, kind, reputation, score);
+}
+
+DialogueTree MakeCompanionDialogue(const CompanionDef& companion,
+                                   const CompanionState& state,
+                                   const ecs::Health& health) {
+    DialogueTree tree;
+    tree.kind = SettlementNpcKind::Requester;
+    tree.startNode = "root";
+    const std::string speaker = companion.name;
+    const bool linVoice = companion.dialogueProfile == "companion_lin";
+    const bool amoVoice = companion.dialogueProfile == "companion_amo";
+    const CompanionTrustTier tier = CompanionTrustTierForScore(state.loyalty);
+    const bool lowHealth = health.max > 0.0f && health.current > 0.0f &&
+                           health.current <= health.max * 0.3f;
+    const CompanionQuestStatus questStatus =
+        CompanionQuestStatusFor(companion, state);
+
+    std::string rootText;
+    if (state.dead) {
+        rootText = companion.name + "已经没有了呼吸。";
+    } else if (state.downed) {
+        rootText = companion.name + "靠在地上，按住伤口，呼吸很浅。";
+    } else if (lowHealth) {
+        rootText = companion.name +
+                   "的袖口沾着血，声音却还稳：“我还能走，别为我停下。”";
+    } else {
+        switch (tier) {
+            case CompanionTrustTier::Wary:
+                rootText = companion.name + "看了你一眼，手上的动作没有停。";
+                break;
+            case CompanionTrustTier::Steady:
+                rootText = companion.name + "朝你点了点头。";
+                break;
+            case CompanionTrustTier::Trusted:
+                rootText = companion.name + "把身边的位置留给你。";
+                break;
+            case CompanionTrustTier::Bonded:
+                rootText = companion.name + "先看了看你的伤，再看向前方的路。";
+                break;
+        }
+    }
+
+    std::vector<DialogueOption> rootOptions;
+    if (!state.dead && !state.downed) {
+        rootOptions.push_back(MakeOption(
+            "你看起来有心事。", DialogueResultKind::Goto, "quest",
+            CompanionCondition(
+                DialogueConditionKind::CompanionQuestAvailable)));
+        rootOptions.push_back(MakeOption(
+            "你托付的事，怎么样了？", DialogueResultKind::Goto, "quest",
+            CompanionCondition(DialogueConditionKind::CompanionQuestActive)));
+        rootOptions.push_back(MakeOption(
+            "上次的事，我想再试一次。", DialogueResultKind::Goto, "quest",
+            CompanionCondition(DialogueConditionKind::CompanionQuestFailed)));
+        rootOptions.push_back(MakeOption(
+            "你看起来轻松了些。", DialogueResultKind::Goto, "quest_done",
+            CompanionCondition(
+                DialogueConditionKind::CompanionQuestCompleted)));
+        rootOptions.push_back(MakeOption(
+            "你受伤了？", DialogueResultKind::Goto, "hurt",
+            CompanionCondition(DialogueConditionKind::CompanionLowHealth)));
+        rootOptions.push_back(
+            MakeOption("送你一件东西。", DialogueResultKind::GiftToCompanion));
+        rootOptions.push_back(
+            MakeOption("随便聊聊。", DialogueResultKind::Goto, "talk"));
+    }
+    rootOptions.push_back(MakeOption("先这样。", DialogueResultKind::Close));
+    tree.nodes.push_back(
+        MakeNode("root", speaker, rootText, std::move(rootOptions)));
+
+    std::string talkText;
+    if (linVoice) {
+        talkText = tier == CompanionTrustTier::Wary
+                       ? "“绷带要按顺序摆，真出事时能省几秒。”"
+                       : tier == CompanionTrustTier::Steady
+                             ? "“你走前面，我盯着谁的伤口在流血。”"
+                             : tier == CompanionTrustTier::Trusted
+                                   ? "“有你在，我敢低头救人。”"
+                                   : "“下次你倒下，我会先把你拖回来。”";
+    } else if (amoVoice) {
+        talkText = tier == CompanionTrustTier::Wary
+                       ? "“东边的路被堵了，西边还能绕。”"
+                       : tier == CompanionTrustTier::Steady
+                             ? "“你走前面，我盯着地平线。”"
+                             : tier == CompanionTrustTier::Trusted
+                                   ? "“地图给你，撤退路线我记着。”"
+                                   : "“真到撤的时候，跟着我，别回头。”";
+    } else {
+        talkText = tier == CompanionTrustTier::Wary
+                       ? "“路还长，先活下去。”"
+                       : tier == CompanionTrustTier::Steady
+                             ? "“你走前面，我盯着后面。”"
+                             : tier == CompanionTrustTier::Trusted
+                                   ? "“有你在，我敢把背后交出去。”"
+                                   : "“下次你倒下，我会先把你拖回来。”";
+    }
+    tree.nodes.push_back(MakeNode(
+        "talk", speaker, talkText,
+        {
+            MakeOption("回到刚才的话题。", DialogueResultKind::Goto,
+                       "root"),
+            MakeOption("先这样。", DialogueResultKind::Close),
+        }));
+
+    std::string hurtText;
+    if (linVoice) {
+        hurtText =
+            lowHealth
+                ? "“皮外伤，不碍事。真到走不动的时候，我会告诉你。”"
+                : "“我没事。”";
+    } else if (amoVoice) {
+        hurtText = lowHealth
+                       ? "“擦破点皮。别停，路还长。”"
+                       : "“还能走。”";
+    } else {
+        hurtText = lowHealth
+                       ? "“皮外伤，不碍事。真到走不动的时候，我会告诉你。”"
+                       : "“我没事。”";
+    }
+    tree.nodes.push_back(MakeNode(
+        "hurt", speaker, hurtText,
+        {
+            MakeOption("有需要就叫我。", DialogueResultKind::Goto, "root"),
+            MakeOption("先这样。", DialogueResultKind::Close),
+        }));
+
+    const CompanionQuestStageDef* stage =
+        CurrentCompanionQuestStage(companion, state);
+    std::string questText;
+    std::vector<DialogueOption> questOptions;
+    if (stage == nullptr) {
+        questText = "“该做的都做完了。”";
+        questOptions.push_back(
+            MakeOption("先这样。", DialogueResultKind::Close));
+    } else if (questStatus == CompanionQuestStatus::Available ||
+               questStatus == CompanionQuestStatus::Failed) {
+        questText = stage->description.empty()
+                        ? "“有件事，我想请你帮忙。”"
+                        : stage->description;
+        questOptions.push_back(MakeOption(
+            "我帮你。", DialogueResultKind::AcceptCompanionQuest,
+            stage->id,
+            (questStatus == CompanionQuestStatus::Available
+                 ? CompanionCondition(
+                       DialogueConditionKind::CompanionQuestAvailable)
+                 : CompanionCondition(
+                       DialogueConditionKind::CompanionQuestFailed))));
+        questOptions.push_back(
+            MakeOption("以后再说。", DialogueResultKind::Close));
+    } else if (questStatus == CompanionQuestStatus::Active) {
+        questText = "“还在等一个合适的机会。”";
+        questOptions.push_back(MakeOption(
+            "我会继续。", DialogueResultKind::Close));
+        questOptions.push_back(MakeOption(
+            "先放一放。", DialogueResultKind::AbandonCompanionQuest,
+            stage->id,
+            CompanionCondition(DialogueConditionKind::CompanionQuestActive)));
+    } else {
+        questText = stage->completionText.empty()
+                        ? "“谢谢你。”"
+                        : stage->completionText;
+        questOptions.push_back(
+            MakeOption("先这样。", DialogueResultKind::Close));
+    }
+    tree.nodes.push_back(
+        MakeNode("quest", speaker, questText, std::move(questOptions)));
+
+    std::string doneText = "“该做的都做完了。”";
+    if (!companion.personalQuest.empty()) {
+        const CompanionQuestStageDef& last = companion.personalQuest.back();
+        if (!last.completionText.empty()) {
+            doneText = last.completionText;
+        }
+    }
+    if (!state.extraTraits.empty()) {
+        doneText += "（" + state.extraTraits.back() + "）";
+    }
+    tree.nodes.push_back(MakeNode(
+        "quest_done", speaker, doneText,
+        {
+            MakeOption("先这样。", DialogueResultKind::Close),
+        }));
+    return tree;
 }
 
 }  // namespace zl::game

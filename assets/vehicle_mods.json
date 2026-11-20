@@ -1,0 +1,93 @@
+{
+  "format": "vehicle_mods-v1",
+  "defs": [
+    {
+      "id": "vehicle_armor_plate",
+      "name": "焊接装甲板",
+      "description": "在车门和车头焊上回收钢板。撞墙和感染者抓挠时更耐撞，但车身更重、油耗更高。",
+      "slot": "armor",
+      "installSeconds": 30,
+      "weightKg": 28,
+      "effects": {
+        "crashConditionScale": 0.68,
+        "zombieConditionScale": 0.72,
+        "fuelUseScale": 1.07
+      },
+      "materials": [
+        { "item": "repair_kit", "count": 2 },
+        { "item": "wood", "count": 4 }
+      ]
+    },
+    {
+      "id": "vehicle_storage_rack",
+      "name": "车顶行李架",
+      "description": "用木梁和绑带搭出额外货架。后备箱能装更多，但风阻和重量让油耗略增。",
+      "slot": "storage",
+      "installSeconds": 20,
+      "weightKg": 12,
+      "effects": {
+        "trunkCapacityKg": 24.0,
+        "trunkStacks": 2,
+        "fuelUseScale": 1.03
+      },
+      "materials": [
+        { "item": "wood", "count": 6 },
+        { "item": "repair_kit", "count": 1 }
+      ]
+    },
+    {
+      "id": "vehicle_ram_plow",
+      "name": "撞尸犁",
+      "description": "把厚木板和废金属固定在前保险杠。撞开感染者更狠、车头磨损更小，但明显增重。",
+      "slot": "plow",
+      "installSeconds": 35,
+      "weightKg": 32,
+      "effects": {
+        "ramDamageScale": 1.45,
+        "ramConditionScale": 0.65,
+        "fuelUseScale": 1.05
+      },
+      "materials": [
+        { "item": "repair_kit", "count": 2 },
+        { "item": "wood", "count": 3 }
+      ]
+    },
+    {
+      "id": "vehicle_searchlight",
+      "name": "车顶探照灯",
+      "description": "拆下无线电台零件，接出一盏可调角度的探照灯。夜间照得更远更亮，但会多耗一点电和油。",
+      "slot": "lights",
+      "installSeconds": 15,
+      "weightKg": 6,
+      "effects": {
+        "headlightRangeScale": 1.45,
+        "headlightBrightnessScale": 1.25,
+        "fuelUseScale": 1.02
+      },
+      "materials": [
+        { "item": "radio_part", "count": 1 },
+        { "item": "repair_kit", "count": 1 },
+        { "item": "wood", "count": 1 }
+      ]
+    },
+    {
+      "id": "vehicle_engine_tune",
+      "name": "发动机调校",
+      "description": "清理油路并调整点火时序。极速和加速更好，但更费油，发动机磨损也更快。",
+      "slot": "engine",
+      "installSeconds": 45,
+      "weightKg": 8,
+      "effects": {
+        "maxSpeedScale": 1.18,
+        "accelerationScale": 1.12,
+        "fuelUseScale": 1.15,
+        "conditionWearScale": 1.10
+      },
+      "materials": [
+        { "item": "repair_kit", "count": 2 },
+        { "item": "radio_part", "count": 1 },
+        { "item": "screwdriver", "count": 1 }
+      ]
+    }
+  ]
+}

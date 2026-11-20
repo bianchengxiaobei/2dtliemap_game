@@ -429,6 +429,21 @@ body {
     background-color: #5a2323;
 }
 
+.map-poi.staged .map-poi-dot {
+    border-color: #7fbfff;
+    background-color: #24445f;
+}
+
+.map-poi.stage-failed .map-poi-dot {
+    border-color: #ff8a7a;
+    background-color: #5a2323;
+}
+
+.map-poi.stage-choice .map-poi-dot {
+    border-color: #ffd479;
+    background-color: #5a4a23;
+}
+
 .map-poi-label {
     position: absolute;
     width: 170px;
@@ -450,6 +465,18 @@ body {
 
 .map-poi-label.disabled {
     color: #e6a0a0;
+}
+
+.map-poi-label.staged {
+    color: #9fd7ff;
+}
+
+.map-poi-label.stage-failed {
+    color: #ff8a7a;
+}
+
+.map-poi-label.stage-choice {
+    color: #ffd479;
 }
 
 .map-poi-label.on-right {

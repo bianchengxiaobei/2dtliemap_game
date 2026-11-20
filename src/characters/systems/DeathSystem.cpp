@@ -5,6 +5,7 @@
 
 #include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
 #include "core/EventBus.h"
 #include "core/GameEvents.h"
 #include "core/Log.h"
@@ -81,16 +82,37 @@ void DeathSystem::Update(ecs::EcsWorld& world, float dt) {
             animalSpecies = animal->speciesId;
         }
 
-        // M7-T4：死亡事件（排队：tick 末统一派发；killer 暂无追踪，未知 = 0）
+        // M35-F2-T1：击杀归属取最后一次实际伤害。环境伤害默认 sourceId=0；
+        // 没有 LastDamage 时保持未知（killer=0 / cause="unknown"）。
+        std::uint64_t killerId = 0;
+        std::string cause = "unknown";
+        if (const auto* last = registry.try_get<ecs::LastDamage>(e);
+            last != nullptr) {
+            killerId = last->sourceId;
+            cause = ecs::DamageCauseName(last->cause);
+        }
+
+        // M7-T4：死亡事件（排队：tick 末统一派发）
         // M23-F4-T5：友方聚落 NPC 不计入僵尸击杀/任务进度。
         const bool friendlyNpc = registry.all_of<ecs::FriendlyNpc>(e);
-        if (m_events != nullptr && animalSpecies.empty() && !friendlyNpc) {
-            if (registry.all_of<ecs::PlayerTag>(e)) {
-                m_events->EmitQueued(core::kOnPlayerDeath,
-                                     core::PlayerEvent{sourceId, x, y, z});
-            } else {
-                m_events->EmitQueued(core::kOnZombieDead,
-                                     core::ZombieEvent{sourceId, 0, x, y, z});
+        if (m_events != nullptr) {
+            if (!animalSpecies.empty()) {
+                m_events->EmitQueued(
+                    core::kOnAnimalKilled,
+                    core::AnimalKilledEvent{sourceId, animalSpecies, killerId, x, y, z});
+            } else if (!friendlyNpc && registry.all_of<ecs::PlayerTag>(e)) {
+                core::PlayerEvent event;
+                event.playerId = sourceId;
+                event.x = x;
+                event.y = y;
+                event.z = z;
+                event.sourceId = killerId;
+                event.cause = cause;
+                m_events->EmitQueued(core::kOnPlayerDeath, std::move(event));
+            } else if (!friendlyNpc) {
+                m_events->EmitQueued(
+                    core::kOnZombieDead,
+                    core::ZombieEvent{sourceId, killerId, x, y, z});
             }
         }
 

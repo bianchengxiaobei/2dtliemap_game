@@ -1,0 +1,96 @@
+<rml>
+<head>
+    <title>ZomboidLike Vehicle Mods</title>
+    <link type="text/rcss" href="theme.rcss"/>
+    <link type="text/rcss" href="vehiclemods.rcss"/>
+</head>
+<body>
+    <div id="vehicle-mods-overlay">
+        <div id="vehicle-mods-panel" class="vm-panel">
+            <div class="vm-header">
+                <span class="vm-title">车辆改装</span>
+                <span id="vehicle-mods-subtitle" class="vm-subtitle"></span>
+                <div id="vehicle-mods-close" class="vm-close">X</div>
+            </div>
+            <div id="vehicle-mods-status" class="vm-status"></div>
+            <div id="vehicle-mods-summary" class="vm-summary"></div>
+            <div id="vehicle-mods-progress" class="vm-progress">
+                <div id="vehicle-mods-progress-fill" class="vm-progress-fill"></div>
+            </div>
+            <div class="vm-rows">
+                <div class="vm-row">
+                    <div id="vm-slot-name-0" class="vm-slot">装甲</div>
+                    <div class="vm-info">
+                        <div id="vm-current-0" class="vm-current">当前：空</div>
+                        <div id="vm-candidate-0" class="vm-candidate"></div>
+                        <div id="vm-materials-0" class="vm-materials"></div>
+                        <div id="vm-duration-0" class="vm-duration"></div>
+                    </div>
+                    <div class="vm-actions">
+                        <button id="vm-cycle-0" class="vm-btn vm-cycle">切换</button>
+                        <button id="vm-install-0" class="vm-btn vm-install">安装</button>
+                        <button id="vm-remove-0" class="vm-btn vm-remove">拆除</button>
+                    </div>
+                </div>
+                <div class="vm-row">
+                    <div id="vm-slot-name-1" class="vm-slot">载重</div>
+                    <div class="vm-info">
+                        <div id="vm-current-1" class="vm-current">当前：空</div>
+                        <div id="vm-candidate-1" class="vm-candidate"></div>
+                        <div id="vm-materials-1" class="vm-materials"></div>
+                        <div id="vm-duration-1" class="vm-duration"></div>
+                    </div>
+                    <div class="vm-actions">
+                        <button id="vm-cycle-1" class="vm-btn vm-cycle">切换</button>
+                        <button id="vm-install-1" class="vm-btn vm-install">安装</button>
+                        <button id="vm-remove-1" class="vm-btn vm-remove">拆除</button>
+                    </div>
+                </div>
+                <div class="vm-row">
+                    <div id="vm-slot-name-2" class="vm-slot">撞击</div>
+                    <div class="vm-info">
+                        <div id="vm-current-2" class="vm-current">当前：空</div>
+                        <div id="vm-candidate-2" class="vm-candidate"></div>
+                        <div id="vm-materials-2" class="vm-materials"></div>
+                        <div id="vm-duration-2" class="vm-duration"></div>
+                    </div>
+                    <div class="vm-actions">
+                        <button id="vm-cycle-2" class="vm-btn vm-cycle">切换</button>
+                        <button id="vm-install-2" class="vm-btn vm-install">安装</button>
+                        <button id="vm-remove-2" class="vm-btn vm-remove">拆除</button>
+                    </div>
+                </div>
+                <div class="vm-row">
+                    <div id="vm-slot-name-3" class="vm-slot">灯光</div>
+                    <div class="vm-info">
+                        <div id="vm-current-3" class="vm-current">当前：空</div>
+                        <div id="vm-candidate-3" class="vm-candidate"></div>
+                        <div id="vm-materials-3" class="vm-materials"></div>
+                        <div id="vm-duration-3" class="vm-duration"></div>
+                    </div>
+                    <div class="vm-actions">
+                        <button id="vm-cycle-3" class="vm-btn vm-cycle">切换</button>
+                        <button id="vm-install-3" class="vm-btn vm-install">安装</button>
+                        <button id="vm-remove-3" class="vm-btn vm-remove">拆除</button>
+                    </div>
+                </div>
+                <div class="vm-row">
+                    <div id="vm-slot-name-4" class="vm-slot">发动机</div>
+                    <div class="vm-info">
+                        <div id="vm-current-4" class="vm-current">当前：空</div>
+                        <div id="vm-candidate-4" class="vm-candidate"></div>
+                        <div id="vm-materials-4" class="vm-materials"></div>
+                        <div id="vm-duration-4" class="vm-duration"></div>
+                    </div>
+                    <div class="vm-actions">
+                        <button id="vm-cycle-4" class="vm-btn vm-cycle">切换</button>
+                        <button id="vm-install-4" class="vm-btn vm-install">安装</button>
+                        <button id="vm-remove-4" class="vm-btn vm-remove">拆除</button>
+                    </div>
+                </div>
+            </div>
+            <div class="vm-hint">安装消耗背包材料；拆除返还安装材料的 50%（向下取整）。ESC/X 关闭。</div>
+        </div>
+    </div>
+</body>
+</rml>

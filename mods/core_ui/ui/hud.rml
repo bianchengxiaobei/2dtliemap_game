@@ -13,6 +13,7 @@
     <div id="hud-alerts">
         <div id="base-status" class="base-status"></div>
         <div id="siege-status" class="siege-status"></div>
+        <div id="companion-status" class="companion-status"></div>
         <div id="threat-status" class="threat-status"></div>
     </div>
     <div id="hud-clock" class="hud-box">
@@ -29,11 +30,22 @@
             <div id="objective-text" class="objective-text">目标：--</div>
             <div id="objective-hint" class="objective-hint"></div>
             <div id="poi-guide" class="poi-guide"></div>
+            <div id="poi-stage-panel" class="poi-stage-panel">
+                <div id="poi-stage-title" class="poi-stage-title"></div>
+                <div id="poi-stage-objective" class="poi-stage-objective"></div>
+                <div id="poi-stage-meta" class="poi-stage-meta"></div>
+                <div id="poi-stage-narrative" class="poi-stage-narrative"></div>
+            </div>
             <div id="mission-guide" class="mission-guide"></div>
             <div id="event-guide" class="event-guide"></div>
             <div id="region-guide" class="region-guide"></div>
             <div id="settlement-guide" class="settlement-guide"></div>
             <div id="strategic-guide" class="strategic-guide"></div>
+        </div>
+        <div id="poi-result-panel" class="poi-result-panel">
+            <div class="poi-result-kicker">POI</div>
+            <div id="poi-result-title" class="poi-result-title"></div>
+            <div id="poi-result-body" class="poi-result-body"></div>
         </div>
         <div id="mod-fields" class="mod-fields hud-box">
             <div class="mod-fields-title">模组</div>
@@ -93,7 +105,9 @@
                 <span id="stamina-text" class="vital-value">100</span>
             </div>
             <div id="combat-status" class="needs-status combat-status"></div>
+            <div id="stealth-status" class="needs-status stealth-status"></div>
             <div id="ranged-status" class="needs-status ranged-status"></div>
+            <div id="throw-status" class="needs-status throw-status"></div>
             <div id="forage-status" class="needs-status forage-status"></div>
             <div id="fishing-status" class="needs-status fishing-status"></div>
             <div id="needs-status" class="needs-status"></div>
@@ -109,26 +123,31 @@
         <div id="slot-0" class="slot selected">
             <div class="slot-key">1</div>
             <div id="slot-name-0" class="slot-name">空</div>
+            <div id="slot-throw-0" class="slot-throw"></div>
             <div id="slot-count-0" class="slot-count"></div>
         </div>
         <div id="slot-1" class="slot">
             <div class="slot-key">2</div>
             <div id="slot-name-1" class="slot-name">空</div>
+            <div id="slot-throw-1" class="slot-throw"></div>
             <div id="slot-count-1" class="slot-count"></div>
         </div>
         <div id="slot-2" class="slot">
             <div class="slot-key">3</div>
             <div id="slot-name-2" class="slot-name">空</div>
+            <div id="slot-throw-2" class="slot-throw"></div>
             <div id="slot-count-2" class="slot-count"></div>
         </div>
         <div id="slot-3" class="slot">
             <div class="slot-key">4</div>
             <div id="slot-name-3" class="slot-name">空</div>
+            <div id="slot-throw-3" class="slot-throw"></div>
             <div id="slot-count-3" class="slot-count"></div>
         </div>
         <div id="slot-4" class="slot">
             <div class="slot-key">5</div>
             <div id="slot-name-4" class="slot-name">空</div>
+            <div id="slot-throw-4" class="slot-throw"></div>
             <div id="slot-count-4" class="slot-count"></div>
         </div>
     </div>
@@ -139,6 +158,7 @@
     </div>
 
     <div id="action-hint" class="action-hint"></div>
+    <div id="stealth-prompt" class="stealth-prompt"></div>
 
     <div id="dialogue-panel" class="dialogue-panel">
         <div class="dialogue-card">
@@ -171,6 +191,23 @@
             <div id="perk-choice-1" class="perk-choice"></div>
             <div id="perk-choice-2" class="perk-choice"></div>
             <div class="character-hint">1/2/3 选择 Perk · C/ESC 关闭</div>
+        </div>
+    </div>
+    <div id="companion-panel" class="companion-panel">
+        <div class="companion-card hud-box">
+            <div class="companion-title">同伴</div>
+            <div id="companion-name" class="companion-name"></div>
+            <div id="companion-health" class="companion-health"></div>
+            <div class="companion-track"><div id="companion-health-fill" class="companion-health-fill"></div></div>
+            <div id="companion-state" class="companion-state"></div>
+            <div id="companion-trust" class="companion-trust"></div>
+            <div class="companion-section">装备</div>
+            <div id="companion-equipment" class="companion-line"></div>
+            <div class="companion-section">背包</div>
+            <div id="companion-bag" class="companion-line"></div>
+            <div class="companion-section">个人委托</div>
+            <div id="companion-quest" class="companion-line"></div>
+            <div id="companion-hint" class="companion-hint">1 跟随 · 2 停留 · 3 撤退 · 4 赠礼 · E 交谈/救援 · P/ESC 关闭</div>
         </div>
     </div>
     <div id="perk-prompt" class="perk-prompt"></div>

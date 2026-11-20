@@ -44,6 +44,7 @@ namespace zl::items {
 class ItemRegistry;
 class RecipeRegistry;
 class LootTableRegistry;
+struct RecipeDef;
 }  // namespace zl::items
 
 namespace zl::save {
@@ -96,9 +97,13 @@ class FireRegistry;
 class ForageRegistry;
 class NetworkClient;
 class WorldSimulation;
+struct CompanionConfig;
 struct MissionConfig;
 struct PoiConfig;
+struct ProgressionConfig;
 struct SettlementConfig;
+struct TrapDefsConfig;
+struct VehicleModsConfig;
 struct WorldEventConfig;
 
 struct MultiplayerRequest {
@@ -146,6 +151,21 @@ struct GameContext {    core::Config* config = nullptr;
     // 玩家命令（M12）：世界状态只提交 Command；Direct/Loopback 由 pipeline 决定执行时机。
     net::CommandPipeline* commands = nullptr;
     std::function<bool(const net::Command&, std::string&)> executePlayerCommand;
+    // M35-F3：脚本写动作入口（WorldDemoState 赋值）；内部统一处理 Direct/Loopback/KCP。
+    std::function<bool(const net::Command&, bool& queued, std::string& error)>
+        submitPlayerCommand;
+    // M35-F1：配方是否已学会（含蓝图锁定；WorldDemoState 进入时赋值）。
+    std::function<bool(const std::string&)> recipeKnown;
+    // M35-F3-T4：配方制作站是否在玩家附近（脚本制作动作预检；无玩家返回 false）。
+    std::function<bool(const items::RecipeDef&)> craftStationNearby;
+    // M35-F3-T5：建造动作（WorldDemoState 赋值；Direct 直调，联机走命令）。
+    std::function<bool(const BuildableDef&, int, int, bool, std::string&)>
+        buildCanPlace;
+    std::function<bool(const BuildableDef&, int, int, bool, std::string&)>
+        buildPlace;
+    std::function<bool(int, int, std::string&)> buildDemolish;
+    std::function<bool(int, int, std::string&)> buildRepair;
+    std::function<bool(int, int, std::string&)> buildToggleDoor;
 
     // M13-T5：真实 KCP 客户端（net.mode=client 时存在）；状态只读副本并发送命令。
     NetworkClient* networkClient = nullptr;
@@ -188,6 +208,9 @@ struct GameContext {    core::Config* config = nullptr;
     // 战斗（M5-T6 起）：伤害管线入口（演示/脚本可直调 ApplyDamage）+ HUD 统计
     characters::CombatSystem* combat = nullptr;
 
+    // M35-F1：成长规则（WorldDemoState OnEnter 赋值、OnExit 清空；脚本只读）
+    ProgressionConfig* progressionConfig = nullptr;
+
     // 刷怪与虚拟化（M5-T7 起）：密度目标/实体化/虚拟化（只读统计）
     ai::SpawnLodSystem* spawnLod = nullptr;
     AnimalSystem* animalSystem = nullptr;
@@ -207,6 +230,9 @@ struct GameContext {    core::Config* config = nullptr;
     MissionConfig* missionConfig = nullptr;
     SettlementConfig* settlements = nullptr;
     WorldEventConfig* worldEvents = nullptr;
+    CompanionConfig* companions = nullptr;
+    VehicleModsConfig* vehicleMods = nullptr;
+    TrapDefsConfig* traps = nullptr;
     std::string missionSourceJson;
 
     std::vector<BuildableDef> modBuildables;

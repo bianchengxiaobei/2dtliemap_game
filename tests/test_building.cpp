@@ -1,12 +1,15 @@
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <doctest/doctest.h>
 
 #include "ai/PathfindingService.h"
 #include "core/Config.h"
+#include "core/EventBus.h"
 #include "game/ActionHints.h"
 #include "game/BarricadeDefense.h"
+#include "game/BuildingEvents.h"
 #include "game/BuildingRules.h"
 #include "items/ItemRegistry.h"
 #include "physics/PhysicsWorld.h"
@@ -23,7 +26,7 @@ TEST_CASE("C6 structure owner access rules") {
 
 TEST_CASE("M16-T1 default buildables and cell rules") {
     const auto& defs = zl::game::DefaultBuildables();
-    REQUIRE(defs.size() == 15u);
+    REQUIRE(defs.size() == 18u);
     CHECK(defs[0].id == "barricade");
     CHECK(defs[0].woodCost == 3);
     CHECK(defs[0].maxHp > 0.0f);
@@ -219,6 +222,79 @@ TEST_CASE("M17-T2 repair amount and demolish refund rules") {
     CHECK(zl::game::BuildWoodRefund(0, 0.5f) == 0);
 }
 
+TEST_CASE("M35-F2-T5 建造事件载荷与门槛") {
+    zl::core::EventBus events;
+    std::vector<zl::core::Event> placed;
+    std::vector<zl::core::Event> demolished;
+    std::vector<zl::core::Event> repaired;
+    events.Subscribe(zl::core::kOnBuildPlaced,
+                     [&placed](const zl::core::Event& event) {
+                         placed.push_back(event);
+                     });
+    events.Subscribe(zl::core::kOnBuildDemolished,
+                     [&demolished](const zl::core::Event& event) {
+                         demolished.push_back(event);
+                     });
+    events.Subscribe(zl::core::kOnBuildRepaired,
+                     [&repaired](const zl::core::Event& event) {
+                         repaired.push_back(event);
+                     });
+
+    zl::game::EmitBuildPlaced(&events, 7, "wall", 10, 11, 0, true);
+    zl::game::EmitBuildDemolished(&events, 7, "wall", 10, 11, 0);
+    zl::game::EmitBuildRepaired(&events, 7, 10, 11, 0);
+    zl::game::EmitBuildPlaced(nullptr, 7, "wall", 1, 2, 0, false);
+    CHECK(placed.empty());
+    CHECK(demolished.empty());
+    CHECK(repaired.empty());
+    events.FlushQueued();
+
+    REQUIRE(placed.size() == 1u);
+    const auto* placedPayload =
+        std::get_if<zl::core::BuildPlacedEvent>(&placed[0].payload);
+    REQUIRE(placedPayload != nullptr);
+    CHECK(placedPayload->playerId == 7u);
+    CHECK(placedPayload->defId == "wall");
+    CHECK(placedPayload->x == 10);
+    CHECK(placedPayload->y == 11);
+    CHECK(placedPayload->z == 0);
+    CHECK(placedPayload->vertical);
+
+    REQUIRE(demolished.size() == 1u);
+    const auto* demolishedPayload =
+        std::get_if<zl::core::BuildDemolishedEvent>(&demolished[0].payload);
+    REQUIRE(demolishedPayload != nullptr);
+    CHECK(demolishedPayload->playerId == 7u);
+    CHECK(demolishedPayload->defId == "wall");
+    CHECK(demolishedPayload->x == 10);
+    CHECK(demolishedPayload->y == 11);
+    CHECK(demolishedPayload->z == 0);
+
+    REQUIRE(repaired.size() == 1u);
+    const auto* repairedPayload =
+        std::get_if<zl::core::BuildRepairedEvent>(&repaired[0].payload);
+    REQUIRE(repairedPayload != nullptr);
+    CHECK(repairedPayload->playerId == 7u);
+    CHECK(repairedPayload->x == 10);
+    CHECK(repairedPayload->y == 11);
+    CHECK(repairedPayload->z == 0);
+
+    const auto& defs = zl::game::DefaultBuildables();
+    zl::world::GridSquare occupied(20, 21, 0);
+    occupied.SetFloor(
+        zl::world::SquareObject{"tile.floor.wood", 0, 0, false});
+    occupied.AddObject(
+        zl::world::SquareLayer::Furniture,
+        zl::world::SquareObject{"object.table", 0, 0, false});
+    CHECK_FALSE(zl::game::IsBuildCellFreeFor(defs[1], occupied));
+    CHECK_FALSE(zl::game::CanEditStructure(7, 8));
+    CHECK(zl::game::BuildableSupportsVertical(defs[1]));
+    CHECK_FALSE(zl::game::BuildableSupportsVertical(defs[0]));
+    CHECK(placed.size() == 1u);
+    CHECK(demolished.size() == 1u);
+    CHECK(repaired.size() == 1u);
+}
+
 TEST_CASE("M17-T2 repair action hint includes cost and amount") {
     zl::game::ActionHintState state;
     state.barricadeHp = 60.0f;
@@ -315,7 +391,7 @@ TEST_CASE("M16-T1 build config and wood item") {
     const auto types = building->find("types");
     REQUIRE(types != building->end());
     REQUIRE(types->is_array());
-    CHECK(types->size() == 15u);
+    CHECK(types->size() == 18u);
     const auto rainCollector = std::find_if(
         types->begin(), types->end(), [](const auto& item) {
             return item.value("id", std::string()) == "rain_collector";

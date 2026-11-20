@@ -187,6 +187,74 @@ bool LoadWorldEvents(const core::Config& config,
     return true;
 }
 
+bool LoadCompanions(const core::Config& config,
+                    const std::vector<std::string>& modFiles,
+                    const items::ItemRegistry& items, CompanionConfig* out,
+                    std::string* error) {
+    if (!LoadCompanionConfig(config, out, error, &items)) {
+        *error = "基础同伴配置：" + *error;
+        return false;
+    }
+    if (!out->enabled || modFiles.empty()) {
+        return true;
+    }
+    CompanionMergeStats stats;
+    for (const std::string& file : modFiles) {
+        const int skippedBefore = stats.defsSkipped;
+        if (!MergeCompanionFile(file, out, &stats, error, &items)) {
+            *error = "mod 同伴文件 " + file + "：" + *error;
+            return false;
+        }
+        if (stats.defsSkipped > skippedBefore) {
+            *error = "mod 同伴文件 " + file + " 有定义被跳过";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool LoadVehicleMods(const core::Config& config,
+                     const std::vector<std::string>& modFiles,
+                     const items::ItemRegistry& items, VehicleModsConfig* out,
+                     std::string* error) {
+    if (!LoadVehicleModConfig(config, out, error, &items)) {
+        *error = "基础车辆改装配置：" + *error;
+        return false;
+    }
+    if (!out->enabled || modFiles.empty()) {
+        return true;
+    }
+    VehicleModMergeStats stats;
+    for (const std::string& file : modFiles) {
+        if (!MergeVehicleModFile(file, out, &stats, error, &items)) {
+            *error = "mod 车辆改装文件 " + file + "：" + *error;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool LoadTraps(const core::Config& config,
+               const std::vector<std::string>& modFiles,
+               const std::vector<BuildableDef>& buildables, TrapDefsConfig* out,
+               std::string* error) {
+    if (!LoadTrapDefsConfig(config, buildables, out, error)) {
+        *error = "基础陷阱配置：" + *error;
+        return false;
+    }
+    if (!out->enabled || modFiles.empty()) {
+        return true;
+    }
+    TrapMergeStats stats;
+    for (const std::string& file : modFiles) {
+        if (!MergeTrapFile(file, out, &stats, buildables, error)) {
+            *error = "mod 陷阱文件 " + file + "：" + *error;
+            return false;
+        }
+    }
+    return true;
+}
+
 bool LoadSettlements(const core::Config& config,
                      const std::vector<std::string>& modFiles,
                      SettlementConfig* out, std::string* error) {
@@ -305,18 +373,34 @@ ContentBundleResult LoadContentBundle(const core::Config& config,
                          bundle->items, &bundle->worldEvents, &error)) {
         return Fail(std::move(error));
     }
+    if (!LoadCompanions(config, bundle->modContent.companionFiles,
+                        bundle->items, &bundle->companions, &error)) {
+        return Fail(std::move(error));
+    }
+    if (!LoadVehicleMods(config, bundle->modContent.vehicleModFiles,
+                         bundle->items, &bundle->vehicleMods, &error)) {
+        return Fail(std::move(error));
+    }
+    std::vector<BuildableDef> trapBuildables = LoadBuildableDefs(config);
+    AppendBuildableDefs(trapBuildables, bundle->modContent.buildables);
+    if (!LoadTraps(config, bundle->modContent.trapFiles, trapBuildables,
+                   &bundle->traps, &error)) {
+        return Fail(std::move(error));
+    }
 
     ZL_INFO(kLogModule,
             "content bundle ready: items {}, recipes {}, buildables +{}, loot {}, "
             "forage {} zones/{} spots, animals {}, crops {}, POI {}, missions {}, "
-            "settlements {}, world events {}",
+            "settlements {}, world events {}, companions {}, vehicle mods {}, "
+            "traps {}",
             bundle->items.Size(), bundle->recipes.Size(),
             static_cast<int>(bundle->modContent.buildables.size()),
             bundle->lootTables.Size(), bundle->forage.ZoneCount(),
             bundle->forage.SpotCount(), bundle->animals.Size(),
             bundle->crops.Size(), bundle->poiConfig.defs.size(),
             bundle->missionConfig.defs.size(), bundle->settlements.defs.size(),
-            bundle->worldEvents.defs.size());
+            bundle->worldEvents.defs.size(), bundle->companions.defs.size(),
+            bundle->vehicleMods.defs.size(), bundle->traps.defs.size());
 
     ContentBundleResult result;
     result.bundle = std::move(bundle);

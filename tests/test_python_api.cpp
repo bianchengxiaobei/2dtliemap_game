@@ -7,15 +7,25 @@
 #include <vector>
 
 #include "ai/PathfindingService.h"
+#include "audio/SoundIds.h"
+#include "audio/SoundManager.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/systems/CombatSystem.h"
+#include "core/Config.h"
 #include "core/EventBus.h"
 #include "core/GameLoop.h"
 #include "core/GameTime.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
 #include "game/GameContext.h"
+#include "game/Missions.h"
+#include "game/NetworkClient.h"
+#include "game/ProgressionRules.h"
 #include "items/InventoryOps.h"
 #include "items/ItemRegistry.h"
+#include "items/RecipeRegistry.h"
+#include "net/Command.h"
+#include "net/CommandPipeline.h"
 #include "script/PythonRuntime.h"
 #include "script/ScriptApi.h"
 #include "world/Chunk.h"
@@ -54,23 +64,57 @@ const char* kItemsJson = R"({
 struct Fixture {
     ecs::EcsWorld ecs;
     items::ItemRegistry items;
+    items::RecipeRegistry recipes;
+    core::Config config;
+    game::MissionConfig missionConfig;
+    game::ProgressionConfig progressionConfig =
+        game::DefaultProgressionConfig();
     world::World world;
     core::GameLoop loop{60.0};
     core::GameTime gameTime;
     ai::PathfindingService pathfinding{nullptr, ai::MapChunkBounds{0, 0, 4, 4}};
+    characters::CombatSystem combat;
     game::GameContext ctx;
     script::ScriptApi api;
 
     Fixture() {
         std::string error;
         CHECK(items.LoadFromString(kItemsJson, "test", &error));
+        CHECK(recipes.LoadFromString(R"({
+          "format": "recipes-v3",
+          "recipes": [
+            {
+              "id": "base_bandage",
+              "name": "基础绷带",
+              "output": { "item": "bandage", "count": 1 },
+              "ingredients": [ { "item": "bandage", "count": 1 } ]
+            }
+          ]
+        })", "test-recipes", items, &error));
+        missionConfig.enabled = true;
+        game::MissionDef missionDef;
+        missionDef.id = "m1";
+        missionDef.name = "测试任务";
+        missionDef.chain = "main";
+        missionDef.order = 1;
+        missionDef.kind = game::MissionKind::Once;
+        missionDef.minDay = 1;
+        missionDef.objectives.push_back(game::MissionObjectiveDef{
+            game::MissionObjectiveKind::CollectItem, "bandage", 1, 0.0f, 0.0f,
+            1.5f, "收集绷带"});
+        missionConfig.defs.push_back(missionDef);
         gameTime.Configure(60.0, core::DateTime{});  // 1 tick = 1 游戏分钟（定时器测试用）
+        ctx.config = &config;
         ctx.ecs = &ecs;
         ctx.items = &items;
+        ctx.recipes = &recipes;
+        ctx.missionConfig = &missionConfig;
+        ctx.progressionConfig = &progressionConfig;
         ctx.world = &world;
         ctx.loop = &loop;
         ctx.gameTime = &gameTime;
         ctx.pathfinding = &pathfinding;
+        ctx.combat = &combat;
         api.Attach(&ctx);
     }
 
@@ -116,8 +160,69 @@ TEST_CASE("M8-T3：Python 侧 API 全套（与 Lua 同名同参数）") {
     script::PythonRuntime* runtime = SharedRuntimePtr();
     REQUIRE(runtime != nullptr);
     Fixture f;
+    core::EventBus bus;
+    f.ctx.events = &bus;
     const ecs::Entity player = f.MakePlayer(3.0f, 4.0f);
+    entt::registry& registry = f.ecs.Registry();
+    registry.emplace<ecs::Needs>(
+        player, ecs::Needs{0.2f, 0.3f, 0.4f, 1.0f, 1.0f, 0.0f, 1});
+    auto& progression = registry.emplace<ecs::Progression>(player);
+    progression.level = 2;
+    progression.skills[ecs::SkillIndex(ecs::SkillKind::Melee)] = {1, 10.0f};
+    progression.perks = {"athletic"};
+    ecs::MissionLog missionLog;
+    missionLog.missions.push_back(ecs::MissionRunState{
+        "m1", {1}, ecs::MissionRunStatus::Active, 2, false, ""});
+    registry.emplace<ecs::MissionLog>(player, std::move(missionLog));
+    ecs::CraftingJob craftJob;
+    craftJob.active = true;
+    craftJob.recipeId = "base_bandage";
+    registry.emplace<ecs::CraftingJob>(player, std::move(craftJob));
     f.LoadOpenChunkWithWall();
+    std::vector<net::Command> actionCommands;
+    f.ctx.submitPlayerCommand = [&](const net::Command& command, bool& queued,
+                                    std::string&) {
+        actionCommands.push_back(command);
+        queued = false;
+        return true;
+    };
+    std::string buildPlaced;
+    bool buildVertical = false;
+    int buildDemolishX = -1;
+    int buildRepairX = -1;
+    int buildDoorX = -1;
+    f.ctx.buildCanPlace = [](const game::BuildableDef&, int x, int,
+                             bool, std::string& error) {
+        if (x < 0) {
+            error = "非法格";
+            return false;
+        }
+        return true;
+    };
+    f.ctx.buildPlace = [&](const game::BuildableDef& def, int, int,
+                           bool vertical, std::string&) {
+        buildPlaced = def.id;
+        buildVertical = vertical;
+        return true;
+    };
+    f.ctx.buildDemolish = [&](int x, int, std::string&) {
+        buildDemolishX = x;
+        return true;
+    };
+    f.ctx.buildRepair = [&](int x, int, std::string&) {
+        buildRepairX = x;
+        return true;
+    };
+    f.ctx.buildToggleDoor = [&](int x, int, std::string&) {
+        buildDoorX = x;
+        return true;
+    };
+    std::vector<core::SoundEvent> sounds;
+    bus.Subscribe(core::kOnSound, [&](const core::Event& event) {
+        if (const auto* sound = std::get_if<core::SoundEvent>(&event.payload)) {
+            sounds.push_back(*sound);
+        }
+    });
     runtime->SetApi(&f.api);
 
     zltest::TempModRoot mods;
@@ -148,18 +253,181 @@ zp = Zombies.GetPosition(h)
 assert abs(zp['x'] - 10.0) < 1e-6 and abs(zp['y'] - 11.0) < 1e-6
 assert Items.Exists('bandage') is True
 assert Items.GetName('bandage') == '绷带'
+assert Game.GetApiVersion() == 2
+assert Game.IsMultiplayer() is False
+assert Game.GetNetMode() == 'direct'
+n = Player.GetNeeds()
+assert abs(n['hunger'] - 0.2) < 1e-6 and abs(n['health'] - 80.0) < 1e-6
+inv = Player.GetInventory()
+assert inv['totalStacks'] == 1 and inv['stacks'][0]['defId'] == 'bandage'
+assert Player.GetEquipment() == {}
+pr = Player.GetProgression()
+assert pr['level'] == 2 and pr['skills']['melee']['level'] == 1
+assert len(pr['perks']) == 1
+info = Items.GetInfo('bandage')
+assert info['type'] == 'consumable' and info['usable'] is False
+recipeList = Craft.List()
+assert recipeList['count'] == 1 and recipeList['recipes'][0]['known'] is True
+assert recipeList['recipes'][0]['canCraft'] is True
+assert Craft.IsKnown('base_bandage') is True
+assert Craft.GetState()['active'] is True
+assert Build.List()['count'] > 0
+missions = Mission.List('all')
+assert missions['count'] == 1 and missions['missions'][0]['status'] == 'active'
+m = Mission.Get('m1')
+assert m['id'] == 'm1' and m['progress'][0] == 1
+w = World.GetWeather()
+assert w['kind'] == 'clear'
+assert 0.0 <= World.GetTimeOfDay() <= 1.0
+me = Entities.Get(Game.GetPlayerId())
+assert me['kind'] == 'player'
+q = Entities.Query(7.5, 8.25, 0, 8)
+assert q['count'] == 2 and q['entities'][0]['kind'] == 'player'
+qSmall = Entities.Query(7.5, 8.25, 0, 8, 'any', 1)
+assert qSmall['truncated'] is True
+container = Entities.GetContainer(Game.GetPlayerId())
+assert container['totalStacks'] == 1 and container['stacks'][0]['defId'] == 'bandage'
+assert Zombies.Spawn(20.0, 20.0, 0, 'fast') != 0
+assert Zombies.Spawn(21.0, 20.0, 0, 'strong') != 0
+assert Zombies.Spawn(22.0, 20.0, 0, 'armored') != 0
+assert Zombies.Spawn(23.0, 20.0, 0, 'boss') == 0
+assert World.EmitSound(5.0, 6.0, 18.0, 'gunshot', 'py_shot') is True
+assert World.EmitSound(5.0, 6.0, 0.0) is False
+u = Player.UseItem(0)
+assert u['ok'] is True and u['queued'] is False and u['error'] == ''
+e = Player.EquipItem(0)
+assert e['ok'] is True
+un = Player.Unequip(0)
+assert un['ok'] is True
+d = Player.DropItem(0)
+assert d['ok'] is True
+pn = Player.PickupNearest()
+assert pn['ok'] is True
+p = Player.Pickup(123)
+assert p['ok'] is True
+a = Player.Attack(0, True)
+assert a['ok'] is True
+bad = Player.UseItem(99)
+assert bad['ok'] is False and bad['error'] != ''
+dmg = Player.ApplyDamage(5, 'debug')
+assert dmg['ok'] is True
+assert abs(Player.GetHealth() - 75.0) < 1e-6
+dmgBad = Player.ApplyDamage(-1)
+assert dmgBad['ok'] is False
+adj = Player.AdjustNeeds(0.1, 0.2, 0.3)
+assert adj['ok'] is True
+n2 = Player.GetNeeds()
+assert abs(n2['hunger'] - 0.3) < 1e-6
+assert abs(n2['thirst'] - 0.5) < 1e-6
+assert abs(n2['fatigue'] - 0.7) < 1e-6
+xp = Player.GiveXp('melee', 500)
+assert xp['ok'] is True and xp['characterLevels'] >= 1
+assert xp['skillLevels'] >= 1 and xp['perkPoints'] >= 1
+xpBad = Player.GiveXp('Melee', -1)
+assert xpBad['ok'] is False
+cs = Craft.Start('base_bandage', 2)
+assert cs['ok'] is True and cs['queued'] is False
+cc = Craft.Cancel()
+assert cc['ok'] is True
+cl = Craft.Learn('base_bandage')
+assert cl['ok'] is False
+bc = Build.CanPlace('barricade', 3, 4)
+assert bc['ok'] is True
+bp = Build.Place('door', 4, 4, True)
+assert bp['ok'] is True and bp['queued'] is False
+bd = Build.Demolish(4, 4)
+assert bd['ok'] is True
+br = Build.Repair(4, 4)
+assert br['ok'] is True
+bt = Build.ToggleDoor(4, 4)
+assert bt['ok'] is True
+bcBad = Build.CanPlace('missing', 4, 4)
+assert bcBad['ok'] is False
 Log.Info('api ok')
 )py");
     std::string error;
     CHECK(runtime->LoadMod(mod, error));
     CHECK(error.empty());
+    f.api.FlushQueryStats();
     CHECK(logs.Str().find("api ok") != std::string::npos);
+    CHECK(logs.Str().find("[py_api] Entities.Query 截断") !=
+          std::string::npos);
+    CHECK(logs.Str().find("[py_api] 查询统计：tick=0 次数=2 截断=1") !=
+          std::string::npos);
+
+    bus.FlushQueued();
+    REQUIRE(sounds.size() == 1);
+    CHECK(sounds[0].x == doctest::Approx(5.0f));
+    CHECK(sounds[0].y == doctest::Approx(6.0f));
+    CHECK(sounds[0].radius == doctest::Approx(18.0f));
+    CHECK(sounds[0].type == core::SoundType::Gunshot);
+    CHECK(sounds[0].clip == "py_shot");
+    CHECK(f.api.ZombieCount() == 4);
+    int normal = 0;
+    int fast = 0;
+    int strong = 0;
+    int armored = 0;
+    f.ecs.Registry().view<ecs::ZombieVariant>().each(
+        [&](entt::entity, const ecs::ZombieVariant& variant) {
+            switch (variant.kind) {
+                case ecs::ZombieVariantKind::Fast:
+                    ++fast;
+                    break;
+                case ecs::ZombieVariantKind::Strong:
+                    ++strong;
+                    break;
+                case ecs::ZombieVariantKind::Armored:
+                    ++armored;
+                    break;
+                case ecs::ZombieVariantKind::Normal:
+                    ++normal;
+                    break;
+            }
+        });
+    CHECK(normal == 1);
+    CHECK(fast == 1);
+    CHECK(strong == 1);
+    CHECK(armored == 1);
 
     // C++ 侧确认脚本确实改到了游戏状态
     CHECK(items::CountOf(f.ecs.Registry().get<ecs::Container>(player), "bandage") == 2);
     const ecs::Position& position = f.ecs.Registry().get<ecs::Position>(player);
     CHECK(position.x == doctest::Approx(7.5f));
     CHECK(position.y == doctest::Approx(8.25f));
+    CHECK(f.ecs.Registry().get<ecs::Health>(player).current ==
+          doctest::Approx(75.0f));
+    const ecs::Needs& finalNeeds = f.ecs.Registry().get<ecs::Needs>(player);
+    CHECK(finalNeeds.hunger == doctest::Approx(0.3f));
+    CHECK(finalNeeds.thirst == doctest::Approx(0.5f));
+    CHECK(finalNeeds.fatigue == doctest::Approx(0.7f));
+    CHECK(progression.level > 2);
+    CHECK(buildPlaced == "door");
+    CHECK(buildVertical);
+    CHECK(buildDemolishX == 4);
+    CHECK(buildRepairX == 4);
+    CHECK(buildDoorX == 4);
+    REQUIRE(actionCommands.size() == 9);
+    CHECK(actionCommands[0].type == net::CommandType::UseBag);
+    CHECK(actionCommands[0].payload.index == 0);
+    CHECK(actionCommands[1].type == net::CommandType::EquipBag);
+    CHECK(actionCommands[1].payload.targetIndex == 0);
+    CHECK(actionCommands[2].type == net::CommandType::Unequip);
+    CHECK(actionCommands[3].type == net::CommandType::DropBag);
+    CHECK(actionCommands[4].type == net::CommandType::PickupNearest);
+    CHECK(actionCommands[5].type == net::CommandType::PickupEntity);
+    CHECK(actionCommands[5].payload.entityId == 123);
+    CHECK(actionCommands[6].type == net::CommandType::Attack);
+    CHECK((actionCommands[6].payload.flags & net::kAttackHeavyFlag) != 0);
+    CHECK(actionCommands[7].type == net::CommandType::InventoryAction);
+    CHECK(static_cast<ui::InventoryActionType>(
+              actionCommands[7].payload.flags & 0xFFu) ==
+          ui::InventoryActionType::Craft);
+    CHECK((actionCommands[7].payload.flags >> 8) == 2);
+    CHECK(actionCommands[7].payload.index == 0);
+    CHECK(actionCommands[8].type == net::CommandType::InventoryAction);
+    CHECK(static_cast<ui::InventoryActionType>(
+              actionCommands[8].payload.flags & 0xFFu) ==
+          ui::InventoryActionType::CancelCraft);
 }
 
 TEST_CASE("M8-T3：Events.On/Off 与事件字段（Python）") {
@@ -346,6 +614,17 @@ TEST_CASE("M15-T5：Python HUD 暴露操作提示字段") {
     f.ctx.hudState.rangedTone = "warn";
     f.ctx.hudState.combatStatus = "格挡 · 弹反窗口 0.2s";
     f.ctx.hudState.combatTone = "ok";
+    f.ctx.hudState.stealthValid = true;
+    f.ctx.hudState.stealthCrouched = true;
+    f.ctx.hudState.stealthMoveSpeed = 2.2f;
+    f.ctx.hudState.stealthFootstepRadius = 1.125f;
+    f.ctx.hudState.stealthAwarenessValid = true;
+    f.ctx.hudState.stealthNearbyAlertCount = 2;
+    f.ctx.hudState.stealthBackstabAvailable = true;
+    f.ctx.hudState.stealthStatus =
+        "潜行 · 2.2 格/s · 脚步 1.1 格 · 附近警觉 2 · 可背刺";
+    f.ctx.hudState.stealthTone = "warn";
+    f.ctx.hudState.stealthPrompt = "背刺可用 · SPACE";
     f.ctx.hudState.forageValid = true;
     f.ctx.hudState.forageName = "森林";
     f.ctx.hudState.forageToolName = "树枝";
@@ -445,6 +724,16 @@ assert h['rangedStatus'] == '手枪 换弹中 42% · 0/8 · 备弹 7'
 assert h['rangedTone'] == 'warn'
 assert h['combatStatus'] == '格挡 · 弹反窗口 0.2s'
 assert h['combatTone'] == 'ok'
+assert h['stealthValid'] is True
+assert h['stealthCrouched'] is True
+assert abs(h['stealthMoveSpeed'] - 2.2) < 0.001
+assert abs(h['stealthFootstepRadius'] - 1.125) < 0.001
+assert h['stealthAwarenessValid'] is True
+assert h['stealthNearbyAlertCount'] == 2
+assert h['stealthBackstabAvailable'] is True
+assert h['stealthStatus'] == '潜行 · 2.2 格/s · 脚步 1.1 格 · 附近警觉 2 · 可背刺'
+assert h['stealthTone'] == 'warn'
+assert h['stealthPrompt'] == '背刺可用 · SPACE'
 assert h['forageValid'] is True
 assert h['forageName'] == '森林'
 assert h['forageToolName'] == '树枝'
@@ -800,6 +1089,279 @@ assert Save.Delete('missing')['ok'] is False
     CHECK(loadedSave == "py-save");
     CHECK(deletedSave == "py-save");
     runtime->UnloadMod("py_save");
+}
+
+TEST_CASE("M35-F3-T7：Python 联机写 API fail-closed") {
+    script::PythonRuntime* runtime = SharedRuntimePtr();
+    REQUIRE(runtime != nullptr);
+    Fixture f;
+    const ecs::Entity player = f.MakePlayer(1.0f, 2.0f);
+    entt::registry& registry = f.ecs.Registry();
+    registry.emplace<ecs::Needs>(
+        player, ecs::Needs{0.2f, 0.3f, 0.4f, 1.0f, 1.0f, 0.0f, 0});
+    registry.emplace<ecs::Progression>(player);
+    runtime->SetApi(&f.api);
+
+    const auto scriptFor = [](const std::string& mode) {
+        return std::string("assert Game.GetNetMode() == '") + mode + "'\n" + R"py(
+assert Game.IsMultiplayer() is True
+dmg = Player.ApplyDamage(5.0, 'debug')
+adj = Player.AdjustNeeds(0.1)
+xp = Player.GiveXp('melee', 10.0)
+learn = Craft.Learn('base_bandage')
+can = Build.CanPlace('barricade', 3, 4)
+assert dmg['ok'] is False and '联机' in dmg['error']
+assert adj['ok'] is False and '联机' in adj['error']
+assert xp['ok'] is False and '联机' in xp['error']
+assert learn['ok'] is False and '联机' in learn['error']
+assert can['ok'] is False and '联机' in can['error']
+assert World.EmitSound(1.0, 1.0, 10.0) is False
+assert abs(Player.GetHealth() - 80.0) < 1e-6
+Log.Info('py mp ok')
+)py";
+    };
+
+    zltest::TempModRoot mods;
+    zltest::LogCapture logs;
+    net::CommandPipeline::Options loopOptions;
+    loopOptions.mode = net::TransportMode::Loopback;
+    net::CommandPipeline pipeline(loopOptions);
+    f.ctx.commands = &pipeline;
+    std::string error;
+    CHECK(runtime->LoadMod(mods.MakeModPy("py_mp_loop", scriptFor("loopback")),
+                           error));
+    CHECK(error.empty());
+    runtime->UnloadMod("py_mp_loop");
+
+    f.ctx.commands = nullptr;
+    game::NetworkClient client;
+    f.ctx.networkClient = &client;
+    CHECK(runtime->LoadMod(mods.MakeModPy("py_mp_client", scriptFor("client")),
+                           error));
+    CHECK(error.empty());
+    runtime->UnloadMod("py_mp_client");
+
+    CHECK(logs.Str().find("py mp ok") != std::string::npos);
+    CHECK(registry.get<ecs::Health>(player).current == doctest::Approx(80.0f));
+    CHECK(registry.get<ecs::Needs>(player).hunger ==
+          doctest::Approx(0.2f));
+    CHECK(registry.get<ecs::Progression>(player).xp ==
+          doctest::Approx(0.0f));
+}
+
+TEST_CASE("M35-F5-T3：Python Audio 绑定、缺失 clip 与设备关闭") {
+    script::PythonRuntime* runtime = SharedRuntimePtr();
+    REQUIRE(runtime != nullptr);
+    Fixture f;
+    runtime->SetApi(&f.api);
+
+    core::EventBus bus;
+    audio::SoundManagerOptions options;
+    options.engine.root = std::string(ZL_SOURCE_DIR) + "/assets/audio";
+    options.engine.device = "null";
+    audio::SoundManager sound;
+    REQUIRE(sound.Init(bus, options));
+    f.ctx.audio = &sound;
+
+    zltest::TempModRoot mods;
+    zltest::LogCapture logs;
+    const script::ModInfo mod = mods.MakeModPy("py_audio", R"py(
+assert Audio.Play2D('ui_click', 0.5) is True
+assert Audio.Play2D('missing_clip') is False
+assert Audio.Play2D('../ui_click') is False
+assert Audio.Play3D('impact', 1.0, 2.0, 18.0, 0.5) is True
+assert Audio.Play3D('impact', 1.0, 2.0) is True
+assert Audio.Play3D('impact', 1.0, 2.0, -1.0) is False
+assert Audio.Play3D('missing_clip', 1.0, 2.0, 18.0, 0.5) is False
+print('py audio ok')
+)py");
+    std::string error;
+    REQUIRE(runtime->LoadMod(mod, error));
+    CHECK(logs.Str().find("py audio ok") != std::string::npos);
+    runtime->UnloadMod("py_audio");
+
+    audio::SoundManagerOptions offOptions;
+    offOptions.engine.root = options.engine.root;
+    offOptions.engine.device = "off";
+    audio::SoundManager offSound;
+    REQUIRE(offSound.Init(bus, offOptions));
+    f.ctx.audio = &offSound;
+    const script::ModInfo offMod = mods.MakeModPy("py_audio_off", R"py(
+assert Audio.Play2D('ui_click') is False
+assert Audio.Play3D('impact', 1.0, 2.0, 18.0) is False
+print('py audio off ok')
+)py");
+    REQUIRE(runtime->LoadMod(offMod, error));
+    CHECK(logs.Str().find("py audio off ok") != std::string::npos);
+    runtime->UnloadMod("py_audio_off");
+}
+
+TEST_CASE("M35-F4-T2：Python Mod.Data 绑定、热重载与新世界") {
+    script::PythonRuntime* runtime = SharedRuntimePtr();
+    REQUIRE(runtime != nullptr);
+    Fixture f;
+    runtime->SetApi(&f.api);
+
+    zltest::TempModRoot mods;
+    zltest::LogCapture logs;
+    const script::ModInfo mod = mods.MakeModPy("py_mod_data", R"py(
+assert Mod.Id() == 'py_mod_data'
+assert Mod.Data.Clear() is True
+assert Mod.Data.Get('missing') is None
+assert Mod.Data.Set('b', '2') is True
+assert Mod.Data.Set('a', '1') is True
+assert Mod.Data.Set('a', '3') is True
+assert Mod.Data.Set('empty', '') is True
+assert Mod.Data.Get('empty') == ''
+assert Mod.Data.Set('keep', 'ok') is True
+assert Mod.Data.Set('score', '1') is True
+assert Mod.Data.Set('non_string', 123) is False
+assert Mod.Data.Remove('b') is True
+assert Mod.Data.Remove('b') is False
+keys = Mod.Data.Keys()
+assert keys == ['a', 'empty', 'keep', 'score']
+print('py mod.data init')
+)py");
+    std::string error;
+    REQUIRE(runtime->LoadMod(mod, error));
+    CHECK(f.api.GetModData("py_mod_data", "score").value() == "1");
+    CHECK(f.api.GetModData("py_mod_data", "empty").value().empty());
+    CHECK(f.api.ListModDataKeys("py_mod_data") ==
+          std::vector<std::string>{"a", "empty", "keep", "score"});
+
+    mods.WritePy("py_mod_data", R"py(
+assert Mod.Id() == 'py_mod_data'
+assert Mod.Data.Get('score') == '1'
+assert Mod.Data.Set('score', '2') is True
+assert Mod.Data.Remove('keep') is True
+assert Mod.Data.Remove('keep') is False
+keys = Mod.Data.Keys()
+assert keys == ['a', 'empty', 'score']
+print('py mod.data reload')
+)py");
+    CAPTURE(error);
+    REQUIRE(runtime->ReloadMod("py_mod_data", error));
+    CHECK(f.api.GetModData("py_mod_data", "score").value() == "2");
+    CHECK(f.api.ListModDataKeys("py_mod_data") ==
+          std::vector<std::string>{"a", "empty", "score"});
+
+    ecs::EcsWorld fresh;
+    game::GameContext freshCtx;
+    freshCtx.ecs = &fresh;
+    script::ScriptApi freshApi;
+    freshApi.Attach(&freshCtx);
+    runtime->SetApi(&freshApi);
+    mods.WritePy("py_mod_data", R"py(
+assert Mod.Data.Get('score') is None
+assert Mod.Data.Keys() == []
+assert Mod.Data.Set('score', 'fresh') is True
+print('py mod.data fresh')
+)py");
+    CAPTURE(error);
+    REQUIRE(runtime->ReloadMod("py_mod_data", error));
+    CHECK(freshApi.GetModData("py_mod_data", "score").value() == "fresh");
+    CHECK(f.api.GetModData("py_mod_data", "score").value() == "2");
+    const std::string logText = logs.Str();
+    CHECK(logText.find("py mod.data init") != std::string::npos);
+    CHECK(logText.find("py mod.data reload") != std::string::npos);
+    CHECK(logText.find("py mod.data fresh") != std::string::npos);
+    runtime->UnloadMod("py_mod_data");
+}
+
+TEST_CASE("M35-F4-T2：Python Mod.Data 联机拒绝且只警告一次") {
+    script::PythonRuntime* runtime = SharedRuntimePtr();
+    REQUIRE(runtime != nullptr);
+    Fixture f;
+    net::CommandPipeline::Options options;
+    options.mode = net::TransportMode::Loopback;
+    net::CommandPipeline loop(options);
+    f.ctx.commands = &loop;
+    runtime->SetApi(&f.api);
+
+    zltest::TempModRoot mods;
+    zltest::LogCapture logs;
+    const script::ModInfo mod = mods.MakeModPy("py_mod_data_mp", R"py(
+assert Mod.Id() == 'py_mod_data_mp'
+assert Mod.Data.Get('k') is None
+assert Mod.Data.Set('k', 'v') is False
+assert Mod.Data.Set('x', 1) is False
+assert Mod.Data.Remove('k') is False
+assert Mod.Data.Clear() is False
+assert Mod.Data.Keys() == []
+print('py mod.data mp ok')
+)py");
+    std::string error;
+    REQUIRE(runtime->LoadMod(mod, error));
+    CHECK(f.api.GetModData("py_mod_data_mp", "k") == std::nullopt);
+    const std::string logText = logs.Str();
+    CHECK(logText.find("py mod.data mp ok") != std::string::npos);
+    const std::string warning = "Mod.Data 在联机模式下不可用";
+    const std::size_t first = logText.find(warning);
+    REQUIRE(first != std::string::npos);
+    CHECK(logText.find(warning, first + 1) == std::string::npos);
+    runtime->UnloadMod("py_mod_data_mp");
+}
+
+TEST_CASE("M35-F4-T3：Python Json 编解码、空表/数组/Null 与限制") {
+    script::PythonRuntime* runtime = SharedRuntimePtr();
+    REQUIRE(runtime != nullptr);
+    Fixture f;
+    runtime->SetApi(&f.api);
+
+    zltest::TempModRoot mods;
+    zltest::LogCapture logs;
+    const script::ModInfo mod = mods.MakeModPy("json_py", R"py(
+assert Json.Encode({}) == '{}'
+assert Json.Encode(Json.Array()) == '[]'
+assert Json.Encode(Json.Null()) == 'null'
+assert Json.Encode(None) == 'null'
+assert Json.Encode('中文') == '"中文"'
+assert Json.Encode(True) == 'true'
+assert Json.Encode(1) == '1'
+assert Json.Encode(1.0) == '1.0'
+assert Json.Encode(1.5) == '1.5'
+assert Json.Encode({'b': 2, 'a': 1}) == '{"a":1,"b":2}'
+assert Json.Encode([1, 2.5, True, '中文']) == '[1,2.5,true,"中文"]'
+
+value = Json.Decode('{"a":[1,2.5,true,null,"中文"],"empty":[],"obj":{}}')
+assert isinstance(value, dict)
+assert value['a'][0] == 1 and value['a'][1] == 2.5 and value['a'][2] is True
+assert value['a'][3] is None and value['a'][4] == '中文'
+assert Json.Encode(value['a'][3]) == 'null'
+assert Json.Encode(value['empty']) == '[]'
+assert Json.Encode(value['obj']) == '{}'
+assert Json.Encode(value) == '{"a":[1,2.5,true,null,"中文"],"empty":[],"obj":{}}'
+assert Json.Encode(Json.Decode('null')) == 'null'
+assert Json.Encode(Json.Decode('[]')) == '[]'
+assert Json.Decode('{bad') is None
+assert Json.Decode(123) is None
+assert Json.Decode('NaN') is None
+
+assert Json.Encode({1.5: 'x'}) is None
+cycle = {}
+cycle['self'] = cycle
+assert Json.Encode(cycle) is None
+deep = 0
+for _ in range(16):
+    deep = [deep]
+assert Json.Encode(deep) is not None
+deep = [deep]
+assert Json.Encode(deep) is None
+assert Json.Encode(list(range(1025))) is None
+assert Json.Encode('x' * 65537) is None
+assert Json.Encode(float('nan')) is None
+assert Json.Encode(float('inf')) is None
+assert Json.Decode('[' * 17 + '0' + ']' * 17) is None
+assert Json.Decode('"' + 'x' * 65537 + '"') is None
+assert Json.Decode('[' + ','.join(['0'] * 1025) + ']') is None
+print('py json ok')
+)py");
+    std::string error;
+    REQUIRE(runtime->LoadMod(mod, error));
+    const std::string logText = logs.Str();
+    CHECK(logText.find("py json ok") != std::string::npos);
+    CHECK(logText.find("Json.Encode 检测到循环引用") != std::string::npos);
+    runtime->UnloadMod("json_py");
 }
 
 #else

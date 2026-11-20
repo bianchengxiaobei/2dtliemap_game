@@ -183,6 +183,7 @@ void WoundSystem::Update(ecs::EcsWorld& world, float dt) {
             ecs::LastDamage& last = registry.get_or_emplace<ecs::LastDamage>(entity);
             last.cause = ecs::DamageCause::Bleed;
             last.amount = totalDamage;
+            last.sourceId = 0;  // 持续失血：不继承旧攻击者
             if (before > 0.0f && health.current <= 0.0f &&
                 registry.all_of<ecs::PlayerTag>(entity)) {
                 ZL_INFO("characters", "玩家失血过多：稳定 ID {}",

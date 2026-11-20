@@ -60,6 +60,7 @@ inline constexpr MenuKeyBindingDef kMenuBindingDefs[] = {
     {"Equip", "装备", "bind-Equip", "R"},
     {"Drop", "丢弃", "bind-Drop", "G"},
     {"Pause", "暂停/倍速", "bind-Pause", "F1"},
+    {"Stealth", "潜行", "bind-Stealth", "N"},
 };
 
 using MenuActionHandler = std::function<void(MenuActionType)>;

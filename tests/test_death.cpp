@@ -2,14 +2,21 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <type_traits>
+#include <variant>
+#include <vector>
 
+#include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
 #include "characters/systems/DeathSystem.h"
 #include "characters/systems/MovementSystem.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/components/CommonComponents.h"
 #include "ecs/components/PhysicsComponents.h"
+#include "core/EventBus.h"
+#include "core/GameEvents.h"
 #include "physics/PhysicsSyncSystem.h"
 #include "physics/PhysicsWorld.h"
 #include "world/Chunk.h"
@@ -236,4 +243,80 @@ TEST_CASE("DeathSystem：全链路——Health 归零的物理角色在 tick 链
             matched = true;
         });
     CHECK(matched);
+}
+
+TEST_CASE("M35-F2-T1：死亡事件填击杀者与死因，动物单独发 OnAnimalKilled") {
+    core::EventBus bus;
+    std::vector<core::Event> zombieEvents;
+    std::vector<core::Event> playerEvents;
+    std::vector<core::Event> animalEvents;
+    bus.Subscribe(core::kOnZombieDead,
+                  [&](const core::Event& event) { zombieEvents.push_back(event); });
+    bus.Subscribe(core::kOnPlayerDeath,
+                  [&](const core::Event& event) { playerEvents.push_back(event); });
+    bus.Subscribe(core::kOnAnimalKilled,
+                  [&](const core::Event& event) { animalEvents.push_back(event); });
+
+    EcsWorld world;
+    entt::registry& registry = world.Registry();
+    DeathSystem death(nullptr, 0.5f, &bus);
+
+    const auto player = world.Create();
+    const std::uint64_t playerId = world.IdOf(player).id;
+    registry.emplace<ecs::PlayerTag>(player);
+    registry.emplace<Health>(player, Health{0.0f, 100.0f});
+    registry.emplace<ecs::Dying>(player, ecs::Dying{0.0f});
+    registry.emplace<Position>(player, Position{1.0f, 2.0f, 0});
+    registry.emplace<ecs::LastDamage>(
+        player, ecs::LastDamage{ecs::DamageCause::Starvation, 5.0f, 0});
+
+    const auto zombie = world.Create();
+    const std::uint64_t zombieId = world.IdOf(zombie).id;
+    registry.emplace<Health>(zombie, Health{0.0f, 100.0f});
+    registry.emplace<ecs::Dying>(zombie, ecs::Dying{0.0f});
+    registry.emplace<Position>(zombie, Position{8.0f, 9.0f, 0});
+    registry.emplace<ecs::LastDamage>(
+        zombie, ecs::LastDamage{ecs::DamageCause::Blunt, 20.0f, playerId});
+
+    const auto animal = world.Create();
+    const std::uint64_t animalId = world.IdOf(animal).id;
+    registry.emplace<Health>(animal, Health{0.0f, 30.0f});
+    registry.emplace<ecs::Dying>(animal, ecs::Dying{0.0f});
+    registry.emplace<Position>(animal, Position{4.0f, 5.0f, 1});
+    registry.emplace<ecs::Animal>(
+        animal, ecs::Animal{"rabbit", ecs::AnimalKind::Passive});
+    registry.emplace<ecs::LastDamage>(
+        animal, ecs::LastDamage{ecs::DamageCause::Blunt, 10.0f, playerId});
+
+    death.Update(world, 0.1f);
+    bus.FlushQueued();
+
+    REQUIRE(playerEvents.size() == 1);
+    const auto* playerPayload =
+        std::get_if<core::PlayerEvent>(&playerEvents[0].payload);
+    REQUIRE(playerPayload != nullptr);
+    CHECK(playerPayload->playerId == playerId);
+    CHECK(playerPayload->sourceId == 0u);
+    CHECK(playerPayload->cause == "starvation");
+
+    REQUIRE(zombieEvents.size() == 1);
+    const auto* zombiePayload =
+        std::get_if<core::ZombieEvent>(&zombieEvents[0].payload);
+    REQUIRE(zombiePayload != nullptr);
+    CHECK(zombiePayload->zombieId == zombieId);
+    CHECK(zombiePayload->killerId == playerId);
+
+    REQUIRE(animalEvents.size() == 1);
+    const auto* animalPayload =
+        std::get_if<core::AnimalKilledEvent>(&animalEvents[0].payload);
+    REQUIRE(animalPayload != nullptr);
+    CHECK(animalPayload->animalId == animalId);
+    CHECK(animalPayload->speciesId == "rabbit");
+    CHECK(animalPayload->killerId == playerId);
+    CHECK(animalPayload->x == doctest::Approx(4.0f));
+    CHECK(animalPayload->y == doctest::Approx(5.0f));
+    CHECK(animalPayload->z == 1);
+
+    // 动物只发 OnAnimalKilled，不混入僵尸击杀。
+    CHECK(zombieEvents.size() == 1);
 }

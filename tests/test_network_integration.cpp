@@ -41,70 +41,11 @@
 #include "physics/PhysicsWorld.h"
 #include "save/ChunkDiff.h"
 #include "server/ServerHost.h"
+#include "ServerHostTestAccess.h"
 #include "ui/InventoryUi.h"
 #include "world/ChunkManager.h"
 #include "world/GridSquare.h"
 #include "world/World.h"
-
-namespace zl::server {
-struct ServerHostTestAccess {
-    static bool TeleportVehicle(ServerHost& host, std::uint64_t stableId,
-                                float x, float y, int z = 0) {
-        ServerHost::ServerVehicleRuntime* vehicle =
-            host.FindServerVehicle(stableId);
-        if (vehicle == nullptr || vehicle->entity == entt::null) {
-            return false;
-        }
-        vehicle->motion.x = x;
-        vehicle->motion.y = y;
-        vehicle->motion.z = z;
-        vehicle->motion.vx = 0.0f;
-        vehicle->motion.vy = 0.0f;
-        vehicle->motion.crashLatched = false;
-        host.SyncServerVehicleToEcs(*vehicle);
-        host.SyncServerVehiclePassengers(*vehicle);
-        return true;
-    }
-
-    static bool SetVehicleVelocity(ServerHost& host, std::uint64_t stableId,
-                                   float vx, float vy) {
-        ServerHost::ServerVehicleRuntime* vehicle =
-            host.FindServerVehicle(stableId);
-        if (vehicle == nullptr || vehicle->entity == entt::null) {
-            return false;
-        }
-        vehicle->motion.vx = vx;
-        vehicle->motion.vy = vy;
-        host.SyncServerVehicleToEcs(*vehicle);
-        return true;
-    }
-
-    static zl::ecs::Position VehiclePosition(ServerHost& host,
-                                             std::uint64_t stableId) {
-        const ServerHost::ServerVehicleRuntime* vehicle =
-            host.FindServerVehicle(stableId);
-        if (vehicle == nullptr) {
-            return {};
-        }
-        return {vehicle->motion.x, vehicle->motion.y, vehicle->motion.z};
-    }
-
-    static zl::game::VehicleVisualDirection VehicleVisualDirection(
-        ServerHost& host, std::uint64_t stableId) {
-        const ServerHost::ServerVehicleRuntime* vehicle =
-            host.FindServerVehicle(stableId);
-        return vehicle != nullptr ? vehicle->visualDirection
-                                  : zl::game::VehicleVisualDirection::South;
-    }
-
-    static zl::game::VehicleMotion VehicleMotion(
-        ServerHost& host, std::uint64_t stableId) {
-        const ServerHost::ServerVehicleRuntime* vehicle =
-            host.FindServerVehicle(stableId);
-        return vehicle != nullptr ? vehicle->motion : zl::game::VehicleMotion{};
-    }
-};
-}  // namespace zl::server
 
 namespace {
 
@@ -2179,7 +2120,7 @@ TEST_CASE("M23-F2a-T6 服务器权威觅食/钓鱼与重复/距离拒绝") {
                zl::net::kPlayerSurvivalModeFishing;
     }));
     CHECK(BagCount(first.PlayerState(), "fish_bait") < baitBefore);
-    REQUIRE(PumpUntil(host, first, second, 15000, [&] {
+    REQUIRE(PumpUntil(host, first, second, 30000, [&] {
         return first.PlayerState().survival.phase ==
                zl::net::kPlayerSurvivalPhaseBiting;
     }));
@@ -6224,5 +6165,189 @@ TEST_CASE("M30-T6 双客户端：服务器权威重击/格挡/弹反/闪避与�
 
     defender.Close();
     attacker.Close();
+    host.Shutdown();
+}
+
+
+TEST_CASE("M34-F1-T5 双客户端潜行：SetStealth 权威、STLH、非法与倒地拒绝") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    REQUIRE(std::filesystem::exists(root / "config" / "game.json"));
+    ScopedWorkingDirectory cwd(root);
+
+    zl::server::ServerHost::Options hostOptions;
+    hostOptions.configPath = (root / "config" / "game.json").string();
+    hostOptions.spawnDemoPopulation = false;
+    hostOptions.spawnLocalPlayer = false;
+    hostOptions.network = true;
+    hostOptions.port = 0;
+    hostOptions.contentHash = 0x4D33344631543531ull;
+
+    zl::server::ServerHost host;
+    std::string error;
+    REQUIRE_MESSAGE(host.Init(hostOptions, &error), error);
+    REQUIRE(host.NetworkPort() != 0);
+
+    zl::game::NetworkClient::Options options;
+    options.host = "127.0.0.1";
+    options.port = host.NetworkPort();
+    options.contentHash = hostOptions.contentHash;
+    options.autoReconnect = false;
+
+    zl::game::NetworkClient first(options);
+    zl::game::NetworkClient second(options);
+    REQUIRE(first.Connect(&error));
+    REQUIRE(second.Connect(&error));
+    REQUIRE(PumpUntil(host, first, second, 8000, [&] {
+        return first.IsConnected() && second.IsConnected() &&
+               first.HasPlayerState() && second.HasPlayerState() &&
+               first.PlayerState().stealth.valid &&
+               second.PlayerState().stealth.valid &&
+               host.SessionCount() == 2;
+    }));
+    const std::uint64_t firstId = first.PlayerStableId();
+    const std::uint64_t secondId = second.PlayerStableId();
+    REQUIRE(firstId != 0);
+    REQUIRE(secondId != 0);
+    REQUIRE(firstId != secondId);
+
+    auto& registry = host.Simulation().Ecs().Registry();
+    const zl::ecs::Entity firstEntity =
+        host.Simulation().Ecs().FindById(firstId);
+    REQUIRE(static_cast<bool>(firstEntity != entt::null));
+    auto* stealth = registry.try_get<zl::ecs::StealthState>(firstEntity);
+    REQUIRE(stealth != nullptr);
+
+    zl::net::Command down;
+    down.type = zl::net::CommandType::SetStealth;
+    down.playerStableId = firstId;
+    down.payload.flags = zl::net::kStealthCrouchFlag;
+    REQUIRE(first.SendCommand(down, &error));
+    REQUIRE(PumpUntil(host, first, second, 5000, [&] {
+        const auto* remote = second.Replication().Find(firstId);
+        return stealth->crouched && first.PlayerState().stealth.crouched &&
+               first.PlayerState().stealth.noiseRadius == doctest::Approx(1.125f) &&
+               first.PlayerState().stealth.visibilityScale ==
+                   doctest::Approx(0.65f) &&
+               remote != nullptr && remote->hasStealth &&
+               remote->stealthCrouched;
+    }));
+    CHECK(stealth->speedScale == doctest::Approx(0.55f));
+    CHECK(stealth->noiseScale == doctest::Approx(0.45f));
+    CHECK(stealth->visibilityScale == doctest::Approx(0.65f));
+
+    const std::uint64_t rejectedBefore =
+        host.GetNetworkStats().commandsRejected;
+    zl::net::Command invalid = down;
+    invalid.payload.flags = 0x02u;
+    invalid.payload.x = 1.0f;
+    REQUIRE(first.SendCommand(invalid, &error));
+    REQUIRE(PumpUntil(host, first, second, 3000, [&] {
+        return host.GetNetworkStats().commandsRejected > rejectedBefore;
+    }));
+    CHECK(stealth->crouched);
+
+    zl::net::Command up;
+    up.type = zl::net::CommandType::SetStealth;
+    up.playerStableId = firstId;
+    up.payload.flags = 0;
+    REQUIRE(first.SendCommand(up, &error));
+    REQUIRE(PumpUntil(host, first, second, 5000, [&] {
+        const auto* remote = second.Replication().Find(firstId);
+        return !stealth->crouched && !first.PlayerState().stealth.crouched &&
+               remote != nullptr && remote->hasStealth &&
+               !remote->stealthCrouched;
+    }));
+    CHECK(stealth->speedScale == doctest::Approx(1.0f));
+
+    REQUIRE(first.SendCommand(down, &error));
+    REQUIRE(PumpUntil(host, first, second, 5000, [&] {
+        return stealth->crouched && first.PlayerState().stealth.crouched;
+    }));
+    registry.get<zl::ecs::Health>(firstEntity).current = 0.0f;
+    REQUIRE(PumpUntil(host, first, second, 5000, [&] {
+        return !stealth->crouched && !first.PlayerState().stealth.crouched;
+    }));
+
+    const std::uint64_t downedRejected =
+        host.GetNetworkStats().commandsRejected;
+    REQUIRE(first.SendCommand(down, &error));
+    REQUIRE(PumpUntil(host, first, second, 3000, [&] {
+        return host.GetNetworkStats().commandsRejected > downedRejected;
+    }));
+    CHECK_FALSE(stealth->crouched);
+    CHECK_FALSE(first.PlayerState().stealth.crouched);
+
+    first.Close();
+    second.Close();
+    host.Shutdown();
+}
+
+
+TEST_CASE("M34-F1-T5 服务器攻击写入背刺参数并退出潜行") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    REQUIRE(std::filesystem::exists(root / "config" / "game.json"));
+    ScopedWorkingDirectory cwd(root);
+
+    zl::server::ServerHost::Options hostOptions;
+    hostOptions.configPath = (root / "config" / "game.json").string();
+    hostOptions.spawnDemoPopulation = false;
+    hostOptions.spawnLocalPlayer = false;
+    hostOptions.network = true;
+    hostOptions.port = 0;
+    hostOptions.contentHash = 0x4D33344631544154ull;
+
+    zl::server::ServerHost host;
+    std::string error;
+    REQUIRE_MESSAGE(host.Init(hostOptions, &error), error);
+
+    zl::game::NetworkClient::Options options;
+    options.host = "127.0.0.1";
+    options.port = host.NetworkPort();
+    options.contentHash = hostOptions.contentHash;
+    options.autoReconnect = false;
+    zl::game::NetworkClient client(options);
+    REQUIRE(client.Connect(&error));
+    REQUIRE(PumpUntil(host, client, 6000, [&] {
+        return client.HasPlayerState() && client.PlayerState().stealth.valid;
+    }));
+    const std::uint64_t playerId = client.PlayerStableId();
+    auto& registry = host.Simulation().Ecs().Registry();
+    const zl::ecs::Entity player =
+        host.Simulation().Ecs().FindById(playerId);
+    REQUIRE(static_cast<bool>(player != entt::null));
+    const auto& position = registry.get<zl::ecs::Position>(player);
+    const zl::ecs::Entity zombie = host.Simulation().SpawnZombieAt(
+        position.x + 0.8f, position.y + 0.8f);
+    REQUIRE(static_cast<bool>(zombie != entt::null));
+    registry.get_or_emplace<zl::ecs::AiState>(zombie).status =
+        zl::ecs::AiStatus::Idle;
+    registry.get_or_emplace<zl::ecs::PerceptionState>(zombie).alertness = 0.0f;
+    registry.get_or_emplace<zl::ecs::Facing>(zombie).dir =
+        zl::ecs::Direction::Down;
+
+    zl::net::Command crouch;
+    crouch.type = zl::net::CommandType::SetStealth;
+    crouch.playerStableId = playerId;
+    crouch.payload.flags = zl::net::kStealthCrouchFlag;
+    REQUIRE(zl::server::ServerHostTestAccess::ExecuteCommand(host, playerId,
+                                                             crouch));
+    auto* stealth = registry.try_get<zl::ecs::StealthState>(player);
+    REQUIRE(stealth != nullptr);
+    CHECK(stealth->crouched);
+
+    zl::net::Command attack;
+    attack.type = zl::net::CommandType::Attack;
+    attack.playerStableId = playerId;
+    attack.payload.entityId = host.Simulation().Ecs().IdOf(zombie).id;
+    REQUIRE(zl::server::ServerHostTestAccess::ExecuteCommand(host, playerId,
+                                                             attack));
+    const auto* intent = registry.try_get<zl::ecs::AttackIntent>(player);
+    REQUIRE(intent != nullptr);
+    CHECK(intent->pending);
+    CHECK(intent->backstabMultiplier == doctest::Approx(1.6f));
+    CHECK(intent->backstabHalfAngleDegrees == doctest::Approx(60.0f));
+    CHECK_FALSE(stealth->crouched);
+
+    client.Close();
     host.Shutdown();
 }

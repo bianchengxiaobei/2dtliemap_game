@@ -36,6 +36,7 @@ enum class InventoryActionType : std::uint8_t {
     StoreAll,
     TakeAll,
     SortStorage,
+    OpenVehicleMods,
 };
 
 struct InventorySlot {
@@ -49,6 +50,9 @@ struct InventorySlot {
     bool damaged = false;
     bool repairAvailable = false;
     bool perishable = false;
+    // M34-F2-T6：投掷标记（背包/装备/地面共享）。
+    bool throwable = false;
+    std::string throwTag;
 };
 
 struct InventoryRecipeIngredient {
@@ -112,6 +116,9 @@ struct InventoryState {
     int lootStacks = 0;
     std::string lootTitle = "附近地面";
     bool lootIsStorage = false;
+    bool lootIsVehicle = false;
+    bool vehicleModsEnabled = false;
+    bool vehicleModsReadOnly = false;
     bool lootCanTakeAll = false;
     std::uint64_t lootEntityId = 0;
     std::string status;
@@ -123,7 +130,8 @@ inline bool operator==(const InventorySlot& a, const InventorySlot& b) {
            a.usable == b.usable && a.equippable == b.equippable &&
            a.entityId == b.entityId && a.condition == b.condition &&
            a.damaged == b.damaged && a.repairAvailable == b.repairAvailable &&
-           a.perishable == b.perishable;
+           a.perishable == b.perishable && a.throwable == b.throwable &&
+           a.throwTag == b.throwTag;
 }
 
 inline bool operator==(const InventoryRecipeIngredient& a,
@@ -164,6 +172,9 @@ inline bool operator==(const InventoryState& a, const InventoryState& b) {
            a.loot == b.loot && a.recipes == b.recipes && a.crafting == b.crafting &&
            a.bagStacks == b.bagStacks && a.lootStacks == b.lootStacks &&
            a.lootTitle == b.lootTitle && a.lootIsStorage == b.lootIsStorage &&
+           a.lootIsVehicle == b.lootIsVehicle &&
+           a.vehicleModsEnabled == b.vehicleModsEnabled &&
+           a.vehicleModsReadOnly == b.vehicleModsReadOnly &&
            a.lootCanTakeAll == b.lootCanTakeAll &&
            a.lootEntityId == b.lootEntityId && a.status == b.status &&
            a.statusTone == b.statusTone;

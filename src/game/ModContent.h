@@ -38,6 +38,9 @@ struct ModContentResult {
     std::vector<std::string> cropFiles;
     std::vector<std::string> settlementFiles;
     std::vector<std::string> worldEventFiles;
+    std::vector<std::string> companionFiles;
+    std::vector<std::string> vehicleModFiles;
+    std::vector<std::string> trapFiles;
     std::vector<std::string> skippedIds;
     std::vector<ModContentSource> sources;
 };

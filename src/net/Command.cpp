@@ -104,6 +104,30 @@ const char* CommandTypeName(CommandType type) {
             return "Dodge";
         case CommandType::ChooseWorldEvent:
             return "ChooseWorldEvent";
+        case CommandType::RecruitCompanion:
+            return "RecruitCompanion";
+        case CommandType::DismissCompanion:
+            return "DismissCompanion";
+        case CommandType::SetCompanionCommand:
+            return "SetCompanionCommand";
+        case CommandType::GiftToCompanion:
+            return "GiftToCompanion";
+        case CommandType::AcceptCompanionQuest:
+            return "AcceptCompanionQuest";
+        case CommandType::AbandonCompanionQuest:
+            return "AbandonCompanionQuest";
+        case CommandType::RescueCompanion:
+            return "RescueCompanion";
+        case CommandType::InstallVehicleMod:
+            return "InstallVehicleMod";
+        case CommandType::RemoveVehicleMod:
+            return "RemoveVehicleMod";
+        case CommandType::PoiInteract:
+            return "PoiInteract";
+        case CommandType::SetStealth:
+            return "SetStealth";
+        case CommandType::ThrowItem:
+            return "ThrowItem";
     }
     return "Unknown";
 }

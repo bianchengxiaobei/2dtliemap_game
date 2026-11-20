@@ -22,7 +22,7 @@ namespace zl::ui {
 // 面板只负责展示与键位采集；新游戏/继续/退出等动作通过回调交给游戏状态处理。
 class MenuPanel {
 public:
-    static constexpr int kKeyBindingCount = 13;
+    static constexpr int kKeyBindingCount = 14;
 
     MenuPanel();
     ~MenuPanel();
