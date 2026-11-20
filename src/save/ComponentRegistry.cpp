@@ -417,10 +417,11 @@ bool ReadSpikeTrap(BinaryReader& reader, ecs::SpikeTrap* trap) {
 bool WritePlacedTrap(const ecs::PlacedTrap& trap, BinaryWriter& writer) {
     return game::IsValidTrapToken(trap.defId) && Finite(trap.cooldown) &&
            trap.cooldown >= 0.0f && trap.uses >= 0 && trap.uses <= 999 &&
+           Finite(trap.armRemaining) && trap.armRemaining >= 0.0f &&
            writer.WriteString(trap.defId, 64) && writer.Write(trap.armed) &&
            writer.Write(trap.cooldown) &&
            writer.Write(static_cast<std::int32_t>(trap.uses)) &&
-           writer.Write(trap.owner);
+           writer.Write(trap.owner) && writer.Write(trap.armRemaining);
 }
 
 bool ReadPlacedTrap(BinaryReader& reader, ecs::PlacedTrap* trap) {
@@ -435,6 +436,12 @@ bool ReadPlacedTrap(BinaryReader& reader, ecs::PlacedTrap* trap) {
     if (!Finite(loaded.cooldown) || loaded.cooldown < 0.0f || uses < 0 ||
         uses > 999) {
         return false;
+    }
+    if (reader.Header().version >= kSaveComponentVersionPlacedTrap) {
+        if (!reader.Read(loaded.armRemaining) ||
+            !Finite(loaded.armRemaining) || loaded.armRemaining < 0.0f) {
+            return false;
+        }
     }
     loaded.uses = static_cast<int>(uses);
     *trap = std::move(loaded);
@@ -2695,7 +2702,8 @@ bool RegisterBuiltinComponents(ComponentRegistry& registry, std::string* error) 
             [](BinaryReader& reader, ecs::PlacedTrap* trap) {
                 return ReadPlacedTrap(reader, trap);
             },
-            kSaveComponentVersion, error)) {
+            kSaveComponentVersionPlacedTrap, error,
+            kSaveComponentVersion)) {
         return false;
     }
 

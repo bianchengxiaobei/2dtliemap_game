@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-11-20 M34-F3-T4 陷阱存档、读档与旧档兼容
+
+**范围**：`PlacedTrap` 从 `TRP2 v1` 升到 v2，在 defId/armed/cooldown/uses/owner 后追加 `armRemaining`；读取仍接受 v1，旧负载缺失该字段时按 0 处理。单机通过 `SaveManager` 快照/读档，服务器通过 `ServerHost::SaveWorld` 与重启恢复，布防中的陷阱继续按剩余时间自动布防；旧档只有 `SpikeTrap` 时保持 `TRAP v1` 与电网/占位实体独立，不生成 `PlacedTrap`。燃油陷阱的 `FireSource/FireAnchor` 沿用 M23 火焰存档，`trap_fuel` 火源跨重启保留。
+
+**关键修复/边界**：T2/T3 的 `armRemaining` 只是运行时字段，布防中存档会永久保持解除；T4 将其纳入组件 v2，同时保留 v1 回退，避免旧档被误判为布防中。现有 `FireSource.ownerStableId` 按 M23 约定不落盘，重启后火焰本身恢复但归属为 0，守城贡献不回溯。读档不会重跑建造/拆除，不返还木材也不重复触发；T4 不保存飞行中投掷物，不改变旧 `SpikeTrap`/电网运行时。
+
+**验证**：`M34-F3-T4*` **4/4（126 assertions）**，覆盖 TRP2 v2 往返/v1 回退、单机快照后继续游戏再读档、旧档无 `PlacedTrap` 与旧 `TRAP v1`、服务器 `SaveWorld` 重启恢复 3 个陷阱与燃油火源；`M34-F3*` **16/16（401）**、保存/复制回归 **48/48（1256）**、Release 全量 **1144/1144（145291 assertions，4 skipped）**、Debug 定向 **64/64（1657）**、Python 数据 **127/127**，Release app 构建成功。**限制/下一步**：T5 负责 `TRAP2` 客户端只读一致性与双客户端重连；T6 负责 1280 陷阱状态/建造面板。下一步 M34-F3-T5。
+
 ## 2026-11-20 M34-F3-T3 触发规则与三种效果
 
 **范围**：新增 `TrapSystem` 纯函数与 `FireSystem::IgniteForcedAt`。目标筛选按 `triggerMask` + 半径取最近僵尸/动物，排除玩家、同伴、聚落友军、尸体/`Dying`、`NoCombatTarget`、Human Raiders 和异层；捕兽夹 55 Blunt/2 秒硬直/4 次，绊线只发 18 格噪声/8 次，燃油陷阱强制生成 1.5 格、45 游戏分钟的 `trap_fuel` 火焰/1 次。单机 `UpdateTraps` 改为所有非联机 tick 推进，服务器 `TickTrapTriggers` 同时处理新陷阱，同伴 AI 依据 `PlacedTrap.defId` 半径避开武装陷阱；旧尖刺仍只在基地守城激活时处理。

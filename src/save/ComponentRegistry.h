@@ -31,6 +31,8 @@ inline constexpr std::uint16_t kSaveComponentVersionMissionLog = 2;
 inline constexpr std::uint16_t kSaveComponentVersionCompanionState = 3;
 // M33-F5-T2：PoiTasks 增加阶段奖励幂等键；旧 v1 仍可读，默认无已领奖励。
 inline constexpr std::uint16_t kSaveComponentVersionPoiTasks = 2;
+// M34-F3-T4：PlacedTrap 增加布防剩余时间；旧 v1 仍可读，默认已完成布防计时。
+inline constexpr std::uint16_t kSaveComponentVersionPlacedTrap = 2;
 
 inline constexpr std::uint32_t kSaveComponentPosition =
     MakeMagic('P', 'O', 'S', 'N');

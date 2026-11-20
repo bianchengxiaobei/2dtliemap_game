@@ -341,6 +341,7 @@ add_executable(ZomboidLikeTests
     tests/test_spawn_lod.cpp
     tests/test_items.cpp
     tests/test_traps.cpp
+    tests/test_trap_persistence.cpp
     tests/test_throwing.cpp
     tests/test_throw_aim.cpp
     tests/test_throw_flight.cpp
