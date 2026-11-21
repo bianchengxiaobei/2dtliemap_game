@@ -70,6 +70,7 @@ class ArtSliceTest(unittest.TestCase):
     def test_wall_and_door_contract(self):
         for name in ("wall_brick_1", "wall_brick_2", "wall_brick_3",
                      "wall_door_1", "wall_door_2",
+                     "wall_window_h_1", "wall_window_v_1",
                      "wall_wood_h_1", "wall_wood_v_1",
                      "door_wood_closed_h_1", "door_wood_closed_v_1",
                      "door_wood_open_h_1", "door_wood_open_v_1"):
@@ -139,6 +140,8 @@ class ArtSliceTest(unittest.TestCase):
             "character_zombie_up_1",
             "wall_brick_3",
             "wall_door_2",
+            "wall_window_h_1",
+            "wall_window_v_1",
             "wall_wood_h_1",
             "wall_wood_v_1",
             "door_wood_closed_h_1",

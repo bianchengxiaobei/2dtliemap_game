@@ -61,6 +61,10 @@
           "wall_brick_2",
           "wall_brick_3"
         ]
+      },
+      "cutaway": {
+        "edges": ["n", "w"],
+        "style": "full"
       }
     },
     "wall.door": {
@@ -71,6 +75,24 @@
           "wall_door_2"
         ]
       }
+    },
+    "wall.window_h": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "wall_window_h_1"
+        ]
+      },
+      "window": true
+    },
+    "wall.window_v": {
+      "own": {
+        "atlas": "assets/own/atlas_own.atlas.json",
+        "frames": [
+          "wall_window_v_1"
+        ]
+      },
+      "window": true
     },
     "object.wall_h": {
       "own": {
@@ -137,7 +159,8 @@
           "e_newgrassbase_1_22",
           "e_newgrassbase_1_23"
         ]
-      }
+      },
+      "foliage": true
     },
     "object.tree": {
       "own": {
@@ -156,7 +179,8 @@
           "e_americanlindenJUMBO_1_0",
           "e_americanlindenJUMBO_1_3"
         ]
-      }
+      },
+      "foliage": true
     },
     "object.workbench": {
       "own": {

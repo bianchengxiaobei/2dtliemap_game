@@ -70,7 +70,7 @@ TEST_CASE("M31-T2 世界契约：36×36、区域覆盖、道路图与 POI 模板
     }
     CHECK(minDistance >= 80.0);
     CHECK(definition.mapHash != 0u);
-    CHECK(world::FormatMapHash(definition.mapHash) == "b00ef11346939918");
+    CHECK(world::FormatMapHash(definition.mapHash) == "736948ac7902ed3e");
 }
 
 TEST_CASE("M31-T2 大世界加载：所有 chunk 可解析、边界闭合、模板房间存在") {

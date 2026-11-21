@@ -128,7 +128,10 @@ class M31WorldDataTest(unittest.TestCase):
                     math.hypot(x - ox, y - oy), 80.0,
                     "%s/%s 距离不足" % (poi_id, other_id))
         self.assertEqual(gen_world.compute_map_hash(MAP_DIR),
-                         "b00ef11346939918")
+                         "736948ac7902ed3e")
+        windows = [obj for obj in self.objects
+                   if obj[2] in ("wall.window_h", "wall.window_v")]
+        self.assertEqual(len(windows), 7)
 
     def test_templates_are_valid_and_stamped(self):
         self.assertEqual(set(self.templates), {

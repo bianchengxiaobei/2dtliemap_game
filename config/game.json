@@ -317,6 +317,20 @@
   "render": {
     "wallOcclusionAlpha": 0.35,
     "roomCutaway": true,
+    "cutawayWallKeepRatio": 0.45,
+    "cutawayLockMs": 750,
+    "cutawayPerSquare": true,
+    "cutawayTrimMode": "edges",
+    "buildingOcclusion": true,
+    "occluderBuildingsMax": 8,
+    "occluderLockMs": 750,
+    "windowPeek": true,
+    "windowPeekRange": 0.9,
+    "roofCull": true,
+    "foliageFlatten": true,
+    "foliageAlpha": 0.4,
+    "foliageKeepRatio": 0.55,
+    "cutawayDebug": false,
     "debugText": true
   },
   "task": {

@@ -11,6 +11,10 @@ namespace {
 
 constexpr const char* kLogModule = "assets";
 
+bool IsMetadataKey(const std::string& key) {
+    return key == "cutaway" || key == "window" || key == "foliage";
+}
+
 bool ReadJson(const std::filesystem::path& path, nlohmann::json* out,
               std::string* error) {
     std::ifstream file(path, std::ios::binary);
@@ -36,7 +40,9 @@ bool ValidBinding(const nlohmann::json& binding) {
         return false;
     }
     for (const auto& [provider, value] : binding.items()) {
-        (void)provider;
+        if (IsMetadataKey(provider)) {
+            continue;
+        }
         if (!value.is_object()) {
             return false;
         }
@@ -80,7 +86,9 @@ nlohmann::json NormalizeBinding(const nlohmann::json& binding,
                                 const std::filesystem::path& baseDir) {
     nlohmann::json normalized = binding;
     for (auto& [provider, value] : normalized.items()) {
-        (void)provider;
+        if (IsMetadataKey(provider)) {
+            continue;
+        }
         if (!value.is_object()) {
             continue;
         }
@@ -93,6 +101,103 @@ nlohmann::json NormalizeBinding(const nlohmann::json& binding,
 }
 
 }  // namespace
+
+bool ParseCutawayMeta(const nlohmann::json& node, AssetCutawayMeta* out,
+                      std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "剖切元数据输出为空";
+        }
+        return false;
+    }
+    *out = {};
+    if (!node.is_object()) {
+        if (error != nullptr) {
+            *error = "cutaway 必须是对象";
+        }
+        return false;
+    }
+    for (const auto& [key, value] : node.items()) {
+        if (key == "edges" || key == "style" || key == "mask") {
+            continue;
+        }
+        if (error != nullptr) {
+            *error = "未知 cutaway 字段: " + key;
+        }
+        return false;
+    }
+
+    const auto edgesIt = node.find("edges");
+    if (edgesIt == node.end() || !edgesIt->is_array()) {
+        if (error != nullptr) {
+            *error = "cutaway.edges 必须是数组";
+        }
+        return false;
+    }
+    std::uint8_t edges = 0;
+    for (const auto& edge : *edgesIt) {
+        if (!edge.is_string()) {
+            if (error != nullptr) {
+                *error = "cutaway.edges 元素必须是字符串";
+            }
+            return false;
+        }
+        const std::string value = edge.get<std::string>();
+        if (value == "n") {
+            edges |= 1u;
+        } else if (value == "w") {
+            edges |= 2u;
+        } else {
+            if (error != nullptr) {
+                *error = "未知 cutaway 边: " + value;
+            }
+            return false;
+        }
+    }
+    if (edges == 0u) {
+        if (error != nullptr) {
+            *error = "cutaway.edges 为空";
+        }
+        return false;
+    }
+
+    AssetCutawayMeta::Style style = AssetCutawayMeta::Style::Full;
+    const auto styleIt = node.find("style");
+    if (styleIt != node.end()) {
+        if (!styleIt->is_string()) {
+            if (error != nullptr) {
+                *error = "cutaway.style 必须是字符串";
+            }
+            return false;
+        }
+        const std::string value = styleIt->get<std::string>();
+        if (value == "full") {
+            style = AssetCutawayMeta::Style::Full;
+        } else if (value == "top") {
+            style = AssetCutawayMeta::Style::Top;
+        } else if (value == "left") {
+            style = AssetCutawayMeta::Style::Left;
+        } else if (value == "right") {
+            style = AssetCutawayMeta::Style::Right;
+        } else {
+            if (error != nullptr) {
+                *error = "未知 cutaway.style: " + value;
+            }
+            return false;
+        }
+    }
+    const auto maskIt = node.find("mask");
+    if (maskIt != node.end() && !maskIt->is_string()) {
+        if (error != nullptr) {
+            *error = "cutaway.mask 必须是字符串";
+        }
+        return false;
+    }
+
+    out->edges = edges;
+    out->style = style;
+    return true;
+}
 
 bool LoadMergedAssetManifest(
     const std::filesystem::path& basePath,

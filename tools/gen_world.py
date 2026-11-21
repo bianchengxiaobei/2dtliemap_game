@@ -40,6 +40,7 @@ FLOOR_LEGEND = {
 OBJECT_LEGEND = {
     "#": {"layer": "wall", "sprite": "wall.brick"},
     "D": {"layer": "wall", "sprite": "wall.door"},
+    "N": {"layer": "wall", "sprite": "wall.window_h"},
     "B": {"layer": "furniture", "sprite": "object.bed"},
     "W": {"layer": "furniture", "sprite": "object.workbench"},
     "C": {"layer": "furniture", "sprite": "object.crate"},
@@ -215,6 +216,7 @@ def build_templates():
     clinic_floor = _grid(14, 10, "g")
     clinic_objects = _grid(14, 10, ".")
     _building(clinic_floor, clinic_objects, 1, 1, 12, 8, "north")
+    _put(clinic_objects, 4, 1, "N")
     _fill(clinic_floor, 5, 0, 5, 1, "d")
     _put(clinic_objects, 3, 3, "B")
     _put(clinic_objects, 3, 4, "B")

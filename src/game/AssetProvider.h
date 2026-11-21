@@ -6,9 +6,11 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "characters/components/CharacterComponents.h"
+#include "game/AssetManifest.h"
 #include "render/Atlas.h"
 
 namespace zl::game {
@@ -76,12 +78,44 @@ public:
         return it == m_animByHash.end() ? nullptr : it->second;
     }
 
+    // M36-T2：manifest 的 cutaway 元数据；未声明返回 nullptr（不可剖）。
+    const AssetCutawayMeta* Cutaway(std::string_view logical) const {
+        const auto it = m_cutaway.find(std::string(logical));
+        return it == m_cutaway.end() ? nullptr : &it->second;
+    }
+    const AssetCutawayMeta* CutawayByHash(std::uint32_t hash) const {
+        const auto it = m_cutawayByHash.find(hash);
+        return it == m_cutawayByHash.end() ? nullptr : it->second;
+    }
+
+    // M36-T4：manifest 标了 "window": true 的逻辑名（窗格仍阻挡移动）。
+    bool IsWindow(std::string_view logical) const {
+        return m_windows.find(std::string(logical)) != m_windows.end();
+    }
+    bool IsWindowByHash(std::uint32_t hash) const {
+        return m_windowHashes.find(hash) != m_windowHashes.end();
+    }
+
+    // M36-T6：manifest 标了 "foliage": true 的逻辑名（树/高草）。
+    bool IsFoliage(std::string_view logical) const {
+        return m_foliage.find(std::string(logical)) != m_foliage.end();
+    }
+    bool IsFoliageByHash(std::uint32_t hash) const {
+        return m_foliageHashes.find(hash) != m_foliageHashes.end();
+    }
+
 private:
     std::string m_provider;
     std::unordered_map<std::string, std::vector<Entry>> m_resolved;
     std::unordered_map<std::uint32_t, const std::vector<Entry>*> m_byHash;  // HashName → 变体表
     std::unordered_map<std::string, AnimationSet> m_animationSets;
     std::unordered_map<std::uint32_t, const AnimationSet*> m_animByHash;
+    std::unordered_map<std::string, AssetCutawayMeta> m_cutaway;
+    std::unordered_map<std::uint32_t, const AssetCutawayMeta*> m_cutawayByHash;
+    std::unordered_set<std::string> m_windows;
+    std::unordered_set<std::uint32_t> m_windowHashes;
+    std::unordered_set<std::string> m_foliage;
+    std::unordered_set<std::uint32_t> m_foliageHashes;
 };
 
 }  // namespace zl::game

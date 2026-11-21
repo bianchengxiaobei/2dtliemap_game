@@ -1,6 +1,8 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -295,6 +297,89 @@ TEST_CASE("M14-T10 CutawayUpperLayersInRoom：只隐藏当前房间上方楼层"
     CHECK(items[2].color == 0xFFFFFFFFu);
     CHECK(items[3].color == 0x59AABBCCu);
     CHECK(zl::game::RenderCollectSystem::CutawayUpperLayersInRoom(-1, items) == 0u);
+}
+
+TEST_CASE("M14-T10 对齐 PZ：剖切房间集合内上层全部隐藏") {
+    auto Make = [](int z, int roomId, std::uint32_t color) {
+        zl::render::DrawItem item;
+        item.stage = z == 0 ? 0 : 1;
+        item.z = z;
+        item.roomId = roomId;
+        item.color = color;
+        return item;
+    };
+    std::vector<zl::render::DrawItem> items = {
+        Make(1, 7, 0x59AABBCCu),  // 当前房间楼上：隐藏
+        Make(1, 8, 0x59AABBCCu),  // 前方相邻房间楼上：隐藏
+        Make(1, 9, 0x59AABBCCu),  // 集合外房间楼上：保留
+        Make(0, 7, 0xFFFFFFFFu),  // 地面层：保留
+        Make(1, -1, 0x59AABBCCu), // 无房间信息：保留
+    };
+
+    const std::vector<int> rooms{7, 8};
+    CHECK(zl::game::RenderCollectSystem::CutawayUpperLayersInRooms(rooms, items) == 2u);
+    CHECK(items[0].color == 0x00AABBCCu);
+    CHECK(items[1].color == 0x00AABBCCu);
+    CHECK(items[2].color == 0x59AABBCCu);
+    CHECK(items[3].color == 0xFFFFFFFFu);
+    CHECK(items[4].color == 0x59AABBCCu);
+    CHECK(zl::game::RenderCollectSystem::CutawayUpperLayersInRooms({}, items) == 0u);
+}
+
+TEST_CASE("M14-T10 对齐 PZ：墙体遮罩裁切而非整块消失") {
+    auto MakeWall = [](zl::render::SpriteRect rect, std::uint32_t color) {
+        zl::render::DrawItem item;
+        item.stage = 1;
+        item.z = 0;
+        item.layer = static_cast<int>(zl::world::SquareLayer::Wall);
+        item.rect = rect;
+        item.v0 = 0.1f;
+        item.v1 = 0.9f;
+        item.color = color;
+        return item;
+    };
+    const zl::render::SpriteRect player{0.0f, 0.0f, 20.0f, 40.0f};
+
+    // 墙盖住角色：底边压到玩家头顶（y=30），只保留顶部 30px。
+    zl::render::DrawItem wall = MakeWall({0.0f, 0.0f, 64.0f, 100.0f}, 0xFFFFFFFFu);
+    CHECK(zl::game::RenderCollectSystem::TrimWallForCutaway(wall, player, 0.45f, 30.0f));
+    CHECK(wall.cutawayTrimmed);
+    CHECK(wall.rect.h == 30.0f);
+    CHECK(std::abs(wall.v1 - (0.1f + 0.8f * 0.3f)) < 0.0001f);
+    CHECK(wall.color == 0xFFFFFFFFu);
+
+    // 不盖住角色：只按 keepRatio 裁掉下部。
+    zl::render::DrawItem freeWall = MakeWall({0.0f, 0.0f, 64.0f, 100.0f}, 0xFFFFFFFFu);
+    const float kInf = std::numeric_limits<float>::max();
+    CHECK(zl::game::RenderCollectSystem::TrimWallForCutaway(freeWall, player, 0.45f, kInf));
+    CHECK(freeWall.cutawayTrimmed);
+    CHECK(std::abs(freeWall.rect.h - 45.0f) < 0.0001f);
+    CHECK(std::abs(freeWall.v1 - (0.1f + 0.8f * 0.45f)) < 0.0001f);
+
+    // 完全被玩家头顶压掉：整块隐藏。
+    zl::render::DrawItem hidden = MakeWall({0.0f, 0.0f, 64.0f, 100.0f}, 0xFFFFFFFFu);
+    CHECK(zl::game::RenderCollectSystem::TrimWallForCutaway(hidden, player, 0.45f, 1.0f));
+    CHECK(hidden.cutawayTrimmed);
+    CHECK(hidden.color == 0x00FFFFFFu);
+
+    // 非墙不参与裁切。
+    zl::render::DrawItem floor = MakeWall({0.0f, 0.0f, 64.0f, 100.0f}, 0xFFFFFFFFu);
+    floor.layer = static_cast<int>(zl::world::SquareLayer::Floor);
+    CHECK_FALSE(zl::game::RenderCollectSystem::TrimWallForCutaway(floor, player, 0.45f, kInf));
+}
+
+TEST_CASE("M14-T10 对齐 PZ：已裁切的墙跳过整块淡出") {
+    zl::render::DrawItem wall;
+    wall.stage = 1;
+    wall.z = 0;
+    wall.layer = static_cast<int>(zl::world::SquareLayer::Wall);
+    wall.rect = {0.0f, 0.0f, 64.0f, 100.0f};
+    wall.color = 0xFFFFFFFFu;
+    wall.cutawayTrimmed = true;
+    std::vector<zl::render::DrawItem> items{wall};
+    const zl::render::SpriteRect player{0.0f, 0.0f, 20.0f, 40.0f};
+    CHECK(zl::game::RenderCollectSystem::FadeOccludingWalls(player, 0, 0x59u, items) == 0u);
+    CHECK(items[0].color == 0xFFFFFFFFu);
 }
 
 TEST_CASE("RenderCollectSystem：ViewRect 包含性（含格边界余量）") {

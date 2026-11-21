@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "characters/components/CharacterComponents.h"
 #include "ecs/EcsWorld.h"
 #include "ecs/SpatialIndex.h"
 #include "game/AssetProvider.h"
+#include "render/CutawayLogic.h"
 #include "render/DrawList.h"
 #include "world/GridSquare.h"
 
@@ -63,6 +65,7 @@ public:
         item.layer = kEntityLayerBase + subLayer;
         item.tieBreaker = stableId;
         item.roomId = roomId;
+        item.roofOwnerRoom = z >= 1 ? roomId : -1;
         *out = item;
     }
 
@@ -81,7 +84,7 @@ public:
         std::size_t faded = 0;
         for (std::size_t i = playerIndex + 1; i < items.size(); ++i) {
             render::DrawItem& item = items[i];
-            if (item.stage != 1 || item.z != 0 ||
+            if (item.cutawayTrimmed || item.stage != 1 || item.z != 0 ||
                 item.layer != static_cast<int>(world::SquareLayer::Wall)) {
                 continue;
             }
@@ -110,14 +113,129 @@ public:
         if (roomId < 0) {
             return 0;
         }
+        return CutawayUpperLayersInRooms({roomId}, items);
+    }
+
+    // M14-T10 对齐 PZ SetCutawayRoomsForPlayer：剖切房间是"当前房间 + 前方可见相邻房间"，
+    // 上层（z≥1）按房间集合整体剖掉。
+    static std::size_t CutawayUpperLayersInRooms(const std::vector<int>& roomIds,
+                                                 std::vector<render::DrawItem>& items) {
+        if (roomIds.empty()) {
+            return 0;
+        }
         std::size_t hidden = 0;
         for (render::DrawItem& item : items) {
-            if (item.z >= 1 && item.roomId == roomId && (item.color >> 24) != 0u) {
-                item.color &= 0x00FFFFFFu;
-                ++hidden;
+            if (item.z < 1 || (item.color >> 24) == 0u) {
+                continue;
             }
+            if (std::find(roomIds.begin(), roomIds.end(), item.roomId) == roomIds.end()) {
+                continue;
+            }
+            item.color &= 0x00FFFFFFu;
+            ++hidden;
         }
         return hidden;
+    }
+
+    // M14-T10 对齐 PZ DoCutawayShader：遮挡墙不做整块淡出，而是按遮罩裁掉挡住角色/房间的
+    // 下部，只保留墙顶一段。这里用"裁短目标矩形 + 同步 UV"实现同样的裁切效果：
+    //   keepRatio  正常保留的墙高比例（1=不裁）；
+    //   maxBottomY 墙体底边最多画到该屏幕 Y（通常是玩家头顶），再高的墙不会盖住角色；
+    // 纯函数，便于单测；返回是否发生了裁切/隐藏。
+    static bool TrimWallForCutaway(render::DrawItem& item, const render::SpriteRect& playerRect,
+                                   float keepRatio, float maxBottomY) {
+        const bool isWall = item.layer == static_cast<int>(world::SquareLayer::Wall);
+        if (!isWall || item.rect.h <= 0.0f) {
+            return false;
+        }
+        if (!std::isfinite(keepRatio)) {
+            keepRatio = 1.0f;
+        }
+        keepRatio = std::clamp(keepRatio, 0.0f, 1.0f);
+        const float originalH = item.rect.h;
+        float keepH = originalH * keepRatio;
+        if (playerRect.h > 0.0f && maxBottomY < std::numeric_limits<float>::max()) {
+            keepH = std::min(keepH, std::max(0.0f, maxBottomY - item.rect.y));
+        }
+        const std::uint32_t currentAlpha = item.color >> 24;
+        if (keepH <= 1.0f) {
+            item.color &= 0x00FFFFFFu;
+            item.cutawayTrimmed = true;
+            return currentAlpha != 0u;
+        }
+        if (keepH >= originalH) {
+            return false;
+        }
+        const float vSpan = item.v1 - item.v0;
+        const float keptRatio = keepH / originalH;
+        item.rect.h = keepH;
+        item.v1 = item.v0 + vSpan * keptRatio;
+        item.color = (currentAlpha << 24) | (item.color & 0x00FFFFFFu);
+        item.cutawayTrimmed = true;
+        return true;
+    }
+
+    // M36-T2：按 manifest 的 cutaway.edges 做方向裁切。
+    //   flags 来自 EvaluateWallCut（自身 + E/S 邻格）；
+    //   style=Left/Right 时 W 边裁成竖条，否则 N/W 任一方向都压掉下沿；
+    //   保留区域始终贴住墙顶，保证相邻墙顶对齐。
+    static bool TrimWallCutaway(render::DrawItem& item, render::WallCutFlags flags,
+                                float keepRatio, float maxBottomY,
+                                std::uint8_t style) {
+        if (!flags.Any() || item.rect.w <= 0.0f || item.rect.h <= 0.0f) {
+            return false;
+        }
+        if (!std::isfinite(keepRatio)) {
+            keepRatio = 1.0f;
+        }
+        keepRatio = std::clamp(keepRatio, 0.0f, 1.0f);
+
+        const float originalW = item.rect.w;
+        const float originalH = item.rect.h;
+        float keepW = originalW;
+        float keepH = originalH;
+
+        const bool columnCut =
+            flags.west && (style == static_cast<std::uint8_t>(render::CutawayStyle::Left) ||
+                           style == static_cast<std::uint8_t>(render::CutawayStyle::Right));
+        if (columnCut) {
+            keepW = originalW * keepRatio;
+        }
+        if (flags.north || (flags.west && !columnCut)) {
+            keepH = originalH * keepRatio;
+        }
+        if (keepH > 1.0f && maxBottomY < std::numeric_limits<float>::max()) {
+            keepH = std::min(keepH, std::max(0.0f, maxBottomY - item.rect.y));
+        }
+
+        const std::uint32_t currentAlpha = item.color >> 24;
+        if (keepH <= 1.0f || keepW <= 1.0f) {
+            item.color &= 0x00FFFFFFu;
+            item.cutawayTrimmed = true;
+            return currentAlpha != 0u;
+        }
+        if (keepH >= originalH && keepW >= originalW) {
+            return false;
+        }
+
+        if (keepH < originalH) {
+            const float vSpan = item.v1 - item.v0;
+            item.rect.h = keepH;
+            item.v1 = item.v0 + vSpan * (keepH / originalH);
+        }
+        if (keepW < originalW) {
+            const float uSpan = item.u1 - item.u0;
+            if (style == static_cast<std::uint8_t>(render::CutawayStyle::Right)) {
+                item.rect.x += originalW - keepW;
+                item.u0 += uSpan * (1.0f - keepW / originalW);
+            } else {
+                item.u1 = item.u0 + uSpan * (keepW / originalW);
+            }
+            item.rect.w = keepW;
+        }
+        item.color = (currentAlpha << 24) | (item.color & 0x00FFFFFFu);
+        item.cutawayTrimmed = true;
+        return true;
     }
 
     // M14-T2/T3：动画 v2 片段选帧；帧表由 manifest 的 animations 段提供。

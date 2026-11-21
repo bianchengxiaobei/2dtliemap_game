@@ -33,8 +33,8 @@ DEFAULT_CHAR = CHAR_OF[DEFAULT_FLOOR]
 
 
 # 阻挡移动的精灵（M4 物理/A*）：写对象时附 "solid": true（解析端缺省 false，向后兼容）
-SOLID_SPRITES = {"wall.brick", "object.tree", "object.workbench", "object.campfire",
-                 "object.barricade"}
+SOLID_SPRITES = {"wall.brick", "wall.window_h", "wall.window_v", "object.tree",
+                 "object.workbench", "object.campfire", "object.barricade"}
 
 
 # M19-F2/M24-T2：村庄外的固定小型 POI。坐标与 config/game.json 的 pois.defs 交叉校验；
@@ -250,6 +250,7 @@ def gen_house(mapd, rng, x0, y0, w, h, house_rects, stories=1):
         return False
 
     door_x = x0 + 1 + rng.randrange(max(1, w - 3))
+    window_x = x0 + w // 2  # M36-T4：北墙固定一扇窗，不消耗 RNG
     for ly in range(h):
         for lx in range(w):
             x, y = x0 + lx, y0 + ly
@@ -257,6 +258,8 @@ def gen_house(mapd, rng, x0, y0, w, h, house_rects, stories=1):
             if perimeter:
                 if ly == h - 1 and x == door_x:
                     mapd.add_object(x, y, 0, "wall", "wall.door")
+                elif ly == 0 and x == window_x:
+                    mapd.add_object(x, y, 0, "wall", "wall.window_h")
                 else:
                     mapd.add_object(x, y, 0, "wall", "wall.brick")
             mapd.set_floor(x, y, "w")
@@ -342,12 +345,26 @@ def gen_pois(mapd):
         elif poi["door"] != "south":
             raise SystemExit("未知 POI 门朝向: %s" % poi["door"])
 
+        window_n = None
+        window_w = None
+        if poi["id"] == "clinic":  # M36-T4：诊所北墙/西墙各一扇窗
+            window_n = (x0 + w // 2, y0)
+            if poi["door"] != "west":
+                window_w = (x0, y0 + h // 2)
+
         for ly in range(h):
             for lx in range(w):
                 x, y = x0 + lx, y0 + ly
                 perimeter = lx == 0 or ly == 0 or lx == w - 1 or ly == h - 1
                 if perimeter:
-                    sprite = "wall.door" if (x, y) == (door_x, door_y) else "wall.brick"
+                    if (x, y) == (door_x, door_y):
+                        sprite = "wall.door"
+                    elif window_n is not None and (x, y) == window_n:
+                        sprite = "wall.window_h"
+                    elif window_w is not None and (x, y) == window_w:
+                        sprite = "wall.window_v"
+                    else:
+                        sprite = "wall.brick"
                     mapd.add_object(x, y, 0, "wall", sprite)
                     mapd.blocked.add((x, y))
                 mapd.set_floor(x, y, "w")

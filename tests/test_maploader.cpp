@@ -88,14 +88,15 @@ TEST_CASE("MapLoader：解析真实 chunk 文件（chunk_6_1 含房子）") {
     CHECK(data.rooms[0].id == 3);
     CHECK(data.rooms[0].name == "house_2");
 
-    // 对象：9 面砖墙（房子西/北/东边）+ 1 处草丛
+    // 对象：9 面砖墙（房子西/北/东边，M36-T4 起其中一扇为窗）+ 1 处草丛
     CHECK(data.objects.size() == 10u);
     int wallCount = 0;
     bool foundNW = false;
     for (const auto& object : data.objects) {
         if (object.layer == world::SquareLayer::Wall) {
             ++wallCount;
-            CHECK(object.sprite == "wall.brick");
+            CHECK((object.sprite == "wall.brick" || object.sprite == "wall.window_h" ||
+                   object.sprite == "wall.window_v"));
             if (object.localX == 4 && object.localY == 7) {
                 foundNW = true;
             }
@@ -276,6 +277,7 @@ TEST_CASE("MapLoader：整张 village_demo 全量解析一致性") {
     int filesLoaded = 0;
     int objectTotal = 0;
     int roomOccurrences = 0;
+    int windowTotal = 0;
     for (int cy = 0; cy < 12; ++cy) {
         for (int cx = 0; cx < 12; ++cx) {
             world::ChunkData data;
@@ -287,12 +289,18 @@ TEST_CASE("MapLoader：整张 village_demo 全量解析一致性") {
             }
             objectTotal += static_cast<int>(data.objects.size());
             roomOccurrences += static_cast<int>(data.rooms.size());
+            for (const world::ChunkObjectData& object : data.objects) {
+                if (object.sprite.rfind("wall.window", 0) == 0) {
+                    ++windowTotal;
+                }
+            }
         }
     }
-    // 与生成器输出一致（确定性地图：134 个非默认 chunk / 814 对象（含 z=1 楼上、工作台、篝火、T6 目标物、M19-F2/F6-T1/M24-T2 POI）/ 48 房间出现）
+    // 与生成器输出一致（确定性地图：134 个非默认 chunk / 814 对象（含 z=1 楼上、工作台、篝火、T6 目标物、M19-F2/F6-T1/M24-T2 POI、M36-T4 窗户）/ 48 房间出现）
     CHECK(filesLoaded == 134);
     CHECK(objectTotal == 814);
     CHECK(roomOccurrences == 48);
+    CHECK(windowTotal == 7);  // 6 栋村庄房 + 诊所，窗户替换同数量砖墙
 }
 
 TEST_CASE("MapLoader：错误路径（坏元数据/坏 chunk）") {

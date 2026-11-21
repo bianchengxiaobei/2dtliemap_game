@@ -79,7 +79,7 @@
 运行时只认逻辑名，不认 Tiled tile id 或图集矩形：
 
 - 地面：`tile.floor.grass` / `tile.floor.dirt` / `tile.floor.wood`；
-- 墙：`wall.brick` / `wall.door`；
+- 墙：`wall.brick` / `wall.door` / `wall.window_h` / `wall.window_v`；
 - 玩家建造：`object.wall_h` / `object.wall_v` / `object.door_closed_h` /
   `object.door_closed_v` / `object.door_open_h` / `object.door_open_v`；
 - 角色：`character.placeholder`（玩家，保留旧名以兼容存档/测试）、

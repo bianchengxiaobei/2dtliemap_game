@@ -34,6 +34,10 @@
    "layer": "wall",
    "sprite": "wall.door"
   },
+  "N": {
+   "layer": "wall",
+   "sprite": "wall.window_h"
+  },
   "B": {
    "layer": "furniture",
    "sprite": "object.bed"
@@ -53,7 +57,7 @@
  },
  "objectRows": [
   "..............",
-  ".######D#####.",
+  ".###N##D#####.",
   ".#..........#.",
   ".#.B......B.#.",
   ".#.B......B.#.",

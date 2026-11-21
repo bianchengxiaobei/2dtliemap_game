@@ -55,7 +55,10 @@
 #include "items/RangedWeapon.h"
 #include "net/Command.h"
 #include "net/PlayerState.h"
+#include "render/CutawayLogic.h"
 #include "render/DrawList.h"
+#include "render/BuildingOcclusion.h"
+#include "render/WindowPeek.h"
 #include "render/IsoMath.h"
 #include "save/SaveService.h"
 #include "ui/InventoryUi.h"
@@ -803,10 +806,27 @@ private:
     world::Chunk* FindChunk(int chunkX, int chunkY) const;
     int RoomIdAt(int wx, int wy, int z) const;
     int PlayerRoomId() const;
-    // M14-T10：隐藏当前房间前方（画家序在玩家之后）的边界墙与边界上方楼墙；3×3 邻域覆盖转角
-    void CutawayRoomWalls(int roomId, std::size_t playerIndex);
+    // M14-T10：对齐 PZ SetCutawayRoomsForPlayer —— 收集"当前房间 + 玩家 ±1.5 格内、
+    // 位于朝向前方且视线可达的相邻房间"，作为本帧剖切房间集合。
+    std::vector<int> ComputeCutawayRoomTargets() const;
+    // M36-T4：室外正对窗格时的扒看房间（无则 -1）。
+    int FindWindowPeekRoom(float px, float py, float facingX, float facingY) const;
+    bool RoomLineOfSight(float px, float py, int wx, int wy) const;
+    // M36-T1：按格剖切。输入变化（玩家格/房间/朝向/chunk 计数/结构重建）才重算，
+    // 每格带 750ms 锁；上层按地面格隐藏，边界墙按自身与 S/E 邻格决定裁切。
+    bool CutawayInputsChanged();
+    void RebuildCutawaySquares(const std::vector<int>& rooms);
+    // M36-T3：房间矩形按 z 聚成建筑，筛选屏幕遮挡建筑并做 750ms 迟滞。
+    void RebuildBuildings();
+    void UpdateOccluderBuildings(const std::vector<int>& rooms);
+    const render::BuildingInfo* FindBuilding(int id) const;
+    bool SquareIsCutaway(int gx, int gy, int z) const;
+    // M14-T10：隐藏剖切格的上层；前方边界墙裁切（只留墙顶），而非整块消失。
+    // 返回本帧是否存在启用的剖切格。
+    bool ApplyRoomCutaway(const render::SpriteRect& playerRect, std::size_t playerIndex,
+                          double frameDt);
     // M14-T1：玩家被墙/门挡住时淡出遮挡项（只改本帧 DrawItem 颜色）
-    void ApplyWallOcclusion();
+    void ApplyWallOcclusion(double frameDt);
     void DrawWorld();
     void DrawVehicleHeadlights(render::SpriteBatch& batch);
     void DrawDebugOverlay();
@@ -822,6 +842,8 @@ private:
     std::vector<render::DrawItem> m_items;
     std::string_view m_cachedSprite;
     const std::vector<AssetProvider::Entry>* m_cachedFrames = nullptr;
+    const AssetCutawayMeta* m_cachedCutaway = nullptr;
+    bool m_cachedFoliage = false;
     RenderCollectSystem::ViewRect m_view;  // 本帧可见范围（世界格坐标）
     int m_collectedChunks = 0;  // 本帧进入收集的已加载 chunk 数
     int m_missingChunks = 0;    // 本帧可见但尚未加载的 chunk 数
@@ -1269,6 +1291,46 @@ private:
     float m_wallOcclusionAlpha = 0.35f;
     // M14-T10：进入房间后剖掉本房间上层与前方边界墙（config render.roomCutaway）
     bool m_roomCutaway = true;
+    // M14-T10 对齐 PZ：剖切墙体保留的顶部高度比例（config render.cutawayWallKeepRatio）
+    float m_cutawayWallKeepRatio = 0.45f;
+    // M36-T1：按地面格记录剖切状态（每格 750ms 锁），不再按房间整体开关。
+    render::CutawaySquareMap m_cutawaySquares;
+    std::vector<int> m_cutawayRoomIds;
+    double m_cutawayClock = 0.0;      // 累计秒（锁计时）
+    double m_cutawayLockSeconds = 0.75;  // config render.cutawayLockMs
+    bool m_cutawayPerSquare = true;   // config render.cutawayPerSquare
+    bool m_cutawayDebug = false;      // config render.cutawayDebug（重算日志摘要）
+    bool m_cutawayTrimEdges = true;   // config render.cutawayTrimMode=edges（否则回退 ratio）
+    // M36-T7：剖切更新计时与射线预算统计（每次重算 / 当前帧）
+    mutable std::uint32_t m_cutawayRaysThisFrame = 0;  // const RoomLineOfSight 内统计
+    std::uint32_t m_cutawayRaysLastRebuild = 0;
+    std::uint32_t m_cutawayMaxRaysPerRebuild = 0;
+    double m_cutawayLastUpdateMs = 0.0;
+    // M36-T3：室外建筑遮挡（config render.buildingOcclusion / occluderBuildingsMax / occluderLockMs）
+    bool m_buildingOcclusion = true;
+    std::size_t m_occluderBuildingsMax = 8;
+    double m_occluderLockSeconds = 0.75;
+    std::vector<render::BuildingInfo> m_buildings;
+    bool m_buildingsDirty = true;
+    std::uint64_t m_buildingsChunkEpoch = 0;
+    std::unordered_map<int, render::CutawaySquareState> m_occluderStates;
+    std::vector<int> m_occluders;
+    render::SpriteRect m_cutawayPlayerRect;  // 本帧玩家屏幕矩形（供建筑遮挡筛选）
+    // M36-T4：窗口扒看（config render.windowPeek / windowPeekRange）
+    bool m_windowPeek = true;
+    float m_windowPeekRange = 0.9f;
+    // M36-T5：屋顶归属（config render.roofCull；false 回退按格剖切）
+    bool m_roofCull = true;
+    // M36-T6：植被压平/淡化（config render.foliageFlatten/foliageAlpha/foliageKeepRatio）
+    bool m_foliageFlatten = true;
+    float m_foliageAlpha = 0.4f;
+    float m_foliageKeepRatio = 0.55f;
+    bool m_cutawayDirty = true;
+    std::uint64_t m_cutawayChunkEpoch = 0;
+    int m_cutawayPlayerX = 0;
+    int m_cutawayPlayerY = 0;
+    int m_cutawayRoomId = -1;
+    int m_cutawayFacingDir = -1;
     // M4-T5：相机模式（F4 切换；follow 平滑跟随玩家并夹取到地图边界）
     bool m_followCamera = true;
     bool m_followSnapped = false;  // 下次跟随直接落位（刚切换/生成时不做缓动）

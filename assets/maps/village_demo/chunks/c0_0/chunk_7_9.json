@@ -43,7 +43,7 @@
    "y": 2,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick",
+   "sprite": "wall.window_h",
    "solid": true
   },
   {
@@ -194,7 +194,7 @@
    "y": 8,
    "z": 0,
    "layer": "wall",
-   "sprite": "wall.brick",
+   "sprite": "wall.window_h",
    "solid": true
   },
   {

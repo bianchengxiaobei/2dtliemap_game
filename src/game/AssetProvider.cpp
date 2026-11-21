@@ -100,6 +100,12 @@ bool AssetProvider::Init(const std::string& manifestPath, const std::string& pro
     m_byHash.clear();
     m_animationSets.clear();
     m_animByHash.clear();
+    m_cutaway.clear();
+    m_cutawayByHash.clear();
+    m_windows.clear();
+    m_windowHashes.clear();
+    m_foliage.clear();
+    m_foliageHashes.clear();
 
     std::vector<std::filesystem::path> modPaths;
     modPaths.reserve(modManifestPaths.size());
@@ -123,6 +129,9 @@ bool AssetProvider::Init(const std::string& manifestPath, const std::string& pro
 
     int fallbackCount = 0;
     int animationCount = 0;
+    int cutawayCount = 0;
+    int windowCount = 0;
+    int foliageCount = 0;
     for (const auto& [logicalName, providers] : logicalIt->items()) {
         ResolvedBinding resolved;
         const auto chosenIt = providers.find(m_provider);
@@ -170,6 +179,37 @@ bool AssetProvider::Init(const std::string& manifestPath, const std::string& pro
             }
         }
         m_resolved.emplace(logicalName, std::move(resolved.entries));
+
+        const auto cutawayIt = providers.find("cutaway");
+        if (cutawayIt != providers.end()) {
+            AssetCutawayMeta meta;
+            std::string cutawayError;
+            if (ParseCutawayMeta(*cutawayIt, &meta, &cutawayError)) {
+                m_cutaway.emplace(logicalName, meta);
+                ++cutawayCount;
+            } else {
+                ZL_WARN("assets", "忽略非法 cutaway 元数据: {}（{}）", logicalName,
+                        cutawayError);
+            }
+        }
+        const auto windowIt = providers.find("window");
+        if (windowIt != providers.end()) {
+            if (windowIt->is_boolean() && windowIt->get<bool>()) {
+                m_windows.insert(logicalName);
+                ++windowCount;
+            } else if (!windowIt->is_boolean()) {
+                ZL_WARN("assets", "忽略非法 window 元数据（应为 bool）: {}", logicalName);
+            }
+        }
+        const auto foliageIt = providers.find("foliage");
+        if (foliageIt != providers.end()) {
+            if (foliageIt->is_boolean() && foliageIt->get<bool>()) {
+                m_foliage.insert(logicalName);
+                ++foliageCount;
+            } else if (!foliageIt->is_boolean()) {
+                ZL_WARN("assets", "忽略非法 foliage 元数据（应为 bool）: {}", logicalName);
+            }
+        }
     }
 
     for (const auto& [logicalName, entries] : m_resolved) {
@@ -180,12 +220,21 @@ bool AssetProvider::Init(const std::string& manifestPath, const std::string& pro
                     hash);
         }
     }
+    for (const auto& [logicalName, meta] : m_cutaway) {
+        m_cutawayByHash.emplace(ecs::HashName(logicalName), &meta);
+    }
+    for (const std::string& logicalName : m_windows) {
+        m_windowHashes.insert(ecs::HashName(logicalName));
+    }
+    for (const std::string& logicalName : m_foliage) {
+        m_foliageHashes.insert(ecs::HashName(logicalName));
+    }
 
     ZL_INFO("assets",
             "AssetProvider 就绪：provider={}，逻辑资源 {} 项（own 回退 {} 项，动画集 {} 项，"
-            "mod 清单 {}，新增绑定 {}）",
-            m_provider, m_resolved.size(), fallbackCount, animationCount,
-            mergeStats.manifestsLoaded, mergeStats.bindingsAdded);
+            "可剖 {} 项，窗 {} 项，植被 {} 项，mod 清单 {}，新增绑定 {}）",
+            m_provider, m_resolved.size(), fallbackCount, animationCount, cutawayCount,
+            windowCount, foliageCount, mergeStats.manifestsLoaded, mergeStats.bindingsAdded);
     if (mergeStats.manifestsSkipped > 0 || mergeStats.bindingsSkipped > 0) {
         ZL_WARN("assets", "mod 资源清单跳过：清单 {}，绑定 {}",
                 mergeStats.manifestsSkipped, mergeStats.bindingsSkipped);

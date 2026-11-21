@@ -29,6 +29,19 @@ struct DrawItem {
     // M14-T10：该对象所属地面格（z=0）的房间 ID；室内剖切只用它匹配当前房间，
     // 不参与排序，也不写入存档/复制负载。
     int roomId = -1;
+    // M36-T5：z≥1 世界对象（楼板/墙等）与它们归属的 z=0 地面房间。
+    // 屋顶归属用于只隐藏玩家所在/被遮挡建筑的上层，避免误删相邻建筑/露台。
+    bool isRoof = false;
+    int roofOwnerRoom = -1;
+    // M36-T6：manifest 声明为植被（树/高草）；遮挡玩家时压平/淡化，不回写世界。
+    bool foliage = false;
+    // M14-T10 对齐 PZ：墙体已按 cutaway 遮罩裁切（只保留顶部），
+    // 不再参与整块淡出，渲染收尾阶段据此跳过。
+    bool cutawayTrimmed = false;
+    // M36-T2：manifest 声明的可剖边（1=N，2=W）与风格（0=full/1=top/2=left/3=right）。
+    // 0 表示该资源不可剖（门/栅栏/木结构等），不参与方向裁切。
+    std::uint8_t cutawayEdges = 0;
+    std::uint8_t cutawayStyle = 0;
 };
 
 // 全局画家序（唯一排序入口）：stage → z → diag → gx → layer → tieBreaker

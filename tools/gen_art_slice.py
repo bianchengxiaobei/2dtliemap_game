@@ -206,6 +206,24 @@ def make_water_floor(seed):
     return canvas
 
 
+def make_window(seed):
+    canvas = _wall_shell(seed, 0)
+    d = ImageDraw.Draw(canvas)
+    # 砖墙内嵌木框窗：深色室内 + 玻璃反光 + 中梃/窗台。
+    x0, y0, x1, y1 = 19, 142, 45, 194
+    d.rectangle([x0 - 4, y0 - 4, x1 + 4, y1 + 4], fill=(70, 47, 32, 255),
+                outline=(38, 27, 20, 255), width=2)
+    d.rectangle([x0, y0, x1, y1], fill=(24, 34, 38, 255))
+    d.rectangle([x0 + 2, y0 + 2, x1 - 2, (y0 + y1) // 2 - 1],
+                fill=(36, 58, 64, 255))
+    d.line([(x0 + 4, y0 + 5), (x1 - 8, y0 + 14)], fill=(104, 146, 152, 200), width=2)
+    d.line([((x0 + x1) // 2, y0), ((x0 + x1) // 2, y1)], fill=(70, 47, 32, 255), width=3)
+    d.line([(x0, (y0 + y1) // 2), (x1, (y0 + y1) // 2)], fill=(70, 47, 32, 255), width=3)
+    d.rectangle([x0 - 4, y1 + 2, x1 + 4, y1 + 6], fill=(92, 63, 42, 255),
+                outline=(38, 27, 20, 255))
+    return canvas
+
+
 def make_wall(seed, variant=0, door=False):
     canvas = _wall_shell(seed, variant)
     if not door:
@@ -1323,6 +1341,11 @@ def build_specs():
         canvas = make_wall(2300 + i, i, door=True)
         specs.append((f"wall_door_{i + 1}", canvas, (0, 112, 64, 112),
                       0, 112, 64, 224))
+    window = make_window(2350)
+    specs.append(("wall_window_h_1", window, (0, 112, 64, 112),
+                  0, 112, 64, 224))
+    specs.append(("wall_window_v_1", ImageOps.mirror(window), (0, 112, 64, 112),
+                  0, 112, 64, 224))
 
     wall_wood = make_wood_wall(2400, 0)
     door_closed = make_built_door(2500, open_door=False)

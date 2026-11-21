@@ -119,6 +119,8 @@
 #include "render/Camera.h"
 #include "render/IsoMath.h"
 #include "render/Renderer.h"
+#include "render/FoliageFlatten.h"
+#include "render/RoofCull.h"
 #include "render/SpriteBatch.h"
 #include "save/ChunkDiff.h"
 #include "save/RegionEntityBuckets.h"
@@ -504,6 +506,55 @@ void WorldDemoState::OnEnter() {
         static_cast<float>(config.Get<double>("render.wallOcclusionAlpha", 0.35)), 0.05f, 1.0f);
     // M14-T10：进入房间后切换为剖切视图（隐藏房间上层与前方边界墙）
     m_roomCutaway = config.Get<bool>("render.roomCutaway", true);
+    m_cutawayWallKeepRatio = std::clamp(
+        static_cast<float>(config.Get<double>("render.cutawayWallKeepRatio", 0.45)), 0.05f, 1.0f);
+    // M36-T1：按格剖切的锁时长与调试开关（输入变化才重算，见 ApplyRoomCutaway）
+    m_cutawayLockSeconds = std::clamp(
+        config.Get<double>("render.cutawayLockMs", 750.0) / 1000.0, 0.0, 5.0);
+    m_cutawayPerSquare = config.Get<bool>("render.cutawayPerSquare", true);
+    m_cutawayDebug = config.Get<bool>("render.cutawayDebug", false);
+    m_cutawayTrimEdges =
+        config.Get<std::string>("render.cutawayTrimMode", "edges") != "ratio";
+    m_buildingOcclusion = config.Get<bool>("render.buildingOcclusion", true);
+    m_occluderBuildingsMax = static_cast<std::size_t>(std::clamp(
+        config.Get<int>("render.occluderBuildingsMax", 8), 0, 64));
+    m_occluderLockSeconds = std::clamp(
+        config.Get<double>("render.occluderLockMs", 750.0) / 1000.0, 0.0, 5.0);
+    m_buildings.clear();
+    m_buildingsDirty = true;
+    m_buildingsChunkEpoch = 0;
+    m_occluderStates.clear();
+    m_occluders.clear();
+    m_cutawayPlayerRect = {};
+    m_windowPeek = config.Get<bool>("render.windowPeek", true);
+    m_windowPeekRange = std::clamp(
+        static_cast<float>(config.Get<double>("render.windowPeekRange", 0.9)), 0.1f, 3.0f);
+    m_roofCull = config.Get<bool>("render.roofCull", true);
+    m_foliageFlatten = config.Get<bool>("render.foliageFlatten", true);
+    m_foliageAlpha = std::clamp(
+        static_cast<float>(config.Get<double>("render.foliageAlpha", 0.4)), 0.05f, 1.0f);
+    m_foliageKeepRatio = std::clamp(
+        static_cast<float>(config.Get<double>("render.foliageKeepRatio", 0.55)), 0.05f, 1.0f);
+    ZL_INFO("render",
+            "剖切配置：总开关={} 按格={} 锁={:.0f}ms 裁切={} 建筑遮挡={} 上限={} 窗扒看={} 屋顶归属={} 植被={}",
+            m_roomCutaway ? "on" : "off", m_cutawayPerSquare ? "on" : "off",
+            m_cutawayLockSeconds * 1000.0, m_cutawayTrimEdges ? "edges" : "ratio",
+            m_buildingOcclusion ? "on" : "off", m_occluderBuildingsMax,
+            m_windowPeek ? "on" : "off", m_roofCull ? "on" : "off",
+            m_foliageFlatten ? "on" : "off");
+    m_cutawaySquares.clear();
+    m_cutawayRoomIds.clear();
+    m_cutawayClock = 0.0;
+    m_cutawayDirty = true;
+    m_cutawayChunkEpoch = 0;
+    m_cutawayPlayerX = 0;
+    m_cutawayPlayerY = 0;
+    m_cutawayRoomId = -1;
+    m_cutawayFacingDir = -1;
+    m_cutawayRaysThisFrame = 0;
+    m_cutawayRaysLastRebuild = 0;
+    m_cutawayMaxRaysPerRebuild = 0;
+    m_cutawayLastUpdateMs = 0.0;
     m_showDebugText = config.Get<bool>("render.debugText", true);
 
     // 自动巡航压测（M3-T7；F8 手动切换）
@@ -19808,6 +19859,7 @@ bool WorldDemoState::TryPlaceSelectedBuild(int wx, int wy) {
 }
 
 void WorldDemoState::RebuildChunkCollision(int chunkX, int chunkY) {
+    m_cutawayDirty = true;  // M36-T1：chunk/结构变化后重算剖切格
     world::Chunk* chunk = FindChunk(chunkX, chunkY);
     if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
         return;
@@ -26462,7 +26514,7 @@ void WorldDemoState::OnFrame(double frameDt, double alpha) {
     // M6-T5：手持武器（装备槽 → 玩家旁图标；画在同格角色之上）
     AppendActorPresentation();
     std::sort(m_items.begin(), m_items.end(), render::DrawItemLess);
-    ApplyWallOcclusion();
+    ApplyWallOcclusion(frameDt);
     const auto afterSort = Clock::now();
     DrawWorld();
     const auto afterWorldDraw = Clock::now();
@@ -27569,6 +27621,8 @@ void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int w
     if (m_cachedSprite.empty() || object.sprite != m_cachedSprite) {
         m_cachedSprite = object.sprite;
         m_cachedFrames = m_ctx.assets->Frames(object.sprite);
+        m_cachedCutaway = m_ctx.assets->Cutaway(object.sprite);
+        m_cachedFoliage = m_ctx.assets->IsFoliage(object.sprite);
     }
     const std::vector<AssetProvider::Entry>* frames = m_cachedFrames;
     if (frames == nullptr || frames->empty()) {
@@ -27600,6 +27654,13 @@ void WorldDemoState::PushObject(const world::SquareObject& object, int wx, int w
     item.layer = static_cast<int>(layer);
     item.tieBreaker = 0;  // 世界对象同格同层视为无序（0）
     item.roomId = roomId;
+    item.isRoof = z >= 1;
+    item.roofOwnerRoom = z >= 1 ? roomId : -1;
+    item.foliage = m_cachedFoliage;
+    if (layer == world::SquareLayer::Wall && m_cachedCutaway != nullptr) {
+        item.cutawayEdges = m_cachedCutaway->edges;
+        item.cutawayStyle = static_cast<std::uint8_t>(m_cachedCutaway->style);
+    }
     m_items.push_back(item);
 }
 
@@ -27607,6 +27668,8 @@ void WorldDemoState::CollectWorld() {
     m_items.clear();
     m_cachedSprite = {};
     m_cachedFrames = nullptr;
+    m_cachedCutaway = nullptr;
+    m_cachedFoliage = false;
     m_collectedChunks = 0;
     m_missingChunks = 0;
 
@@ -27739,48 +27802,564 @@ int WorldDemoState::PlayerRoomId() const {
     return nearestRoom;
 }
 
-void WorldDemoState::CutawayRoomWalls(int roomId, std::size_t playerIndex) {
-    if (roomId < 0) {
-        return;
+int WorldDemoState::FindWindowPeekRoom(float px, float py, float facingX,
+                                       float facingY) const {
+    if (!m_windowPeek || m_ctx.assets == nullptr || m_ctx.world == nullptr) {
+        return -1;
     }
-    for (std::size_t i = 0; i < m_items.size(); ++i) {
-        render::DrawItem& item = m_items[i];
-        if (item.stage != 1) {
-            continue;
-        }
-        if (item.z == 0) {
-            // 地面层只切玩家前方（画家序之后）的边界墙。
-            if (i <= playerIndex ||
-                item.layer != static_cast<int>(world::SquareLayer::Wall)) {
+    int bestRoom = -1;
+    float bestDistSq = std::numeric_limits<float>::max();
+    const int reach = static_cast<int>(std::ceil(m_windowPeekRange)) + 1;
+    const int x0 = static_cast<int>(std::floor(px)) - reach;
+    const int x1 = static_cast<int>(std::floor(px)) + reach;
+    const int y0 = static_cast<int>(std::floor(py)) - reach;
+    const int y1 = static_cast<int>(std::floor(py)) + reach;
+    for (int wy = y0; wy <= y1; ++wy) {
+        for (int wx = x0; wx <= x1; ++wx) {
+            const world::ChunkCoord cc = world::ChunkOf(wx, wy);
+            const world::Chunk* chunk = FindChunk(cc.cx, cc.cy);
+            if (chunk == nullptr || chunk->State() != world::ChunkState::Loaded) {
                 continue;
             }
-        } else if (item.z >= 1) {
-            // 楼上没有独立房间 ID：地基格是墙时取四邻接房间，剖掉房间边界上的楼上墙。
-            if (item.layer != static_cast<int>(world::SquareLayer::Wall) ||
-                item.roomId == roomId) {
-                continue;  // 本房间上方楼板，已由 CutawayUpperLayersInRoom 处理
+            const world::SquareLocal local = world::SquareLocalOf(wx, wy);
+            const world::GridSquare& square = chunk->Square(local.lx, local.ly, 0);
+            for (const world::SquareObject& object :
+                 square.Layer(world::SquareLayer::Wall)) {
+                if (!m_ctx.assets->IsWindow(object.sprite)) {
+                    continue;
+                }
+                const int room = render::WindowPeekRoomId(
+                    px, py, facingX, facingY, wx, wy,
+                    [this](int ax, int ay) { return RoomIdAt(ax, ay, 0); },
+                    m_windowPeekRange);
+                if (room < 0) {
+                    continue;
+                }
+                const float dx = static_cast<float>(wx) + 0.5f - px;
+                const float dy = static_cast<float>(wy) + 0.5f - py;
+                const float distSq = dx * dx + dy * dy;
+                if (distSq < bestDistSq) {
+                    bestDistSq = distSq;
+                    bestRoom = room;
+                }
             }
-        } else {
+        }
+    }
+    return bestRoom;
+}
+
+std::vector<int> WorldDemoState::ComputeCutawayRoomTargets() const {
+    std::vector<int> rooms;
+    if (m_ctx.ecs == nullptr || m_ctx.world == nullptr || m_player == entt::null) {
+        return rooms;
+    }
+    const auto* pos = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (pos == nullptr || pos->z != 0 || !std::isfinite(pos->x) || !std::isfinite(pos->y)) {
+        return rooms;
+    }
+    const int currentRoom = PlayerRoomId();
+    float forwardX = 0.0f;
+    float forwardY = 1.0f;
+    if (const auto* facing = m_ctx.ecs->Registry().try_get<ecs::Facing>(m_player);
+        facing != nullptr) {
+        switch (facing->dir) {
+            case ecs::Direction::Down:
+                forwardX = 0.0f;
+                forwardY = 1.0f;
+                break;
+            case ecs::Direction::Left:
+                forwardX = -1.0f;
+                forwardY = 0.0f;
+                break;
+            case ecs::Direction::Right:
+                forwardX = 1.0f;
+                forwardY = 0.0f;
+                break;
+            case ecs::Direction::Up:
+                forwardX = 0.0f;
+                forwardY = -1.0f;
+                break;
+        }
+    }
+    if (currentRoom < 0) {
+        // 对齐 PZ GetPeekedInBuilding：室外正对窗口时，剖开窗后房间。
+        const int peekRoom = FindWindowPeekRoom(pos->x, pos->y, forwardX, forwardY);
+        if (peekRoom >= 0) {
+            rooms.push_back(peekRoom);
+        }
+        return rooms;
+    }
+    rooms.push_back(currentRoom);
+
+    // 对齐 PZ SetCutawayRoomsForPlayer：以角色为中心的 ±1.5 格范围内挑房间；
+    // 非本格必须位于朝向前方（forward.dot(center - player) > 0）且视线可达。
+    const int cx = static_cast<int>(std::floor(pos->x));
+    const int cy = static_cast<int>(std::floor(pos->y));
+    const int gx0 = static_cast<int>(std::floor(pos->x - 1.5f));
+    const int gx1 = static_cast<int>(std::floor(pos->x + 1.5f));
+    const int gy0 = static_cast<int>(std::floor(pos->y - 1.5f));
+    const int gy1 = static_cast<int>(std::floor(pos->y + 1.5f));
+    for (int gy = gy0; gy <= gy1; ++gy) {
+        for (int gx = gx0; gx <= gx1; ++gx) {
+            const int roomId = RoomIdAt(gx, gy, 0);
+            if (roomId < 0 ||
+                std::find(rooms.begin(), rooms.end(), roomId) != rooms.end()) {
+                continue;
+            }
+            if (gx != cx || gy != cy) {
+                const float dx = (static_cast<float>(gx) + 0.5f) - pos->x;
+                const float dy = (static_cast<float>(gy) + 0.5f) - pos->y;
+                if (forwardX * dx + forwardY * dy <= 0.0f) {
+                    continue;
+                }
+                if (!RoomLineOfSight(pos->x, pos->y, gx, gy)) {
+                    continue;  // 近似 PZ getCanSee：被墙挡住的房间不参与剖切
+                }
+            }
+            rooms.push_back(roomId);
+        }
+    }
+    std::sort(rooms.begin(), rooms.end());
+    rooms.erase(std::unique(rooms.begin(), rooms.end()), rooms.end());
+    return rooms;
+}
+
+bool WorldDemoState::RoomLineOfSight(float px, float py, int wx, int wy) const {
+    if (m_ctx.world == nullptr) {
+        return false;
+    }
+    ++m_cutawayRaysThisFrame;
+    const float tx = static_cast<float>(wx) + 0.5f;
+    const float ty = static_cast<float>(wy) + 0.5f;
+    const float dx = tx - px;
+    const float dy = ty - py;
+    const float dist = std::sqrt(dx * dx + dy * dy);
+    if (dist <= 0.001f) {
+        return true;
+    }
+    const int cx = static_cast<int>(std::floor(px));
+    const int cy = static_cast<int>(std::floor(py));
+    const int steps = std::max(2, static_cast<int>(std::ceil(dist / 0.5f)));
+    for (int i = 1; i < steps; ++i) {  // 首尾两格不参与（角色可能贴墙、目标格是房间地面）
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        const int sx = static_cast<int>(std::floor(px + dx * t));
+        const int sy = static_cast<int>(std::floor(py + dy * t));
+        if ((sx == cx && sy == cy) || (sx == wx && sy == wy)) {
             continue;
         }
-        const int wx = item.gx;
-        const int wy = item.diag - item.gx;
-        // 用 3×3 邻域而不是四邻接：房屋外墙的转角格只与房间对角相邻，
-        // 站在房间角落时仍会挡住角色，必须一起剖掉。
-        bool touchesRoom = false;
-        for (int dy = -1; dy <= 1 && !touchesRoom; ++dy) {
-            for (int dx = -1; dx <= 1 && !touchesRoom; ++dx) {
-                touchesRoom = RoomIdAt(wx + dx, wy + dy, 0) == roomId;
+        if (IsSolidSquare(sx, sy)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool WorldDemoState::CutawayInputsChanged() {
+    if (m_ctx.ecs == nullptr || m_player == entt::null) {
+        return false;
+    }
+    const auto* pos = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (pos == nullptr || pos->z != 0 || !std::isfinite(pos->x) || !std::isfinite(pos->y)) {
+        return false;
+    }
+    const int gx = static_cast<int>(std::floor(pos->x));
+    const int gy = static_cast<int>(std::floor(pos->y));
+    const int roomId = PlayerRoomId();
+    int facingDir = -1;
+    if (const auto* facing = m_ctx.ecs->Registry().try_get<ecs::Facing>(m_player);
+        facing != nullptr) {
+        facingDir = static_cast<int>(facing->dir);
+    }
+    std::uint64_t chunkEpoch = m_cutawayChunkEpoch;
+    if (m_ctx.chunkManager != nullptr) {
+        const auto& stats = m_ctx.chunkManager->GetStats();
+        chunkEpoch = stats.totalLoaded + stats.totalUnloaded;
+    }
+    if (gx == m_cutawayPlayerX && gy == m_cutawayPlayerY && roomId == m_cutawayRoomId &&
+        facingDir == m_cutawayFacingDir && chunkEpoch == m_cutawayChunkEpoch) {
+        return false;
+    }
+    m_cutawayPlayerX = gx;
+    m_cutawayPlayerY = gy;
+    m_cutawayRoomId = roomId;
+    m_cutawayFacingDir = facingDir;
+    m_cutawayChunkEpoch = chunkEpoch;
+    return true;
+}
+
+void WorldDemoState::RebuildBuildings() {
+    m_buildings.clear();
+    m_buildingsDirty = false;
+    m_buildingsChunkEpoch = m_cutawayChunkEpoch;
+
+    std::unordered_map<int, render::RoomBounds> byRoom;
+    for (const render::DrawItem& item : m_items) {
+        if (item.z != 0 || item.roomId < 0) {
+            continue;
+        }
+        const int gx = item.gx;
+        const int gy = item.diag - item.gx;
+        auto [it, inserted] = byRoom.try_emplace(item.roomId);
+        render::RoomBounds& room = it->second;
+        if (inserted) {
+            room.roomId = item.roomId;
+            room.minX = room.maxX = gx;
+            room.minY = room.maxY = gy;
+            room.z = 0;
+        } else {
+            room.minX = std::min(room.minX, gx);
+            room.maxX = std::max(room.maxX, gx);
+            room.minY = std::min(room.minY, gy);
+            room.maxY = std::max(room.maxY, gy);
+        }
+    }
+
+    std::vector<render::RoomBounds> rooms;
+    rooms.reserve(byRoom.size());
+    for (const auto& [id, bounds] : byRoom) {
+        (void)id;
+        rooms.push_back(bounds);
+    }
+    m_buildings = render::GroupRoomsIntoBuildings(std::move(rooms));
+}
+
+const render::BuildingInfo* WorldDemoState::FindBuilding(int id) const {
+    for (const render::BuildingInfo& building : m_buildings) {
+        if (building.id == id) {
+            return &building;
+        }
+    }
+    return nullptr;
+}
+
+void WorldDemoState::UpdateOccluderBuildings(const std::vector<int>& rooms) {
+    m_occluders.clear();
+    std::vector<int> chosen;
+    if (m_buildingOcclusion && !m_buildings.empty() && m_ctx.ecs != nullptr &&
+        m_player != entt::null) {
+        const auto* pos = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+        if (pos != nullptr) {
+            render::SelectOccluderBuildings(
+                m_cutawayPlayerRect, static_cast<int>(std::floor(pos->x)),
+                static_cast<int>(std::floor(pos->y)), m_cutawayRoomId, m_buildings,
+                m_occluderBuildingsMax, &chosen);
+        }
+    }
+    (void)rooms;
+
+    for (auto& [id, state] : m_occluderStates) {
+        (void)id;
+        state.target = false;
+    }
+    for (const int id : chosen) {
+        render::UpdateCutawaySquareState(m_occluderStates[id], true, m_cutawayClock,
+                                         m_occluderLockSeconds);
+    }
+    for (auto it = m_occluderStates.begin(); it != m_occluderStates.end();) {
+        render::UpdateCutawaySquareState(it->second, it->second.target, m_cutawayClock,
+                                         m_occluderLockSeconds);
+        if (!it->second.enabled && m_cutawayClock >= it->second.lockUntil) {
+            it = m_occluderStates.erase(it);
+        } else {
+            if (it->second.enabled) {
+                m_occluders.push_back(it->first);
+            }
+            ++it;
+        }
+    }
+    std::sort(m_occluders.begin(), m_occluders.end());
+}
+
+void WorldDemoState::RebuildCutawaySquares(const std::vector<int>& rooms) {
+    const auto rebuildStart = std::chrono::steady_clock::now();
+    if (m_ctx.ecs == nullptr || m_ctx.world == nullptr || m_player == entt::null) {
+        return;
+    }
+    const auto* pos = m_ctx.ecs->Registry().try_get<ecs::Position>(m_player);
+    if (pos == nullptr || pos->z != 0 || !std::isfinite(pos->x) || !std::isfinite(pos->y)) {
+        return;
+    }
+    const auto profileStart = std::chrono::steady_clock::now();
+    if (m_buildingOcclusion && (m_buildingsDirty || m_buildingsChunkEpoch != m_cutawayChunkEpoch)) {
+        RebuildBuildings();
+    }
+    const auto profileBuildings = std::chrono::steady_clock::now();
+    UpdateOccluderBuildings(rooms);
+    const auto profileOccluders = std::chrono::steady_clock::now();
+    if (rooms.empty() && m_occluders.empty() && m_cutawaySquares.empty()) {
+        return;  // 室外且无建筑遮挡：省掉候选扫描
+    }
+
+    // 候选格来自本帧可见 DrawItem：z=0 地面（含空房间地板）与墙/门/家具。
+    struct Candidate {
+        int x = 0;
+        int y = 0;
+        bool hasWall = false;
+    };
+    // 只扫描玩家附近与当前房间/遮挡建筑包围盒内的格，避免每帧遍历整个可见 stack。
+    struct Rect {
+        int minX = 0;
+        int minY = 0;
+        int maxX = 0;
+        int maxY = 0;
+    };
+    std::vector<Rect> candidateRects;
+    const int playerGridX = static_cast<int>(std::floor(pos->x));
+    const int playerGridY = static_cast<int>(std::floor(pos->y));
+    candidateRects.push_back({playerGridX - 4, playerGridY - 4, playerGridX + 4,
+                              playerGridY + 4});
+    const auto addBuildingRect = [this, &candidateRects](const render::BuildingInfo& building) {
+        for (const Rect& existing : candidateRects) {
+            if (existing.minX <= building.minX - 2 && existing.maxX >= building.maxX + 2 &&
+                existing.minY <= building.minY - 2 && existing.maxY >= building.maxY + 2) {
+                return;  // 已被玩家附近矩形覆盖
             }
         }
-        if (!touchesRoom) {
+        candidateRects.push_back(
+            {building.minX - 2, building.minY - 2, building.maxX + 2, building.maxY + 2});
+    };
+    for (const int roomId : rooms) {
+        if (const render::BuildingInfo* building =
+                render::FindBuildingContainingRoom(m_buildings, roomId)) {
+            addBuildingRect(*building);
+        }
+    }
+    for (const int occluderId : m_occluders) {
+        if (const render::BuildingInfo* building = FindBuilding(occluderId)) {
+            addBuildingRect(*building);
+        }
+    }
+    const auto inCandidateRects = [&candidateRects](int x, int y) {
+        for (const Rect& rect : candidateRects) {
+            if (x >= rect.minX && x <= rect.maxX && y >= rect.minY && y <= rect.maxY) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::vector<Candidate> candidates;
+    candidates.reserve(256);
+    const auto addCandidate = [&candidates](int x, int y, bool hasWall) {
+        candidates.push_back({x, y, hasWall});
+    };
+    for (const render::DrawItem& item : m_items) {
+        if (item.z != 0) {
+            continue;  // 上层按地面格归属
+        }
+        // 只需地面（stage 0）与墙：实体/家具不影响剖切资格。
+        const bool isFloor = item.stage == 0;
+        const bool isWall = item.layer == static_cast<int>(world::SquareLayer::Wall);
+        if (!isFloor && !isWall) {
+            continue;
+        }
+        const int gx = item.gx;
+        const int gy = item.diag - item.gx;
+        if (!inCandidateRects(gx, gy)) {
+            continue;
+        }
+        addCandidate(gx, gy, isWall);
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        if (a.x != b.x) {
+            return a.x < b.x;
+        }
+        if (a.y != b.y) {
+            return a.y < b.y;
+        }
+        return a.hasWall && !b.hasWall;
+    });
+    std::size_t uniqueCount = 0;
+    for (const Candidate& candidate : candidates) {
+        if (uniqueCount > 0 && candidates[uniqueCount - 1].x == candidate.x &&
+            candidates[uniqueCount - 1].y == candidate.y) {
+            candidates[uniqueCount - 1].hasWall =
+                candidates[uniqueCount - 1].hasWall || candidate.hasWall;
+        } else {
+            candidates[uniqueCount++] = candidate;
+        }
+    }
+    candidates.resize(uniqueCount);
+    const auto profileScan = std::chrono::steady_clock::now();
+    static constexpr std::array<std::array<int, 2>, 8> kNeighborOffsets{{
+        {{0, -1}}, {{1, -1}}, {{1, 0}}, {{1, 1}},
+        {{0, 1}},  {{-1, 1}}, {{-1, 0}}, {{-1, -1}},
+    }};
+    render::CutawayRules rules;
+    if (!m_cutawayPerSquare) {
+        rules.maxWallDistance = 0.0f;  // 回退：不做距离/视线细化
+    }
+    const double lockSeconds = m_cutawayPerSquare ? m_cutawayLockSeconds : 0.0;
+    std::size_t targetCount = 0;
+    std::unordered_set<render::CutawaySquareKey, render::CutawaySquareKeyHash> visited;
+    visited.reserve(candidates.size() + 16);
+    for (const Candidate& c : candidates) {
+        render::CutawayProbe probe;
+        probe.key = {c.x, c.y, 0};
+        probe.roomId = RoomIdAt(c.x, c.y, 0);
+        probe.hasWall = c.hasWall;
+        const float dx = (static_cast<float>(c.x) + 0.5f) - pos->x;
+        const float dy = (static_cast<float>(c.y) + 0.5f) - pos->y;
+        probe.distToPlayer = std::sqrt(dx * dx + dy * dy);
+        const bool roomInSet = render::RoomInSet(probe.roomId, rooms);
+        // 房间内直接参与；边界墙需要视线可达（近似 PZ getCanSee）。
+        // cutawayPerSquare=false 时只看邻接关系，不做视线/距离细化。
+        probe.lineOfSight = roomInSet || !c.hasWall || !m_cutawayPerSquare ||
+                            RoomLineOfSight(pos->x, pos->y, c.x, c.y);
+        if (!roomInSet && c.hasWall) {
+            for (std::size_t i = 0; i < kNeighborOffsets.size(); ++i) {
+                probe.neighborRooms[i] = RoomIdAt(c.x + kNeighborOffsets[i][0],
+                                                  c.y + kNeighborOffsets[i][1], 0);
+            }
+        }
+        bool target = render::IsCutawaySquareTarget(probe, rooms, rules);
+        if (!target && !m_occluders.empty()) {
+            for (const int id : m_occluders) {
+                const render::BuildingInfo* building = FindBuilding(id);
+                if (building != nullptr &&
+                    render::ShouldCutBuildingSquare(*building, c.x, c.y, pos->x, pos->y, 6.0f)) {
+                    target = true;
+                    break;
+                }
+            }
+        }
+        if (target) {
+            ++targetCount;
+        }
+        auto squareIt = m_cutawaySquares.find(probe.key);
+        if (!target && squareIt == m_cutawaySquares.end()) {
+            continue;  // 不把每个可见格都插入稀疏表，避免重算时大量分配
+        }
+        render::CutawaySquareState& state =
+            squareIt != m_cutawaySquares.end() ? squareIt->second : m_cutawaySquares[probe.key];
+        render::UpdateCutawaySquareState(state, target, m_cutawayClock, lockSeconds);
+        visited.insert(probe.key);
+    }
+    const auto profileProbes = std::chrono::steady_clock::now();
+    m_cutawayLastUpdateMs =
+        std::chrono::duration<double, std::milli>(profileProbes - rebuildStart).count();
+    // 已离开可见范围的格：目标置 false（锁内保持旧值，避免出屏瞬间闪烁）。
+    for (auto& entry : m_cutawaySquares) {
+        if (visited.count(entry.first) != 0) {
+            continue;
+        }
+        render::UpdateCutawaySquareState(entry.second, false, m_cutawayClock, lockSeconds);
+    }
+    if (m_cutawayDebug) {
+        ZL_INFO("render",
+                "剖切格重算：候选 {} / 目标 {} / 房间 {} / 遮挡建筑 {} / 锁 {:.0f}ms / 射线 {} / 耗时 {:.3f}ms",
+                candidates.size(), targetCount, rooms.size(), m_occluders.size(),
+                lockSeconds * 1000.0, m_cutawayRaysLastRebuild, m_cutawayLastUpdateMs);
+        ZL_INFO("render", "剖切重算分段：建筑 {:.3f}ms / 遮挡 {:.3f}ms / 扫描 {:.3f}ms / 探测 {:.3f}ms",
+                std::chrono::duration<double, std::milli>(profileBuildings - profileStart).count(),
+                std::chrono::duration<double, std::milli>(profileOccluders - profileBuildings).count(),
+                std::chrono::duration<double, std::milli>(profileScan - profileOccluders).count(),
+                std::chrono::duration<double, std::milli>(profileProbes - profileScan).count());
+    }
+    if (m_cutawayRaysLastRebuild > 16u) {
+        ZL_WARN("render", "剖切重算射线超预算：{} > 16", m_cutawayRaysLastRebuild);
+    }
+}
+
+bool WorldDemoState::SquareIsCutaway(int gx, int gy, int z) const {
+    return render::SquareEnabled(m_cutawaySquares, gx, gy, z);
+}
+
+bool WorldDemoState::ApplyRoomCutaway(const render::SpriteRect& playerRect,
+                                      std::size_t playerIndex, double frameDt) {
+    m_cutawayRaysThisFrame = 0;
+    m_cutawayClock += std::max(0.0, frameDt);
+    m_cutawayPlayerRect = playerRect;
+    bool anyEnabled = std::any_of(m_cutawaySquares.begin(), m_cutawaySquares.end(),
+                                  [](const auto& entry) { return entry.second.enabled; });
+    if (CutawayInputsChanged() || m_cutawayDirty) {
+        m_cutawayRoomIds = ComputeCutawayRoomTargets();
+        m_cutawayRaysLastRebuild = m_cutawayRaysThisFrame;
+        m_cutawayMaxRaysPerRebuild =
+            std::max(m_cutawayMaxRaysPerRebuild, m_cutawayRaysLastRebuild);
+        // 室外也可能有建筑遮挡（T3），因此不能仅凭房间集合为空跳过。
+        if (!m_cutawayRoomIds.empty() || anyEnabled || m_buildingOcclusion) {
+            RebuildCutawaySquares(m_cutawayRoomIds);
+            render::PruneCutawaySquares(m_cutawaySquares, m_cutawayClock);
+            anyEnabled = std::any_of(m_cutawaySquares.begin(), m_cutawaySquares.end(),
+                                     [](const auto& entry) { return entry.second.enabled; });
+        } else {
+            m_cutawaySquares.clear();
+        }
+        m_cutawayDirty = false;
+    }
+    if (m_cutawaySquares.empty()) {
+        return false;
+    }
+    if (!anyEnabled && m_cutawayRoomIds.empty() && m_occluders.empty()) {
+        return false;
+    }
+
+    // 1) M36-T5 屋顶归属：只隐藏玩家所在/被遮挡建筑的上层；
+    //    空悬上层（露台/无地面房间）仅在其下方有剖切格时隐藏。
+    int playerBuildingId = -1;
+    if (m_roofCull && !m_buildings.empty()) {
+        const render::BuildingInfo* playerBuilding =
+            render::FindBuildingContainingRoom(m_buildings, m_cutawayRoomId);
+        if (playerBuilding != nullptr) {
+            playerBuildingId = playerBuilding->id;
+        }
+    }
+    for (render::DrawItem& item : m_items) {
+        if (item.z < 1 || (item.color >> 24) == 0u) {
+            continue;
+        }
+        const bool hide = render::ShouldHideUpper(item, m_cutawayRoomIds, m_buildings,
+                                                  m_occluders, playerBuildingId,
+                                                  m_cutawaySquares, m_roofCull);
+        if (!hide) {
             continue;
         }
         item.color &= 0x00FFFFFFu;
     }
+
+    // 2) 对齐 PZ DoCutawayShaderSprite：只裁 manifest 声明可剖的墙；
+    //    N 面看自身+E 邻格，W 面看自身+S 邻格（见 EvaluateWallCut）。
+    for (std::size_t i = playerIndex + 1; i < m_items.size(); ++i) {
+        render::DrawItem& item = m_items[i];
+        if (item.stage != 1 || (item.color >> 24) == 0u || item.z != 0 ||
+            item.layer != static_cast<int>(world::SquareLayer::Wall)) {
+            continue;
+        }
+        const int gx = item.gx;
+        const int gy = item.diag - item.gx;
+        float maxBottomY = std::numeric_limits<float>::max();
+        const bool overlapsPlayer = item.rect.x < playerRect.x + playerRect.w &&
+                                    item.rect.x + item.rect.w > playerRect.x &&
+                                    item.rect.y < playerRect.y + playerRect.h &&
+                                    item.rect.y + item.rect.h > playerRect.y;
+        if (overlapsPlayer) {
+            maxBottomY = playerRect.y;
+        }
+        if (m_cutawayTrimEdges) {
+            if (item.cutawayEdges == 0u) {
+                continue;  // 门/栅栏/木结构等未声明 cutaway
+            }
+            const render::WallCutFlags flags =
+                render::EvaluateWallCut(m_cutawaySquares, gx, gy, 0, item.cutawayEdges);
+            if (!flags.Any()) {
+                continue;
+            }
+            RenderCollectSystem::TrimWallCutaway(item, flags, m_cutawayWallKeepRatio,
+                                                 maxBottomY, item.cutawayStyle);
+            continue;
+        }
+        // 回退：M14-T10 的等比高度裁切（所有墙参与）。
+        if (!render::WallSquareCut(m_cutawaySquares, gx, gy, 0)) {
+            continue;
+        }
+        RenderCollectSystem::TrimWallForCutaway(item, playerRect, m_cutawayWallKeepRatio,
+                                                maxBottomY);
+    }
+    return true;
 }
 
-void WorldDemoState::ApplyWallOcclusion() {
+void WorldDemoState::ApplyWallOcclusion(double frameDt) {
     if (m_ctx.ecs == nullptr || m_player == entt::null) {
         return;
     }
@@ -27803,19 +28382,17 @@ void WorldDemoState::ApplyWallOcclusion() {
     if (playerItem == nullptr) {
         return;
     }
-    if (m_roomCutaway) {
-        const int roomId = PlayerRoomId();
-        if (roomId >= 0) {
-            // 房间内：先剖掉本房间上方楼层，再移除玩家前方/相交的边界墙（含楼上边界墙）。
-            RenderCollectSystem::CutawayUpperLayersInRoom(roomId, m_items);
-            CutawayRoomWalls(roomId, playerIndex);
-            RenderCollectSystem::FadeOccludingWalls(playerItem->rect, playerIndex, 0, m_items);
-            return;
-        }
-    }
     const std::uint32_t alpha = static_cast<std::uint32_t>(
         std::clamp(m_wallOcclusionAlpha, 0.05f, 1.0f) * 255.0f + 0.5f);
+    if (m_roomCutaway) {
+        // 房间内：多房间剖切 + 遮罩裁墙；剩余非房间遮挡墙仍按配置 alpha 淡出（不再整块消失）。
+        ApplyRoomCutaway(playerItem->rect, playerIndex, frameDt);
+    }
     RenderCollectSystem::FadeOccludingWalls(playerItem->rect, playerIndex, alpha, m_items);
+    if (m_foliageFlatten) {
+        render::FlattenOccludingFoliage(playerItem->rect, playerIndex, m_foliageAlpha,
+                                        m_foliageKeepRatio, m_items);
+    }
 }
 
 void WorldDemoState::DrawWorld() {
@@ -29287,7 +29864,7 @@ void WorldDemoState::DrawDebugText() {
         if (playerPos != nullptr) {
             const auto* playerHealth = registry.try_get<ecs::Health>(m_player);
             bgfx::dbgTextPrintf(
-                0, 7, 0x0f, "player: (%.1f, %.1f) dir=%u frame=%u intent=(%.1f, %.1f) hp=%.0f",
+0, 7, 0x0f, "player: (%.1f, %.1f) dir=%u frame=%u intent=(%.1f, %.1f) hp=%.0f",
                 playerPos->x, playerPos->y,
                 playerFacing != nullptr ? static_cast<unsigned>(playerFacing->dir) : 0u,
                 playerAnim != nullptr ? static_cast<unsigned>(playerAnim->frame) : 0u,

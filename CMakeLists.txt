@@ -313,6 +313,7 @@ add_executable(ZomboidLikeTests
     tests/test_chunkmanager.cpp
     tests/test_ecs.cpp
     tests/test_spatialindex.cpp
+    tests/test_cutaway.cpp
     tests/test_physics.cpp
     tests/test_player_control.cpp
     tests/test_needs.cpp
