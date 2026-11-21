@@ -9,17 +9,25 @@
 #include "ai/components/AiComponents.h"
 #include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
+#include "characters/components/CombatComponents.h"
+#include "characters/systems/StealthRules.h"
 #include "core/Config.h"
 #include "ecs/EcsWorld.h"
+#include "ecs/SpatialIndex.h"
 #include "ecs/components/CommonComponents.h"
 #include "game/BuildingRules.h"
+#include "game/Companion.h"
 #include "game/FireSystem.h"
 #include "game/HomesteadComponents.h"
 #include "game/SettlementNpc.h"
+#include "game/StealthConfig.h"
 #include "game/StructureComponents.h"
+#include "game/Throwing.h"
 #include "game/TrapSystem.h"
 #include "game/Traps.h"
 #include "game/WorldQueries.h"
+#include "items/ItemDef.h"
+#include "items/ItemRegistry.h"
 #include "save/ComponentRegistry.h"
 #include "save/EntityStore.h"
 #include "world/Chunk.h"
@@ -461,4 +469,310 @@ TEST_CASE("M34-F3-T3 燃油陷阱强制点燃无可燃物格") {
     CHECK(source->burnRemaining == doctest::Approx(112.5f));
     CHECK(source->heatRadius == doctest::Approx(1.5f));
     CHECK(fire.HasActiveFireNear(ecs, 30.5f, 30.5f, 0));
+}
+
+TEST_CASE("M34-F3-T7 陷阱成本、效果与平衡") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    core::Config config;
+    REQUIRE(config.LoadFile(root / "config" / "game.json"));
+    const std::vector<game::BuildableDef> buildables =
+        game::LoadBuildableDefs(config);
+    const auto findBuildable = [&](const std::string& id)
+        -> const game::BuildableDef* {
+        const auto it = std::find_if(
+            buildables.begin(), buildables.end(),
+            [&](const game::BuildableDef& def) { return def.id == id; });
+        return it == buildables.end() ? nullptr : &*it;
+    };
+
+    game::TrapDefsConfig traps;
+    std::string error;
+    REQUIRE_MESSAGE(
+        game::LoadTrapDefsConfig(config, buildables, &traps, &error), error);
+    const game::TrapDef* bear = traps.Find("bear_trap");
+    const game::TrapDef* tripwire = traps.Find("tripwire_alarm");
+    const game::TrapDef* fuel = traps.Find("fuel_trap");
+    REQUIRE(bear != nullptr);
+    REQUIRE(tripwire != nullptr);
+    REQUIRE(fuel != nullptr);
+    REQUIRE(fuel->fire.has_value());
+
+    const game::BuildableDef* bearBuild = findBuildable("bear_trap");
+    const game::BuildableDef* tripwireBuild = findBuildable("tripwire_alarm");
+    const game::BuildableDef* fuelBuild = findBuildable("fuel_trap");
+    REQUIRE(bearBuild != nullptr);
+    REQUIRE(tripwireBuild != nullptr);
+    REQUIRE(fuelBuild != nullptr);
+
+    CHECK(bearBuild->woodCost == 3);
+    CHECK(tripwireBuild->woodCost == 1);
+    CHECK(fuelBuild->woodCost == 4);
+
+    CHECK(bear->damage == doctest::Approx(55.0f));
+    CHECK(bear->staggerSeconds == doctest::Approx(2.0f));
+    CHECK(bear->noiseRadius == doctest::Approx(0.0f));
+    CHECK(bear->radius == doctest::Approx(1.0f));
+    CHECK(bear->cooldownSeconds == doctest::Approx(2.0f));
+    CHECK(bear->uses == 4);
+    CHECK(bear->armSeconds == doctest::Approx(1.0f));
+    CHECK(bear->triggerMask ==
+          (game::kTrapTriggerZombie | game::kTrapTriggerAnimal));
+    CHECK_FALSE(bear->fire.has_value());
+
+    CHECK(tripwire->damage == doctest::Approx(0.0f));
+    CHECK(tripwire->staggerSeconds == doctest::Approx(0.0f));
+    CHECK(tripwire->noiseRadius == doctest::Approx(18.0f));
+    CHECK(tripwire->cooldownSeconds == doctest::Approx(1.0f));
+    CHECK(tripwire->uses == 8);
+    CHECK(tripwire->armSeconds == doctest::Approx(1.0f));
+    CHECK(tripwire->triggerMask ==
+          (game::kTrapTriggerZombie | game::kTrapTriggerAnimal));
+    CHECK_FALSE(tripwire->fire.has_value());
+
+    CHECK(fuel->damage == doctest::Approx(0.0f));
+    CHECK(fuel->staggerSeconds == doctest::Approx(0.0f));
+    CHECK(fuel->noiseRadius == doctest::Approx(0.0f));
+    CHECK(fuel->cooldownSeconds == doctest::Approx(0.0f));
+    CHECK(fuel->uses == 1);
+    CHECK(fuel->armSeconds == doctest::Approx(1.0f));
+    CHECK(fuel->triggerMask ==
+          (game::kTrapTriggerZombie | game::kTrapTriggerAnimal));
+    CHECK(fuel->fire->radius == doctest::Approx(1.5f));
+    CHECK(fuel->fire->minutes == doctest::Approx(45.0f));
+    CHECK(game::TrapFireDurationSeconds(fuel->fire->minutes, 0.4f) ==
+          doctest::Approx(112.5f));
+    CHECK(game::TrapFireAreaCells(10.5f, 8.5f, fuel->fire->radius).size() ==
+          9u);
+
+    items::ItemRegistry items;
+    REQUIRE_MESSAGE(items.LoadFile((root / "assets" / "items.json").string(),
+                                   &error),
+                    error);
+    const items::ItemDef* axe = items.Find("axe");
+    REQUIRE(axe != nullptr);
+    REQUIRE(axe->combat.damage.has_value());
+    REQUIRE(axe->combat.cooldownSeconds.has_value());
+    const float axeDamage = *axe->combat.damage;
+    const float axeDps =
+        axeDamage / std::max(0.01f, *axe->combat.cooldownSeconds);
+    const float bearDps =
+        bear->damage / std::max(0.01f, bear->cooldownSeconds);
+
+    CHECK(bear->damage < axeDamage);
+    CHECK(bearDps < axeDps * 0.5f);
+    CHECK(bear->uses <= 4);
+    CHECK(tripwire->damage == doctest::Approx(0.0f));
+    CHECK(fuelBuild->woodCost > bearBuild->woodCost);
+    CHECK(fuelBuild->woodCost > tripwireBuild->woodCost);
+    CHECK(fuel->uses == 1);
+    CHECK(fuel->fire->radius >= 1.0f);
+    CHECK(fuel->fire->minutes >= 30.0f);
+}
+
+TEST_CASE("M34-F4-T1 潜行、投掷与陷阱联动规则") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    core::Config config;
+    REQUIRE(config.LoadFile(root / "config" / "game.json"));
+
+    const characters::StealthRuleConfig stealth =
+        game::LoadStealthRuleConfig(config);
+    const float standingStep =
+        characters::StealthFootstepRadius(2.5f, false, stealth);
+    const float crouchedStep =
+        characters::StealthFootstepRadius(2.5f, true, stealth);
+    CHECK(standingStep == doctest::Approx(2.5f));
+    CHECK(crouchedStep < standingStep);
+    CHECK(crouchedStep == doctest::Approx(1.125f));
+    CHECK(characters::StealthExitRequired(
+        true, characters::StealthExitReason::Throw));
+    CHECK(characters::StealthBackstabDamageScale(true, 1.6f) ==
+          doctest::Approx(1.6f));
+
+    const std::vector<game::BuildableDef> buildables =
+        game::LoadBuildableDefs(config);
+    game::TrapDefsConfig traps;
+    std::string error;
+    REQUIRE_MESSAGE(
+        game::LoadTrapDefsConfig(config, buildables, &traps, &error), error);
+    const game::TrapDef* bear = traps.Find("bear_trap");
+    const game::TrapDef* tripwire = traps.Find("tripwire_alarm");
+    const game::TrapDef* fuel = traps.Find("fuel_trap");
+    REQUIRE(bear != nullptr);
+    REQUIRE(tripwire != nullptr);
+    REQUIRE(fuel != nullptr);
+    REQUIRE(fuel->fire.has_value());
+    CHECK(tripwire->damage == doctest::Approx(0.0f));
+    CHECK(tripwire->noiseRadius > 0.0f);
+    CHECK(game::TrapFireDurationSeconds(fuel->fire->minutes, 0.4f) ==
+          doctest::Approx(112.5f));
+    CHECK(game::TrapFireAreaCells(10.5f, 8.5f, fuel->fire->radius).size() ==
+          9u);
+
+    ecs::EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto addHealthEntity = [&](float x, float y) {
+        const ecs::Entity entity = world.Create();
+        registry.emplace<ecs::Position>(entity, ecs::Position{x, y, 0});
+        registry.emplace<ecs::Health>(entity, ecs::Health{100.0f, 100.0f});
+        return entity;
+    };
+    const ecs::Entity player = addHealthEntity(20.5f, 20.5f);
+    registry.emplace<ecs::PlayerTag>(player);
+    const ecs::Entity companion = addHealthEntity(20.5f, 20.5f);
+    registry.emplace<game::Companion>(
+        companion, game::Companion{"companion", 42, "home"});
+    const ecs::Entity zombie = addHealthEntity(20.6f, 20.5f);
+    registry.emplace<ecs::ZombieVariant>(zombie, ecs::ZombieVariant{});
+    const ecs::Entity animal = addHealthEntity(21.2f, 20.5f);
+    registry.emplace<ecs::Animal>(
+        animal, ecs::Animal{"deer", ecs::AnimalKind::Passive});
+    const ecs::Entity projectile = world.Create();
+    registry.emplace<ecs::Position>(projectile, ecs::Position{20.5f, 20.5f, 0});
+    registry.emplace<ecs::Projectile>(projectile, ecs::Projectile{});
+    const ecs::Entity groundItem = world.Create();
+    registry.emplace<ecs::Position>(groundItem, ecs::Position{20.5f, 20.5f, 0});
+
+    const std::vector<game::TrapTargetCandidate> targets =
+        game::CollectTrapTargets(world);
+    REQUIRE(targets.size() == 2u);
+    CHECK(game::ClassifyTrapTarget(registry, projectile) ==
+          game::TrapTargetKind::None);
+    CHECK(game::ClassifyTrapTarget(registry, groundItem) ==
+          game::TrapTargetKind::None);
+    CHECK(game::ClassifyTrapTarget(registry, player) ==
+          game::TrapTargetKind::None);
+    CHECK(game::ClassifyTrapTarget(registry, companion) ==
+          game::TrapTargetKind::None);
+
+    const ecs::Position trapPosition{20.5f, 20.5f, 0};
+    game::TrapTargetKind kind = game::TrapTargetKind::None;
+    CHECK(game::FindTrapTarget(targets, trapPosition, *bear, &kind) == zombie);
+    CHECK(kind == game::TrapTargetKind::Zombie);
+    game::TrapDef animalOnly = *bear;
+    animalOnly.triggerMask = game::kTrapTriggerAnimal;
+    CHECK(game::FindTrapTarget(targets, trapPosition, animalOnly, &kind) ==
+          animal);
+    CHECK(kind == game::TrapTargetKind::Animal);
+
+    ecs::EcsWorld civilians;
+    const ecs::Entity civilianPlayer = civilians.Create();
+    civilians.Registry().emplace<ecs::Position>(
+        civilianPlayer, ecs::Position{20.5f, 20.5f, 0});
+    civilians.Registry().emplace<ecs::Health>(
+        civilianPlayer, ecs::Health{100.0f, 100.0f});
+    civilians.Registry().emplace<ecs::PlayerTag>(civilianPlayer);
+    const ecs::Entity civilianCompanion = civilians.Create();
+    civilians.Registry().emplace<ecs::Position>(
+        civilianCompanion, ecs::Position{20.5f, 20.5f, 0});
+    civilians.Registry().emplace<ecs::Health>(
+        civilianCompanion, ecs::Health{100.0f, 100.0f});
+    civilians.Registry().emplace<game::Companion>(
+        civilianCompanion, game::Companion{"companion", 42, "home"});
+    CHECK(game::CollectTrapTargets(civilians).empty());
+
+    ecs::PlacedTrap once{"bear_trap", true, 0.0f, 4, 42};
+    CHECK(game::TrapCanActivate(once, *bear));
+    CHECK(game::ConsumePlacedTrapUse(once, *bear));
+    CHECK(once.uses == 3);
+    CHECK(once.cooldown == doctest::Approx(2.0f));
+    CHECK_FALSE(game::TrapCanActivate(once, *bear));
+    CHECK_FALSE(game::AdvancePlacedTrapCooldown(once, 1.9f));
+    CHECK(game::AdvancePlacedTrapCooldown(once, 0.1f));
+    CHECK(game::TrapCanActivate(once, *bear));
+
+    game::ThrowAimRequest aim;
+    aim.hasThrowable = true;
+    aim.targetValid = true;
+    aim.playerX = 10.0f;
+    aim.playerY = 10.0f;
+    aim.targetX = 16.0f;
+    aim.targetY = 10.0f;
+    aim.itemRange = 8.0f;
+    aim.config = game::ThrowingConfig{0.7f, 12.0f, 1.0f};
+    CHECK(game::EvaluateThrowAim(aim).valid);
+    aim.gathering = true;
+    CHECK(game::EvaluateThrowAim(aim).block ==
+          game::ThrowAimBlockReason::Gathering);
+    aim.gathering = false;
+    aim.modalOpen = true;
+    CHECK(game::EvaluateThrowAim(aim).block ==
+          game::ThrowAimBlockReason::OtherUi);
+
+    items::ItemRegistry items;
+    REQUIRE_MESSAGE(items.LoadFile((root / "assets" / "items.json").string(),
+                                   &error),
+                    error);
+    const items::ItemDef* stone = items.Find("forage_stone");
+    REQUIRE(stone != nullptr);
+    REQUIRE(stone->throwable.has_value());
+    CHECK(stone->throwable->noiseRadius > crouchedStep);
+    CHECK_FALSE(stone->throwable->fire.has_value());
+}
+
+TEST_CASE("M34-F4-T3 陷阱局部扫描与上限") {
+    CHECK(game::kMaxTrapScanCenters >= 20u);
+    CHECK(game::kMaxInFlightThrownProjectiles >= 10u);
+    std::vector<game::ThrownProjectile> inFlight(10);
+    CHECK(inFlight.size() == 10u);
+
+    ecs::EcsWorld world;
+    entt::registry& registry = world.Registry();
+    const auto addZombie = [&](float x, float y) {
+        const ecs::Entity entity = world.Create();
+        registry.emplace<ecs::Position>(entity, ecs::Position{x, y, 0});
+        registry.emplace<ecs::Health>(entity, ecs::Health{100.0f, 100.0f});
+        registry.emplace<ecs::ZombieVariant>(entity, ecs::ZombieVariant{});
+        registry.emplace<ecs::AiState>(entity, ecs::AiState{});
+        return entity;
+    };
+    for (int i = 0; i < 20; ++i) {
+        addZombie(10.5f + static_cast<float>(i % 4) * 0.1f,
+                  10.5f + static_cast<float>(i / 4) * 0.1f);
+    }
+    for (int i = 0; i < 500; ++i) {
+        addZombie(1000.5f + static_cast<float>(i % 20),
+                  1000.5f + static_cast<float>(i / 20));
+    }
+    std::vector<game::TrapTargetScanCenter> centers;
+    for (int i = 0; i < 20; ++i) {
+        centers.push_back(game::TrapTargetScanCenter{10.5f, 10.5f, 0, 1.0f});
+    }
+    ecs::SpatialIndex spatial;
+    spatial.Update(world);
+    game::TrapTargetScanStats stats;
+    const std::vector<game::TrapTargetCandidate> nearby =
+        game::CollectTrapTargetsAround(world, spatial, centers, &stats);
+    CHECK(nearby.size() == 20u);
+    CHECK(stats.visited < 100u);
+    CHECK_FALSE(stats.limited);
+    CHECK(game::CollectTrapTargets(world).size() == 520u);
+
+    ecs::EcsWorld crowded;
+    entt::registry& crowdedRegistry = crowded.Registry();
+    for (int i = 0; i < 300; ++i) {
+        const ecs::Entity entity = crowded.Create();
+        crowdedRegistry.emplace<ecs::Position>(
+            entity, ecs::Position{20.5f + static_cast<float>(i % 10) * 0.01f,
+                                  20.5f, 0});
+        crowdedRegistry.emplace<ecs::Health>(
+            entity, ecs::Health{100.0f, 100.0f});
+        crowdedRegistry.emplace<ecs::ZombieVariant>(entity,
+                                                    ecs::ZombieVariant{});
+    }
+    ecs::SpatialIndex crowdedSpatial;
+    crowdedSpatial.Update(crowded);
+    game::TrapTargetScanStats crowdedStats;
+    const auto capped = game::CollectTrapTargetsAround(
+        crowded, crowdedSpatial,
+        {{20.5f, 20.5f, 0, 2.0f}}, &crowdedStats);
+    CHECK(capped.size() == game::kMaxTrapTargetCandidates);
+    CHECK(crowdedStats.limited);
+
+    game::TrapTargetScanStats centersStats;
+    std::vector<game::TrapTargetScanCenter> tooMany(
+        70, game::TrapTargetScanCenter{10.5f, 10.5f, 0, 1.0f});
+    (void)game::CollectTrapTargetsAround(world, spatial, tooMany,
+                                         &centersStats);
+    CHECK(centersStats.centers == game::kMaxTrapScanCenters);
+    CHECK(centersStats.limited);
 }

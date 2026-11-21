@@ -119,6 +119,10 @@ TEST_CASE("M34-F2-T2 UI/建造/背包/载具拦截与 V 投掷提示") {
     CHECK(EvaluateThrowAim(request).block == ThrowAimBlockReason::InVehicle);
 
     request = ReadyRequest();
+    request.gathering = true;
+    CHECK(EvaluateThrowAim(request).block == ThrowAimBlockReason::Gathering);
+
+    request = ReadyRequest();
     request.hasThrowable = false;
     CHECK(EvaluateThrowAim(request).block == ThrowAimBlockReason::NoThrowable);
 

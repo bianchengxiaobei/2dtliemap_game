@@ -71,6 +71,37 @@ bool PumpUntil(zl::server::ServerHost& host, zl::game::NetworkClient& client,
     return predicate();
 }
 
+template <typename Predicate>
+bool PumpUntil(zl::server::ServerHost& host, zl::game::NetworkClient& first,
+               zl::game::NetworkClient& second, int timeoutMs,
+               Predicate predicate) {
+    const Clock::time_point deadline =
+        Clock::now() + std::chrono::milliseconds(timeoutMs);
+    Clock::time_point nextTick = Clock::now();
+    while (Clock::now() < deadline) {
+        if (Clock::now() >= nextTick) {
+            host.Tick(1.0f / 60.0f);
+            nextTick += std::chrono::milliseconds(16);
+        }
+        first.Poll();
+        second.Poll();
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return predicate();
+}
+
+std::filesystem::path TempProfileDir(const char* name) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "zomboidlike_f3t5" / name;
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
+    std::filesystem::create_directories(dir, error);
+    return dir;
+}
+
 bool TeleportServerPlayer(zl::server::ServerHost& host, std::uint64_t stableId,
                           float x, float y) {
     const zl::ecs::Entity entity = host.Simulation().Ecs().FindById(stableId);
@@ -365,4 +396,301 @@ TEST_CASE("M34-F3-T3 联机陷阱：捕兽夹伤害、绊线噪声与燃油火�
 
     client.Close();
     host.Shutdown();
+}
+
+
+TEST_CASE("M34-F3-T5 双客户端陷阱：权威、复制、拒绝与重连") {
+    const std::filesystem::path root{ZL_SOURCE_DIR};
+    REQUIRE(std::filesystem::exists(root / "config" / "game.json"));
+    ScopedWorkingDirectory cwd(root);
+    const std::filesystem::path profileDir = TempProfileDir("dual");
+    const std::string profilePath = (profileDir / "players.bin").string();
+
+    zl::server::ServerHost::Options hostOptions;
+    hostOptions.configPath = (root / "config" / "game.json").string();
+    hostOptions.spawnDemoPopulation = false;
+    hostOptions.spawnLocalPlayer = false;
+    hostOptions.network = true;
+    hostOptions.port = 0;
+    hostOptions.contentHash = 0x4D33345452353031ull;
+    hostOptions.enablePlayerProfiles = true;
+    hostOptions.playerProfilesFile = profilePath;
+
+    zl::server::ServerHost host;
+    std::string error;
+    REQUIRE_MESSAGE(host.Init(hostOptions, &error), error);
+    REQUIRE(host.NetworkPort() != 0);
+
+    zl::game::NetworkClient::Options firstOptions;
+    firstOptions.host = "127.0.0.1";
+    firstOptions.port = host.NetworkPort();
+    firstOptions.contentHash = hostOptions.contentHash;
+    firstOptions.autoReconnect = false;
+    firstOptions.playerIdentity = "m34-t5-trap-owner";
+    firstOptions.playerName = "TrapOwner";
+    zl::game::NetworkClient::Options secondOptions = firstOptions;
+    secondOptions.playerIdentity = "m34-t5-trap-watcher";
+    secondOptions.playerName = "TrapWatcher";
+
+    zl::game::NetworkClient first(firstOptions);
+    zl::game::NetworkClient second(secondOptions);
+    REQUIRE(first.Connect(&error));
+    REQUIRE(second.Connect(&error));
+    REQUIRE(PumpUntil(host, first, second, 8000, [&] {
+        return first.IsConnected() && second.IsConnected() &&
+               first.HasPlayer() && second.HasPlayer() &&
+               first.HasPlayerState() && second.HasPlayerState() &&
+               host.SessionCount() == 2;
+    }));
+
+    const std::uint64_t firstId = first.PlayerStableId();
+    const std::uint64_t secondId = second.PlayerStableId();
+    REQUIRE(firstId != 0);
+    REQUIRE(secondId != 0);
+    REQUIRE(firstId != secondId);
+
+    zl::ecs::EcsWorld& ecs = host.Simulation().Ecs();
+    entt::registry& registry = ecs.Registry();
+    const zl::ecs::Entity firstPlayer = ecs.FindById(firstId);
+    const zl::ecs::Entity secondPlayer = ecs.FindById(secondId);
+    REQUIRE(static_cast<bool>(firstPlayer != entt::null));
+    REQUIRE(static_cast<bool>(secondPlayer != entt::null));
+    auto* firstPosition = registry.try_get<zl::ecs::Position>(firstPlayer);
+    REQUIRE(firstPosition != nullptr);
+    REQUIRE(TeleportServerPlayer(host, secondId, firstPosition->x + 1.0f,
+                                 firstPosition->y + 1.0f));
+
+    auto& serverBag = registry.get<zl::ecs::Container>(firstPlayer);
+    serverBag.items.push_back(zl::ecs::ItemInstance{"wood", 10, 1.0f});
+
+    const auto& defs = zl::game::DefaultBuildables();
+    const auto buildIndex = [&](std::string_view id) {
+        for (std::size_t i = 0; i < defs.size(); ++i) {
+            if (defs[i].id == id) {
+                return static_cast<std::int32_t>(i);
+            }
+        }
+        return static_cast<std::int32_t>(-1);
+    };
+    const std::int32_t bearIndex = buildIndex("bear_trap");
+    REQUIRE(bearIndex >= 0);
+    const zl::game::BuildableDef& bearBuild =
+        defs[static_cast<std::size_t>(bearIndex)];
+
+    const auto findFreeCell = [&](int* outX, int* outY) {
+        const auto* position = registry.try_get<zl::ecs::Position>(firstPlayer);
+        if (position == nullptr) {
+            return false;
+        }
+        const int px = static_cast<int>(std::floor(position->x));
+        const int py = static_cast<int>(std::floor(position->y));
+        for (int radius = 1; radius <= 3; ++radius) {
+            for (int dy = -radius; dy <= radius; ++dy) {
+                for (int dx = -radius; dx <= radius; ++dx) {
+                    if (std::abs(dx) != radius && std::abs(dy) != radius) {
+                        continue;
+                    }
+                    if (std::hypot(static_cast<float>(dx),
+                                   static_cast<float>(dy)) > 3.0f) {
+                        continue;
+                    }
+                    const int wx = px + dx;
+                    const int wy = py + dy;
+                    zl::world::GridSquare* square =
+                        host.Simulation().World().GetSquare(wx, wy, 0);
+                    if (square == nullptr ||
+                        !zl::game::IsBuildCellFreeFor(bearBuild, *square)) {
+                        continue;
+                    }
+                    bool occupied = false;
+                    registry.view<zl::ecs::Position>().each(
+                        [&](const zl::ecs::Position& candidate) {
+                            if (!occupied && candidate.z == 0 &&
+                                static_cast<int>(std::floor(candidate.x)) == wx &&
+                                static_cast<int>(std::floor(candidate.y)) == wy) {
+                                occupied = true;
+                            }
+                        });
+                    if (!occupied) {
+                        *outX = wx;
+                        *outY = wy;
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    };
+    const auto findTrapAt = [&](int wx, int wy) {
+        zl::ecs::Entity found = entt::null;
+        registry.view<zl::ecs::PlacedTrap, zl::ecs::Position>().each(
+            [&](const zl::ecs::Entity entity,
+                const zl::ecs::PlacedTrap&,
+                const zl::ecs::Position& position) {
+                if (found == entt::null && position.z == 0 &&
+                    static_cast<int>(std::floor(position.x)) == wx &&
+                    static_cast<int>(std::floor(position.y)) == wy) {
+                    found = entity;
+                }
+            });
+        return found;
+    };
+    const auto placeCommand = [&](int wx, int wy) {
+        zl::net::Command command;
+        command.type = zl::net::CommandType::PlaceStructure;
+        command.playerStableId = firstId;
+        command.payload.x = static_cast<float>(wx);
+        command.payload.y = static_cast<float>(wy);
+        command.payload.index = bearIndex;
+        return command;
+    };
+
+    int trapX = 0;
+    int trapY = 0;
+    REQUIRE(findFreeCell(&trapX, &trapY));
+    REQUIRE(first.SendCommand(placeCommand(trapX, trapY), &error));
+    zl::ecs::Entity trap = entt::null;
+    REQUIRE(PumpUntil(host, first, second, 5000, [&] {
+        trap = findTrapAt(trapX, trapY);
+        return trap != entt::null &&
+               registry.get<zl::ecs::PlacedTrap>(trap).armed;
+    }));
+    const std::uint64_t trapId = ecs.IdOf(trap).id;
+    REQUIRE(trapId != 0);
+    REQUIRE(PumpUntil(host, first, second, 5000, [&] {
+        const auto* firstActor = first.Replication().Find(trapId);
+        const auto* secondActor = second.Replication().Find(trapId);
+        return firstActor != nullptr && secondActor != nullptr &&
+               firstActor->hasPlacedTrap && secondActor->hasPlacedTrap &&
+               firstActor->placedTrap.defId == "bear_trap" &&
+               secondActor->placedTrap.defId == "bear_trap" &&
+               firstActor->placedTrap.armed && secondActor->placedTrap.armed &&
+               firstActor->placedTrap.cooldown == doctest::Approx(0.0f) &&
+               secondActor->placedTrap.cooldown == doctest::Approx(0.0f) &&
+               firstActor->placedTrap.uses == 4 &&
+               secondActor->placedTrap.uses == 4 &&
+               firstActor->placedTrap.owner == firstId &&
+               secondActor->placedTrap.owner == firstId;
+    }));
+
+    REQUIRE(TeleportServerPlayer(host, secondId,
+                                 static_cast<float>(trapX) + 0.5f,
+                                 static_cast<float>(trapY) + 0.5f));
+    const std::uint64_t ownershipRejectedBefore =
+        host.GetNetworkStats().ownershipRejected;
+    zl::net::Command intruderArm;
+    intruderArm.type = zl::net::CommandType::InteractFacility;
+    intruderArm.playerStableId = secondId;
+    intruderArm.payload.entityId = trapId;
+    REQUIRE(second.SendCommand(intruderArm, &error));
+    REQUIRE(PumpUntil(host, first, second, 3000, [&] {
+        return host.GetNetworkStats().ownershipRejected >
+               ownershipRejectedBefore;
+    }));
+    CHECK(registry.get<zl::ecs::PlacedTrap>(trap).armed);
+
+    const std::uint64_t duplicateRejectedBefore =
+        host.GetNetworkStats().commandsRejected;
+    REQUIRE(first.SendCommand(placeCommand(trapX, trapY), &error));
+    REQUIRE(PumpUntil(host, first, second, 3000, [&] {
+        return host.GetNetworkStats().commandsRejected >
+               duplicateRejectedBefore;
+    }));
+    CHECK(findTrapAt(trapX, trapY) == trap);
+
+    auto* firstPositionAfter = registry.try_get<zl::ecs::Position>(firstPlayer);
+    auto* secondPositionAfter = registry.try_get<zl::ecs::Position>(secondPlayer);
+    REQUIRE(firstPositionAfter != nullptr);
+    REQUIRE(secondPositionAfter != nullptr);
+    REQUIRE(TeleportServerPlayer(host, firstId,
+                                 firstPositionAfter->x + 8.0f,
+                                 firstPositionAfter->y + 8.0f));
+    REQUIRE(TeleportServerPlayer(host, secondId,
+                                 secondPositionAfter->x + 8.0f,
+                                 secondPositionAfter->y + 8.0f));
+
+    const zl::ecs::Entity firstZombie = host.Simulation().SpawnZombieAt(
+        static_cast<float>(trapX) + 0.4f,
+        static_cast<float>(trapY) + 0.3f,
+        zl::ecs::ZombieVariantKind::Normal);
+    const zl::ecs::Entity secondZombie = host.Simulation().SpawnZombieAt(
+        static_cast<float>(trapX) + 0.4f,
+        static_cast<float>(trapY) + 0.7f,
+        zl::ecs::ZombieVariantKind::Normal);
+    REQUIRE(static_cast<bool>(firstZombie != entt::null));
+    REQUIRE(static_cast<bool>(secondZombie != entt::null));
+    REQUIRE(PumpUntil(host, first, second, 5000, [&] {
+        return registry.get<zl::ecs::PlacedTrap>(trap).uses == 3;
+    }));
+    const auto& triggeredState = registry.get<zl::ecs::PlacedTrap>(trap);
+    CHECK(triggeredState.cooldown > 0.0f);
+    const int firstHealth = static_cast<int>(
+        std::lround(registry.get<zl::ecs::Health>(firstZombie).current));
+    const int secondHealth = static_cast<int>(
+        std::lround(registry.get<zl::ecs::Health>(secondZombie).current));
+    CHECK((firstHealth == 45 || secondHealth == 45));
+    CHECK((firstHealth == 100 || secondHealth == 100));
+    registry.get<zl::ecs::PlacedTrap>(trap).armed = false;
+    host.Simulation().DespawnEntity(firstZombie);
+    host.Simulation().DespawnEntity(secondZombie);
+    host.RunForTicks(2);
+    first.Poll();
+    second.Poll();
+
+    REQUIRE(PumpUntil(host, first, second, 4000, [&] {
+        const auto* firstActor = first.Replication().Find(trapId);
+        const auto* secondActor = second.Replication().Find(trapId);
+        return firstActor != nullptr && secondActor != nullptr &&
+               firstActor->hasPlacedTrap && secondActor->hasPlacedTrap &&
+               firstActor->placedTrap.uses == 3 &&
+               secondActor->placedTrap.uses == 3 &&
+               firstActor->placedTrap.cooldown > 0.0f &&
+               secondActor->placedTrap.cooldown > 0.0f;
+    }));
+
+    first.Close();
+    REQUIRE(PumpUntil(host, second, 8000, [&] {
+        return host.SessionCount() == 1;
+    }));
+    zl::game::NetworkClient reconnected(firstOptions);
+    REQUIRE(reconnected.Connect(&error));
+    REQUIRE(PumpUntil(host, second, reconnected, 8000, [&] {
+        return reconnected.IsConnected() && reconnected.HasPlayer() &&
+               reconnected.HasPlayerState() &&
+               reconnected.PlayerStableId() == firstId;
+    }));
+    REQUIRE(TeleportServerPlayer(host, firstId,
+                                 static_cast<float>(trapX) + 0.5f,
+                                 static_cast<float>(trapY) + 0.5f));
+    REQUIRE(PumpUntil(host, second, reconnected, 5000, [&] {
+        const auto* ownerActor = reconnected.Replication().Find(trapId);
+        const auto* watcherActor = second.Replication().Find(trapId);
+        return ownerActor != nullptr && watcherActor != nullptr &&
+               ownerActor->hasPlacedTrap && watcherActor->hasPlacedTrap &&
+               ownerActor->placedTrap.defId == "bear_trap" &&
+               watcherActor->placedTrap.defId == "bear_trap" &&
+               ownerActor->placedTrap.uses == 3 &&
+               watcherActor->placedTrap.uses == 3 &&
+               ownerActor->placedTrap.owner == firstId &&
+               watcherActor->placedTrap.owner == firstId;
+    }));
+    CHECK(registry.get<zl::ecs::PlacedTrap>(trap).uses == 3);
+    CHECK_FALSE(registry.get<zl::ecs::PlacedTrap>(trap).armed);
+
+    zl::net::Command legacyDemolish;
+    legacyDemolish.type = zl::net::CommandType::DemolishStructure;
+    legacyDemolish.playerStableId = firstId;
+    legacyDemolish.payload.x = static_cast<float>(trapX);
+    legacyDemolish.payload.y = static_cast<float>(trapY);
+    legacyDemolish.payload.flags = 0;
+    REQUIRE(reconnected.SendCommand(legacyDemolish, &error));
+    REQUIRE(PumpUntil(host, second, reconnected, 4000, [&] {
+        return findTrapAt(trapX, trapY) == entt::null;
+    }));
+
+    reconnected.Close();
+    second.Close();
+    host.Shutdown();
+    std::error_code cleanupError;
+    std::filesystem::remove_all(profileDir, cleanupError);
 }

@@ -82,6 +82,20 @@ struct HudState {
     std::string throwLastTone = "info";
     std::string throwTone = "info";
     std::string throwStatus;
+    // M34-F3-T6：附近已放置陷阱的只读摘要（单机/联机副本）。
+    bool trapValid = false;
+    std::string trapName;
+    std::string trapEffect;
+    bool trapArmed = false;
+    bool trapArming = false;
+    float trapArmRemaining = 0.0f;
+    int trapUses = 0;
+    int trapUsesMax = 0;
+    float trapCooldownRemaining = 0.0f;
+    float trapCooldownDuration = 0.0f;
+    bool trapReadOnly = false;
+    std::string trapStatus;
+    std::string trapTone = "info";
     // M23-F2a-T5：附近资源节点/当前采集状态（单机）。
     bool forageValid = false;
     std::string forageName;
@@ -250,6 +264,12 @@ inline bool HudNoticeSuppressed(bool inventoryOpen, bool tradeOpen,
 inline bool HudStealthPromptSuppressed(bool menuOpen, bool inventoryOpen,
                                        bool tradeOpen, bool dialogueOpen,
                                        bool modalOpen) {
+    return menuOpen || inventoryOpen || tradeOpen || dialogueOpen || modalOpen;
+}
+
+inline bool HudTrapStatusSuppressed(bool menuOpen, bool inventoryOpen,
+                                    bool tradeOpen, bool dialogueOpen,
+                                    bool modalOpen) {
     return menuOpen || inventoryOpen || tradeOpen || dialogueOpen || modalOpen;
 }
 
@@ -595,6 +615,72 @@ inline std::string ThrowStatusText(const HudState& state,
         if (tone != nullptr && state.throwCooldownRemaining <= 0.0f) {
             *tone = state.throwLastTone.empty() ? "info" : state.throwLastTone;
         }
+    }
+    return text;
+}
+
+inline std::string TrapStatusText(const HudState& state,
+                                  std::string* tone = nullptr) {
+    if (tone != nullptr) {
+        *tone = "info";
+    }
+    if (!state.trapValid) {
+        return {};
+    }
+    const std::string name =
+        state.trapName.empty() ? std::string("陷阱") : state.trapName;
+    std::string text = name + " · " + std::to_string(std::max(0, state.trapUses));
+    if (state.trapUsesMax > 0) {
+        text += "/" + std::to_string(std::max(0, state.trapUsesMax));
+    }
+    text += " 次";
+    if (state.trapUses <= 0) {
+        text += " · 已耗尽";
+        if (tone != nullptr) {
+            *tone = "fail";
+        }
+    } else if (state.trapArming) {
+        char remaining[32];
+        std::snprintf(remaining, sizeof(remaining), "%.1f",
+                      static_cast<double>(
+                          std::max(0.0f, state.trapArmRemaining)));
+        text += " · 布防中 " + std::string(remaining) + "s";
+        if (tone != nullptr) {
+            *tone = "warn";
+        }
+    } else if (state.trapArmed) {
+        text += " · 已布防";
+        if (tone != nullptr) {
+            *tone = "ok";
+        }
+    } else {
+        text += " · 已解除";
+        if (tone != nullptr) {
+            *tone = "warn";
+        }
+    }
+    if (state.trapCooldownRemaining > 0.0f) {
+        char cooldown[48];
+        std::snprintf(cooldown, sizeof(cooldown), "%.1f",
+                      static_cast<double>(state.trapCooldownRemaining));
+        text += " · 冷却 " + std::string(cooldown) + "s";
+        if (state.trapCooldownDuration > 0.0f) {
+            char duration[32];
+            std::snprintf(duration, sizeof(duration), "%.1f",
+                          static_cast<double>(state.trapCooldownDuration));
+            text += "/" + std::string(duration) + "s";
+        }
+        if (tone != nullptr && state.trapUses > 0) {
+            *tone = "warn";
+        }
+    }
+    if (state.trapReadOnly) {
+        text += " · 仅所有者可操作";
+        if (tone != nullptr && state.trapUses > 0) {
+            *tone = "warn";
+        }
+    } else if (state.trapUses <= 0) {
+        text += " · 需拆除重建";
     }
     return text;
 }

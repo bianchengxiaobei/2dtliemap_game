@@ -3502,6 +3502,10 @@ bool ServerHost::SetServerStealth(SessionPlayer& session, ecs::Entity player,
         registry.all_of<ecs::VehicleOccupant>(player)) {
         return fail("驾驶中无法切换潜行");
     }
+    if (session.survival.mode != net::kPlayerSurvivalModeNone ||
+        session.animalHarvest.active) {
+        return fail("采集/剥取中无法切换潜行");
+    }
     auto& state = registry.get_or_emplace<ecs::StealthState>(player);
     const characters::StealthScales scales =
         characters::StealthScalesFor(crouched, m_stealthRules);
@@ -6911,6 +6915,10 @@ bool ServerHost::ThrowItemAction(SessionPlayer& session,
         registry.all_of<ecs::VehicleOccupant>(player)) {
         return fail("载具中无法投掷");
     }
+    if (session.survival.mode != net::kPlayerSurvivalModeNone ||
+        session.animalHarvest.active) {
+        return fail("采集/剥取中无法投掷");
+    }
 
     auto* equipment = registry.try_get<ecs::Equipment>(player);
     auto* container = registry.try_get<ecs::Container>(player);
@@ -6972,6 +6980,9 @@ bool ServerHost::ThrowItemAction(SessionPlayer& session,
         m_ticks < session.lastThrowTick + m_throwCooldownTicks) {
         ++m_networkStats.cooldownRejected;
         return fail("投掷冷却中");
+    }
+    if (m_serverThrows.size() >= game::kMaxInFlightThrownProjectiles) {
+        return fail("在飞投掷物过多");
     }
 
     ecs::ItemInstance thrown;
@@ -14451,8 +14462,26 @@ void ServerHost::TickTrapTriggers() {
         const game::TrapDef* def = nullptr;
     };
     std::vector<PendingPlacedHit> pendingPlaced;
+    std::vector<game::TrapTargetScanCenter> centers;
+    registry.view<ecs::PlacedTrap, ecs::Position>().each(
+        [&](const ecs::Entity, const ecs::PlacedTrap& trap,
+            const ecs::Position& position) {
+            const game::TrapDef* def = m_traps->Find(trap.defId);
+            if (def != nullptr && game::TrapCanActivate(trap, *def)) {
+                centers.push_back(game::TrapTargetScanCenter{
+                    position.x, position.y, position.z, def->radius});
+            }
+        });
+    game::TrapTargetScanStats scanStats;
     const std::vector<game::TrapTargetCandidate> targets =
-        game::CollectTrapTargets(m_simulation->Ecs());
+        game::CollectTrapTargetsAround(m_simulation->Ecs(),
+                                       m_simulation->Spatial(), centers,
+                                       &scanStats);
+    if (scanStats.limited) {
+        ZL_DEBUG("traps",
+                 "服务器陷阱目标局部扫描达到上限：centers={} visited={} candidates={}",
+                 scanStats.centers, scanStats.visited, scanStats.candidates);
+    }
     registry.view<ecs::PlacedTrap, ecs::Position>().each(
         [&](const ecs::Entity entity, const ecs::PlacedTrap& trap,
             const ecs::Position& position) {

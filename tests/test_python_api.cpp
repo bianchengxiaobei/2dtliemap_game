@@ -625,6 +625,20 @@ TEST_CASE("M15-T5：Python HUD 暴露操作提示字段") {
         "潜行 · 2.2 格/s · 脚步 1.1 格 · 附近警觉 2 · 可背刺";
     f.ctx.hudState.stealthTone = "warn";
     f.ctx.hudState.stealthPrompt = "背刺可用 · SPACE";
+    f.ctx.hudState.trapValid = true;
+    f.ctx.hudState.trapName = "捕兽夹";
+    f.ctx.hudState.trapEffect = "55 伤害 · 硬直 2 秒";
+    f.ctx.hudState.trapArmed = true;
+    f.ctx.hudState.trapArming = false;
+    f.ctx.hudState.trapArmRemaining = 0.0f;
+    f.ctx.hudState.trapUses = 3;
+    f.ctx.hudState.trapUsesMax = 4;
+    f.ctx.hudState.trapCooldownRemaining = 0.8f;
+    f.ctx.hudState.trapCooldownDuration = 2.0f;
+    f.ctx.hudState.trapReadOnly = true;
+    f.ctx.hudState.trapStatus =
+        "捕兽夹 · 3/4 次 · 已布防 · 冷却 0.8s/2.0s · 仅所有者可操作";
+    f.ctx.hudState.trapTone = "warn";
     f.ctx.hudState.forageValid = true;
     f.ctx.hudState.forageName = "森林";
     f.ctx.hudState.forageToolName = "树枝";
@@ -734,6 +748,19 @@ assert h['stealthBackstabAvailable'] is True
 assert h['stealthStatus'] == '潜行 · 2.2 格/s · 脚步 1.1 格 · 附近警觉 2 · 可背刺'
 assert h['stealthTone'] == 'warn'
 assert h['stealthPrompt'] == '背刺可用 · SPACE'
+assert h['trapValid'] is True
+assert h['trapName'] == '捕兽夹'
+assert h['trapEffect'] == '55 伤害 · 硬直 2 秒'
+assert h['trapArmed'] is True
+assert h['trapArming'] is False
+assert abs(h['trapArmRemaining']) < 0.001
+assert h['trapUses'] == 3
+assert h['trapUsesMax'] == 4
+assert abs(h['trapCooldownRemaining'] - 0.8) < 0.001
+assert abs(h['trapCooldownDuration'] - 2.0) < 0.001
+assert h['trapReadOnly'] is True
+assert h['trapStatus'] == '捕兽夹 · 3/4 次 · 已布防 · 冷却 0.8s/2.0s · 仅所有者可操作'
+assert h['trapTone'] == 'warn'
 assert h['forageValid'] is True
 assert h['forageName'] == '森林'
 assert h['forageToolName'] == '树枝'

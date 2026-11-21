@@ -312,6 +312,54 @@ const TrapDef* TrapDefsConfig::FindByBuilding(
     return nullptr;
 }
 
+namespace {
+
+std::string TrapNumberText(float value) {
+    if (!std::isfinite(value)) {
+        return "0";
+    }
+    std::string text = std::to_string(std::max(0.0f, value));
+    const std::size_t dot = text.find('.');
+    if (dot != std::string::npos) {
+        while (!text.empty() && text.back() == '0') {
+            text.pop_back();
+        }
+        if (!text.empty() && text.back() == '.') {
+            text.pop_back();
+        }
+    }
+    return text.empty() ? "0" : text;
+}
+
+}  // namespace
+
+std::string TrapEffectText(const TrapDef& trap) {
+    if (trap.fire.has_value()) {
+        return "火焰 " + TrapNumberText(trap.fire->radius) + " 格 · " +
+               TrapNumberText(trap.fire->minutes) + " 分钟";
+    }
+    if (trap.damage > 0.0f) {
+        std::string text = TrapNumberText(trap.damage) + " 伤害";
+        if (trap.staggerSeconds > 0.0f) {
+            text += " · 硬直 " + TrapNumberText(trap.staggerSeconds) + " 秒";
+        }
+        return text;
+    }
+    if (trap.noiseRadius > 0.0f) {
+        return "噪声 " + TrapNumberText(trap.noiseRadius) + " 格";
+    }
+    return "无直接效果";
+}
+
+std::string TrapBuildSummary(const TrapDef& trap) {
+    std::string text = TrapEffectText(trap) + " · " +
+                       std::to_string(std::max(0, trap.uses)) + " 次";
+    if (trap.cooldownSeconds > 0.0f) {
+        text += "/冷却 " + TrapNumberText(trap.cooldownSeconds) + "s";
+    }
+    return text;
+}
+
 bool TrapCanToggle(const ecs::PlacedTrap& trap) {
     return trap.uses > 0;
 }

@@ -6712,6 +6712,55 @@ void WorldDemoState::RefreshStealthHud(ui::HudState& hud, bool networkState) {
     }
 }
 
+void WorldDemoState::RefreshTrapHud(ui::HudState& hud, bool suppressed) {
+    hud.trapValid = false;
+    hud.trapName.clear();
+    hud.trapEffect.clear();
+    hud.trapArmed = false;
+    hud.trapArming = false;
+    hud.trapArmRemaining = 0.0f;
+    hud.trapUses = 0;
+    hud.trapUsesMax = 0;
+    hud.trapCooldownRemaining = 0.0f;
+    hud.trapCooldownDuration = 0.0f;
+    hud.trapReadOnly = false;
+    hud.trapStatus.clear();
+    hud.trapTone = "info";
+    if (suppressed || m_ctx.ecs == nullptr || m_ctx.traps == nullptr ||
+        !m_ctx.traps->enabled) {
+        return;
+    }
+    const ecs::Entity entity = FindNearbyPlacedTrap();
+    if (entity == entt::null) {
+        return;
+    }
+    const auto* trap =
+        m_ctx.ecs->Registry().try_get<ecs::PlacedTrap>(entity);
+    if (trap == nullptr) {
+        return;
+    }
+    const TrapDef* def = m_ctx.traps->Find(trap->defId);
+    if (def == nullptr) {
+        return;
+    }
+    const BuildableDef* buildable = PlacedTrapBuildable(entity);
+    const std::uint64_t owner = EntityOwnerStableId(entity);
+    hud.trapValid = true;
+    hud.trapName =
+        !def->name.empty() ? def->name
+                           : (buildable != nullptr ? buildable->name : "陷阱");
+    hud.trapEffect = TrapEffectText(*def);
+    hud.trapArmed = trap->armed;
+    hud.trapArming = !trap->armed && trap->armRemaining > 0.0f;
+    hud.trapArmRemaining = std::max(0.0f, trap->armRemaining);
+    hud.trapUses = std::max(0, trap->uses);
+    hud.trapUsesMax = std::max(0, def->uses);
+    hud.trapCooldownRemaining = std::max(0.0f, trap->cooldown);
+    hud.trapCooldownDuration = std::max(0.0f, def->cooldownSeconds);
+    hud.trapReadOnly = !CanEditLocalStructure(owner);
+    hud.trapStatus = ui::TrapStatusText(hud, &hud.trapTone);
+}
+
 void WorldDemoState::RefreshHud(double frameDt) {
     if (m_ctx.ui == nullptr || m_ctx.gameTime == nullptr) {
         return;
@@ -7241,10 +7290,11 @@ void WorldDemoState::RefreshHud(double frameDt) {
                 (m_tradeOpen ||
                  (hint.nearbyForage.empty() &&
                   hint.nearbyAnimalCorpse.empty()))) {
-                const std::string homestead = HomesteadHint();
+                std::string homesteadTone;
+                const std::string homestead = HomesteadHint(&homesteadTone);
                 if (!homestead.empty()) {
                     hud.actionHint = homestead;
-                    hud.actionTone = "info";
+                    hud.actionTone = homesteadTone;
                 }
             }
             if (m_buildMode) {
@@ -7261,8 +7311,16 @@ void WorldDemoState::RefreshHud(double frameDt) {
                     }
                     hud.actionHint = BuildMenuText() + " · 木材 " +
                                      std::to_string(woodCount) + "/" +
-                                     std::to_string(def->woodCost) +
-                                     " · 左键放置 · 滚轮切换";
+                                     std::to_string(def->woodCost);
+                    if (m_ctx.traps != nullptr) {
+                        if (const TrapDef* trap =
+                                m_ctx.traps->FindByBuilding(def->id);
+                            trap != nullptr) {
+                            hud.actionHint +=
+                                " · " + TrapBuildSummary(*trap);
+                        }
+                    }
+                    hud.actionHint += " · 左键放置 · 滚轮切换";
                     if (BuildableSupportsVertical(*def)) {
                         hud.actionHint += " · R 旋转（建造优先，不换弹）";
                     }
@@ -7377,6 +7435,7 @@ void WorldDemoState::RefreshHud(double frameDt) {
                             const std::string suffix =
                                 StructureOwnerSuffix(owner);
                             std::string label;
+                            int refund = 0;
                             if (facility.kind == HomesteadTargetKind::Farm) {
                                 label = "农田";
                             } else if (facility.kind ==
@@ -7392,6 +7451,11 @@ void WorldDemoState::RefreshHud(double frameDt) {
                                 label = trapBuildable != nullptr
                                             ? trapBuildable->name
                                             : "陷阱";
+                                if (trapBuildable != nullptr) {
+                                    refund = BuildWoodRefund(
+                                        trapBuildable->woodCost,
+                                        m_demolishRefundRatio);
+                                }
                             } else {
                                 label = "陷阱";
                             }
@@ -7402,10 +7466,23 @@ void WorldDemoState::RefreshHud(double frameDt) {
                             } else if (pending) {
                                 hud.actionHint +=
                                     " · X 再次确认拆除 " + label +
-                                    "（3 秒内）" + suffix;
+                                    (facility.kind ==
+                                             HomesteadTargetKind::PlacedTrap
+                                         ? "（返还 " +
+                                               std::to_string(refund) +
+                                               " 木材，3 秒内）"
+                                         : "（3 秒内）") +
+                                    suffix;
                             } else {
                                 hud.actionHint +=
-                                    " · X 拆除" + label + suffix;
+                                    " · X 拆除" + label +
+                                    (facility.kind ==
+                                             HomesteadTargetKind::PlacedTrap
+                                         ? "（返还 " +
+                                               std::to_string(refund) +
+                                               " 木材）"
+                                         : "") +
+                                    suffix;
                             }
                         }
                     }
@@ -7635,6 +7712,17 @@ void WorldDemoState::RefreshHud(double frameDt) {
         hud.weatherStatus = game::WeatherStatusText(
             weather, m_networkClimate, &hud.weatherTone, &hud.weatherClass);
     }
+    const bool trapModalOpen =
+        m_characterOpen || m_companionOpen || m_worldMapOpen ||
+        m_vehicleModsOpen || m_worldEventChoiceOpen ||
+        m_sleep.Active() || m_sleepSelecting || m_siegeReportOpen;
+    RefreshTrapHud(
+        hud,
+        ui::HudTrapStatusSuppressed(
+            m_ctx.ui != nullptr && m_ctx.ui->IsMenuOpen(),
+            m_ctx.ui != nullptr && m_ctx.ui->IsInventoryOpen(), m_tradeOpen,
+            m_dialogueOpen, trapModalOpen));
+
     if (hud.actionHint.empty() && hud.playerValid) {
         game::ActionHintState hint;
         hint.hasRangedWeapon = hud.rangedValid;
@@ -10616,6 +10704,7 @@ ThrowAimBlockReason WorldDemoState::CurrentThrowAimBlock() {
     request.buildMode = m_buildMode;
     request.dead = m_runOutcome != RunOutcome::None;
     request.inVehicle = m_driving || m_riding || m_vehicleModsOpen;
+    request.gathering = IsGatheringActionActive();
     request.modalOpen = m_dialogueOpen || m_tradeOpen || m_characterOpen ||
                         m_companionOpen || m_worldEventChoiceOpen ||
                         m_siegeReportOpen || m_worldMapOpen ||
@@ -10705,6 +10794,7 @@ bool WorldDemoState::TryBeginThrowAim(const glm::vec2& mousePx) {
     request.buildMode = m_buildMode;
     request.dead = m_runOutcome != RunOutcome::None;
     request.inVehicle = m_driving || m_riding || m_vehicleModsOpen;
+    request.gathering = IsGatheringActionActive();
     request.modalOpen = m_dialogueOpen || m_tradeOpen || m_characterOpen ||
                         m_companionOpen || m_worldEventChoiceOpen ||
                         m_siegeReportOpen || m_worldMapOpen ||
@@ -10751,6 +10841,9 @@ bool WorldDemoState::TryBeginThrowAim(const glm::vec2& mousePx) {
                 break;
             case ThrowAimBlockReason::InVehicle:
                 reason = "载具中不可投掷";
+                break;
+            case ThrowAimBlockReason::Gathering:
+                reason = "采集/剥取中不可投掷";
                 break;
             case ThrowAimBlockReason::InvalidTarget:
                 reason = "目标不在已加载区域";
@@ -10882,6 +10975,10 @@ void WorldDemoState::ReleaseThrowAim() {
     }
     if (m_throwCooldownLeft > 0.0f) {
         CancelThrowAim("投掷冷却中", true);
+        return;
+    }
+    if (m_thrownProjectiles.size() >= kMaxInFlightThrownProjectiles) {
+        CancelThrowAim("在飞投掷物过多，请稍后再试", true);
         return;
     }
     if (m_networkMode) {
@@ -20191,7 +20288,29 @@ void WorldDemoState::UpdateTraps(float tickDt) {
         std::vector<PendingPlacedHit> pending;
         std::vector<TrapTargetCandidate> targets;
         if (anyReady) {
-            targets = CollectTrapTargets(*m_ctx.ecs);
+            std::vector<TrapTargetScanCenter> centers;
+            registry.view<ecs::PlacedTrap, ecs::Position>().each(
+                [&](const ecs::Entity, const ecs::PlacedTrap& trap,
+                    const ecs::Position& position) {
+                    const TrapDef* def = m_ctx.traps->Find(trap.defId);
+                    if (def != nullptr && TrapCanActivate(trap, *def)) {
+                        centers.push_back(TrapTargetScanCenter{
+                            position.x, position.y, position.z, def->radius});
+                    }
+                });
+            if (m_ctx.spatialIndex != nullptr) {
+                TrapTargetScanStats stats;
+                targets = CollectTrapTargetsAround(
+                    *m_ctx.ecs, *m_ctx.spatialIndex, centers, &stats);
+                if (stats.limited) {
+                    ZL_DEBUG("traps",
+                             "陷阱目标局部扫描达到上限：centers={} visited={} candidates={}",
+                             stats.centers, stats.visited,
+                             stats.candidates);
+                }
+            } else {
+                targets = CollectTrapTargets(*m_ctx.ecs);
+            }
         }
         registry.view<ecs::PlacedTrap, ecs::Position>().each(
             [&](const ecs::Entity entity, const ecs::PlacedTrap& trap,
@@ -23608,7 +23727,10 @@ std::string WorldDemoState::StructureOwnerSuffix(
     return " · 归属：" + StructureOwnerLabel(ownerStableId);
 }
 
-std::string WorldDemoState::HomesteadHint() const {
+std::string WorldDemoState::HomesteadHint(std::string* tone) const {
+    if (tone != nullptr) {
+        *tone = "info";
+    }
     if (m_dialogueOpen) {
         return {};
     }
@@ -23735,24 +23857,23 @@ std::string WorldDemoState::HomesteadHint() const {
                 const bool canEdit = CanEditLocalStructure(owner);
                 const BuildableDef* buildable =
                     PlacedTrapBuildable(target.entity);
-                const std::string name =
-                    buildable != nullptr ? buildable->name : "陷阱";
-                std::string status;
-                if (trap->uses <= 0) {
-                    status = "已耗尽";
-                } else if (trap->armed) {
-                    status = "已布防";
-                } else if (trap->armRemaining > 0.0f) {
-                    char buffer[64];
-                    std::snprintf(buffer, sizeof(buffer), "布防中 %.1fs",
-                                  static_cast<double>(trap->armRemaining));
-                    status = buffer;
-                } else {
-                    status = "已解除";
-                }
-                return name + "：剩余 " + std::to_string(trap->uses) +
-                       " 次 · " + status +
-                       (canEdit ? " · E 切换" : " · 仅所有者可操作") +
+                const TrapDef* def =
+                    m_ctx.traps != nullptr ? m_ctx.traps->Find(trap->defId)
+                                           : nullptr;
+                game::TrapHintState hint;
+                hint.name = def != nullptr && !def->name.empty()
+                                ? def->name
+                                : (buildable != nullptr ? buildable->name
+                                                        : "陷阱");
+                hint.armed = trap->armed;
+                hint.arming = !trap->armed && trap->armRemaining > 0.0f;
+                hint.armRemaining = std::max(0.0f, trap->armRemaining);
+                hint.uses = std::max(0, trap->uses);
+                hint.usesMax =
+                    def != nullptr ? std::max(0, def->uses) : hint.uses;
+                hint.cooldownRemaining = std::max(0.0f, trap->cooldown);
+                hint.readOnly = !canEdit;
+                return game::TrapHintText(hint, tone) +
                        StructureOwnerSuffix(owner);
             }
         }
@@ -26575,8 +26696,18 @@ void WorldDemoState::HandleSleepInput(core::Input& input) {
     }
 }
 
+bool WorldDemoState::IsGatheringActionActive() const {
+    return m_forageAction.active || m_fishingAction.active ||
+           m_animalHarvestAction.active ||
+           m_networkSurvival.mode != net::kPlayerSurvivalModeNone ||
+           m_networkAnimalHarvest.active;
+}
+
 bool WorldDemoState::CanToggleStealth() const {
     if (!m_stealthRules.enabled || m_ctx.ecs == nullptr) {
+        return false;
+    }
+    if (IsGatheringActionActive()) {
         return false;
     }
     if (m_networkMode &&

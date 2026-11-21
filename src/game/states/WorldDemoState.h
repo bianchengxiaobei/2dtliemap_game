@@ -103,6 +103,7 @@ public:
 private:
     void HandleFrameInput(double frameDt);
     bool CanToggleStealth() const;
+    bool IsGatheringActionActive() const;
     void ToggleStealth();
     void SetLocalStealth(bool crouched);
     void ExitStealth(characters::StealthExitReason reason);
@@ -487,7 +488,7 @@ private:
     bool CanEditLocalStructure(std::uint64_t ownerStableId) const;
     std::string StructureOwnerLabel(std::uint64_t ownerStableId) const;
     std::string StructureOwnerSuffix(std::uint64_t ownerStableId) const;
-    std::string HomesteadHint() const;
+    std::string HomesteadHint(std::string* tone = nullptr) const;
     std::string TradePanelText() const;
     const BuildableDef* BuildableById(std::string_view id) const;
     void RebuildBuildables();
@@ -789,6 +790,7 @@ private:
     void SetNotice(std::string text, uint32_t color, float seconds);
     void RefreshRangedHud(ui::HudState& hud);
     void RefreshStealthHud(ui::HudState& hud, bool networkState);
+    void RefreshTrapHud(ui::HudState& hud, bool suppressed);
     void RefreshHud(double frameDt);
     // M4-T5：相机跟随（follow=平滑跟随玩家+地图边界；自由=方向键/拖拽，无边界）
     void ApplyCameraMode();

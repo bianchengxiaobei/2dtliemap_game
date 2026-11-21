@@ -2,13 +2,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 #include "ai/components/AiComponents.h"
 #include "characters/components/AnimalComponents.h"
 #include "characters/components/CharacterComponents.h"
+#include "ecs/SpatialIndex.h"
 #include "ecs/components/CommonComponents.h"
 #include "game/Companion.h"
 #include "game/SettlementNpc.h"
+#include "world/WorldCoords.h"
 
 namespace zl::game {
 namespace {
@@ -97,6 +100,109 @@ std::vector<TrapTargetCandidate> CollectTrapTargets(
             candidates.push_back(TrapTargetCandidate{
                 entity, position.x, position.y, position.z, kind});
         });
+    return candidates;
+}
+
+std::vector<TrapTargetCandidate> CollectTrapTargetsAround(
+    const ecs::EcsWorld& world, const ecs::SpatialIndex& spatial,
+    const std::vector<TrapTargetScanCenter>& centers,
+    TrapTargetScanStats* stats) {
+    std::vector<TrapTargetCandidate> candidates;
+    if (stats != nullptr) {
+        *stats = TrapTargetScanStats{};
+    }
+    if (centers.empty()) {
+        return candidates;
+    }
+    const entt::registry& registry = world.Registry();
+    std::unordered_set<ecs::Entity, ecs::EntityHash> seen;
+    std::unordered_set<std::uint64_t> scannedChunks;
+    std::size_t visited = 0;
+    bool stop = false;
+    const auto consider = [&](const ecs::Entity entity) {
+        if (stop) {
+            return;
+        }
+        if (visited >= kMaxTrapScanVisited) {
+            if (stats != nullptr) {
+                stats->limited = true;
+                stats->visited = visited;
+            }
+            stop = true;
+            return;
+        }
+        ++visited;
+        if (stats != nullptr) {
+            stats->visited = visited;
+        }
+        if (!world.Alive(entity) || !registry.valid(entity) ||
+            !seen.insert(entity).second) {
+            return;
+        }
+        const auto* position = registry.try_get<ecs::Position>(entity);
+        if (position == nullptr) {
+            return;
+        }
+        const TrapTargetKind kind = ClassifyTrapTarget(registry, entity);
+        if (kind == TrapTargetKind::None) {
+            return;
+        }
+        if (candidates.size() >= kMaxTrapTargetCandidates) {
+            if (stats != nullptr) {
+                stats->limited = true;
+            }
+            stop = true;
+            return;
+        }
+        candidates.push_back(TrapTargetCandidate{
+            entity, position->x, position->y, position->z, kind});
+    };
+
+    for (const TrapTargetScanCenter& center : centers) {
+        if (stop) {
+            break;
+        }
+        if (stats != nullptr) {
+            if (stats->centers >= kMaxTrapScanCenters) {
+                stats->limited = true;
+                break;
+            }
+            ++stats->centers;
+        }
+        if (!std::isfinite(center.x) || !std::isfinite(center.y) ||
+            !std::isfinite(center.radius) || center.radius <= 0.0f) {
+            continue;
+        }
+        const int minX = static_cast<int>(
+            std::floor(center.x - center.radius));
+        const int minY = static_cast<int>(
+            std::floor(center.y - center.radius));
+        const int maxX = static_cast<int>(
+            std::floor(center.x + center.radius));
+        const int maxY = static_cast<int>(
+            std::floor(center.y + center.radius));
+        const world::ChunkCoord minChunk = world::ChunkOf(minX, minY);
+        const world::ChunkCoord maxChunk = world::ChunkOf(maxX, maxY);
+        for (int cy = minChunk.cy; cy <= maxChunk.cy; ++cy) {
+            for (int cx = minChunk.cx; cx <= maxChunk.cx; ++cx) {
+                const std::uint64_t key =
+                    (static_cast<std::uint64_t>(
+                         static_cast<std::uint32_t>(cx))
+                     << 32U) |
+                    static_cast<std::uint64_t>(
+                        static_cast<std::uint32_t>(cy));
+                if (!scannedChunks.insert(key).second) {
+                    continue;
+                }
+                spatial.ForEachInChunks(
+                    cx, cy, cx, cy,
+                    [&](const ecs::Entity entity) { consider(entity); });
+            }
+        }
+    }
+    if (stats != nullptr) {
+        stats->candidates = candidates.size();
+    }
     return candidates;
 }
 

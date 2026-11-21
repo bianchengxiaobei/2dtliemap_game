@@ -62,6 +62,8 @@ struct TrapDefsConfig {
     const TrapDef* FindByBuilding(std::string_view buildingId) const;
 };
 
+std::string TrapEffectText(const TrapDef& trap);
+std::string TrapBuildSummary(const TrapDef& trap);
 bool TrapCanToggle(const ecs::PlacedTrap& trap);
 bool SetPlacedTrapArmed(ecs::PlacedTrap& trap, bool armed);
 bool AdvancePlacedTrapArming(ecs::PlacedTrap& trap, float seconds);

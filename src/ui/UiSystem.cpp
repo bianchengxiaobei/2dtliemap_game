@@ -360,6 +360,7 @@ bool UiSystem::EnsureHudDocument() {
     m_actionHintElement = m_hudDocument->GetElementById("action-hint");
     m_stealthPromptElement =
         m_hudDocument->GetElementById("stealth-prompt");
+    m_trapStatusElement = m_hudDocument->GetElementById("trap-status");
     m_noticeElement = m_hudDocument->GetElementById("notice");
     for (int i = 0; i < 5; ++i) {
         const std::string suffix = std::to_string(i);
@@ -718,6 +719,7 @@ void UiSystem::Shutdown() {
     m_dialogueHintElement = nullptr;
     m_actionHintElement = nullptr;
     m_stealthPromptElement = nullptr;
+    m_trapStatusElement = nullptr;
     m_noticeElement = nullptr;
     m_hotbarSlots.fill(nullptr);
     m_hotbarNames.fill(nullptr);
@@ -1280,6 +1282,20 @@ void UiSystem::ApplyHudState(const HudState& state, bool force) {
                                            state.throwTone == "fail");
             m_throwStatusElement->SetClass("status-ok",
                                            state.throwTone == "ok");
+        }
+    }
+    if (first || state.trapStatus != m_hudCache.trapStatus ||
+        state.trapTone != m_hudCache.trapTone) {
+        setText(m_trapStatusElement, state.trapStatus);
+        if (m_trapStatusElement != nullptr) {
+            m_trapStatusElement->SetProperty(
+                "display", state.trapStatus.empty() ? "none" : "block");
+            m_trapStatusElement->SetClass("status-ok",
+                                          state.trapTone == "ok");
+            m_trapStatusElement->SetClass("status-warn",
+                                          state.trapTone == "warn");
+            m_trapStatusElement->SetClass("status-fail",
+                                          state.trapTone == "fail");
         }
     }
     if (first || state.forageStatus != m_hudCache.forageStatus ||

@@ -108,6 +108,7 @@
             <div id="stealth-status" class="needs-status stealth-status"></div>
             <div id="ranged-status" class="needs-status ranged-status"></div>
             <div id="throw-status" class="needs-status throw-status"></div>
+            <div id="trap-status" class="needs-status trap-status"></div>
             <div id="forage-status" class="needs-status forage-status"></div>
             <div id="fishing-status" class="needs-status fishing-status"></div>
             <div id="needs-status" class="needs-status"></div>

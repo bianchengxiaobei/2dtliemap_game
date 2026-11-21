@@ -428,3 +428,17 @@ TEST_CASE("M34-F3-T3 同伴跟随落点避开 PlacedTrap") {
         Distance(goalX, goalY, position.x, position.y);
     CHECK(goalDistance > 2.0f + 0.7f);
 }
+
+TEST_CASE("M34-F4-T1 同伴从武装 PlacedTrap 上移开") {
+    CompanionAiRig rig;
+    const ecs::Entity player =
+        rig.AddPlayer(10.5f, 10.5f, ecs::Direction::Right);
+    const ecs::Entity companion = rig.AddCompanion(player, 15.5f, 10.5f);
+    const ecs::Entity trap = rig.AddPlacedTrap(15.5f, 10.5f);
+    rig.Tick();
+    const float goalX = static_cast<float>(rig.Request(companion).goalX) + 0.5f;
+    const float goalY = static_cast<float>(rig.Request(companion).goalY) + 0.5f;
+    const auto& position = rig.Pos(trap);
+    CHECK(Distance(goalX, goalY, position.x, position.y) >
+          2.0f + 0.7f);
+}

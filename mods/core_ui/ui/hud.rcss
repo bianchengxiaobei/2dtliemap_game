@@ -376,6 +376,10 @@ body {
     color: #ffd479;
 }
 
+.trap-status {
+    color: #d8c28f;
+}
+
 .ranged-status {
     margin-top: 2px;
     color: #e5c97b;

@@ -113,6 +113,9 @@ ThrowAimBlockReason ThrowAimBlockReasonFor(const ThrowAimRequest& request) {
     if (request.inVehicle) {
         return ThrowAimBlockReason::InVehicle;
     }
+    if (request.gathering) {
+        return ThrowAimBlockReason::Gathering;
+    }
     if (!request.targetValid) {
         return ThrowAimBlockReason::InvalidTarget;
     }

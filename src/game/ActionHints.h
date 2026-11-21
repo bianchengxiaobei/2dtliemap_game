@@ -7,6 +7,17 @@
 
 namespace zl::game {
 
+struct TrapHintState {
+    std::string name;
+    bool armed = false;
+    bool arming = false;
+    float armRemaining = 0.0f;
+    int uses = 0;
+    int usesMax = 0;
+    float cooldownRemaining = 0.0f;
+    bool readOnly = false;
+};
+
 struct ActionHintState {
     bool bleeding = false;
     bool hasBandage = false;
@@ -65,6 +76,68 @@ struct ActionHintState {
     bool throwWallClipped = false;
     float throwDistance = 0.0f;
 };
+
+inline std::string TrapHintText(const TrapHintState& state,
+                                std::string* tone = nullptr) {
+    if (tone != nullptr) {
+        *tone = "info";
+    }
+    if (state.name.empty()) {
+        return {};
+    }
+    std::string text = state.name + " · " +
+                       std::to_string(std::max(0, state.uses));
+    if (state.usesMax > 0) {
+        text += "/" + std::to_string(std::max(0, state.usesMax));
+    }
+    text += " 次";
+    if (state.uses <= 0) {
+        text += " · 已耗尽 · 需拆除重建";
+        if (tone != nullptr) {
+            *tone = "fail";
+        }
+    } else if (state.arming) {
+        char remaining[32];
+        std::snprintf(remaining, sizeof(remaining), "%.1f",
+                      static_cast<double>(std::max(0.0f, state.armRemaining)));
+        text += " · 布防中 " + std::string(remaining) + "s";
+        if (tone != nullptr) {
+            *tone = "warn";
+        }
+    } else if (state.armed) {
+        text += " · 已布防";
+    } else {
+        text += " · 已解除";
+        if (tone != nullptr) {
+            *tone = "warn";
+        }
+    }
+    if (state.cooldownRemaining > 0.0f) {
+        char cooldown[32];
+        std::snprintf(cooldown, sizeof(cooldown), "%.1f",
+                      static_cast<double>(state.cooldownRemaining));
+        text += " · 冷却 " + std::string(cooldown) + "s";
+        if (tone != nullptr && state.uses > 0) {
+            *tone = "warn";
+        }
+    }
+    if (state.readOnly) {
+        text += " · 仅所有者可操作";
+        if (tone != nullptr && state.uses > 0) {
+            *tone = "warn";
+        }
+    } else if (state.uses > 0) {
+        if (state.armed) {
+            text += " · E 解除";
+        } else if (state.arming) {
+            text += " · E 立即布防";
+        } else {
+            text += " · E 布防";
+        }
+        text += " · X 拆除（建造模式）";
+    }
+    return text;
+}
 
 inline std::string ActionHintText(const ActionHintState& state,
                                   std::string* tone = nullptr) {

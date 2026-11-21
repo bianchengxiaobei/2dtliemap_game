@@ -851,12 +851,13 @@ TEST_CASE("P1 HUD 左侧状态堆叠与底部提示布局") {
                                     Rml::Vector2i(1920, 1080)};
     const char* hudPaths[] = {"assets/ui/hud.rml",
                               "mods/core_ui/ui/hud.rml"};
-    const char* statusIds[] = {"ranged-status", "forage-status", "fishing-status",
-                               "needs-status", "wound-status", "pain-status",
-                               "armor-status", "infection-status",
-                               "weather-status"};
+    const char* statusIds[] = {"ranged-status", "trap-status", "forage-status",
+                               "fishing-status", "needs-status",
+                               "wound-status", "pain-status", "armor-status",
+                               "infection-status", "weather-status"};
     const char* statusTexts[] = {
         "手枪 换弹中 42% · 3/8 · 备弹 9",
+        "捕兽夹 · 4/4 次 · 已布防 · 冷却 1.2s/2.0s",
         "可觅食 · 森林（2.6 秒）",
         "可钓鱼 · 静水（需要 鱼饵）",
         "饥饿：严重（移速 -20%） · 口渴：中度（体力恢复 -10%）",
@@ -894,7 +895,7 @@ TEST_CASE("P1 HUD 左侧状态堆叠与底部提示布局") {
             REQUIRE(stealthPrompt != nullptr);
             REQUIRE(notice != nullptr);
 
-            for (std::size_t i = 0; i < 9; ++i) {
+            for (std::size_t i = 0; i < 10; ++i) {
                 Rml::Element* status = document->GetElementById(statusIds[i]);
                 REQUIRE(status != nullptr);
                 status->SetInnerRML(statusTexts[i]);

@@ -4,6 +4,54 @@
 
 ---
 
+## 2026-11-21 M34-F4-T4 文档、验收与交付
+
+**范围**：补齐 M34 交付文档。README 增加潜行/投掷/陷阱操作、M34 自动回归状态与已知限制；`docs/modding.md` 版本行补 M34-F1/F2/F4，并新增 `3.6.3.10 M34 潜行、投掷与陷阱交付契约/限制`，汇总键位、配置/内容契约、版本/旧档、服务器权威、性能上限、未做项和复验命令；`docs/22` 补齐 F4-T4 文档记录、F4-T2 未验收说明与已知限制；`docs/01` 同步状态。
+
+**状态**：M34 仍为 **23/25**。F4-T2 的 15–30 分钟自然流程、陷阱触发/火焰/背刺/读档和双客户端服务器重启未人工验收，因此 T4 完成标准未勾选，不宣称 M34 已完整可交付。无新增代码、协议、存档或内容字段；未提交 Git。
+
+**下一步**：按 F4-T2 清单做人工闭环并勾选 T2/T4；用户确认后才进入下一里程碑。
+
+## 2026-11-21 M34-F4-T3 全量回归、版本与性能
+
+**范围**：为陷阱目标收集增加 `ecs::SpatialIndex` 局部 chunk 查询（`CollectTrapTargetsAround`），单机 `UpdateTraps` 和服务器 `TickTrapTriggers` 不再每 tick 扫描全图 `Health/Position`；按 chunk/实体去重，限制 64 个扫描中心/2048 次访问/256 个候选，超限安全跳过。新增 64 个在飞投掷物上限，单机 `ReleaseThrowAim` 与服务器 `ThrowItemAction` 超限拒绝。无空间索引时保留旧全量收集回退。
+
+**测试/证据**：`M34-F4-T3*` **1/1（11 assertions）**；`M34*` Release/Debug **64/64（1633）**。Release 全量排除既有 `M30-T6`/`M31-T9` **1151/1151（145479 assertions，4 skipped）**；Release 相关 `M5/M20/M23/M25/M30/M33*` 排除 `M30-T6`/`M31-T9` **373/373（8916）**。Debug 全量排除七组既有 flake 后 **1127/1127（144696，28 skipped）**；此前过滤五组时 X-F1、M26-V2 各失败一次，隔离 **13/13（482）**、**2/2（66）** 均通过。版本定向 **20/20（736）**，确认内容指纹 v23、`PlayerState v23`、ZLR1 组件、存档 53、命令 62、旧档回退；Python **127/127**。Release 无 mod 600 tick 烟测 `build/m34_f4_t3_startup_nomods/startup_nomods.out.log`：物品 99、配方 31、陷阱 3、指纹 `0xa086c91a0d3c7030`、tick=600、stderr 0。
+
+**限制/下一步**：F4-T2 的 15–30 分钟自然流程/双客户端重启仍待人工（本轮按用户选择先做 T3），不勾选 T2；Debug 原始全量仍有既有非 M34 flake；局部扫描按 chunk 粗粒度，同一 chunk 内实体仍全部分类，候选超限时尾部本 tick 不触发。下一步 F4-T2 人工收口或 F4-T4 文档交付。
+
+## 2026-11-21 M34-F4-T1 跨系统联动
+
+**范围**：新增 `M34-F4-T1` 组合用例，覆盖潜行脚步 2.5→1.125 格、投掷石块独立 6 格噪声、投掷物/地面物品/玩家/同伴不会成为陷阱目标、捕兽夹与动物掩码、燃油 112.5s/9 格火焰、冷却阻止重复消耗、同伴从武装 `PlacedTrap` 上移开。新增 `ThrowAimBlockReason::Gathering` 与 `WorldDemoState::IsGatheringActionActive`：单机觅食/钓鱼/剥取和联机 survival/animalHarvest 进行中拒绝投掷瞄准与潜行切换；服务器 `SetServerStealth`/`ThrowItemAction` 同步拒绝，避免投掷或潜行覆盖采集动作。菜单/背包/建造/载具/UI 拦截沿用 F2-T2，投掷仍不会替代战斗动作。
+
+**验证**：`M34-F4-T1*` **2/2（42 assertions）**；`M34*` Release/Debug **63/63（1622）**；`M34-F3*` Release/Debug **20/20（531）**；`M34-F2-T2*` **4/4（59）**；相关旧系统 `M33-F3-T3/M23-F2b-T6/M30-T7/X-F1 2b-3` **11/11（182）**；Release 全量排除既有 `M30-T6`/`M31-T9` flake **1150/1150（145468 assertions，4 skipped）**。绊线噪声/零伤害、燃油火焰、投掷扣除/回收/损坏与非 owner 拒绝沿用 F3-T3/T5、F2-T5/T7 真实服务器用例。
+
+**限制/下一步**：投掷/陷阱自然组合与 15–30 分钟 1280 流程留 F4-T2；火焰仍可伤害进入火区的玩家/同伴（只保证陷阱直接目标排除）；本机 Python 后端未编译；无 PvP 陷阱/可携带陷阱。下一步 **M34-F4-T2**。
+
+## 2026-11-21 M34-F3-T7 陷阱平衡、回归与 F3 收口
+
+**范围**：新增 `M34-F3-T7` 数据平衡用例，从真实 `config/game.json`/`assets/traps.json`/`assets/items.json` 锁定木材成本捕兽夹 3、绊线 1、燃油 4；捕兽夹 55 伤害/2s 硬直/4 次/2s 冷却/1s 布防，绊线 0 伤害/18 格噪声/8 次/1s 冷却，燃油 0 直接伤害/1.5 格 45 游戏分钟/1 次。断言捕兽夹单次低于消防斧轻击、DPS 低于其 50%，绊线不造成伤害，燃油成本最高且 9 格火焰一次性；未改生产逻辑、数据、协议或存档。README 补充三种陷阱与 HUD/拆除能力；F3 验收项全部勾选。
+
+**验证**：`M34-F3-T7*` **1/1（53 assertions）**；`M34-F3*` Release/Debug 均 **20/20（531）**；Release 定向 `M34-F3*,M20*,M23*,M32*` **245/245（6068）**；Release 全量排除既有 `M30-T6`/`M31-T9` flake **1148/1148（145425 assertions，4 skipped）**；Python **127/127**。Debug 全量首轮 **1146/1152**，6 个失败均为既有非 F3 计时/网络/性能用例（X-F1 建筑格、M22 睡眠、M23-F2a-T6/T7、M26-V2、M31-T9）；排除既有 `M22-F1`/`M23-F2a-T6`/`M30-T6`/`M31-T9` 组后 **1142/1142（145265）**，M23-F2a-T6 单跑仍失败，未改该旧测试/生产路径。
+
+**限制/下一步**：平衡为数据/纯逻辑断言，不替代自然 15 分钟试玩；Debug 原始全量仍有上述既有 flake。未新增陷阱实体/地图格式字段，`mapformat.md` 无需变更。F3 无阻塞，下一步 **M34-F4-T1 跨系统联动**。
+
+## 2026-11-20 M34-F3-T6 陷阱 UI、提示与 1280 验证
+
+**范围**：新增 `TrapEffectText`/`TrapBuildSummary`，建造菜单显示陷阱名称、木材、效果、次数/冷却；`HudState` 增加附近已放置陷阱摘要字段与 `TrapStatusText`，显示 armed/布防中/解除/冷却/剩余次数/耗尽/owner 只读；`TrapHintText` 统一 E 布防/立即布防/解除与 X 建造模式拆除/二次确认/返还文案。Native `UiSystem`、两份 RML/RCSS、`core_ui` Lua/Python 与 `Hud.GetState` 增加 `trap-status` 和 camelCase 字段；`HudTrapStatusSuppressed` 在背包/菜单/对话/角色/地图/载具改装/睡眠/战报等模态界面隐藏摘要。
+
+**验证**：`M34-F3-T6*` **2/2（31 assertions）**；`M34-F3*` **19/19（478）**；P1 HUD **2/2（730）**、Lua UI binding **36**；Release 全量 **1147/1147（145372 assertions，4 skipped）**、Debug 定向 **67/67（1734）**、Python 数据 **127/127**。Release 1280 core_ui 构造烟测 `build/m34_f3_t6_ui/`：建造菜单捕兽夹效果/次数、捕兽夹 E/X 与已布防 HUD、绊线 7/8 次、燃油 0/1 次/9 格火焰、拆除返还 2 木材共 7 张截图；日志确认 `m34-f3-t6-ui-smoke-pass`，stderr 0。
+
+**限制/下一步**：烟测使用临时探针、传送、加木材/绷带与构造僵尸/火焰，不替代自然试玩；Python 后端本机关闭，Python 字段代码已同步但未执行 Python API 断言；native fallback 未单独出图；X 仍仅在建造模式生效，普通 E/X 提示明确标注。下一步 M34-F3-T7 平衡、全量回归与文档收口。
+
+## 2026-11-20 M34-F3-T5 联机权威、复制与双客户端
+
+**范围**：T5 复用已接好的 `TRAP2` 只读复制和 `PlaceStructure`/`InteractFacility`/`DemolishStructure` 命令，不新增命令、存档字段或协议。`WorldDemoState::UpdateTraps` 仍只在单机分支运行；网络客户端只把服务器 `PlacedTrap` 副本应用到 ECS 显示，不本地布防、触发、扣次数或发奖。`TRAP2` 服务 defId/armed/cooldown/uses/owner，owner 同时还原 `StructureOwner`，非 owner 客户端前置拦截，服务器再次校验。
+
+**验证**：新增真实 UDP/KCP 双客户端用例：A/B 看到同一陷阱 StableId 与 defId/armed/cooldown/uses/owner；B 非 owner 发送 `InteractFacility` 被 `ownershipRejected`，A 对同格重复 `PlaceStructure` 被 `commandsRejected` 且不生成第二座陷阱；两名僵尸同时进入范围时只结算一名、捕兽夹 4→3 次并进入 2s 冷却，A/B 的 `TRAP2` 都看到 uses/cooldown；A 断开后同身份重连恢复同一 StableId 和陷阱 owner 状态；重连后的 A 用旧客户端 `demolish.flags=0` 立即拆除成功，验证旧路径兼容。`M34-F3-T5*` **1/1（46 assertions）**，连续 3 次 Release 通过；`M34-F3*` **17/17（447）**、Release 全量 **1145/1145（145337 assertions，4 skipped）**、Debug 定向 **65/65（1703）**、Python 数据 **127/127**。
+
+**限制/下一步**：没有 1280 双窗口画面/UI 验证，留 T6；网络测试不替代自然双客户端试玩；`TRAP2` 不复制 `armRemaining`，布防剩余时间只影响服务器/读档，客户端等服务器 armed 状态；旧 `SpikeTrap`/电网仍独立。下一步 M34-F3-T6。
+
 ## 2026-11-20 M34-F3-T4 陷阱存档、读档与旧档兼容
 
 **范围**：`PlacedTrap` 从 `TRP2 v1` 升到 v2，在 defId/armed/cooldown/uses/owner 后追加 `armRemaining`；读取仍接受 v1，旧负载缺失该字段时按 0 处理。单机通过 `SaveManager` 快照/读档，服务器通过 `ServerHost::SaveWorld` 与重启恢复，布防中的陷阱继续按剩余时间自动布防；旧档只有 `SpikeTrap` 时保持 `TRAP v1` 与电网/占位实体独立，不生成 `PlacedTrap`。燃油陷阱的 `FireSource/FireAnchor` 沿用 M23 火焰存档，`trap_fuel` 火源跨重启保留。

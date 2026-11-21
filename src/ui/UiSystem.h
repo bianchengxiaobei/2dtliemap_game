@@ -291,6 +291,7 @@ private:
     Rml::Element* m_dialogueHintElement = nullptr;
     Rml::Element* m_actionHintElement = nullptr;
     Rml::Element* m_stealthPromptElement = nullptr;
+    Rml::Element* m_trapStatusElement = nullptr;
     Rml::Element* m_noticeElement = nullptr;
     std::array<Rml::Element*, 5> m_hotbarSlots{};
     std::array<Rml::Element*, 5> m_hotbarNames{};

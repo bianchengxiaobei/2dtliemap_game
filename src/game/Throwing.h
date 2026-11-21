@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -20,6 +21,10 @@ struct ThrowingConfig {
     float maxRange = 12.0f;
     float minRange = 1.0f;
 };
+
+// M34-F4-T3：在飞投掷物上限。正常 10 个远低于上限；超限拒绝/跳过，
+// 避免异常输入把本地/服务器队列无限推高。
+inline constexpr std::size_t kMaxInFlightThrownProjectiles = 64;
 
 ThrowingConfig DefaultThrowingConfig();
 ThrowingConfig SanitizeThrowingConfig(const ThrowingConfig& config);
@@ -47,6 +52,7 @@ enum class ThrowAimBlockReason {
     OtherUi,
     Dead,
     InVehicle,
+    Gathering,
     InvalidTarget,
     TooClose,
 };
@@ -60,6 +66,7 @@ struct ThrowAimRequest {
     bool modalOpen = false;
     bool dead = false;
     bool inVehicle = false;
+    bool gathering = false;
     bool targetValid = false;
     float playerX = 0.0f;
     float playerY = 0.0f;

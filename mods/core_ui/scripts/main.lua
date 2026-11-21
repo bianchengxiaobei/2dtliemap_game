@@ -159,6 +159,14 @@ local function refresh_hud()
     UI.SetClass(HUD_DOC, "throw-status", "status-ok", throw_tone == "ok")
     UI.SetClass(HUD_DOC, "throw-status", "status-warn", throw_tone == "warn")
     UI.SetClass(HUD_DOC, "throw-status", "status-fail", throw_tone == "fail")
+    local trap_status = s.trapStatus or ""
+    local trap_tone = s.trapTone or "info"
+    UI.SetText(HUD_DOC, "trap-status", trap_status)
+    UI.SetProperty(HUD_DOC, "trap-status", "display",
+                   trap_status ~= "" and "block" or "none")
+    UI.SetClass(HUD_DOC, "trap-status", "status-ok", trap_tone == "ok")
+    UI.SetClass(HUD_DOC, "trap-status", "status-warn", trap_tone == "warn")
+    UI.SetClass(HUD_DOC, "trap-status", "status-fail", trap_tone == "fail")
     local forage_status = s.forageStatus or ""
     local forage_tone = s.forageTone or "info"
     UI.SetText(HUD_DOC, "forage-status", forage_status)
