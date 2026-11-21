@@ -65,7 +65,8 @@ public:
         std::uint64_t interrupted = 0;  // 前摇被硬直打断（跨帧累计）
     };
 
-    explicit AiSystem(WalkableQuery walkable, AttackParams attack = {})
+    static AttackParams DefaultAttackParams();
+    explicit AiSystem(WalkableQuery walkable, AttackParams attack = DefaultAttackParams())
         : m_walkable(std::move(walkable)), m_attack(attack) {}
 
     void Update(ecs::EcsWorld& world, float dt);
@@ -88,5 +89,7 @@ private:
     std::vector<PlayerTarget> m_players;  // 每 tick 收集的存活玩家（燃烧僵尸追逐用）
     std::uint32_t m_tick = 0;  // 确定性随机盐（游荡/搜索选点每次不同）
 };
+
+inline AiSystem::AttackParams AiSystem::DefaultAttackParams() { return {}; }
 
 }  // namespace zl::ai

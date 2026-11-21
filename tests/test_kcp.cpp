@@ -13,6 +13,26 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+
+using SocketLength = int;
+constexpr int kWouldBlock = WSAEWOULDBLOCK;
+#else
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cerrno>
+
+using SOCKET = int;
+constexpr SOCKET INVALID_SOCKET = -1;
+constexpr int SOCKET_ERROR = -1;
+
+inline int closesocket(SOCKET socket) { return ::close(socket); }
+inline int WSAGetLastError() { return errno; }
+using SocketLength = socklen_t;
+constexpr int kWouldBlock = EWOULDBLOCK;
 #endif
 
 #include "net/FrameCodec.h"
@@ -34,8 +54,12 @@ class LossyUdpRelay {
 public:
     LossyUdpRelay(std::uint16_t serverPort, int dropEvery)
         : m_dropEvery(std::max(1, dropEvery)) {
+#ifdef _WIN32
         WSADATA data{};
         m_wsaStarted = WSAStartup(MAKEWORD(2, 2), &data) == 0;
+#else
+        m_wsaStarted = true;
+#endif
         std::memset(&m_server, 0, sizeof(m_server));
         m_server.sin_family = AF_INET;
         m_server.sin_port = htons(serverPort);
@@ -63,9 +87,18 @@ public:
             Close();
             return false;
         }
+#ifdef _WIN32
         u_long nonBlocking = 1;
         ioctlsocket(m_front, FIONBIO, &nonBlocking);
         ioctlsocket(m_back, FIONBIO, &nonBlocking);
+#else
+        for (SOCKET socket : {m_front, m_back}) {
+            const int flags = fcntl(socket, F_GETFL, 0);
+            if (flags >= 0) {
+                fcntl(socket, F_SETFL, flags | O_NONBLOCK);
+            }
+        }
+#endif
 
         sockaddr_in bindAddress{};
         bindAddress.sin_family = AF_INET;
@@ -82,7 +115,7 @@ public:
             return false;
         }
         sockaddr_in actual{};
-        int actualLength = sizeof(actual);
+        SocketLength actualLength = sizeof(actual);
         if (getsockname(m_front, reinterpret_cast<sockaddr*>(&actual), &actualLength) ==
             SOCKET_ERROR) {
             if (error != nullptr) {
@@ -109,12 +142,12 @@ public:
         std::array<char, 65536> buffer{};
         for (;;) {
             sockaddr_in from{};
-            int fromLength = sizeof(from);
+            SocketLength fromLength = sizeof(from);
             const int received =
                 recvfrom(m_front, buffer.data(), static_cast<int>(buffer.size()), 0,
                          reinterpret_cast<sockaddr*>(&from), &fromLength);
             if (received == SOCKET_ERROR) {
-                if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                if (WSAGetLastError() == kWouldBlock) {
                     break;
                 }
                 return;
@@ -135,7 +168,7 @@ public:
 
         for (;;) {
             sockaddr_in from{};
-            int fromLength = sizeof(from);
+            SocketLength fromLength = sizeof(from);
             const int received =
                 recvfrom(m_back, buffer.data(), static_cast<int>(buffer.size()), 0,
                          reinterpret_cast<sockaddr*>(&from), &fromLength);
@@ -173,7 +206,9 @@ private:
             m_back = INVALID_SOCKET;
         }
         if (m_wsaStarted) {
+#ifdef _WIN32
             WSACleanup();
+#endif
             m_wsaStarted = false;
         }
     }

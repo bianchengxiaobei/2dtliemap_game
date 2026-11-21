@@ -41,7 +41,8 @@ public:
     bool IsFullscreen() const { return m_fullscreen; }
 
     GLFWwindow* Handle() const { return m_window; }
-    void* NativeHandle() const;  // Win32 HWND
+    void* NativeHandle() const;         // Win32 HWND / X11 Window
+    void* NativeDisplayHandle() const;  // X11 Display*，其他平台为 nullptr
 
     int Width() const { return m_width; }
     int Height() const { return m_height; }

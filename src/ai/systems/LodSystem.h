@@ -28,7 +28,8 @@ public:
         int updated = 0;    // 本 tick 实际执行"重"逻辑的实体数
     };
 
-    LodSystem(Params params = {}) : m_params(params) {}
+    static Params DefaultParams();
+    LodSystem(Params params = DefaultParams()) : m_params(params) {}
 
     void SetFocus(float x, float y) {
         m_focusX = x;
@@ -45,5 +46,7 @@ private:
     std::uint32_t m_tick = 0;  // 自增 tick（Update 次数）
     Stats m_stats;
 };
+
+inline LodSystem::Params LodSystem::DefaultParams() { return {}; }
 
 }  // namespace zl::ai

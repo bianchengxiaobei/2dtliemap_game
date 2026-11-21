@@ -57,8 +57,9 @@ public:
         std::uint64_t virtualized = 0;   // 累计虚拟化
     };
 
+    static Params DefaultParams();
     SpawnLodSystem(WalkableQuery walkable, SpawnFn spawnZombie, DespawnFn despawnZombie,
-                   VirtualHordeStore& hordes, Params params = {})
+                   VirtualHordeStore& hordes, Params params = DefaultParams())
         : m_walkable(std::move(walkable)),
           m_spawn(std::move(spawnZombie)),
           m_despawn(std::move(despawnZombie)),
@@ -107,5 +108,7 @@ private:
     std::vector<Candidate> m_candidates;  // 每 tick 复用（避免分配）
     Stats m_stats;
 };
+
+inline SpawnLodSystem::Params SpawnLodSystem::DefaultParams() { return {}; }
 
 }  // namespace zl::ai

@@ -235,6 +235,7 @@ target_include_directories(ZomboidLikeCore PUBLIC
     ${BULLET_INCLUDE_DIRS}
     ${Stb_INCLUDE_DIR}
     ${MINIAUDIO_INCLUDE_DIR}
+    ${LUA_INCLUDE_DIR}
 )
 
 target_compile_definitions(ZomboidLikeCore PRIVATE
@@ -254,11 +255,10 @@ target_link_libraries(ZomboidLikeCore PUBLIC
     RmlUi::RmlUi
     unofficial::sqlite3::sqlite3
     kcp::kcp
-    ws2_32
 )
 
 if (WIN32)
-    target_link_libraries(ZomboidLikeCore PUBLIC psapi)
+    target_link_libraries(ZomboidLikeCore PUBLIC psapi ws2_32)
 endif()
 
 if (ZL_ENABLE_PYTHON)

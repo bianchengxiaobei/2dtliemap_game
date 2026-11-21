@@ -17,7 +17,20 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
-#error "Kcp transport currently supports Windows only"
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cerrno>
+
+using SOCKET = int;
+constexpr SOCKET INVALID_SOCKET = -1;
+constexpr int SOCKET_ERROR = -1;
+
+inline int closesocket(SOCKET socket) { return ::close(socket); }
 #endif
 
 namespace zl::net {
@@ -37,6 +50,7 @@ std::uint64_t NowMs() {
             .count());
 }
 
+#ifdef _WIN32
 struct WinsockRuntime {
     WinsockRuntime() {
         WSADATA data{};
@@ -70,9 +84,29 @@ bool EnsureWinsock(std::string* error) {
     return true;
 }
 
+using SocketLength = int;
+
+constexpr int kWouldBlock = WSAEWOULDBLOCK;
+constexpr int kConnectionReset = WSAECONNRESET;
+
 std::string SocketError(std::string_view what) {
     return std::string(what) + "（WSA " + std::to_string(WSAGetLastError()) + "）";
 }
+#else
+using SocketLength = socklen_t;
+
+inline int WSAGetLastError() { return errno; }
+
+bool EnsureWinsock(std::string*) { return true; }
+
+constexpr int kWouldBlock = EWOULDBLOCK;
+constexpr int kConnectionReset = ECONNRESET;
+
+std::string SocketError(std::string_view what) {
+    return std::string(what) + "（errno " + std::to_string(errno) + ": " +
+           std::strerror(errno) + "）";
+}
+#endif
 
 bool ResolveIPv4(std::string_view host, std::uint16_t port, sockaddr_in* address,
                  std::string* error) {
@@ -120,8 +154,16 @@ bool ResolveIPv4(std::string_view host, std::uint16_t port, sockaddr_in* address
 }
 
 bool SetNonBlocking(SOCKET socket) {
+#ifdef _WIN32
     u_long enabled = 1;
     return ioctlsocket(socket, FIONBIO, &enabled) == 0;
+#else
+    const int flags = fcntl(socket, F_GETFL, 0);
+    if (flags < 0) {
+        return false;
+    }
+    return fcntl(socket, F_SETFL, flags | O_NONBLOCK) == 0;
+#endif
 }
 
 void SetSocketBuffers(SOCKET socket) {
@@ -176,7 +218,7 @@ struct KcpClient::Impl {
 
     static int Output(const char* data, int length, ikcpcb*, void* user) {
         auto* self = static_cast<Impl*>(user);
-        const int sent = send(self->socket, data, length, 0);
+        const int sent = static_cast<int>(send(self->socket, data, length, 0));
         if (sent == SOCKET_ERROR) {
             return -1;
         }
@@ -297,14 +339,14 @@ void KcpClient::Poll() {
 
     std::array<char, kReceiveBufferBytes> buffer{};
     for (;;) {
-        const int received = recv(m_impl->socket, buffer.data(),
-                                  static_cast<int>(buffer.size()), 0);
+        const int received = static_cast<int>(
+            recv(m_impl->socket, buffer.data(), static_cast<int>(buffer.size()), 0));
         if (received == SOCKET_ERROR) {
             const int code = WSAGetLastError();
-            if (code == WSAEWOULDBLOCK) {
+            if (code == kWouldBlock) {
                 break;
             }
-            if (code == WSAECONNRESET) {
+            if (code == kConnectionReset) {
                 m_impl->Close();
                 return;
             }
@@ -409,8 +451,9 @@ struct KcpServer::Impl {
     }
 
     int RawSend(const sockaddr_in& peer, const char* data, int length) {
-        const int sent = sendto(socket, data, length, 0,
-                                reinterpret_cast<const sockaddr*>(&peer), sizeof(peer));
+        const int sent = static_cast<int>(
+            sendto(socket, data, length, 0, reinterpret_cast<const sockaddr*>(&peer),
+                   sizeof(peer)));
         if (sent == SOCKET_ERROR) {
             return -1;
         }
@@ -479,16 +522,16 @@ struct KcpServer::Impl {
         std::array<char, kReceiveBufferBytes> buffer{};
         for (;;) {
             sockaddr_in from{};
-            int fromLength = sizeof(from);
-            const int received =
+            SocketLength fromLength = sizeof(from);
+            const int received = static_cast<int>(
                 recvfrom(socket, buffer.data(), static_cast<int>(buffer.size()), 0,
-                         reinterpret_cast<sockaddr*>(&from), &fromLength);
+                         reinterpret_cast<sockaddr*>(&from), &fromLength));
             if (received == SOCKET_ERROR) {
                 const int code = WSAGetLastError();
-                if (code == WSAEWOULDBLOCK) {
+                if (code == kWouldBlock) {
                     break;
                 }
-                if (code == WSAECONNRESET) {
+                if (code == kConnectionReset) {
                     continue;
                 }
                 ++stats.datagramsRejected;
@@ -606,7 +649,7 @@ bool KcpServer::Listen(std::string_view bindHost, std::uint16_t port, std::strin
     }
 
     sockaddr_in actual{};
-    int actualLength = sizeof(actual);
+    SocketLength actualLength = sizeof(actual);
     if (getsockname(socket, reinterpret_cast<sockaddr*>(&actual), &actualLength) ==
         SOCKET_ERROR) {
         if (error != nullptr) {

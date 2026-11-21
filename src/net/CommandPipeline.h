@@ -46,7 +46,8 @@ public:
         std::string lastError;
     };
 
-    explicit CommandPipeline(Options options = {});
+    static Options DefaultOptions();
+    explicit CommandPipeline(Options options = DefaultOptions());
     ~CommandPipeline();
 
     CommandPipeline(const CommandPipeline&) = delete;
@@ -93,5 +94,7 @@ private:
     std::uint64_t m_directExecuted = 0;
     std::uint64_t m_directRejected = 0;
 };
+
+inline CommandPipeline::Options CommandPipeline::DefaultOptions() { return {}; }
 
 }  // namespace zl::net

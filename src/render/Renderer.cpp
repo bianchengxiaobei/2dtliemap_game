@@ -131,6 +131,9 @@ Renderer::~Renderer() = default;
 bool Renderer::Init(platform::Window& window, const RendererDesc& desc) {
     bgfx::PlatformData pd{};
     pd.nwh = window.NativeHandle();
+#if defined(__linux__)
+    pd.ndt = window.NativeDisplayHandle();
+#endif
 
     bgfx::Init init;
     init.type = desc.backend;

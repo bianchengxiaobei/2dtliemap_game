@@ -59,7 +59,8 @@ public:
         net::KcpSessionClientStats session;
     };
 
-    explicit NetworkClient(Options options = {});
+    static Options DefaultOptions();
+    explicit NetworkClient(Options options = DefaultOptions());
     ~NetworkClient();
 
     NetworkClient(const NetworkClient&) = delete;
@@ -146,5 +147,7 @@ private:
     bool m_wasDisconnected = true;
     Stats m_stats;
 };
+
+inline NetworkClient::Options NetworkClient::DefaultOptions() { return {}; }
 
 }  // namespace zl::game

@@ -97,8 +97,9 @@ public:
         std::uint64_t targetsAcquired = 0;
     };
 
+    static Options DefaultOptions();
     explicit CompanionSystem(WalkableQuery walkable = {},
-                             DamageCallback damage = {}, Options options = {});
+                             DamageCallback damage = {}, Options options = DefaultOptions());
 
     void Update(ecs::EcsWorld& world, float dt);
     void SetItemRegistry(const items::ItemRegistry* items) { m_items = items; }
@@ -163,6 +164,8 @@ private:
     Options m_options;
     Stats m_stats;
 };
+
+inline CompanionSystem::Options CompanionSystem::DefaultOptions() { return {}; }
 
 CompanionSystem::Options LoadCompanionSystemOptions(const core::Config& config);
 CompanionAttackProfile CompanionAttackProfileFor(

@@ -43,7 +43,8 @@ public:
         int separated = 0;  // 触发过分离的实体数
     };
 
-    BoidsSystem(Params params = {}) : m_params(params) {}
+    static Params DefaultParams();
+    BoidsSystem(Params params = DefaultParams()) : m_params(params) {}
 
     void Update(ecs::EcsWorld& world);
     const Stats& GetStats() const { return m_stats; }
@@ -67,5 +68,7 @@ private:
     std::vector<Candidate> m_candidates;  // 本 tick 候选快照（复用容量）
     std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> m_grid;  // 复用容量
 };
+
+inline BoidsSystem::Params BoidsSystem::DefaultParams() { return {}; }
 
 }  // namespace zl::ai

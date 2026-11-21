@@ -227,9 +227,10 @@ public:
         std::uint64_t entitiesRemoved = 0;
     };
 
+    static Options DefaultOptions();
     EntityReplicationProducer(ecs::EcsWorld& world,
                               const net::ReplicationRegistry& registry,
-                              Options options = {});
+                              Options options = DefaultOptions());
 
     // 全量快照重置该客户端的复制基线（首次连接/丢失增量基线时调用）。
     net::ReplicationSnapshot BuildFull(std::uint64_t serverTick, float focusX,
@@ -268,6 +269,10 @@ private:
     Stats m_stats;
 };
 
+inline EntityReplicationProducer::Options EntityReplicationProducer::DefaultOptions() {
+    return {};
+}
+
 class EntityReplicationClient {
 public:
     struct Options {
@@ -286,7 +291,8 @@ public:
         float lastCorrectionDistance = 0.0f;
     };
 
-    explicit EntityReplicationClient(Options options = {});
+    static Options DefaultOptions();
+    explicit EntityReplicationClient(Options options = DefaultOptions());
 
     // Delta 的 baseTick 必须等于 LastAppliedTick()；不匹配时拒绝并标记需要全量快照。
     bool Apply(const net::ReplicationSnapshot& snapshot,
@@ -409,5 +415,9 @@ private:
     bool m_needsFullSnapshot = false;
     Stats m_stats;
 };
+
+inline EntityReplicationClient::Options EntityReplicationClient::DefaultOptions() {
+    return {};
+}
 
 }  // namespace zl::game

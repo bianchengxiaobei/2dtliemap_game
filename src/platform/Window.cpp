@@ -1,7 +1,11 @@
 #include "platform/Window.h"
 
 #include <GLFW/glfw3.h>
+#if defined(_WIN32)
 #define GLFW_EXPOSE_NATIVE_WIN32
+#elif defined(__linux__)
+#define GLFW_EXPOSE_NATIVE_X11
+#endif
 #include <GLFW/glfw3native.h>
 
 #include "core/Input.h"
@@ -210,7 +214,21 @@ void Window::ToggleFullscreen() {
 }
 
 void* Window::NativeHandle() const {
+#if defined(_WIN32)
     return m_window ? glfwGetWin32Window(m_window) : nullptr;
+#elif defined(__linux__)
+    return m_window ? reinterpret_cast<void*>(glfwGetX11Window(m_window)) : nullptr;
+#else
+    return nullptr;
+#endif
+}
+
+void* Window::NativeDisplayHandle() const {
+#if defined(__linux__)
+    return m_window ? static_cast<void*>(glfwGetX11Display()) : nullptr;
+#else
+    return nullptr;
+#endif
 }
 
 void Window::SetResizeCallback(std::function<void(int, int)> callback) {

@@ -67,8 +67,9 @@ public:
         float damage = 0.0f;
     };
 
+    static Params DefaultParams();
     AnimalSystem(const AnimalRegistry& animals, world::World& world,
-                 ecs::EcsWorld& ecs, const PoiConfig* pois, Params params = {});
+                 ecs::EcsWorld& ecs, const PoiConfig* pois, Params params = DefaultParams());
     ~AnimalSystem();
 
     AnimalSystem(const AnimalSystem&) = delete;
@@ -170,5 +171,7 @@ private:
     float m_nearestLogTimer = 0.0f;
     Stats m_stats;
 };
+
+inline AnimalSystem::Params AnimalSystem::DefaultParams() { return {}; }
 
 }

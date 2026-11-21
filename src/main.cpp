@@ -1,7 +1,9 @@
 #include "game/GameApp.h"
 #include "server/ServerHost.h"
 
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 #include <cstring>
 #include <filesystem>
@@ -11,6 +13,7 @@
 namespace {
 
 std::filesystem::path ExecutableDirectory() {
+#if defined(_WIN32)
     std::vector<wchar_t> buffer(32768, L'\0');
     DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
                                       static_cast<DWORD>(buffer.size()));
@@ -18,6 +21,15 @@ std::filesystem::path ExecutableDirectory() {
         return {};
     }
     return std::filesystem::path(buffer.data()).parent_path();
+#else
+    std::error_code error;
+    const std::filesystem::path executable =
+        std::filesystem::read_symlink("/proc/self/exe", error);
+    if (error) {
+        return {};
+    }
+    return executable.parent_path();
+#endif
 }
 
 void UseProjectRootWorkingDirectory() {
@@ -27,7 +39,11 @@ void UseProjectRootWorkingDirectory() {
         if (std::filesystem::exists(directory / "assets" / "asset_manifest.json",
                                     error) &&
             std::filesystem::exists(directory / "config" / "game.json", error)) {
+#if defined(_WIN32)
             SetCurrentDirectoryW(directory.c_str());
+#else
+            std::filesystem::current_path(directory, error);
+#endif
             return;
         }
         directory = directory.parent_path();

@@ -27,7 +27,12 @@ struct RendererDesc {
     int width = 1280;
     int height = 720;
     bool vsync = true;
+#if defined(__linux__)
+    // Linux 下只提交了 GLSL 版着色器；自动选择可能命中 Vulkan。
+    bgfx::RendererType::Enum backend = bgfx::RendererType::OpenGL;
+#else
     bgfx::RendererType::Enum backend = bgfx::RendererType::Count;  // Count=自动选择
+#endif
 };
 
 // M2-T1：bgfx 初始化参数化、View/视口管理、每帧统计。
